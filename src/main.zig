@@ -1,17 +1,47 @@
+const PlatformGives = @import("game.zig").PlatformGives;
+const game = @import("game.zig");
+
+var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| struct {
+    const Self = @This();
+
+    api: *const game.GameApi = &game.game_api,
+    dyn_lib: ?std.DynLib = null,
+    state: game.GameState,
+
+    fn init() Self {
+        return .{ .state = .init() };
+    }
+
+    fn update(self: *Self, platform_gives: PlatformGives) !void {
+        try self.maybeReloadApi();
+        self.api.update(&self.state, &platform_gives);
+    }
+
+    fn maybeReloadApi(self: *Self) !void {
+        if (self.dyn_lib) |*dyn_lib| dyn_lib.close();
+        // const path = "./zig-out/lib/libgame.so";
+        self.dyn_lib = try .open(game_dynlib_path);
+        self.api = self.dyn_lib.?.lookup(*const game.GameApi, "game_api") orelse return error.LookupFail;
+    }
+} else game.GameState = undefined;
+
+comptime {
+    std.testing.refAllDeclsRecursive(game);
+}
+
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    const windows_platform: PlatformGives = .{
+        .stdout = std.io.getStdOut(),
+        .gpa = std.heap.smp_allocator,
+    };
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    my_game = .init();
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // Don't forget to flush!
+    for (0..100) |_| {
+        try my_game.update(windows_platform);
+        windows_platform.stdout.writeAll("bbb123\n") catch unreachable;
+        std.Thread.sleep(std.time.ns_per_s);
+    }
 }
 
 const std = @import("std");
