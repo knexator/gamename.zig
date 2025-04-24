@@ -20,7 +20,11 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     fn maybeReloadApi(self: *Self) !void {
         if (self.dyn_lib) |*dyn_lib| dyn_lib.close();
         // const path = "./zig-out/lib/libgame.so";
-        self.dyn_lib = try .open(game_dynlib_path);
+        const path = if (@import("builtin").os.tag == .windows) blk: {
+            try std.fs.copyFileAbsolute(game_dynlib_path, game_dynlib_path ++ ".tmp", .{});
+            break :blk game_dynlib_path ++ ".tmp";
+        } else game_dynlib_path;
+        self.dyn_lib = try .open(path);
         self.api = self.dyn_lib.?.lookup(*const game.GameApi, "game_api") orelse return error.LookupFail;
     }
 } else game.GameState = undefined;
