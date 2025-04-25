@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- FIXME: add an icon to the game -->
+    <link rel="icon" href="data:,">
+    <title>gamename</title>
+    <style>
+        body {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            margin: 0;
+            overscroll-behavior: contain;
+            background-color: #333;
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #canvas_container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-height: calc(100vw * 9 / 16);
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+        }
+
+        #loading_screen {
+            /* FIXME: customize loading screen */
+            transition: .4s;
+            background-color: #b0b0b0;
+            font-size: larger;
+            text-align: center;
+            line-height: 90vh;
+            color: #000000;
+
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            opacity: 1;
+            user-select: none;
+        }
+
+        canvas:focus {
+            outline: none;
+        }
+
+        @media (max-aspect-ratio: 16/9) {
+            #canvas_container {
+                max-height: calc(100vw * 9 / 16);
+            }
+        }
+
+        @media not (max-aspect-ratio: 16/9) {
+            #canvas_container {
+                max-width: calc(100vh * 16 / 9);
+            }
+        }
+    </style>
+    <script defer type="module" src="main.js"></script>
+</head>
+
+<body>
+    <div id="canvas_container">
+        <!-- <div id="loading_screen">Loading...</div> -->
+        <!-- <canvas id="gl_canvas"></canvas> -->
+        <canvas id="ctx_canvas"></canvas>
+    </div>
+</body>
+
+</html>

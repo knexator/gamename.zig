@@ -25,7 +25,8 @@ pub const GameState = struct {
     }
 
     pub fn update(self: *GameState, platform_gives: PlatformGives) !void {
-        platform_gives.stdout.writeAll("aaa123\n") catch unreachable;
+        _ = platform_gives;
+        // platform_gives.stdout.writeAll("aaa123\n") catch unreachable;
         std.log.debug("Update, n is {d} and n2 is {d}", .{ self.n, self.n2 });
         self.n += 1;
         self.n2 += 1;

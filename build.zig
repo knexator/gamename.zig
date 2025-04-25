@@ -1,7 +1,9 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+pub fn build(b: *std.Build) !void {
+    // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
+    b.reference_trace = 10;
+
     const optimize = b.standardOptimizeOption(.{});
 
     const hot_reloadable = b.option(
@@ -12,28 +14,49 @@ pub fn build(b: *std.Build) void {
 
     const emit_llvm_ir = b.option(bool, "emit-llvm-ir", "Emit LLVM IR") orelse false;
 
+    const web = b.option(bool, "web", "Target the web") orelse false;
+
     const install_step = b.getInstallStep();
     const run_step = b.step("run", "Run the app");
+    // const desktop_run_step = b.step("run_desktop", "Run the app, on the desktop");
+    // const web_run_step = b.step("run_web", "Run the app, on the web");
     const test_step = b.step("test", "Run unit tests");
     const check_step = b.step("check", "Check if the project compiles");
 
-    // TODO: delete this variable
-    const kommon_module = b.dependency("kommon", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("kommon");
+    run_step.dependOn(install_step);
+    // desktop_run_step.dependOn(install_step);
+    // web_run_step.dependOn(install_step);
 
-    build_for_desktop(b, .{
-        .install = install_step,
-        .run = run_step,
-        .unit_test = test_step,
-        .check = check_step,
-    }, .{
-        .target = target,
-        .optimize = optimize,
-        .hot_reloadable = hot_reloadable,
-        .emit_llvm_ir = emit_llvm_ir,
-    }, kommon_module);
+    if (web) {
+        build_for_web(b, .{
+            .install = install_step,
+            .run = run_step,
+            // .run = web_run_step,
+            .unit_test = test_step,
+            .check = check_step,
+        }, .{
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .wasm32,
+                .os_tag = .freestanding,
+            }),
+            .optimize = optimize,
+            .hot_reloadable = hot_reloadable,
+            .emit_llvm_ir = emit_llvm_ir,
+        });
+    } else {
+        build_for_desktop(b, .{
+            .install = install_step,
+            .run = run_step,
+            // .run = desktop_run_step,
+            .unit_test = test_step,
+            .check = check_step,
+        }, .{
+            .target = b.standardTargetOptions(.{}),
+            .optimize = optimize,
+            .hot_reloadable = hot_reloadable,
+            .emit_llvm_ir = emit_llvm_ir,
+        });
+    }
 }
 
 fn build_for_desktop(
@@ -50,12 +73,17 @@ fn build_for_desktop(
         hot_reloadable: bool,
         emit_llvm_ir: bool,
     },
-    kommon_module: *std.Build.Module,
 ) void {
     const sdl_lib = b.dependency("sdl", .{
         .target = options.target,
         .optimize = options.optimize,
     }).artifact("SDL3");
+
+    // TODO: delete this variable
+    const kommon_module = b.dependency("kommon", .{
+        .target = options.target,
+        .optimize = options.optimize,
+    }).module("kommon");
 
     const build_options = b.addOptions();
     if (options.hot_reloadable) {
@@ -115,7 +143,7 @@ fn build_for_desktop(
     exe_module.addOptions("build_options", build_options);
 
     const exe = b.addExecutable(.{
-        .name = "game",
+        .name = "gamename",
         .root_module = exe_module,
     });
     steps.install.dependOn(&b.addInstallArtifact(exe, .{}).step);
@@ -133,7 +161,6 @@ fn build_for_desktop(
         if (b.args) |args| {
             run_cmd.addArgs(args);
         }
-
         steps.run.dependOn(&run_cmd.step);
     }
 
@@ -169,29 +196,78 @@ fn build_for_web(
         hot_reloadable: bool,
         emit_llvm_ir: bool,
     },
-    kommon_module: *std.Build.Module,
 ) void {
-    _ = steps;
-    // TODO: wasm
-    if (false) {
-        // const target = b.resolveTargetQuery(.{
-        //     .cpu_arch = .wasm32,
-        //     .os_tag = .freestanding,
-        // });
-        const wasm_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = b.resolveTargetQuery(.{
-                .cpu_arch = .wasm32,
-                .os_tag = .freestanding,
-            }),
-            .optimize = options.optimize,
-        });
-        wasm_module.addImport("kommon", kommon_module);
+    const web_install_dir = std.Build.InstallDir{ .custom = "web_static" };
 
-        const wasm = b.addExecutable(.{
-            .name = "game",
+    // TODO: delete this variable
+    const kommon_module = b.dependency("kommon", .{
+        .target = options.target,
+        .optimize = options.optimize,
+    }).module("kommon");
+
+    const wasm_module = b.createModule(.{
+        .root_source_file = b.path("src/web_platform.zig"),
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+    wasm_module.addImport("kommon", kommon_module);
+
+    const wasm = b.addExecutable(.{
+        .name = "main",
+        .root_module = wasm_module,
+    });
+
+    {
+        // taken from https://github.com/daneelsan/minimal-zig-wasm-canvas/blob/master/build.zig
+        wasm.global_base = 6560;
+        wasm.entry = .disabled;
+        wasm.rdynamic = true;
+        wasm.export_memory = true;
+        wasm.stack_size = std.wasm.page_size;
+    }
+
+    steps.install.dependOn(&b.addInstallArtifact(wasm, .{
+        .dest_dir = .{ .override = web_install_dir },
+    }).step);
+
+    if (options.emit_llvm_ir) {
+        steps.install.dependOn(&b.addInstallFile(
+            wasm.getEmittedLlvmIr(),
+            "web_platform.ir",
+        ).step);
+    }
+
+    const copy_static_files = b.addInstallDirectory(.{
+        .install_dir = web_install_dir,
+        .install_subdir = "",
+        .source_dir = b.path("static"),
+    });
+    steps.install.dependOn(&copy_static_files.step);
+
+    {
+        // dev server for testing the webgame, with WebSockets + hot reloading
+        // TODO(eternal): remove this step if zig gets a fs.watch equivalent
+        const run_dev_server_cmd = b.addSystemCommand(&.{"bun"});
+        run_dev_server_cmd.addFileArg(b.path("src/tools/dev_server.js"));
+        run_dev_server_cmd.addArg(b.getInstallPath(web_install_dir, ""));
+        steps.run.dependOn(&run_dev_server_cmd.step);
+    }
+
+    // TODO(future): get unit tests working for the web version
+    // {
+    //     const wasm_unit_tests = b.addTest(.{
+    //         .root_module = wasm_module,
+    //     });
+    //     const run_wasm_unit_tests = b.addRunArtifact(wasm_unit_tests);
+    //     steps.unit_test.dependOn(&run_wasm_unit_tests.step);
+    // }
+
+    {
+        // TODO(zig): delete wasm_check after solving https://github.com/ziglang/zig/issues/18877
+        const wasm_check = b.addExecutable(.{
+            .name = "wasm_platform",
             .root_module = wasm_module,
         });
-        b.installArtifact(wasm);
+        steps.check.dependOn(&wasm_check.step);
     }
 }
