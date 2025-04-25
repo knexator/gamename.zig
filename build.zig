@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -42,18 +42,16 @@ pub fn build(b: *std.Build) !void {
         // HACK
         // hot_reload_options.args.clearRetainingCapacity();
         // build_options.addOptionPath("lib_path", install_game_lib.emitted_bin.?);
-        var path_to_lib: std.ArrayListUnmanaged(u8) = .empty;
-        defer path_to_lib.deinit(b.allocator);
-        try path_to_lib.appendSlice(b.allocator, b.install_path);
-        try path_to_lib.appendSlice(b.allocator, "/");
-        try path_to_lib.appendSlice(b.allocator, switch (install_game_lib.dest_dir.?) {
-            .lib => "lib",
-            .bin => "bin",
-            .custom, .header, .prefix => unreachable,
+        const path_to_lib = b.fmt("{s}/{s}/{s}", .{
+            b.install_path,
+            switch (install_game_lib.dest_dir.?) {
+                .lib => "lib",
+                .bin => "bin",
+                .custom, .header, .prefix => unreachable,
+            },
+            install_game_lib.dest_sub_path,
         });
-        try path_to_lib.appendSlice(b.allocator, "/");
-        try path_to_lib.appendSlice(b.allocator, install_game_lib.dest_sub_path);
-        build_options.addOption(?[]const u8, "game_dynlib_path", path_to_lib.items);
+        build_options.addOption(?[]const u8, "game_dynlib_path", path_to_lib);
     } else {
         build_options.addOption(?[]const u8, "game_dynlib_path", null);
     }
