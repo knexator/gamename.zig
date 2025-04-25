@@ -59,7 +59,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const exe_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/sdl_platform.zig"),
         .target = target,
         .optimize = optimize,
     });

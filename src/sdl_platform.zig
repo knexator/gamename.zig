@@ -4,7 +4,7 @@ const game = @import("game.zig");
 var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| struct {
     const Self = @This();
 
-    api: *const game.GameApi = &game.game_api,
+    api: *const game.CApi = &game.game_api,
     dyn_lib: ?std.DynLib = null,
     state: game.GameState,
 
@@ -25,7 +25,7 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
             break :blk game_dynlib_path ++ ".tmp";
         } else game_dynlib_path;
         self.dyn_lib = try .open(path);
-        self.api = self.dyn_lib.?.lookup(*const game.GameApi, "game_api") orelse return error.LookupFail;
+        self.api = self.dyn_lib.?.lookup(*const game.CApi, "game_api") orelse return error.LookupFail;
     }
 } else game.GameState = undefined;
 

@@ -33,7 +33,7 @@ pub const GameState = struct {
     }
 };
 
-pub const GameApi = extern struct {
+pub const CApi = extern struct {
     // TODO: init should take an allocator
     // init: *const fn () *GameState,
     update: *const @TypeOf(_update),
@@ -44,8 +44,8 @@ pub const GameApi = extern struct {
     }
 };
 
-pub export const game_api: GameApi = .{
-    .update = GameApi._update,
+pub export const game_api: CApi = .{
+    .update = CApi._update,
 };
 
 test "foo" {
