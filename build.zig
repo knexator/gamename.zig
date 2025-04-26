@@ -18,20 +18,15 @@ pub fn build(b: *std.Build) !void {
 
     const install_step = b.getInstallStep();
     const run_step = b.step("run", "Run the app");
-    // const desktop_run_step = b.step("run_desktop", "Run the app, on the desktop");
-    // const web_run_step = b.step("run_web", "Run the app, on the web");
     const test_step = b.step("test", "Run unit tests");
     const check_step = b.step("check", "Check if the project compiles");
 
     run_step.dependOn(install_step);
-    // desktop_run_step.dependOn(install_step);
-    // web_run_step.dependOn(install_step);
 
     if (web) {
         build_for_web(b, .{
             .install = install_step,
             .run = run_step,
-            // .run = web_run_step,
             .unit_test = test_step,
             .check = check_step,
         }, .{
@@ -47,7 +42,6 @@ pub fn build(b: *std.Build) !void {
         build_for_desktop(b, .{
             .install = install_step,
             .run = run_step,
-            // .run = desktop_run_step,
             .unit_test = test_step,
             .check = check_step,
         }, .{
@@ -182,6 +176,7 @@ fn build_for_desktop(
     }
 }
 
+// inspiration from https://github.com/daneelsan/minimal-zig-wasm-canvas/blob/master/build.zig
 fn build_for_web(
     b: *std.Build,
     steps: struct {
@@ -212,18 +207,21 @@ fn build_for_web(
     });
     wasm_module.addImport("kommon", kommon_module);
 
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "hot_reloadable", options.hot_reloadable);
+    wasm_module.addOptions("build_options", build_options);
+
     const wasm = b.addExecutable(.{
         .name = "main",
         .root_module = wasm_module,
     });
 
     {
-        // taken from https://github.com/daneelsan/minimal-zig-wasm-canvas/blob/master/build.zig
-        wasm.global_base = 6560;
         wasm.entry = .disabled;
-        wasm.rdynamic = true;
-        wasm.export_memory = true;
+        wasm.import_memory = true;
         wasm.stack_size = std.wasm.page_size;
+        // without this, the .js can't see the exported symbols
+        wasm.rdynamic = true;
     }
 
     steps.install.dependOn(&b.addInstallArtifact(wasm, .{

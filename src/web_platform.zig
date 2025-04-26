@@ -30,8 +30,7 @@ fn myLogFn(
     // js_better.debug.logString(res);
 }
 
-// TODO: hot reloading
-var my_game: game.GameState = undefined;
+var my_game: if (@import("build_options").hot_reloadable) *game.GameState else game.GameState = undefined;
 
 const js = struct {
     pub const debug = struct {
@@ -40,7 +39,12 @@ const js = struct {
 };
 
 export fn init() void {
-    my_game = .init();
+    if (@import("build_options").hot_reloadable) {
+        my_game = std.heap.wasm_allocator.create(game.GameState) catch unreachable;
+        my_game.* = .init();
+    } else {
+        my_game = .init();
+    }
 }
 
 export fn update() void {
