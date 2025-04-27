@@ -21,8 +21,6 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     const check_step = b.step("check", "Check if the project compiles");
 
-    run_step.dependOn(install_step);
-
     if (web) {
         build_for_web(b, .{
             .install = install_step,
@@ -56,10 +54,10 @@ pub fn build(b: *std.Build) !void {
 fn build_for_desktop(
     b: *std.Build,
     steps: struct {
-        run: *std.Build.Step,
         install: *std.Build.Step,
-        check: *std.Build.Step,
+        run: *std.Build.Step,
         unit_test: *std.Build.Step,
+        check: *std.Build.Step,
     },
     options: struct {
         target: std.Build.ResolvedTarget,
@@ -87,6 +85,7 @@ fn build_for_desktop(
             .optimize = options.optimize,
             .pic = true,
         });
+        game_module.addImport("kommon", kommon_module);
         const game_lib = b.addLibrary(.{
             .name = "game",
             .root_module = game_module,
@@ -151,7 +150,7 @@ fn build_for_desktop(
 
     {
         const run_cmd = b.addRunArtifact(exe);
-        run_cmd.step.dependOn(b.getInstallStep());
+        run_cmd.step.dependOn(steps.install);
         if (b.args) |args| {
             run_cmd.addArgs(args);
         }
@@ -180,10 +179,10 @@ fn build_for_desktop(
 fn build_for_web(
     b: *std.Build,
     steps: struct {
-        run: *std.Build.Step,
         install: *std.Build.Step,
-        check: *std.Build.Step,
+        run: *std.Build.Step,
         unit_test: *std.Build.Step,
+        check: *std.Build.Step,
     },
     options: struct {
         target: std.Build.ResolvedTarget,
@@ -248,6 +247,7 @@ fn build_for_web(
         const run_dev_server_cmd = b.addSystemCommand(&.{"bun"});
         run_dev_server_cmd.addFileArg(b.path("src/tools/dev_server.js"));
         run_dev_server_cmd.addArg(b.getInstallPath(web_install_dir, ""));
+        run_dev_server_cmd.step.dependOn(steps.install);
         steps.run.dependOn(&run_dev_server_cmd.step);
     }
 
