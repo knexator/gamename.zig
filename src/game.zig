@@ -4,18 +4,14 @@
 
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
-    stdout: std.fs.File,
+    render_queue: *@import("renderer.zig").RenderQueue,
+    getAspectRatio: *const fn () f32,
 };
 
 pub const GameState = struct {
     n: usize = 0,
     n2: usize = 0,
 
-    // pub fn init(alloc: std.mem.Allocator) *GameState {
-    //     var res = alloc.create(GameState) catch unreachable;
-    //     res.n = 0;
-    //     return res;
-    // }
     pub fn init() GameState {
         return .{};
     }
@@ -25,8 +21,19 @@ pub const GameState = struct {
     }
 
     pub fn update(self: *GameState, platform_gives: PlatformGives) !void {
-        _ = platform_gives;
-        // platform_gives.stdout.writeAll("aaa123\n") catch unreachable;
+        try platform_gives.render_queue.clear(.gray(128));
+
+        const camera: Rect = .{
+            .top_left = .zero,
+            .size = .new(3 * platform_gives.getAspectRatio(), 3),
+        };
+        try platform_gives.render_queue.drawShape(camera, .{}, &.{
+            .new(1, 1),
+            .new(2, 1),
+            .new(2, 2),
+            .new(1, 2),
+        }, .black, .white);
+
         std.log.debug("Update, n is {d} and n2 is {d}", .{ self.n, self.n2 });
         self.n += 1;
         self.n2 += 1;
@@ -54,3 +61,9 @@ test "foo" {
 }
 
 const std = @import("std");
+const math = @import("kommon").math;
+const Color = math.Color;
+const Camera = math.Camera;
+const Rect = math.Rect;
+const Point = math.Point;
+const Vec2 = math.Vec2;

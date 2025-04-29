@@ -203,6 +203,8 @@ fn build_for_web(
         .root_source_file = b.path("src/web_platform.zig"),
         .target = options.target,
         .optimize = options.optimize,
+        // TODO(zig): uncomment this line when zig's backend works
+        // .use_llvm = options.optimize != .Debug,
     });
     wasm_module.addImport("kommon", kommon_module);
 
