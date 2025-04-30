@@ -44,6 +44,15 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
 } else game.GameState = undefined;
 
 var window_size: UVec2 = .new(1280, 720);
+fn getWindowRect() Rect {
+    return .{
+        .top_left = .zero,
+        .size = window_size.tof32(),
+    };
+}
+
+/// positions are in [0..1]x[0..1]
+var mouse = Mouse{ .cur = .init, .prev = .init };
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
@@ -68,6 +77,17 @@ pub fn main() !void {
         .getAspectRatio = struct {
             pub fn anon() f32 {
                 return window_size.aspectRatio();
+            }
+        }.anon,
+        .getMouse = struct {
+            pub fn anon(camera: Rect) Mouse {
+                var result = mouse;
+                result.cur.position = camera.applyToLocalPosition(result.cur.position);
+                result.prev.position = camera.applyToLocalPosition(result.prev.position);
+                // TODO: delete these fields
+                result.cur.client_pos = .zero;
+                result.prev.client_pos = .zero;
+                return result;
             }
         }.anon,
     };
@@ -120,6 +140,28 @@ pub fn main() !void {
                         @intCast(event.window.data1),
                         @intCast(event.window.data2),
                     ),
+                    c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_EVENT_MOUSE_BUTTON_UP => {
+                        const is_pressed = event.button.down;
+                        switch (event.button.button) {
+                            c.SDL_BUTTON_LEFT => mouse.cur.buttons.left = is_pressed,
+                            c.SDL_BUTTON_RIGHT => mouse.cur.buttons.right = is_pressed,
+                            c.SDL_BUTTON_MIDDLE => mouse.cur.buttons.middle = is_pressed,
+                            else => {},
+                        }
+                    },
+                    c.SDL_EVENT_MOUSE_MOTION => {
+                        mouse.cur.position = getWindowRect().localFromWorldPosition(
+                            .new(event.motion.x, event.motion.y),
+                        );
+                    },
+                    c.SDL_EVENT_MOUSE_WHEEL => {
+                        mouse.cur.scrolled = if (event.wheel.y == 0)
+                            .none
+                        else if (event.wheel.y < 0)
+                            .down
+                        else
+                            .up;
+                    },
                     else => {},
                 }
             }
@@ -232,3 +274,4 @@ const Point = math.Point;
 const Rect = math.Rect;
 const errify = kommon.sdl.errify;
 const Timekeeper = kommon.Timekeeper;
+const Mouse = game.Mouse;

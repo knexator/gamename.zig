@@ -97,6 +97,28 @@ function every_frame(cur_timestamp_millis) {
 
 requestAnimationFrame(every_frame);
 
+document.addEventListener("pointermove", (ev) => {
+  const rect = canvas.getBoundingClientRect();
+  wasm_exports.pointermove(ev.clientX - rect.left, ev.clientY - rect.top);
+});
+
+document.addEventListener("pointerup", (ev) => {
+  wasm_exports.pointerup(ev.button);
+});
+
+document.addEventListener("wheel", (ev) => {
+  wasm_exports.wheel(ev.deltaY);
+});
+
+document.addEventListener("pointerdown", (ev) => {
+  wasm_exports.pointerdown(ev.button);
+});
+
+document.addEventListener("contextmenu", (ev) => {
+  ev.preventDefault();
+  return false;
+});
+
 function rgbToHex(r, g, b, a) {
   return (
     "#" +

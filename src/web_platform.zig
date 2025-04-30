@@ -1,25 +1,3 @@
-pub const std_options = std.Options{
-    // wasm-freestanding has no stderr, so we have to override this function
-    .logFn = myLogFn,
-};
-fn myLogFn(
-    comptime message_level: std.log.Level,
-    comptime scope: @Type(.enum_literal),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    const level_txt = comptime message_level.asText();
-    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
-
-    var buf: [1000]u8 = undefined;
-    const res = std.fmt.bufPrint(&buf, level_txt ++ prefix2 ++ format ++ "\n", args) catch {
-        js_better.debug.logString("RAN OUT OF LOG BUFFER! the log started with:\n");
-        js_better.debug.logString(&buf);
-        return;
-    };
-    js_better.debug.logString(res);
-}
-
 const js = struct {
     pub const debug = struct {
         extern fn logInt(arg: u32) void;
@@ -52,6 +30,13 @@ const js_better = struct {
     pub const canvas = struct {
         pub fn getSize() UVec2 {
             return UVec2.new(@intCast(js.canvas.getWidth()), @intCast(js.canvas.getHeight()));
+        }
+
+        pub fn getRect() Rect {
+            return .{
+                .top_left = .zero,
+                .size = getSize().tof32(),
+            };
         }
 
         pub fn setFillColor(c: Color) void {
@@ -114,6 +99,17 @@ const web_platform: PlatformGives = .{
         js_better.canvas.getSize,
         UVec2.aspectRatio,
     }),
+    .getMouse = struct {
+        pub fn anon(camera: Rect) Mouse {
+            var result = mouse;
+            result.cur.position = camera.applyToLocalPosition(result.cur.position);
+            result.prev.position = camera.applyToLocalPosition(result.prev.position);
+            // TODO: delete these fields
+            result.cur.client_pos = .zero;
+            result.prev.client_pos = .zero;
+            return result;
+        }
+    }.anon,
 };
 
 fn render(cmd: @import("renderer.zig").RenderQueue.Command) !void {
@@ -132,10 +128,7 @@ fn render(cmd: @import("renderer.zig").RenderQueue.Command) !void {
             const screen_positions = try gpa.alloc(Vec2, shape.local_points.len);
             defer gpa.free(screen_positions);
 
-            const screen: Rect = .{
-                .top_left = .zero,
-                .size = js_better.canvas.getSize().tof32(),
-            };
+            const screen = js_better.canvas.getRect();
 
             for (shape.local_points, screen_positions) |local_pos, *screen_pos| {
                 screen_pos.* = screen.applyToLocalPosition(
@@ -171,9 +164,73 @@ export fn init() void {
 
 export fn update() void {
     my_game.update(web_platform) catch unreachable;
+    mouse.prev = mouse.cur;
+    mouse.cur.scrolled = .none;
     defer web_platform.render_queue.pending_commands.clearRetainingCapacity();
     var it = web_platform.render_queue.pending_commands.constIterator(0);
     while (it.next()) |cmd| render(cmd.*) catch unreachable;
+}
+
+/// positions are in [0..1]x[0..1]
+var mouse: Mouse = .{ .cur = .init, .prev = .init };
+export fn pointermove(x: f32, y: f32) void {
+    mouse.cur.position = js_better.canvas.getRect().localFromWorldPosition(.new(x, y));
+}
+
+const MouseButton = enum(u8) {
+    left = 0,
+    middle = 1,
+    right = 2,
+    _,
+};
+
+export fn pointerup(button: MouseButton) void {
+    switch (button) {
+        .left => mouse.cur.buttons.left = false,
+        .middle => mouse.cur.buttons.middle = false,
+        .right => mouse.cur.buttons.right = false,
+        _ => {},
+    }
+}
+
+export fn pointerdown(button: MouseButton) void {
+    switch (button) {
+        .left => mouse.cur.buttons.left = true,
+        .middle => mouse.cur.buttons.middle = true,
+        .right => mouse.cur.buttons.right = true,
+        _ => {},
+    }
+}
+
+export fn wheel(delta_y: i32) void {
+    mouse.cur.scrolled = if (delta_y == 0)
+        .none
+    else if (delta_y > 0)
+        .down
+    else
+        .up;
+}
+
+pub const std_options = std.Options{
+    // wasm-freestanding has no stderr, so we have to override this function
+    .logFn = myLogFn,
+};
+fn myLogFn(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const level_txt = comptime message_level.asText();
+    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+
+    var buf: [1000]u8 = undefined;
+    const res = std.fmt.bufPrint(&buf, level_txt ++ prefix2 ++ format ++ "\n", args) catch {
+        js_better.debug.logString("RAN OUT OF LOG BUFFER! the log started with:\n");
+        js_better.debug.logString(&buf);
+        return;
+    };
+    js_better.debug.logString(res);
 }
 
 const std = @import("std");
@@ -187,3 +244,4 @@ const Color = math.Color;
 const Camera = math.Camera;
 const Point = math.Point;
 const Rect = math.Rect;
+const Mouse = game.Mouse;

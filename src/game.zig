@@ -6,6 +6,7 @@ pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     render_queue: *@import("renderer.zig").RenderQueue,
     getAspectRatio: *const fn () f32,
+    getMouse: *const fn (camera: Rect) Mouse,
 };
 
 pub const GameState = struct {
@@ -27,8 +28,10 @@ pub const GameState = struct {
             .top_left = .zero,
             .size = .new(3 * platform_gives.getAspectRatio(), 3),
         };
+        const mouse = platform_gives.getMouse(camera);
+
         try platform_gives.render_queue.drawShape(camera, .{}, &.{
-            .new(1, 1),
+            mouse.cur.position,
             .new(2, 1),
             .new(2, 2),
             .new(1, 2),
@@ -61,9 +64,12 @@ test "foo" {
 }
 
 const std = @import("std");
-const math = @import("kommon").math;
+
+const kommon = @import("kommon");
+const math = kommon.math;
 const Color = math.Color;
 const Camera = math.Camera;
 const Rect = math.Rect;
 const Point = math.Point;
 const Vec2 = math.Vec2;
+pub const Mouse = kommon.input.Mouse;
