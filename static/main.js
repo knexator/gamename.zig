@@ -1,3 +1,5 @@
+import { keys } from "./keycodes.js";
+
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#ctx_canvas");
 const ctx = canvas.getContext("2d");
@@ -117,6 +119,22 @@ document.addEventListener("pointerdown", (ev) => {
 document.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
   return false;
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.repeat) return;
+  const key_num = keys[ev.code];
+  if (key_num !== undefined) {
+    wasm_exports.keydown(key_num);
+  }
+});
+
+document.addEventListener("keyup", (ev) => {
+  if (ev.repeat) return;
+  const key_num = keys[ev.code];
+  if (key_num !== undefined) {
+    wasm_exports.keyup(key_num);
+  }
 });
 
 function rgbToHex(r, g, b, a) {

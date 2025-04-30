@@ -6,6 +6,7 @@ pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     render_queue: *@import("renderer.zig").RenderQueue,
     getMouse: *const fn (camera: Rect) Mouse,
+    keyboard: Keyboard,
     aspect_ratio: f32,
     delta_seconds: f32,
 };
@@ -25,7 +26,8 @@ pub const GameState = struct {
     pub fn update(self: *GameState, platform_gives: PlatformGives) !void {
         try platform_gives.render_queue.clear(.gray(128));
 
-        std.log.debug("fps: {d}", .{1.0 / platform_gives.delta_seconds});
+        // std.log.debug("fps: {d}", .{1.0 / platform_gives.delta_seconds});
+        // std.log.debug("key u: {any}", .{platform_gives.keyboard.cur.keys.KeyU});
 
         const camera: Rect = .{
             .top_left = .zero,
@@ -76,3 +78,5 @@ const Rect = math.Rect;
 const Point = math.Point;
 const Vec2 = math.Vec2;
 pub const Mouse = kommon.input.Mouse;
+pub const Keyboard = kommon.input.Keyboard;
+pub const KeyboardButton = kommon.input.KeyboardButton;

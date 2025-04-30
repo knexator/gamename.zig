@@ -243,6 +243,19 @@ fn build_for_web(
     });
     steps.install.dependOn(&copy_static_files.step);
 
+    const generate_keycodes = b.addExecutable(.{
+        .name = "generate_keycodes",
+        .root_source_file = b.path("src/tools/generate_keycodes_js.zig"),
+        .target = b.graph.host,
+    });
+    generate_keycodes.root_module.addImport("kommon", kommon_module);
+    const generate_keycodes_step = b.addRunArtifact(generate_keycodes);
+    steps.install.dependOn(&b.addInstallFileWithDir(
+        generate_keycodes_step.addOutputFileArg("keycodes.js"),
+        web_install_dir,
+        "keycodes.js",
+    ).step);
+
     {
         // dev server for testing the webgame, with WebSockets + hot reloading
         // TODO(eternal): remove this step if zig gets a fs.watch equivalent

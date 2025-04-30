@@ -53,6 +53,7 @@ fn getWindowRect() Rect {
 
 /// positions are in [0..1]x[0..1]
 var mouse = Mouse{ .cur = .init, .prev = .init };
+var keyboard = Keyboard{ .cur = .init, .prev = .init };
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
@@ -84,6 +85,7 @@ pub fn main() !void {
                 return result;
             }
         }.anon,
+        .keyboard = keyboard,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
     };
@@ -157,6 +159,17 @@ pub fn main() !void {
                         else
                             .up;
                     },
+                    c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
+                        const is_pressed = event.type == c.SDL_EVENT_KEY_DOWN;
+                        inline for (sdl_scancode_to_keyboard_button) |pair| {
+                            const sdl_scancode = pair[0];
+                            const key = pair[1];
+                            if (event.key.scancode == sdl_scancode) {
+                                @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
+                                break;
+                            }
+                        }
+                    },
                     else => {},
                 }
             }
@@ -168,6 +181,7 @@ pub fn main() !void {
             sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
             sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
             sdl_platform.aspect_ratio = window_size.aspectRatio();
+            sdl_platform.keyboard = keyboard;
             try my_game.update(sdl_platform);
             // try game.update(1.0 / 60.0);
             // mouse.prev = mouse.cur;
@@ -274,6 +288,77 @@ const Rect = math.Rect;
 const errify = kommon.sdl.errify;
 const Timekeeper = kommon.Timekeeper;
 const Mouse = game.Mouse;
+const Keyboard = game.Keyboard;
+const KeyboardButton = game.KeyboardButton;
+
+const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, KeyboardButton }){
+    .{ c.SDL_SCANCODE_A, .KeyA },
+    .{ c.SDL_SCANCODE_B, .KeyB },
+    .{ c.SDL_SCANCODE_C, .KeyC },
+    .{ c.SDL_SCANCODE_D, .KeyD },
+    .{ c.SDL_SCANCODE_E, .KeyE },
+    .{ c.SDL_SCANCODE_F, .KeyF },
+    .{ c.SDL_SCANCODE_G, .KeyG },
+    .{ c.SDL_SCANCODE_H, .KeyH },
+    .{ c.SDL_SCANCODE_I, .KeyI },
+    .{ c.SDL_SCANCODE_J, .KeyJ },
+    .{ c.SDL_SCANCODE_K, .KeyK },
+    .{ c.SDL_SCANCODE_L, .KeyL },
+    .{ c.SDL_SCANCODE_M, .KeyM },
+    .{ c.SDL_SCANCODE_N, .KeyN },
+    .{ c.SDL_SCANCODE_O, .KeyO },
+    .{ c.SDL_SCANCODE_P, .KeyP },
+    .{ c.SDL_SCANCODE_Q, .KeyQ },
+    .{ c.SDL_SCANCODE_R, .KeyR },
+    .{ c.SDL_SCANCODE_S, .KeyS },
+    .{ c.SDL_SCANCODE_T, .KeyT },
+    .{ c.SDL_SCANCODE_U, .KeyU },
+    .{ c.SDL_SCANCODE_V, .KeyV },
+    .{ c.SDL_SCANCODE_W, .KeyW },
+    .{ c.SDL_SCANCODE_X, .KeyX },
+    .{ c.SDL_SCANCODE_Y, .KeyY },
+    .{ c.SDL_SCANCODE_Z, .KeyZ },
+    .{ c.SDL_SCANCODE_1, .Digit1 },
+    .{ c.SDL_SCANCODE_2, .Digit2 },
+    .{ c.SDL_SCANCODE_3, .Digit3 },
+    .{ c.SDL_SCANCODE_4, .Digit4 },
+    .{ c.SDL_SCANCODE_5, .Digit5 },
+    .{ c.SDL_SCANCODE_6, .Digit6 },
+    .{ c.SDL_SCANCODE_7, .Digit7 },
+    .{ c.SDL_SCANCODE_8, .Digit8 },
+    .{ c.SDL_SCANCODE_9, .Digit9 },
+    .{ c.SDL_SCANCODE_0, .Digit0 },
+    .{ c.SDL_SCANCODE_RETURN, .Enter },
+    .{ c.SDL_SCANCODE_ESCAPE, .Escape },
+    .{ c.SDL_SCANCODE_BACKSPACE, .Backspace },
+    .{ c.SDL_SCANCODE_TAB, .Tab },
+    .{ c.SDL_SCANCODE_SPACE, .Space },
+    .{ c.SDL_SCANCODE_MINUS, .Minus },
+    .{ c.SDL_SCANCODE_EQUALS, .Equal },
+    .{ c.SDL_SCANCODE_LEFTBRACKET, .BracketLeft },
+    .{ c.SDL_SCANCODE_RIGHTBRACKET, .BracketRight },
+    .{ c.SDL_SCANCODE_BACKSLASH, .Backslash },
+    .{ c.SDL_SCANCODE_NONUSHASH, .IntlBackslash },
+    .{ c.SDL_SCANCODE_SEMICOLON, .Semicolon },
+    .{ c.SDL_SCANCODE_APOSTROPHE, .Quote },
+    .{ c.SDL_SCANCODE_GRAVE, .Backquote },
+    .{ c.SDL_SCANCODE_COMMA, .Comma },
+    .{ c.SDL_SCANCODE_PERIOD, .Period },
+    .{ c.SDL_SCANCODE_SLASH, .Slash },
+    .{ c.SDL_SCANCODE_CAPSLOCK, .CapsLock },
+    .{ c.SDL_SCANCODE_F1, .F1 },
+    .{ c.SDL_SCANCODE_F2, .F2 },
+    .{ c.SDL_SCANCODE_F3, .F3 },
+    .{ c.SDL_SCANCODE_F4, .F4 },
+    .{ c.SDL_SCANCODE_F5, .F5 },
+    .{ c.SDL_SCANCODE_F6, .F6 },
+    .{ c.SDL_SCANCODE_F7, .F7 },
+    .{ c.SDL_SCANCODE_F8, .F8 },
+    .{ c.SDL_SCANCODE_F9, .F9 },
+    .{ c.SDL_SCANCODE_F10, .F10 },
+    .{ c.SDL_SCANCODE_F11, .F11 },
+    .{ c.SDL_SCANCODE_F12, .F12 },
+};
 
 pub const std_options: std.Options = .{
     // TODO: remove before final release

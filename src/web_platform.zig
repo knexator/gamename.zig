@@ -106,6 +106,7 @@ var web_platform: PlatformGives = .{
             return result;
         }
     }.anon,
+    .keyboard = undefined,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
 };
@@ -163,6 +164,7 @@ export fn init() void {
 export fn update(delta_seconds: f32) void {
     web_platform.aspect_ratio = js_better.canvas.getSize().aspectRatio();
     web_platform.delta_seconds = delta_seconds;
+    web_platform.keyboard = keyboard;
     my_game.update(web_platform) catch unreachable;
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
@@ -211,6 +213,23 @@ export fn wheel(delta_y: i32) void {
         .up;
 }
 
+var keyboard = Keyboard{ .cur = .init, .prev = .init };
+const KeyCode = KeyboardButton;
+
+export fn keydown(code: KeyCode) void {
+    keychanged(code, true);
+}
+
+export fn keyup(code: KeyCode) void {
+    keychanged(code, false);
+}
+
+fn keychanged(key: KeyCode, is_pressed: bool) void {
+    switch (key) {
+        inline else => |x| @field(keyboard.cur.keys, @tagName(x)) = is_pressed,
+    }
+}
+
 pub const std_options = std.Options{
     // wasm-freestanding has no stderr, so we have to override this function
     .logFn = myLogFn,
@@ -245,3 +264,5 @@ const Camera = math.Camera;
 const Point = math.Point;
 const Rect = math.Rect;
 const Mouse = game.Mouse;
+const Keyboard = game.Keyboard;
+const KeyboardButton = game.KeyboardButton;
