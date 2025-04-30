@@ -5,8 +5,9 @@
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     render_queue: *@import("renderer.zig").RenderQueue,
-    getAspectRatio: *const fn () f32,
     getMouse: *const fn (camera: Rect) Mouse,
+    aspect_ratio: f32,
+    delta_seconds: f32,
 };
 
 pub const GameState = struct {
@@ -24,9 +25,11 @@ pub const GameState = struct {
     pub fn update(self: *GameState, platform_gives: PlatformGives) !void {
         try platform_gives.render_queue.clear(.gray(128));
 
+        std.log.debug("fps: {d}", .{1.0 / platform_gives.delta_seconds});
+
         const camera: Rect = .{
             .top_left = .zero,
-            .size = .new(3 * platform_gives.getAspectRatio(), 3),
+            .size = .new(3 * platform_gives.aspect_ratio, 3),
         };
         const mouse = platform_gives.getMouse(camera);
 
@@ -37,7 +40,7 @@ pub const GameState = struct {
             .new(1, 2),
         }, .black, .white);
 
-        std.log.debug("Update, n is {d} and n2 is {d}", .{ self.n, self.n2 });
+        // std.log.debug("Update, n is {d} and n2 is {d}", .{ self.n, self.n2 });
         self.n += 1;
         self.n2 += 1;
         // return error.hola;

@@ -92,13 +92,9 @@ var my_game: if (@import("build_options").hot_reloadable) *game.GameState else g
 const gpa = std.heap.wasm_allocator;
 var render_queue: @import("renderer.zig").RenderQueue = .init(gpa);
 
-const web_platform: PlatformGives = .{
+var web_platform: PlatformGives = .{
     .gpa = gpa,
     .render_queue = &render_queue,
-    .getAspectRatio = kommon.funktional.chain(&.{
-        js_better.canvas.getSize,
-        UVec2.aspectRatio,
-    }),
     .getMouse = struct {
         pub fn anon(camera: Rect) Mouse {
             var result = mouse;
@@ -110,6 +106,8 @@ const web_platform: PlatformGives = .{
             return result;
         }
     }.anon,
+    .delta_seconds = 0,
+    .aspect_ratio = undefined,
 };
 
 fn render(cmd: @import("renderer.zig").RenderQueue.Command) !void {
@@ -162,7 +160,9 @@ export fn init() void {
     }
 }
 
-export fn update() void {
+export fn update(delta_seconds: f32) void {
+    web_platform.aspect_ratio = js_better.canvas.getSize().aspectRatio();
+    web_platform.delta_seconds = delta_seconds;
     my_game.update(web_platform) catch unreachable;
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;

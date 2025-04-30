@@ -91,7 +91,7 @@ function every_frame(cur_timestamp_millis) {
     canvas.height = canvas.clientHeight;
   }
 
-  wasm_exports.update();
+  wasm_exports.update(delta_seconds);
   requestAnimationFrame(every_frame);
 }
 

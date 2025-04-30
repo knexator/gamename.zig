@@ -70,15 +70,9 @@ pub fn main() !void {
     var render_queue: @import("renderer.zig").RenderQueue = .init(gpa);
     defer render_queue.deinit();
 
-    const sdl_platform: PlatformGives = .{
+    var sdl_platform: PlatformGives = .{
         .gpa = gpa,
         .render_queue = &render_queue,
-        // TODO: maybe some funktional magic
-        .getAspectRatio = struct {
-            pub fn anon() f32 {
-                return window_size.aspectRatio();
-            }
-        }.anon,
         .getMouse = struct {
             pub fn anon(camera: Rect) Mouse {
                 var result = mouse;
@@ -90,6 +84,8 @@ pub fn main() !void {
                 return result;
             }
         }.anon,
+        .aspect_ratio = window_size.aspectRatio(),
+        .delta_seconds = 0,
     };
 
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
@@ -127,8 +123,7 @@ pub fn main() !void {
 
     my_game = .init();
 
-    // TODO: understand this
-    var timekeeper: Timekeeper = .{ .tocks_per_s = c.SDL_GetPerformanceFrequency() };
+    var timer = try std.time.Timer.start();
 
     main_loop: while (true) {
         {
@@ -167,8 +162,12 @@ pub fn main() !void {
             }
         }
 
-        while (timekeeper.consume()) {
+        // while (timekeeper.consume()) {
+        {
+            const ns_since_last_frame = timer.lap();
             sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
+            sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
+            sdl_platform.aspect_ratio = window_size.aspectRatio();
             try my_game.update(sdl_platform);
             // try game.update(1.0 / 60.0);
             // mouse.prev = mouse.cur;
@@ -186,7 +185,7 @@ pub fn main() !void {
             try errify(c.SDL_RenderPresent(sdl_renderer));
         }
 
-        timekeeper.produce(c.SDL_GetPerformanceCounter());
+        // timekeeper.produce(c.SDL_GetPerformanceCounter());
     }
 }
 
@@ -275,3 +274,8 @@ const Rect = math.Rect;
 const errify = kommon.sdl.errify;
 const Timekeeper = kommon.Timekeeper;
 const Mouse = game.Mouse;
+
+pub const std_options: std.Options = .{
+    // TODO: remove before final release
+    .log_level = .debug,
+};
