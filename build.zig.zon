@@ -2,7 +2,7 @@
     .name = .game,
     .version = "0.0.0",
     .fingerprint = 0x232b318c3f30403c, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.0-dev.375+8f8f37fb0",
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .sdl = .{
             .url = "git+https://github.com/castholm/SDL.git?ref=main#f6bbe8ac5e7b901db69ba62f017596090c362d84",
