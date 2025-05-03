@@ -81,8 +81,8 @@ const js_better = struct {
     };
 };
 
-const PlatformGives = @import("game.zig").PlatformGives;
 const game = @import("game.zig");
+const PlatformGives = game.PlatformGives;
 comptime {
     std.testing.refAllDeclsRecursive(game);
 }
@@ -168,6 +168,7 @@ export fn update(delta_seconds: f32) void {
     my_game.update(web_platform) catch unreachable;
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
+    keyboard.prev = keyboard.cur;
     defer web_platform.render_queue.pending_commands.clearRetainingCapacity();
     var it = web_platform.render_queue.pending_commands.constIterator(0);
     while (it.next()) |cmd| render(cmd.*) catch unreachable;

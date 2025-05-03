@@ -8,8 +8,8 @@ const c = @cImport({
     @cInclude("SDL3/SDL_main.h");
 });
 
-const PlatformGives = @import("game.zig").PlatformGives;
 const game = @import("game.zig");
+const PlatformGives = game.PlatformGives;
 comptime {
     std.testing.refAllDeclsRecursive(game);
 }
@@ -124,6 +124,7 @@ pub fn main() !void {
     defer c.SDL_DestroyWindow(sdl_window);
 
     my_game = .init();
+    defer my_game.deinit(gpa);
 
     var timer = try std.time.Timer.start();
 
@@ -184,9 +185,9 @@ pub fn main() !void {
             sdl_platform.keyboard = keyboard;
             try my_game.update(sdl_platform);
             // try game.update(1.0 / 60.0);
-            // mouse.prev = mouse.cur;
-            // mouse.cur.scrolled = .none;
-            // keyboard.prev = keyboard.cur;
+            mouse.prev = mouse.cur;
+            mouse.cur.scrolled = .none;
+            keyboard.prev = keyboard.cur;
         }
 
         // Draw
