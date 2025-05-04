@@ -2,9 +2,13 @@
 
 // https://nullprogram.com/blog/2014/12/23/
 
-// TODO: make this more flexible
-// TODO: add this to the web platform
-pub const initial_screen_size: UVec2 = .new(512, 512);
+pub const metadata = .{
+    .name = "Snakanake",
+    .author = "knexator",
+    // TODO: make this more flexible
+    // TODO: add this to the web platform
+    .initial_screen_size = UVec2.new(512, 512),
+};
 
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,

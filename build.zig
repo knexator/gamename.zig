@@ -1,5 +1,9 @@
 const std = @import("std");
 
+// TODO: doesn't work
+// const game_name = @import("src/game.zig").metadata.name;
+const game_name = "Snakanake";
+
 pub fn build(b: *std.Build) !void {
     // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
     b.reference_trace = 10;
@@ -136,9 +140,11 @@ fn build_for_desktop(
     exe_module.addOptions("build_options", build_options);
 
     const exe = b.addExecutable(.{
-        .name = "gamename",
+        .name = game_name,
         .root_module = exe_module,
     });
+    // Without this, the SDL game will open a console window
+    if (options.target.result.os.tag == .windows) exe.subsystem = .Windows;
     steps.install.dependOn(&b.addInstallArtifact(exe, .{}).step);
 
     if (options.emit_llvm_ir) {

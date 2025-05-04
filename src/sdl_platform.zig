@@ -70,7 +70,7 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
 } else game.GameState = undefined;
 
 // var window_size: UVec2 = .new(1280, 720);
-var window_size: UVec2 = game.initial_screen_size;
+var window_size: UVec2 = game.metadata.initial_screen_size;
 fn getWindowRect() Rect {
     return .{
         .top_left = .zero,
@@ -125,9 +125,9 @@ pub fn main() !void {
     c.SDL_SetMainReady();
 
     try errify(c.SDL_SetAppMetadata(
-        "Gamename",
+        game.metadata.name,
         "0.0.0",
-        "com.authorname.gamename",
+        std.fmt.comptimePrint("com.{s}.{s}", .{ game.metadata.author, game.metadata.name }),
     ));
 
     try errify(c.SDL_Init(c.SDL_INIT_VIDEO));
