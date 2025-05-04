@@ -87,10 +87,12 @@ comptime {
     std.testing.refAllDeclsRecursive(game);
 }
 
+// TODO: hot reloading is not working :(
+
 var my_game: if (@import("build_options").hot_reloadable) *game.GameState else game.GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
-var render_queue: @import("renderer.zig").RenderQueue = .init(gpa);
+var render_queue: game.RenderQueue = .init(gpa);
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
@@ -111,7 +113,7 @@ var web_platform: PlatformGives = .{
     .aspect_ratio = undefined,
 };
 
-fn render(cmd: @import("renderer.zig").RenderQueue.Command) !void {
+fn render(cmd: game.RenderQueue.Command) !void {
     switch (cmd) {
         .clear => |color| {
             const size = js_better.canvas.getSize().tof32();

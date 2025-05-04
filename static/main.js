@@ -67,7 +67,8 @@ wasm_exports.init();
 // TODO(eternal): some more reliable way to detect if it's a hot reloading build
 if (location.hostname === "localhost") {
   // HACK: without this, the first hot reloading resets the state
-  wasm_exports = await getWasm();
+  // wasm_exports = await getWasm();
+  // TODO(future): the above hack introduced a new bug where the initial state was lost, investigate
 
   const ws = new WebSocket("ws://" + location.host);
   ws.onmessage = (event) => {
@@ -75,6 +76,8 @@ if (location.hostname === "localhost") {
       getWasm().then((res) => {
         wasm_exports = res;
         console.log("Reloaded WASM");
+        // HACK until hot reloading works properly
+        wasm_exports.init();
       });
     }
   };

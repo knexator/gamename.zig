@@ -10,11 +10,13 @@ const c = @cImport({
 
 const game = @import("game.zig");
 const PlatformGives = game.PlatformGives;
+
 comptime {
     std.testing.refAllDeclsRecursive(game);
+    std.testing.refAllDeclsRecursive(Triangulator);
+    std.testing.refAllDeclsRecursive(Vec2);
 }
 
-// TODO: f5 for complete reload
 const hot_reloading = @import("build_options").game_dynlib_path != null;
 var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| struct {
     const Self = @This();
@@ -32,9 +34,13 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         self.state.deinit(gpa);
     }
 
-    fn update(self: *Self, platform_gives: PlatformGives) !void {
+    fn reload(self: *Self, gpa: std.mem.Allocator) void {
+        self.api.reload(&self.state, &gpa);
+    }
+
+    fn update(self: *Self, platform_gives: PlatformGives) !bool {
         try self.maybeReloadApi();
-        self.api.update(&self.state, &platform_gives);
+        return self.api.update(&self.state, &platform_gives);
     }
 
     // TODO(zig): use std.fs.watch.Watch once it works
@@ -59,11 +65,12 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         } else game_dynlib_path;
         self.dyn_lib = try .open(path);
         self.api = self.dyn_lib.?.lookup(*const game.CApi, "game_api") orelse return error.LookupFail;
-        std.log.debug("reloaded", .{});
+        std.log.debug("reloaded game code", .{});
     }
 } else game.GameState = undefined;
 
-var window_size: UVec2 = .new(1280, 720);
+// var window_size: UVec2 = .new(1280, 720);
+var window_size: UVec2 = game.initial_screen_size;
 fn getWindowRect() Rect {
     return .{
         .top_left = .zero,
@@ -108,6 +115,7 @@ pub fn main() !void {
         .keyboard = keyboard,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
+        .global_seconds = 0,
     };
 
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
@@ -134,7 +142,8 @@ pub fn main() !void {
             "Gamename",
             @intCast(window_size.x),
             @intCast(window_size.y),
-            if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0,
+            c.SDL_WINDOW_BORDERLESS | c.SDL_WINDOW_ALWAYS_ON_TOP,
+            // c.SDL_WINDOW_BORDERLESS | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
             &sdl_window,
             &sdl_renderer,
         ));
@@ -181,13 +190,18 @@ pub fn main() !void {
                             .up;
                     },
                     c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
-                        const is_pressed = event.type == c.SDL_EVENT_KEY_DOWN;
-                        inline for (sdl_scancode_to_keyboard_button) |pair| {
-                            const sdl_scancode = pair[0];
-                            const key = pair[1];
-                            if (event.key.scancode == sdl_scancode) {
-                                @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
-                                break;
+                        if (hot_reloading and event.key.scancode == c.SDL_SCANCODE_F5) {
+                            // TODO: complete reload, respawning the window etc
+                            my_game.reload(gpa);
+                        } else {
+                            const is_pressed = event.type == c.SDL_EVENT_KEY_DOWN;
+                            inline for (sdl_scancode_to_keyboard_button) |pair| {
+                                const sdl_scancode = pair[0];
+                                const key = pair[1];
+                                if (event.key.scancode == sdl_scancode) {
+                                    @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
+                                    break;
+                                }
                             }
                         }
                     },
@@ -201,9 +215,10 @@ pub fn main() !void {
             const ns_since_last_frame = timer.lap();
             sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
             sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
+            sdl_platform.global_seconds += sdl_platform.delta_seconds;
             sdl_platform.aspect_ratio = window_size.aspectRatio();
             sdl_platform.keyboard = keyboard;
-            try my_game.update(sdl_platform);
+            if (try my_game.update(sdl_platform)) break :main_loop;
             // try game.update(1.0 / 60.0);
             mouse.prev = mouse.cur;
             mouse.cur.scrolled = .none;
@@ -248,8 +263,11 @@ fn render(sdl_renderer: *c.SDL_Renderer, cmd: game.RenderQueue.Command, scratch:
                 screen_pos.* = .{ .x = cur.x, .y = cur.y };
             }
 
-            // TODO: allow non-convex polygons
+            // TODO: cache triangulation
             if (shape.fill) |color| {
+                const real_indices = try Triangulator.triangulate(scratch, shape.local_points);
+                defer scratch.free(real_indices);
+
                 const vertices = try scratch.alloc(c.SDL_Vertex, screen_positions.len);
                 defer scratch.free(vertices);
 
@@ -265,9 +283,9 @@ fn render(sdl_renderer: *c.SDL_Renderer, cmd: game.RenderQueue.Command, scratch:
                 const indices = try scratch.alloc(c_int, 3 * (vertices.len - 2));
                 defer scratch.free(indices);
                 for (0..vertices.len - 2) |k| {
-                    indices[k * 3 + 0] = 0;
-                    indices[k * 3 + 1] = @intCast(k + 1);
-                    indices[k * 3 + 2] = @intCast(k + 2);
+                    for (0..3) |i| {
+                        indices[k * 3 + i] = @intCast(real_indices[k][i]);
+                    }
                 }
 
                 try errify(c.SDL_RenderGeometry(
@@ -294,23 +312,6 @@ fn render(sdl_renderer: *c.SDL_Renderer, cmd: game.RenderQueue.Command, scratch:
         },
     }
 }
-
-const std = @import("std");
-const assert = std.debug.assert;
-
-const kommon = @import("kommon");
-const math = kommon.math;
-const Vec2 = math.Vec2;
-const UVec2 = math.UVec2;
-const Color = math.Color;
-const Camera = math.Camera;
-const Point = math.Point;
-const Rect = math.Rect;
-const errify = kommon.sdl.errify;
-const Timekeeper = kommon.Timekeeper;
-const Mouse = game.Mouse;
-const Keyboard = game.Keyboard;
-const KeyboardButton = game.KeyboardButton;
 
 const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, KeyboardButton }){
     .{ c.SDL_SCANCODE_A, .KeyA },
@@ -380,6 +381,24 @@ const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, Ke
     .{ c.SDL_SCANCODE_F11, .F11 },
     .{ c.SDL_SCANCODE_F12, .F12 },
 };
+
+const std = @import("std");
+const assert = std.debug.assert;
+
+const kommon = @import("kommon");
+const Triangulator = kommon.Triangulator;
+const math = kommon.math;
+const Vec2 = math.Vec2;
+const UVec2 = math.UVec2;
+const Color = math.Color;
+const Camera = math.Camera;
+const Point = math.Point;
+const Rect = math.Rect;
+const errify = kommon.sdl.errify;
+const Timekeeper = kommon.Timekeeper;
+const Mouse = game.Mouse;
+const Keyboard = game.Keyboard;
+const KeyboardButton = game.KeyboardButton;
 
 pub const std_options: std.Options = .{
     // TODO: remove before final release
