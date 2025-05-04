@@ -14,15 +14,22 @@ comptime {
     std.testing.refAllDeclsRecursive(game);
 }
 
+// TODO: f5 for complete reload
+const hot_reloading = @import("build_options").game_dynlib_path != null;
 var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| struct {
     const Self = @This();
 
     api: *const game.CApi = &game.game_api,
     dyn_lib: ?std.DynLib = null,
+    last_inode: std.fs.File.INode = 0,
     state: game.GameState,
 
     fn init() Self {
         return .{ .state = .init() };
+    }
+
+    fn deinit(self: *Self, gpa: std.mem.Allocator) void {
+        self.state.deinit(gpa);
     }
 
     fn update(self: *Self, platform_gives: PlatformGives) !void {
@@ -30,8 +37,20 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         self.api.update(&self.state, &platform_gives);
     }
 
-    // TODO: use std.fs.watch.Watch
+    // TODO(zig): use std.fs.watch.Watch once it works
     fn maybeReloadApi(self: *Self) !void {
+        const should_reload = blk: {
+            const f = try std.fs.openFileAbsolute(game_dynlib_path, .{});
+            defer f.close();
+            const cur_inode = (try f.stat()).inode;
+            if (self.last_inode != cur_inode) {
+                self.last_inode = cur_inode;
+                break :blk true;
+            } else break :blk self.dyn_lib == null;
+        };
+
+        if (!should_reload) return;
+
         if (self.dyn_lib) |*dyn_lib| dyn_lib.close();
         // const path = "./zig-out/lib/libgame.so";
         const path = if (@import("builtin").os.tag == .windows) blk: {
@@ -40,6 +59,7 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         } else game_dynlib_path;
         self.dyn_lib = try .open(path);
         self.api = self.dyn_lib.?.lookup(*const game.CApi, "game_api") orelse return error.LookupFail;
+        std.log.debug("reloaded", .{});
     }
 } else game.GameState = undefined;
 
@@ -68,7 +88,7 @@ pub fn main() !void {
         _ = debug_allocator.deinit();
     };
 
-    var render_queue: @import("renderer.zig").RenderQueue = .init(gpa);
+    var render_queue: game.RenderQueue = .init(gpa);
     defer render_queue.deinit();
 
     var sdl_platform: PlatformGives = .{
@@ -114,7 +134,7 @@ pub fn main() !void {
             "Gamename",
             @intCast(window_size.x),
             @intCast(window_size.y),
-            0,
+            if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0,
             &sdl_window,
             &sdl_renderer,
         ));
@@ -204,7 +224,7 @@ pub fn main() !void {
     }
 }
 
-fn render(sdl_renderer: *c.SDL_Renderer, cmd: @import("renderer.zig").RenderQueue.Command, scratch: std.mem.Allocator) !void {
+fn render(sdl_renderer: *c.SDL_Renderer, cmd: game.RenderQueue.Command, scratch: std.mem.Allocator) !void {
     switch (cmd) {
         .clear => |color| {
             try errify(c.SDL_SetRenderDrawColor(sdl_renderer, color.r, color.g, color.b, color.a));
