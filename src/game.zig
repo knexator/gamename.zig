@@ -421,8 +421,6 @@ test "foo" {
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Noise = @import("fastnoise.zig").Noise(f32);
-
 const kommon = @import("kommon");
 const math = kommon.math;
 const Color = math.Color;
@@ -434,6 +432,7 @@ const UVec2 = math.UVec2;
 const IVec2 = math.IVec2;
 const funk = kommon.funktional;
 const maybeMirror = math.maybeMirror;
+const Noise = kommon.Noise;
 pub const Mouse = kommon.input.Mouse;
 pub const Keyboard = kommon.input.Keyboard;
 pub const KeyboardButton = kommon.input.KeyboardButton;
