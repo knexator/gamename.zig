@@ -18,6 +18,12 @@ const js = struct {
         extern fn getWidth() u32;
         extern fn getHeight() u32;
     };
+
+    pub const sound = struct {
+        extern fn loadSound(url_ptr: [*]const u8, url_len: usize) usize;
+        extern fn isSoundLoaded(sound_id: usize) bool;
+        extern fn playSound(sound_id: usize) void;
+    };
 };
 
 const js_better = struct {
@@ -79,6 +85,12 @@ const js_better = struct {
             }
         }
     };
+
+    pub const sound = struct {
+        pub fn loadSound(url: []const u8) usize {
+            return js.sound.loadSound(url.ptr, url.len);
+        }
+    };
 };
 
 const game = @import("game.zig");
@@ -112,6 +124,7 @@ var web_platform: PlatformGives = .{
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,
+    .sound_queue = &sound_queue,
 };
 
 fn render(cmd: game.RenderQueue.Command) !void {
@@ -155,12 +168,26 @@ fn render(cmd: game.RenderQueue.Command) !void {
     }
 }
 
+var sound_ids: std.EnumArray(std.meta.FieldEnum(@TypeOf(game.sounds)), usize) = .initUndefined();
+var sound_queue: std.meta.Child(@FieldType(PlatformGives, "sound_queue")) = .initEmpty();
+
 export fn init() void {
     if (@import("build_options").hot_reloadable) {
         my_game = std.heap.wasm_allocator.create(game.GameState) catch unreachable;
         my_game.* = .init();
     } else {
         my_game = .init();
+    }
+
+    // inline for (std.enums.values(std.meta.FieldEnum(@TypeOf(game.sounds)))) |sound| {
+    //     sound_ids.set(sound, js_better.sound.loadSound(@field(game.sounds, @tagName(sound))));
+    // }
+    // TODO: less magic, maybe by iterating the enum values instead of the fields
+    inline for (std.meta.fields(@TypeOf(game.sounds))) |field| {
+        sound_ids.set(
+            std.meta.stringToEnum(std.meta.FieldEnum(@TypeOf(game.sounds)), field.name).?,
+            js_better.sound.loadSound(field.defaultValue().?),
+        );
     }
 }
 
@@ -177,13 +204,28 @@ export fn update(delta_seconds: f32) void {
     web_platform.delta_seconds = delta_seconds;
     web_platform.global_seconds += delta_seconds;
     web_platform.keyboard = keyboard;
+    web_platform.sound_queue.* = .initEmpty();
     _ = my_game.update(web_platform) catch unreachable;
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
     keyboard.prev = keyboard.cur;
-    defer web_platform.render_queue.pending_commands.clearRetainingCapacity();
-    var it = web_platform.render_queue.pending_commands.constIterator(0);
-    while (it.next()) |cmd| render(cmd.*) catch unreachable;
+
+    // graphics
+    {
+        defer web_platform.render_queue.pending_commands.clearRetainingCapacity();
+        var it = web_platform.render_queue.pending_commands.constIterator(0);
+        while (it.next()) |cmd| render(cmd.*) catch unreachable;
+    }
+
+    // sounds
+    {
+        var it = web_platform.sound_queue.iterator();
+        while (it.next()) |id| {
+            if (js.sound.isSoundLoaded(sound_ids.get(id))) {
+                js.sound.playSound(sound_ids.get(id));
+            }
+        }
+    }
 }
 
 /// positions are in [0..1]x[0..1]

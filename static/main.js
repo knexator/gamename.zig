@@ -3,7 +3,6 @@ import { keys } from "./keycodes.js";
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#ctx_canvas");
 const ctx = canvas.getContext("2d");
-
 window.addEventListener('resize', resizeCanvas);
 
 function resizeCanvas() {
@@ -28,6 +27,28 @@ function resizeCanvas() {
 
   canvas.width = Math.round(canvas_width);
   canvas.height = Math.round(canvas_height);
+}
+
+const sounds = [];
+
+class Sound {
+  constructor(url) {
+    this.loaded = false;
+    this.audio = new Audio();
+    const that = this;
+    this.audio.addEventListener('canplaythrough', () => {
+      that.loaded = true;
+    })
+    this.audio.src = url;
+    this.audio.load();
+  }
+  // TODO: allow playing multiple copies of the same sound at once
+  play() {
+    if (this.loaded) {
+      this.audio.currentTime = 0;
+      this.audio.play();
+    }
+  }
 }
 
 const text_decoder = new TextDecoder();
@@ -87,6 +108,14 @@ async function getWasm() {
       setStrokeColor: (r, g, b, a) => (ctx.strokeStyle = rgbToHex(r, g, b, a)),
       getWidth: () => canvas.width,
       getHeight: () => canvas.height,
+
+      // sound
+      loadSound: (url_ptr, url_len) => {
+        sounds.push(new Sound(getString(url_ptr, url_len)));
+        return sounds.length - 1;
+      },
+      isSoundLoaded: (sound_id) => sounds[sound_id].loaded,
+      playSound: (sound_id) => sounds[sound_id].play(),
     },
   });
   return wasm_module.instance.exports;

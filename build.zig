@@ -249,6 +249,15 @@ fn build_for_web(
     });
     steps.install.dependOn(&copy_static_files.step);
 
+    {
+        const copy_sound_files = b.addInstallDirectory(.{
+            .install_dir = web_install_dir,
+            .install_subdir = "sounds",
+            .source_dir = b.path("sounds"),
+        });
+        steps.install.dependOn(&copy_sound_files.step);
+    }
+
     const generate_keycodes = b.addExecutable(.{
         .name = "generate_keycodes",
         .root_source_file = b.path("src/tools/generate_keycodes_js.zig"),

@@ -8,6 +8,10 @@ pub const metadata = .{
     .desired_aspect_ratio = 1.0,
 };
 
+pub const sounds = .{
+    .apple = "sounds/apple.wav",
+};
+
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     render_queue: *RenderQueue,
@@ -17,6 +21,7 @@ pub const PlatformGives = struct {
     delta_seconds: f32,
     // idk if this should be given by the platform
     global_seconds: f32,
+    sound_queue: *std.EnumSet(std.meta.FieldEnum(@TypeOf(sounds))),
 };
 
 pub const GameState = struct {
@@ -221,8 +226,8 @@ pub const GameState = struct {
                 }
 
                 if (new_head_pos.equals(self.cur_apple)) {
-                    // appleSound.play();
                     self.score += 1;
+                    platform.sound_queue.insert(.apple);
                     self.cur_screen_shake.actual_mag = 100.0;
                     self.remaining_skip_turns = SNAKE_LENGTH - 1;
                     self.cur_apple = .new(-1, -1);
