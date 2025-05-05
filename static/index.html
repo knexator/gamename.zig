@@ -10,31 +10,38 @@
     <title>gamename</title>
     <style>
         body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #333;
+            overflow: hidden;
+            overscroll-behavior: contain;
+        }
+
+        #canvas_container {
+            position: relative;
             width: 100%;
             height: 100%;
-            position: absolute;
-            margin: 0;
-            overscroll-behavior: contain;
-            background-color: #333;
-
             display: flex;
             justify-content: center;
             align-items: center;
         }
 
-        #canvas_container {
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-            max-height: calc(100vw * 9 / 16);
-        }
-
         canvas {
-            position: absolute;
+            display: block;
+            /* 
             width: 100%;
             height: 100%;
             top: 0;
-            left: 0;
+            left: 0; */
+        }
+
+        canvas:focus {
+            outline: none;
         }
 
         #loading_screen {
@@ -52,22 +59,6 @@
             z-index: 2;
             opacity: 1;
             user-select: none;
-        }
-
-        canvas:focus {
-            outline: none;
-        }
-
-        @media (max-aspect-ratio: 16/9) {
-            #canvas_container {
-                max-height: calc(100vw * 9 / 16);
-            }
-        }
-
-        @media not (max-aspect-ratio: 16/9) {
-            #canvas_container {
-                max-width: calc(100vh * 16 / 9);
-            }
         }
     </style>
     <script defer type="module" src="main.js"></script>

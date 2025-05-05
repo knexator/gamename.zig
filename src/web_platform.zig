@@ -111,6 +111,7 @@ var web_platform: PlatformGives = .{
     .keyboard = undefined,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
+    .global_seconds = 0,
 };
 
 fn render(cmd: game.RenderQueue.Command) !void {
@@ -163,11 +164,20 @@ export fn init() void {
     }
 }
 
+export fn getDesiredAspectRatio() f32 {
+    return game.metadata.desired_aspect_ratio;
+}
+
+export fn getTitle() [*:0]const u8 {
+    return game.metadata.name;
+}
+
 export fn update(delta_seconds: f32) void {
     web_platform.aspect_ratio = js_better.canvas.getSize().aspectRatio();
     web_platform.delta_seconds = delta_seconds;
+    web_platform.global_seconds += delta_seconds;
     web_platform.keyboard = keyboard;
-    my_game.update(web_platform) catch unreachable;
+    _ = my_game.update(web_platform) catch unreachable;
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
     keyboard.prev = keyboard.cur;

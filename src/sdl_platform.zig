@@ -69,8 +69,7 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     }
 } else game.GameState = undefined;
 
-// var window_size: UVec2 = .new(1280, 720);
-var window_size: UVec2 = game.metadata.initial_screen_size;
+var window_size: UVec2 = Vec2.new(game.metadata.desired_aspect_ratio, 1).scale(600).toInt(usize);
 fn getWindowRect() Rect {
     return .{
         .top_left = .zero,
@@ -139,11 +138,10 @@ pub fn main() !void {
         var sdl_window: ?*c.SDL_Window = null;
         var sdl_renderer: ?*c.SDL_Renderer = null;
         try errify(c.SDL_CreateWindowAndRenderer(
-            "Gamename",
+            game.metadata.name,
             @intCast(window_size.x),
             @intCast(window_size.y),
-            c.SDL_WINDOW_BORDERLESS | c.SDL_WINDOW_ALWAYS_ON_TOP,
-            // c.SDL_WINDOW_BORDERLESS | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+            c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
             &sdl_window,
             &sdl_renderer,
         ));
@@ -151,6 +149,12 @@ pub fn main() !void {
     };
     defer c.SDL_DestroyRenderer(sdl_renderer);
     defer c.SDL_DestroyWindow(sdl_window);
+
+    try errify(c.SDL_SetWindowAspectRatio(
+        sdl_window,
+        game.metadata.desired_aspect_ratio,
+        game.metadata.desired_aspect_ratio,
+    ));
 
     my_game = .init();
     defer my_game.deinit(gpa);

@@ -5,9 +5,7 @@
 pub const metadata = .{
     .name = "Snakanake",
     .author = "knexator",
-    // TODO: make this more flexible
-    // TODO: add this to the web platform
-    .initial_screen_size = UVec2.new(512, 512),
+    .desired_aspect_ratio = 1.0,
 };
 
 pub const PlatformGives = struct {
@@ -246,11 +244,10 @@ pub const GameState = struct {
         if (self.state != .main) self.cur_screen_shake.target_mag = 0;
         math.towards(&self.cur_screen_shake.actual_mag, self.cur_screen_shake.target_mag, platform.delta_seconds * 1000);
 
-        // TODO: centered on the 16x9 canvas
-        const camera: Rect = .{
+        const camera: Rect = (Rect{
             .top_left = self.cur_screen_shake.pos,
-            .size = BOARD_SIZE.tof32().mul(.new(platform.aspect_ratio, 1)),
-        };
+            .size = BOARD_SIZE.tof32(),
+        }).withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         const renderer: Renderer = .{
             .render_queue = platform.render_queue,

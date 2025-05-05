@@ -4,8 +4,31 @@ const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#ctx_canvas");
 const ctx = canvas.getContext("2d");
 
-canvas.width = canvas.clientWidth;
-canvas.height = canvas.clientHeight;
+window.addEventListener('resize', resizeCanvas);
+
+function resizeCanvas() {
+  const container_width = container.clientWidth;
+  const container_height = container.clientHeight;
+
+  const aspect_ratio = wasm_exports.getDesiredAspectRatio();
+
+  // Calculate the maximum canvas size that fits within the container
+  // while maintaining the aspect ratio
+  let canvas_width, canvas_height;
+
+  if (container_width / aspect_ratio <= container_height) {
+    // Width is the limiting factor
+    canvas_width = container_width;
+    canvas_height = canvas_width / aspect_ratio;
+  } else {
+    // Height is the limiting factor
+    canvas_height = container_height;
+    canvas_width = canvas_height * aspect_ratio;
+  }
+
+  canvas.width = Math.round(canvas_width);
+  canvas.height = Math.round(canvas_height);
+}
 
 const text_decoder = new TextDecoder();
 const text_encoder = new TextEncoder();
@@ -23,6 +46,14 @@ function getString(ptr, len) {
   return text_decoder.decode(
     wasmMem().subarray(ptr, ptr + len),
   );
+}
+
+function getNullTerminatedString(ptr) {
+  var len = 0;
+  while (wasmMem().at(ptr + len) != 0) {
+    len += 1;
+  }
+  return getString(ptr, len);
 }
 
 async function getWasm() {
@@ -62,6 +93,8 @@ async function getWasm() {
 }
 
 let wasm_exports = await getWasm();
+resizeCanvas();
+document.title = getNullTerminatedString(wasm_exports.getTitle());
 wasm_exports.init();
 
 // TODO(eternal): some more reliable way to detect if it's a hot reloading build
@@ -87,15 +120,6 @@ let last_timestamp_millis = 0;
 function every_frame(cur_timestamp_millis) {
   const delta_seconds = (cur_timestamp_millis - last_timestamp_millis) / 1000;
   last_timestamp_millis = cur_timestamp_millis;
-
-  if (
-    canvas.width !== canvas.clientWidth ||
-    canvas.height !== canvas.clientHeight
-  ) {
-    canvas.width = canvas.clientWidth;
-    canvas.height = canvas.clientHeight;
-  }
-
   wasm_exports.update(delta_seconds);
   requestAnimationFrame(every_frame);
 }
