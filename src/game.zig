@@ -8,8 +8,16 @@ pub const metadata = .{
     .desired_aspect_ratio = 1.0,
 };
 
+// TODO(eternal): support formats other than .wav
 pub const sounds = .{
     .apple = "sounds/apple.wav",
+    .crash = "sounds/crash.wav",
+    .step = "sounds/step1.wav",
+};
+
+pub const loops = .{
+    .alarm = "sounds/alarm.wav",
+    .music = "sounds/music.wav",
 };
 
 pub const PlatformGives = struct {
@@ -22,6 +30,7 @@ pub const PlatformGives = struct {
     // idk if this should be given by the platform
     global_seconds: f32,
     sound_queue: *std.EnumSet(std.meta.FieldEnum(@TypeOf(sounds))),
+    loop_volumes: *std.EnumArray(std.meta.FieldEnum(@TypeOf(loops)), f32),
 };
 
 pub const GameState = struct {
@@ -137,6 +146,8 @@ pub const GameState = struct {
 
     /// returns true if should quit
     pub fn update(self: *GameState, platform: PlatformGives) !bool {
+        platform.loop_volumes.set(.music, 1);
+
         if (platform.keyboard.wasPressed(.KeyR))
             self.restart();
 
@@ -172,7 +183,7 @@ pub const GameState = struct {
             assert((self.turn_offset < 0) == self.time_reversed);
             self.turn_offset -= maybeMirror(@as(f32, 1.0), self.time_reversed);
             self.turn += maybeMirror(@as(i32, 1), self.time_reversed);
-            // stepSound.play();
+            platform.sound_queue.insert(.step);
 
             if (self.remaining_skip_turns > 0) {
                 self.remaining_skip_turns -= 1;
@@ -221,7 +232,7 @@ pub const GameState = struct {
                     break :blk false;
                 };
                 if (collision) {
-                    // crashSound.play();
+                    platform.sound_queue.insert(.crash);
                     self.state = .lost;
                 }
 
@@ -270,12 +281,12 @@ pub const GameState = struct {
         {
             const arc_color = if (distance_to_danger > 0.2) blk: {
                 self.cur_screen_shake.target_mag = 0;
-                // alarmSound.volume(0)
+                platform.loop_volumes.set(.alarm, 0);
                 break :blk COLORS.CLOCK.DANGER;
             } else blk: {
                 const val = std.math.lerp(1.0, 3.0 / 16.0, distance_to_danger / 0.2) * 255;
                 self.cur_screen_shake.target_mag = val * 0.05;
-                // alarmSound.volume((1. - distance_to_danger / .2) * .5)
+                platform.loop_volumes.set(.alarm, (1.0 - distance_to_danger / 0.2) * 0.5);
                 break :blk Color.lerp(COLORS.CLOCK.DANGER_ACTIVE, COLORS.CLOCK.DANGER, distance_to_danger / 0.2);
             };
 

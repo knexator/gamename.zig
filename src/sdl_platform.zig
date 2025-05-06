@@ -84,8 +84,14 @@ var keyboard = Keyboard{ .cur = .init, .prev = .init };
 const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
 
 const Sound = struct {
+    // Taken from apple.wav
+    const spec: c.SDL_AudioSpec = .{
+        .format = c.SDL_AUDIO_U8,
+        .channels = 1,
+        .freq = 44100,
+    };
+
     data: []u8,
-    spec: c.SDL_AudioSpec,
 
     pub fn init(comptime path: []const u8) !Sound {
         const wav = @embedFile(path);
@@ -94,8 +100,10 @@ const Sound = struct {
         var data_len: u32 = undefined;
         var sound_spec: c.SDL_AudioSpec = undefined;
         try errify(c.SDL_LoadWAV_IO(stream, true, &sound_spec, &data_ptr, &data_len));
+        // TODO: what if each sound has a different sound spec?
+        assert(std.meta.eql(sound_spec, spec));
         const data = data_ptr.?[0..data_len];
-        return .{ .data = data, .spec = sound_spec };
+        return .{ .data = data };
     }
 
     pub fn deinit(self: *Sound) void {
@@ -188,12 +196,9 @@ pub fn main() !void {
         sound_data.set(sound, try .init(path));
     }
 
-    // TODO: what if each sound has a different sound spec?
-    // TODO: don't hardcode .apple
-    const sounds_spec = sound_data.get(.apple).spec;
     const audio_device = try errify(c.SDL_OpenAudioDevice(
         c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
-        &sounds_spec,
+        &Sound.spec,
     ));
     defer c.SDL_CloseAudioDevice(audio_device);
 
@@ -206,7 +211,7 @@ pub fn main() !void {
     };
     while (audio_streams.len < audio_streams_buf.len) {
         audio_streams.len += 1;
-        audio_streams[audio_streams.len - 1] = try errify(c.SDL_CreateAudioStream(&sounds_spec, null));
+        audio_streams[audio_streams.len - 1] = try errify(c.SDL_CreateAudioStream(&Sound.spec, null));
     }
 
     try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));

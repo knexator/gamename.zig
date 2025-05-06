@@ -19,10 +19,12 @@ const js = struct {
         extern fn getHeight() u32;
     };
 
-    pub const sound = struct {
+    pub const audio = struct {
         extern fn loadSound(url_ptr: [*]const u8, url_len: usize) usize;
-        extern fn isSoundLoaded(sound_id: usize) bool;
+        // extern fn isSoundLoaded(sound_id: usize) bool;
         extern fn playSound(sound_id: usize) void;
+        extern fn loadAndStartLoop(url_ptr: [*]const u8, url_len: usize) usize;
+        extern fn setLoopVolume(loop_id: usize, volume: f32) void;
     };
 };
 
@@ -86,9 +88,13 @@ const js_better = struct {
         }
     };
 
-    pub const sound = struct {
+    pub const audio = struct {
+        pub fn loadAndStartLoop(url: []const u8) usize {
+            return js.audio.loadAndStartLoop(url.ptr, url.len);
+        }
+
         pub fn loadSound(url: []const u8) usize {
-            return js.sound.loadSound(url.ptr, url.len);
+            return js.audio.loadSound(url.ptr, url.len);
         }
     };
 };
@@ -125,6 +131,7 @@ var web_platform: PlatformGives = .{
     .aspect_ratio = undefined,
     .global_seconds = 0,
     .sound_queue = &sound_queue,
+    .loop_volumes = &loops_volume,
 };
 
 fn render(cmd: game.RenderQueue.Command) !void {
@@ -168,9 +175,14 @@ fn render(cmd: game.RenderQueue.Command) !void {
     }
 }
 
+// TODO: renaming
 const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
 var sound_queue: std.EnumSet(Sounds) = .initEmpty();
+
+const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
+var loop_ids: std.EnumArray(Loops, usize) = .initUndefined();
+var loops_volume: std.EnumArray(Loops, f32) = .initFill(0);
 
 export fn init() void {
     if (@import("build_options").hot_reloadable) {
@@ -182,7 +194,12 @@ export fn init() void {
 
     inline for (comptime std.enums.values(Sounds)) |sound| {
         const path = @field(game.sounds, @tagName(sound));
-        sound_ids.set(sound, js_better.sound.loadSound(path));
+        sound_ids.set(sound, js_better.audio.loadSound(path));
+    }
+
+    inline for (comptime std.enums.values(Loops)) |loop| {
+        const path = @field(game.loops, @tagName(loop));
+        loop_ids.set(loop, js_better.audio.loadAndStartLoop(path));
     }
 }
 
@@ -216,9 +233,16 @@ export fn update(delta_seconds: f32) void {
     {
         var it = web_platform.sound_queue.iterator();
         while (it.next()) |id| {
-            if (js.sound.isSoundLoaded(sound_ids.get(id))) {
-                js.sound.playSound(sound_ids.get(id));
-            }
+            js.audio.playSound(sound_ids.get(id));
+        }
+    }
+
+    // loops
+    {
+        var it = web_platform.loop_volumes.iterator();
+        while (it.next()) |entry| {
+            const id = loop_ids.get(entry.key);
+            js.audio.setLoopVolume(id, entry.value.*);
         }
     }
 }

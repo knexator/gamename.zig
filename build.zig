@@ -144,7 +144,7 @@ fn build_for_desktop(
         .root_module = exe_module,
     });
     // Without this, the SDL game will open a console window
-    if (options.target.result.os.tag == .windows) exe.subsystem = .Windows;
+    if (options.target.result.os.tag == .windows and options.optimize != .Debug) exe.subsystem = .Windows;
     steps.install.dependOn(&b.addInstallArtifact(exe, .{}).step);
 
     if (options.emit_llvm_ir) {

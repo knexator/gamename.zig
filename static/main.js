@@ -30,6 +30,8 @@ function resizeCanvas() {
 }
 
 const sounds = [];
+const loops = [];
+var loops_started = false;
 
 class Sound {
   constructor(url) {
@@ -48,6 +50,24 @@ class Sound {
       this.audio.currentTime = 0;
       this.audio.play();
     }
+  }
+}
+
+class Loop {
+  constructor(url) {
+    this.loaded = false;
+    this.audio = new Audio();
+    const that = this;
+    this.audio.addEventListener('canplaythrough', () => {
+      that.loaded = true;
+    })
+    this.audio.src = url;
+    this.audio.loop = true;
+    this.audio.volume = 0;
+    this.audio.load();
+  }
+  setVolume(v) {
+    this.audio.volume = v;
   }
 }
 
@@ -114,8 +134,13 @@ async function getWasm() {
         sounds.push(new Sound(getString(url_ptr, url_len)));
         return sounds.length - 1;
       },
-      isSoundLoaded: (sound_id) => sounds[sound_id].loaded,
+      // isSoundLoaded: (sound_id) => sounds[sound_id].loaded,
       playSound: (sound_id) => sounds[sound_id].play(),
+      loadAndStartLoop: (url_ptr, url_len) => {
+        loops.push(new Loop(getString(url_ptr, url_len)));
+        return loops.length - 1;
+      },
+      setLoopVolume: (loop_id, v) => loops[loop_id].setVolume(v),
     },
   });
   return wasm_module.instance.exports;
@@ -170,6 +195,11 @@ document.addEventListener("wheel", (ev) => {
 
 document.addEventListener("pointerdown", (ev) => {
   wasm_exports.pointerdown(ev.button);
+
+  if (!loops_started && loops.every(x => x.loaded)) {
+    loops_started = true;
+    loops.forEach(x => x.audio.play());
+  }
 });
 
 document.addEventListener("contextmenu", (ev) => {
