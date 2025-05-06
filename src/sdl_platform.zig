@@ -82,37 +82,12 @@ var mouse = Mouse{ .cur = .init, .prev = .init };
 var keyboard = Keyboard{ .cur = .init, .prev = .init };
 
 const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
-
-const Sound = struct {
-    // Taken from apple.wav
-    const spec: c.SDL_AudioSpec = .{
-        .format = c.SDL_AUDIO_U8,
-        .channels = 1,
-        .freq = 44100,
-    };
-
-    data: []u8,
-
-    pub fn init(comptime path: []const u8) !Sound {
-        const wav = @embedFile(path);
-        const stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
-        var data_ptr: ?[*]u8 = undefined;
-        var data_len: u32 = undefined;
-        var sound_spec: c.SDL_AudioSpec = undefined;
-        try errify(c.SDL_LoadWAV_IO(stream, true, &sound_spec, &data_ptr, &data_len));
-        // TODO: what if each sound has a different sound spec?
-        assert(std.meta.eql(sound_spec, spec));
-        const data = data_ptr.?[0..data_len];
-        return .{ .data = data };
-    }
-
-    pub fn deinit(self: *Sound) void {
-        c.SDL_free(self.data.ptr);
-    }
-};
-
 var sound_data: std.EnumArray(Sounds, Sound) = .initUndefined();
 var sound_queue: std.EnumSet(Sounds) = .initEmpty();
+
+const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
+var loops: std.EnumArray(Loops, Loop) = .initUndefined();
+var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
@@ -149,6 +124,7 @@ pub fn main() !void {
         .delta_seconds = 0,
         .global_seconds = 0,
         .sound_queue = &sound_queue,
+        .loop_volumes = &loop_volumes,
     };
 
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
@@ -201,6 +177,12 @@ pub fn main() !void {
         &Sound.spec,
     ));
     defer c.SDL_CloseAudioDevice(audio_device);
+
+    // TODO: defer unloading
+    inline for (comptime std.enums.values(Loops)) |loop| {
+        const path = @field(game.loops, @tagName(loop));
+        try loops.getPtr(loop).init(path, audio_device);
+    }
 
     var audio_streams_buf: [8]*c.SDL_AudioStream = undefined;
     var audio_streams: []*c.SDL_AudioStream = audio_streams_buf[0..0];
@@ -324,6 +306,14 @@ pub fn main() !void {
             }
         }
 
+        // Loops
+        {
+            var it = loop_volumes.iterator();
+            while (it.next()) |entry| {
+                try errify(c.SDL_SetAudioStreamGain(loops.get(entry.key).stream, entry.value.*));
+            }
+        }
+
         // timekeeper.produce(c.SDL_GetPerformanceCounter());
     }
 }
@@ -401,6 +391,70 @@ fn render(sdl_renderer: *c.SDL_Renderer, cmd: game.RenderQueue.Command, scratch:
         },
     }
 }
+
+const Sound = struct {
+    // Taken from apple.wav
+    const spec: c.SDL_AudioSpec = .{
+        .format = c.SDL_AUDIO_U8,
+        .channels = 1,
+        .freq = 44100,
+    };
+
+    data: []u8,
+
+    pub fn init(comptime path: []const u8) !Sound {
+        const wav = @embedFile(path);
+        const stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
+        var data_ptr: ?[*]u8 = undefined;
+        var data_len: u32 = undefined;
+        var sound_spec: c.SDL_AudioSpec = undefined;
+        try errify(c.SDL_LoadWAV_IO(stream, true, &sound_spec, &data_ptr, &data_len));
+        // TODO: what if each sound has a different sound spec?
+        // TODO: look into SDL_SetAudioStreamFormat as a possible solution
+        assert(std.meta.eql(sound_spec, spec));
+        const data = data_ptr.?[0..data_len];
+        return .{ .data = data };
+    }
+
+    pub fn deinit(self: *Sound) void {
+        c.SDL_free(self.data.ptr);
+    }
+};
+
+const Loop = struct {
+    data: []u8,
+    spec: c.SDL_AudioSpec,
+    stream: *c.SDL_AudioStream,
+
+    pub fn init(self: *Loop, comptime path: []const u8, audio_device: c.SDL_AudioDeviceID) !void {
+        // TODO: errdefers
+        const wav = @embedFile(path);
+        const io_stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
+        var data_ptr: ?[*]u8 = undefined;
+        var data_len: u32 = undefined;
+        var audio_spec: c.SDL_AudioSpec = undefined;
+        try errify(c.SDL_LoadWAV_IO(io_stream, true, &audio_spec, &data_ptr, &data_len));
+        const data = data_ptr.?[0..data_len];
+        const audio_stream = try errify(c.SDL_CreateAudioStream(&audio_spec, null));
+        try errify(c.SDL_SetAudioStreamGain(audio_stream, 0.0));
+        try errify(c.SDL_BindAudioStream(audio_device, audio_stream));
+        try errify(c.SDL_SetAudioStreamGetCallback(audio_stream, &callback, self));
+        self.* = .{ .data = data, .spec = audio_spec, .stream = audio_stream };
+    }
+
+    pub fn deinit(self: *Loop) void {
+        c.SDL_DestroyAudioStream(self.stream);
+        c.SDL_free(self.data.ptr);
+    }
+
+    fn callback(userdata: ?*anyopaque, stream: ?*c.SDL_AudioStream, additional_amount: c_int, total_amount: c_int) callconv(.c) void {
+        _ = total_amount;
+        if (additional_amount == 0) return;
+        const self: *Loop = @ptrCast(@alignCast(userdata));
+        const data = self.data;
+        errify(c.SDL_PutAudioStreamData(stream.?, data.ptr, @intCast(data.len))) catch unreachable;
+    }
+};
 
 const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, KeyboardButton }){
     .{ c.SDL_SCANCODE_A, .KeyA },

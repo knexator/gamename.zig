@@ -131,7 +131,7 @@ var web_platform: PlatformGives = .{
     .aspect_ratio = undefined,
     .global_seconds = 0,
     .sound_queue = &sound_queue,
-    .loop_volumes = &loops_volume,
+    .loop_volumes = &loop_volumes,
 };
 
 fn render(cmd: game.RenderQueue.Command) !void {
@@ -175,14 +175,13 @@ fn render(cmd: game.RenderQueue.Command) !void {
     }
 }
 
-// TODO: renaming
 const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
 var sound_queue: std.EnumSet(Sounds) = .initEmpty();
 
 const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
 var loop_ids: std.EnumArray(Loops, usize) = .initUndefined();
-var loops_volume: std.EnumArray(Loops, f32) = .initFill(0);
+var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
 export fn init() void {
     if (@import("build_options").hot_reloadable) {
