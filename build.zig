@@ -253,7 +253,7 @@ fn build_for_web(
         const copy_sound_files = b.addInstallDirectory(.{
             .install_dir = web_install_dir,
             .install_subdir = "sounds",
-            .source_dir = b.path("sounds"),
+            .source_dir = b.path("src/sounds"),
         });
         steps.install.dependOn(&copy_sound_files.step);
     }

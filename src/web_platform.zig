@@ -168,8 +168,9 @@ fn render(cmd: game.RenderQueue.Command) !void {
     }
 }
 
-var sound_ids: std.EnumArray(std.meta.FieldEnum(@TypeOf(game.sounds)), usize) = .initUndefined();
-var sound_queue: std.meta.Child(@FieldType(PlatformGives, "sound_queue")) = .initEmpty();
+const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
+var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
+var sound_queue: std.EnumSet(Sounds) = .initEmpty();
 
 export fn init() void {
     if (@import("build_options").hot_reloadable) {
@@ -179,15 +180,9 @@ export fn init() void {
         my_game = .init();
     }
 
-    // inline for (std.enums.values(std.meta.FieldEnum(@TypeOf(game.sounds)))) |sound| {
-    //     sound_ids.set(sound, js_better.sound.loadSound(@field(game.sounds, @tagName(sound))));
-    // }
-    // TODO: less magic, maybe by iterating the enum values instead of the fields
-    inline for (std.meta.fields(@TypeOf(game.sounds))) |field| {
-        sound_ids.set(
-            std.meta.stringToEnum(std.meta.FieldEnum(@TypeOf(game.sounds)), field.name).?,
-            js_better.sound.loadSound(field.defaultValue().?),
-        );
+    inline for (comptime std.enums.values(Sounds)) |sound| {
+        const path = @field(game.sounds, @tagName(sound));
+        sound_ids.set(sound, js_better.sound.loadSound(path));
     }
 }
 

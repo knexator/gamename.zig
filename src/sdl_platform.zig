@@ -81,6 +81,31 @@ fn getWindowRect() Rect {
 var mouse = Mouse{ .cur = .init, .prev = .init };
 var keyboard = Keyboard{ .cur = .init, .prev = .init };
 
+const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
+
+const Sound = struct {
+    data: []u8,
+    spec: c.SDL_AudioSpec,
+
+    pub fn init(comptime path: []const u8) !Sound {
+        const wav = @embedFile(path);
+        const stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
+        var data_ptr: ?[*]u8 = undefined;
+        var data_len: u32 = undefined;
+        var sound_spec: c.SDL_AudioSpec = undefined;
+        try errify(c.SDL_LoadWAV_IO(stream, true, &sound_spec, &data_ptr, &data_len));
+        const data = data_ptr.?[0..data_len];
+        return .{ .data = data, .spec = sound_spec };
+    }
+
+    pub fn deinit(self: *Sound) void {
+        c.SDL_free(self.data.ptr);
+    }
+};
+
+var sound_data: std.EnumArray(Sounds, Sound) = .initUndefined();
+var sound_queue: std.EnumSet(Sounds) = .initEmpty();
+
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
     const gpa, const is_debug = gpa: {
@@ -115,6 +140,7 @@ pub fn main() !void {
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
         .global_seconds = 0,
+        .sound_queue = &sound_queue,
     };
 
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
@@ -129,7 +155,7 @@ pub fn main() !void {
         std.fmt.comptimePrint("com.{s}.{s}", .{ game.metadata.author, game.metadata.name }),
     ));
 
-    try errify(c.SDL_Init(c.SDL_INIT_VIDEO));
+    try errify(c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_AUDIO));
     defer c.SDL_Quit();
 
     errify(c.SDL_SetHint(c.SDL_HINT_RENDER_VSYNC, "1")) catch {};
@@ -155,6 +181,35 @@ pub fn main() !void {
         game.metadata.desired_aspect_ratio,
         game.metadata.desired_aspect_ratio,
     ));
+
+    // TODO: defer unloading
+    inline for (comptime std.enums.values(Sounds)) |sound| {
+        const path = @field(game.sounds, @tagName(sound));
+        sound_data.set(sound, try .init(path));
+    }
+
+    // TODO: what if each sound has a different sound spec?
+    // TODO: don't hardcode .apple
+    const sounds_spec = sound_data.get(.apple).spec;
+    const audio_device = try errify(c.SDL_OpenAudioDevice(
+        c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+        &sounds_spec,
+    ));
+    defer c.SDL_CloseAudioDevice(audio_device);
+
+    var audio_streams_buf: [8]*c.SDL_AudioStream = undefined;
+    var audio_streams: []*c.SDL_AudioStream = audio_streams_buf[0..0];
+
+    defer while (audio_streams.len != 0) {
+        c.SDL_DestroyAudioStream(audio_streams[audio_streams.len - 1]);
+        audio_streams.len -= 1;
+    };
+    while (audio_streams.len < audio_streams_buf.len) {
+        audio_streams.len += 1;
+        audio_streams[audio_streams.len - 1] = try errify(c.SDL_CreateAudioStream(&sounds_spec, null));
+    }
+
+    try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));
 
     my_game = .init();
     defer my_game.deinit(gpa);
@@ -222,6 +277,7 @@ pub fn main() !void {
             sdl_platform.global_seconds += sdl_platform.delta_seconds;
             sdl_platform.aspect_ratio = window_size.aspectRatio();
             sdl_platform.keyboard = keyboard;
+            sdl_platform.sound_queue.* = .initEmpty();
             if (try my_game.update(sdl_platform)) break :main_loop;
             // try game.update(1.0 / 60.0);
             mouse.prev = mouse.cur;
@@ -237,6 +293,30 @@ pub fn main() !void {
             while (it.next()) |cmd| try render(sdl_renderer, cmd.*, gpa);
 
             try errify(c.SDL_RenderPresent(sdl_renderer));
+        }
+
+        // Sound
+        {
+            // We have created eight SDL audio streams. When we want to play a sound effect,
+            // we loop through the streams for the first one that isn't playing any audio
+            // and write the audio to that stream.
+            // This is a kind of stupid and naive way of handling audio, but it's very easy to
+            // set up and use. A proper program would probably use an audio mixing callback.
+            var stream_index: usize = 0;
+            var it = sound_queue.iterator();
+            iterate_sounds: while (it.next()) |sound| {
+                const stream = find_available_stream: while (stream_index < audio_streams.len) {
+                    defer stream_index += 1;
+                    const stream = audio_streams[stream_index];
+                    if (try errify(c.SDL_GetAudioStreamAvailable(stream)) == 0) {
+                        break :find_available_stream stream;
+                    }
+                } else {
+                    break :iterate_sounds;
+                };
+                const data = sound_data.get(sound).data;
+                try errify(c.SDL_PutAudioStreamData(stream, data.ptr, @intCast(data.len)));
+            }
         }
 
         // timekeeper.produce(c.SDL_GetPerformanceCounter());
