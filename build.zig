@@ -139,6 +139,13 @@ fn build_for_desktop(
     exe_module.addImport("kommon", kommon_module);
     exe_module.addOptions("build_options", build_options);
 
+    // TODO: profile to find out the best gl version to use
+    exe_module.addImport("gl", @import("zigglgen").generateBindingsModule(b, .{
+        .api = .gl,
+        .version = .@"4.1",
+        .profile = .core,
+    }));
+
     const exe = b.addExecutable(.{
         .name = game_name,
         .root_module = exe_module,

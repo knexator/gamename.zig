@@ -89,6 +89,8 @@ const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
 var loops: std.EnumArray(Loops, Loop) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
+var gl_procs: gl.ProcTable = undefined;
+
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
     const gpa, const is_debug = gpa: {
@@ -144,20 +146,23 @@ pub fn main() !void {
 
     errify(c.SDL_SetHint(c.SDL_HINT_RENDER_VSYNC, "1")) catch {};
 
-    const sdl_window: *c.SDL_Window, const sdl_renderer: *c.SDL_Renderer = create_window_and_renderer: {
-        var sdl_window: ?*c.SDL_Window = null;
-        var sdl_renderer: ?*c.SDL_Renderer = null;
-        try errify(c.SDL_CreateWindowAndRenderer(
-            game.metadata.name,
-            @intCast(window_size.x),
-            @intCast(window_size.y),
-            c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
-            &sdl_window,
-            &sdl_renderer,
-        ));
-        break :create_window_and_renderer .{ sdl_window.?, sdl_renderer.? };
-    };
-    defer c.SDL_DestroyRenderer(sdl_renderer);
+    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_MAJOR_VERSION, gl.info.version_major));
+    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_MINOR_VERSION, gl.info.version_minor));
+    if (gl.info.profile) |profile| try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_PROFILE_MASK, switch (profile) {
+        .core => c.SDL_GL_CONTEXT_PROFILE_CORE,
+        else => @compileError("TODO"),
+    }));
+    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_FLAGS, c.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG));
+
+    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLEBUFFERS, 1));
+    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
+
+    const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
+        game.metadata.name,
+        @intCast(window_size.x),
+        @intCast(window_size.y),
+        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+    ));
     defer c.SDL_DestroyWindow(sdl_window);
 
     try errify(c.SDL_SetWindowAspectRatio(
@@ -165,6 +170,18 @@ pub fn main() !void {
         game.metadata.desired_aspect_ratio,
         game.metadata.desired_aspect_ratio,
     ));
+
+    const gl_context = try errify(c.SDL_GL_CreateContext(sdl_window));
+    defer errify(c.SDL_GL_DestroyContext(gl_context)) catch {};
+    try errify(c.SDL_GL_MakeCurrent(sdl_window, gl_context));
+    defer errify(c.SDL_GL_MakeCurrent(sdl_window, null)) catch {};
+    if (!gl_procs.init(c.SDL_GL_GetProcAddress)) return error.GlInitFailed;
+    gl.makeProcTableCurrent(&gl_procs);
+    defer gl.makeProcTableCurrent(null);
+
+    gl.Viewport(0, 0, @intCast(window_size.x), @intCast(window_size.y));
+    gl.Enable(gl.BLEND);
+    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     // TODO: defer unloading
     inline for (comptime std.enums.values(Sounds)) |sound| {
@@ -198,6 +215,10 @@ pub fn main() !void {
 
     try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));
 
+    // TODO: cleanup
+    var asdf_renderer: ArbitraryShapeRenderer = try .init();
+    defer asdf_renderer.deinit();
+
     my_game = .init();
     defer my_game.deinit(gpa);
 
@@ -209,10 +230,13 @@ pub fn main() !void {
             while (c.SDL_PollEvent(&event)) {
                 switch (event.type) {
                     c.SDL_EVENT_QUIT => break :main_loop,
-                    c.SDL_EVENT_WINDOW_RESIZED => window_size = .new(
-                        @intCast(event.window.data1),
-                        @intCast(event.window.data2),
-                    ),
+                    c.SDL_EVENT_WINDOW_RESIZED => {
+                        window_size = .new(
+                            @intCast(event.window.data1),
+                            @intCast(event.window.data2),
+                        );
+                        gl.Viewport(0, 0, @intCast(window_size.x), @intCast(window_size.y));
+                    },
                     c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_EVENT_MOUSE_BUTTON_UP => {
                         const is_pressed = event.button.down;
                         switch (event.button.button) {
@@ -272,16 +296,6 @@ pub fn main() !void {
             keyboard.prev = keyboard.cur;
         }
 
-        // Draw
-        {
-            defer sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
-            var it = sdl_platform.render_queue.pending_commands.constIterator(0);
-            // TODO: don't use gpa as the scratch allocator
-            while (it.next()) |cmd| try render(sdl_renderer, cmd.*, gpa);
-
-            try errify(c.SDL_RenderPresent(sdl_renderer));
-        }
-
         // Sound
         {
             // We have created eight SDL audio streams. When we want to play a sound effect,
@@ -314,83 +328,295 @@ pub fn main() !void {
             }
         }
 
+        // Draw
+        {
+            defer sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
+            var it = sdl_platform.render_queue.pending_commands.constIterator(0);
+            // TODO: don't use gpa as the scratch allocator
+            while (it.next()) |cmd| try render(asdf_renderer, cmd.*, gpa);
+
+            try errify(c.SDL_GL_SwapWindow(sdl_window));
+        }
+
         // timekeeper.produce(c.SDL_GetPerformanceCounter());
     }
 }
 
-fn render(sdl_renderer: *c.SDL_Renderer, cmd: game.RenderQueue.Command, scratch: std.mem.Allocator) !void {
+const ArbitraryShapeRenderer = struct {
+    const program_info: ProgramInfo = .{
+        .vertex =
+        \\uniform vec4 u_rect; // as top_left, size
+        \\uniform vec4 u_point; // as pos, turns, scale
+        \\
+        \\in vec2 a_position;
+        \\
+        \\void main() {
+        \\  float c = cos(u_point.z * 6.283185307179586);
+        \\  float s = sin(u_point.z * 6.283185307179586);
+        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+        \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
+        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+        \\}
+        ,
+        .fragment =
+        \\precision highp float;
+        \\out vec4 out_color;
+        \\
+        \\uniform vec4 u_color;
+        \\void main() {
+        \\  out_color = u_color;
+        \\}
+        ,
+    };
+
+    program: c_uint,
+    vao: c_uint, // vertex array object: the draw call state, roughly
+    vbo: c_uint, // vertex buffer object: the vertex data itself
+    ebo: c_uint, // element buffer object: the triangle indices
+
+    color_uniform: c_int,
+    rect_uniform: c_int,
+    point_uniform: c_int,
+
+    // TODO: cleaning
+    const VertexData = extern struct { position: Vec2 };
+
+    pub fn init() !ArbitraryShapeRenderer {
+        // To keep things simple, this example doesn't check for shader compilation/linking errors.
+        // A more robust program would call 'GetProgram/Shaderiv' to check for errors.
+        const program = try program_info.load();
+
+        var vao: c_uint = undefined;
+        gl.GenVertexArrays(1, @ptrCast(&vao));
+
+        gl.BindVertexArray(vao);
+
+        var vbo: c_uint = undefined;
+        gl.GenBuffers(1, @ptrCast(&vbo));
+        var ebo: c_uint = undefined;
+        gl.GenBuffers(1, @ptrCast(&ebo));
+
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+        defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+
+        gl.BindBuffer(gl.ARRAY_BUFFER, vbo);
+        defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+        defer gl.BindVertexArray(0);
+
+        inline for (@typeInfo(VertexData).@"struct".fields) |field| {
+            const attrib: gl.uint = @intCast(gl.GetAttribLocation(program, "a_" ++ field.name));
+            gl.EnableVertexAttribArray(attrib);
+            gl.VertexAttribPointer(
+                attrib,
+                howManyElementsIn(field.type),
+                getVertexAttribType(field.type),
+                isVertexAttribNormalized(field.type),
+                @sizeOf(VertexData),
+                @offsetOf(VertexData, field.name),
+            );
+        }
+
+        const color_uniform = gl.GetUniformLocation(program, "u_color");
+        assert(color_uniform != -1);
+        const rect_uniform = gl.GetUniformLocation(program, "u_rect");
+        assert(rect_uniform != -1);
+        const point_uniform = gl.GetUniformLocation(program, "u_point");
+        assert(point_uniform != -1);
+
+        return .{
+            .program = program,
+            .vao = vao,
+            .vbo = vbo,
+            .ebo = ebo,
+            .color_uniform = color_uniform,
+            .rect_uniform = rect_uniform,
+            .point_uniform = point_uniform,
+        };
+    }
+
+    pub fn deinit(self: *ArbitraryShapeRenderer) void {
+        defer gl.DeleteProgram(self.program);
+        defer gl.DeleteVertexArrays(1, @ptrCast(&self.vao));
+        defer gl.DeleteBuffers(1, @ptrCast(&self.vbo));
+        defer gl.DeleteBuffers(1, @ptrCast(&self.ebo));
+    }
+
+    pub fn draw(
+        self: ArbitraryShapeRenderer,
+        scratch: std.mem.Allocator,
+        camera: Rect,
+        parent: Point,
+        positions: []const Vec2,
+        triangles: []const [3]usize,
+        color: Color,
+    ) !void {
+        const cpu_buffer: []const VertexData = @ptrCast(positions);
+
+        gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
+        gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * cpu_buffer.len), @ptrCast(cpu_buffer.ptr), gl.DYNAMIC_DRAW);
+        defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+        const IndexType = u16;
+        const indices: []IndexType = try scratch.alloc(IndexType, 3 * triangles.len);
+        defer scratch.free(indices);
+
+        for (triangles, 0..) |tri, i| {
+            for (0..3) |k| {
+                indices[i * 3 + k] = @intCast(tri[k]);
+            }
+        }
+
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
+        gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf(IndexType) * indices.len), indices.ptr, gl.DYNAMIC_DRAW);
+        defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+
+        gl.BindVertexArray(self.vao);
+        defer gl.BindVertexArray(0);
+
+        gl.UseProgram(self.program);
+        defer gl.UseProgram(0);
+
+        const fcol = color.toFColor();
+        gl.Uniform4f(self.color_uniform, fcol.r, fcol.g, fcol.b, fcol.a);
+
+        gl.Uniform4f(self.rect_uniform, camera.top_left.x, camera.top_left.y, camera.size.y, camera.size.y);
+        gl.Uniform4f(self.point_uniform, parent.pos.x, parent.pos.y, parent.turns, parent.scale);
+
+        gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (IndexType) {
+            u16 => gl.UNSIGNED_SHORT,
+            else => @compileError("not implemented"),
+        }, 0);
+    }
+
+    fn getVertexAttribType(x: type) comptime_int {
+        return switch (x) {
+            f32 => gl.FLOAT,
+            Vec2 => gl.FLOAT,
+            Color => gl.UNSIGNED_BYTE,
+            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+        };
+    }
+
+    fn howManyElementsIn(x: type) comptime_int {
+        return switch (x) {
+            f32 => 1,
+            Vec2 => 2,
+            Color => 4,
+            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+        };
+    }
+
+    fn isVertexAttribNormalized(x: type) comptime_int {
+        return switch (x) {
+            f32 => gl.FALSE,
+            Vec2 => gl.FALSE,
+            Color => gl.TRUE,
+            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+        };
+    }
+};
+
+fn render(asdf_renderer: ArbitraryShapeRenderer, cmd: game.RenderQueue.Command, scratch: std.mem.Allocator) !void {
     switch (cmd) {
         .clear => |color| {
-            try errify(c.SDL_SetRenderDrawColor(sdl_renderer, color.r, color.g, color.b, color.a));
-            try errify(c.SDL_RenderClear(sdl_renderer));
+            gl.ClearBufferfv(gl.COLOR, 0, &color.toFColor().toArray());
         },
         .shape => |shape| {
-            const screen_positions = try scratch.alloc(c.SDL_FPoint, shape.local_points.len);
-            defer scratch.free(screen_positions);
-
-            const screen: Rect = .{
-                .top_left = .zero,
-                .size = window_size.tof32(),
-            };
-
-            for (shape.local_points, screen_positions) |local_pos, *screen_pos| {
-                const cur = screen.applyToLocalPosition(
-                    shape.camera.localFromWorldPosition(
-                        shape.parent_world_point.applyToLocalPosition(local_pos),
-                    ),
-                );
-                screen_pos.* = .{ .x = cur.x, .y = cur.y };
-            }
-
             // TODO: cache triangulation
             if (shape.fill) |color| {
-                const real_indices = try Triangulator.triangulate(scratch, shape.local_points);
-                defer scratch.free(real_indices);
-
-                const vertices = try scratch.alloc(c.SDL_Vertex, screen_positions.len);
-                defer scratch.free(vertices);
-
-                for (screen_positions, vertices) |pos, *vertex| {
-                    vertex.* = c.SDL_Vertex{
-                        .position = c.SDL_FPoint{ .x = pos.x, .y = pos.y },
-                        .color = @bitCast(color.toFColor()),
-                        .tex_coord = c.SDL_FPoint{ .x = 0, .y = 0 },
-                    };
-                }
-
-                assert(vertices.len >= 3);
-                const indices = try scratch.alloc(c_int, 3 * (vertices.len - 2));
+                const indices = try Triangulator.triangulate(scratch, shape.local_points);
                 defer scratch.free(indices);
-                for (0..vertices.len - 2) |k| {
-                    for (0..3) |i| {
-                        indices[k * 3 + i] = @intCast(real_indices[k][i]);
-                    }
-                }
+                assert(shape.local_points.len >= 3);
 
-                try errify(c.SDL_RenderGeometry(
-                    sdl_renderer,
-                    null,
-                    vertices.ptr,
-                    @intCast(vertices.len),
-                    indices.ptr,
-                    @intCast(indices.len),
-                ));
+                try asdf_renderer.draw(
+                    scratch,
+                    shape.camera,
+                    shape.parent_world_point,
+                    shape.local_points,
+                    indices,
+                    color,
+                );
             }
 
             if (shape.stroke) |color| {
-                try errify(c.SDL_SetRenderDrawColor(sdl_renderer, color.r, color.g, color.b, color.a));
-                try errify(c.SDL_RenderLines(sdl_renderer, screen_positions.ptr, @intCast(screen_positions.len)));
-                try errify(c.SDL_RenderLine(
-                    sdl_renderer,
-                    kommon.last(c.SDL_FPoint, screen_positions).?.x,
-                    kommon.last(c.SDL_FPoint, screen_positions).?.y,
-                    screen_positions[0].x,
-                    screen_positions[0].y,
-                ));
+                _ = color;
+                @panic("TODO");
+                // try errify(c.SDL_SetRenderDrawColor(sdl_renderer, color.r, color.g, color.b, color.a));
+                // try errify(c.SDL_RenderLines(sdl_renderer, screen_positions.ptr, @intCast(screen_positions.len)));
+                // try errify(c.SDL_RenderLine(
+                //     sdl_renderer,
+                //     kommon.last(c.SDL_FPoint, screen_positions).?.x,
+                //     kommon.last(c.SDL_FPoint, screen_positions).?.y,
+                //     screen_positions[0].x,
+                //     screen_positions[0].y,
+                // ));
             }
         },
     }
 }
+
+pub const ProgramInfo = struct {
+    // TODO: remove
+    preamble: [:0]const u8 =
+        \\#version 300 es
+        \\
+    ,
+    vertex: [:0]const u8,
+    fragment: [:0]const u8,
+
+    fn doShader(stage: enum { vertex, fragment }, preamble: [:0]const u8, source: [:0]const u8) !gl.uint {
+        const result = gl.CreateShader(switch (stage) {
+            .vertex => gl.VERTEX_SHADER,
+            .fragment => gl.FRAGMENT_SHADER,
+        });
+        gl.ShaderSource(
+            result,
+            2,
+            &.{ preamble.ptr, source.ptr },
+            &.{ @intCast(preamble.len), @intCast(source.len) },
+        );
+        gl.CompileShader(result);
+
+        var success: gl.int = undefined;
+        gl.GetShaderiv(result, gl.COMPILE_STATUS, &success);
+        if (success == 0) {
+            var info_log: [512]u8 = undefined;
+            var info_len: gl.sizei = undefined;
+            gl.GetShaderInfoLog(result, info_log.len, &info_len, &info_log);
+            std.log.err("Failed to compile shader: {s}", .{info_log[0..@intCast(info_len)]});
+            return error.ShaderCompileError;
+        }
+
+        return result;
+    }
+
+    pub fn load(self: ProgramInfo) !gl.uint {
+        const vertex_shader = try doShader(.vertex, self.preamble, self.vertex);
+        defer gl.DeleteShader(vertex_shader);
+
+        const fragment_shader = try doShader(.fragment, self.preamble, self.fragment);
+        defer gl.DeleteShader(fragment_shader);
+
+        const program = gl.CreateProgram();
+
+        gl.AttachShader(program, vertex_shader);
+        gl.AttachShader(program, fragment_shader);
+        gl.LinkProgram(program);
+
+        var success: gl.int = undefined;
+        gl.GetProgramiv(program, gl.LINK_STATUS, &success);
+        if (success == 0) {
+            var info_log: [512]u8 = undefined;
+            var info_len: gl.sizei = undefined;
+            gl.GetProgramInfoLog(program, info_log.len, &info_len, &info_log);
+            std.log.err("Failed to link shader: {s}", .{info_log[0..@intCast(info_len)]});
+            return error.ShaderCompileError;
+        }
+
+        return program;
+    }
+};
 
 const Sound = struct {
     // Taken from apple.wav
@@ -527,6 +753,8 @@ const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, Ke
 
 const std = @import("std");
 const assert = std.debug.assert;
+
+const gl = @import("gl");
 
 const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
