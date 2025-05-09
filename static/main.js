@@ -1,10 +1,18 @@
 import { keys } from "./keycodes.js";
 
 const container = document.querySelector("#canvas_container");
-const canvas = document.querySelector("#ctx_canvas");
-const ctx = canvas.getContext("2d");
+const canvas = document.querySelector("#canvas");
+const gl = canvas.getContext("webgl2");
+
+const gl_objects = [null];
+function storeGlObject(obj) {
+  gl_objects.push(obj);
+  return gl_objects.length - 1;
+}
+
 window.addEventListener('resize', resizeCanvas);
 
+// TODO: could this be done with pure CSS?
 function resizeCanvas() {
   const container_width = container.clientWidth;
   const container_height = container.clientHeight;
@@ -27,6 +35,7 @@ function resizeCanvas() {
 
   canvas.width = Math.round(canvas_width);
   canvas.height = Math.round(canvas_height);
+  gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
 const sounds = [];
@@ -97,6 +106,17 @@ function getNullTerminatedString(ptr) {
   return getString(ptr, len);
 }
 
+function storeString(str, ptr, max_len) {
+  const bytes = text_encoder.encode(str);
+  const wasm_mem = wasmMem();
+  if (bytes.length > max_len) {
+    console.warn("String too long:", str);
+  }
+  const len = Math.min(bytes.length, max_len);
+  wasm_mem.set(bytes.subarray(0, len), ptr);
+  return len;
+}
+
 async function getWasm() {
   const wasm_module = await WebAssembly.instantiateStreaming(fetch("main.wasm"), {
     env: {
@@ -108,24 +128,6 @@ async function getWasm() {
       logString: (ptr, len) => console.log(getString(ptr, len)),
 
       // canvas
-      beginPath: () => ctx.beginPath(),
-      moveTo: (x, y) => {
-        ctx.moveTo(x, y);
-        // console.log(x,y);
-      },
-      lineTo: (x, y) => {
-        ctx.lineTo(x, y);
-        // console.log(x,y);
-      },
-      closePath: () => ctx.closePath(),
-      fill: () => ctx.fill(),
-      stroke: () => ctx.stroke(),
-      setLineWidth: (w) => (ctx.lineWidth = w),
-      setFillColor: (r, g, b, a) => {
-        ctx.fillStyle = rgbToHex(r, g, b, a);
-        // console.log('fillstyle:', rgbToHex(r, g, b, a));
-      },
-      setStrokeColor: (r, g, b, a) => (ctx.strokeStyle = rgbToHex(r, g, b, a)),
       getWidth: () => canvas.width,
       getHeight: () => canvas.height,
 
@@ -141,6 +143,38 @@ async function getWasm() {
         return loops.length - 1;
       },
       setLoopVolume: (loop_id, v) => loops[loop_id].setVolume(v),
+
+      // webgl2
+      createShader: (type) => storeGlObject(gl.createShader(type)),
+      shaderSource: (shader, source_ptr, source_len) => gl.shaderSource(gl_objects[shader], getString(source_ptr, source_len)),
+      compileShader: (shader) => gl.compileShader(gl_objects[shader]),
+      getShaderParameter: (shader, pname) => gl.getShaderParameter(gl_objects[shader], pname),
+      getShaderInfoLog: (shader, buf_ptr, buf_len) => storeString(gl.getShaderInfoLog(gl_objects[shader]), buf_ptr, buf_len),
+      createProgram: () => storeGlObject(gl.createProgram()),
+      attachShader: (program, shader) => gl.attachShader(gl_objects[program], gl_objects[shader]),
+      linkProgram: (program) => gl.linkProgram(gl_objects[program]),
+      getProgramParameter: (program, param) => gl.getProgramParameter(gl_objects[program], param),
+      getProgramInfoLog: (program, buf_ptr, buf_len) => storeString(gl.getProgramInfoLog(gl_objects[program]), buf_ptr, buf_len),
+      useProgram: (program) => gl.useProgram(gl_objects[program]),
+      bufferData_size: (target, size, usage) => gl.bufferData(target, size, usage),
+      bufferData: (target, data_ptr, data_len, usage) => gl.bufferData(target, wasmMem().subarray(data_ptr, data_ptr + data_len), usage),
+      // TODO: clear mask
+      clear: () => gl.clear(gl.COLOR_BUFFER_BIT),
+      clearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
+      deleteShader: (shader) => gl.deleteShader(gl_objects[shader]),
+      deleteProgram: (program) => gl.deleteProgram(gl_objects[program]),
+      getAttribLocation: (program, name_ptr, name_len) => gl.getAttribLocation(gl_objects[program], getString(name_ptr, name_len)),
+      createBuffer: () => storeGlObject(gl.createBuffer()),
+      bindBuffer: (target, buffer) => gl.bindBuffer(target, gl_objects[buffer]),
+      enableVertexAttribArray: (index) => gl.enableVertexAttribArray(index),
+      vertexAttribPointer: (index, size, type, normalized, stride, offset) => gl.vertexAttribPointer(index, size, type, normalized, stride, offset),
+      createVertexArray: () => storeGlObject(gl.createVertexArray()),
+      bindVertexArray: (vao) => gl.bindVertexArray(gl_objects[vao]),
+      drawArrays: (mode, first, count) => gl.drawArrays(mode, first, count),
+      drawElements: (mode, count, type, offset) => gl.drawElements(mode, count, type, offset),
+      deleteBuffer: (buffer) => gl.deleteBuffer(gl_objects[buffer]),
+      getUniformLocation: (program, name_ptr, name_len) => storeGlObject(gl.getUniformLocation(gl_objects[program], getString(name_ptr, name_len))),
+      uniform4f: (location, v0, v1, v2, v3) => gl.uniform4f(gl_objects[location], v0, v1, v2, v3),
     },
   });
   return wasm_module.instance.exports;
