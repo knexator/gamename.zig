@@ -336,12 +336,12 @@ fn render(cmd: game.RenderQueue.Command) !void {
             // TODO: cache triangulation
             if (shape.fill) |color| {
                 // TODO: use another allocator
-                const indices = try Triangulator.triangulate(gpa, shape.local_points);
+                const IndexType = u16;
+                const indices = try Triangulator.triangulate(IndexType, gpa, shape.local_points);
                 defer gpa.free(indices);
                 assert(shape.local_points.len >= 3);
 
-                try asdf_renderer.draw(
-                    gpa,
+                asdf_renderer.drawV2(
                     shape.camera,
                     shape.parent_world_point,
                     shape.local_points,
@@ -354,6 +354,15 @@ fn render(cmd: game.RenderQueue.Command) !void {
                 _ = color;
                 @panic("TODO");
             }
+        },
+        .precomputed_shape => |shape| {
+            asdf_renderer.drawV2(
+                shape.camera,
+                shape.parent_world_point,
+                shape.data.local_points,
+                shape.data.triangles,
+                shape.fill,
+            );
         },
     }
 }
@@ -368,10 +377,10 @@ var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
 export fn init() void {
     if (@import("build_options").hot_reloadable) {
-        my_game = std.heap.wasm_allocator.create(game.GameState) catch unreachable;
-        my_game.* = .init();
+        my_game = gpa.create(game.GameState) catch unreachable;
+        my_game.* = game.GameState.init(gpa) catch unreachable;
     } else {
-        my_game = .init();
+        my_game = game.GameState.init(gpa) catch unreachable;
     }
 
     asdf_renderer = ArbitraryShapeRenderer.init() catch unreachable;
@@ -576,6 +585,7 @@ const ArbitraryShapeRenderer = struct {
 
     // TODO: cleaning
     const VertexData = extern struct { position: Vec2 };
+    const IndexType = game.RenderQueue.PrecomputedShape.IndexType;
 
     pub fn init() !ArbitraryShapeRenderer {
         const program = try js.webgl2.better.buildProgram(
@@ -632,44 +642,37 @@ const ArbitraryShapeRenderer = struct {
         defer js.webgl2.deleteBuffer(self.ebo);
     }
 
-    pub fn draw(
+    pub fn drawV2(
         self: ArbitraryShapeRenderer,
-        scratch: std.mem.Allocator,
         camera: Rect,
         parent: Point,
         positions: []const Vec2,
-        triangles: []const [3]usize,
+        triangles: []const [3]IndexType,
         color: Color,
-    ) !void {
+    ) void {
         const cpu_buffer: []const VertexData = @ptrCast(positions);
 
-        js.webgl2.bindBuffer(.ARRAY_BUFFER, self.vbo);
-        js.webgl2.bufferData(
-            .ARRAY_BUFFER,
-            @ptrCast(cpu_buffer.ptr),
-            @sizeOf(VertexData) * cpu_buffer.len,
-            .DYNAMIC_DRAW,
-        );
-        defer js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
-
-        const IndexType = u16;
-        const indices: []IndexType = try scratch.alloc(IndexType, 3 * triangles.len);
-        defer scratch.free(indices);
-
-        for (triangles, 0..) |tri, i| {
-            for (0..3) |k| {
-                indices[i * 3 + k] = @intCast(tri[k]);
-            }
+        {
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, self.vbo);
+            js.webgl2.bufferData(
+                .ARRAY_BUFFER,
+                @ptrCast(cpu_buffer.ptr),
+                @sizeOf(VertexData) * cpu_buffer.len,
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
         }
 
-        js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, self.ebo);
-        js.webgl2.bufferData(
-            .ELEMENT_ARRAY_BUFFER,
-            @ptrCast(indices.ptr),
-            @sizeOf(IndexType) * indices.len,
-            .DYNAMIC_DRAW,
-        );
-        defer js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
+        {
+            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, self.ebo);
+            js.webgl2.bufferData(
+                .ELEMENT_ARRAY_BUFFER,
+                @ptrCast(triangles.ptr),
+                @sizeOf([3]IndexType) * triangles.len,
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
+        }
 
         js.webgl2.bindVertexArray(self.vao);
         defer js.webgl2.bindVertexArray(.null);

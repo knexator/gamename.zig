@@ -26,8 +26,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     last_inode: std.fs.File.INode = 0,
     state: game.GameState,
 
-    fn init() Self {
-        return .{ .state = .init() };
+    fn init(gpa: std.mem.Allocator) !Self {
+        return .{ .state = try .init(gpa) };
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -101,7 +101,7 @@ pub fn main() !void {
         };
     };
     defer if (is_debug) {
-        _ = debug_allocator.deinit();
+        assert(debug_allocator.deinit() == .ok);
     };
 
     var render_queue: game.RenderQueue = .init(gpa);
@@ -219,7 +219,7 @@ pub fn main() !void {
     var asdf_renderer: ArbitraryShapeRenderer = try .init();
     defer asdf_renderer.deinit();
 
-    my_game = .init();
+    my_game = try .init(gpa);
     defer my_game.deinit(gpa);
 
     var timer = try std.time.Timer.start();
@@ -380,6 +380,7 @@ const ArbitraryShapeRenderer = struct {
 
     // TODO: cleaning
     const VertexData = extern struct { position: Vec2 };
+    const IndexType = game.RenderQueue.PrecomputedShape.IndexType;
 
     pub fn init() !ArbitraryShapeRenderer {
         // To keep things simple, this example doesn't check for shader compilation/linking errors.
@@ -442,34 +443,27 @@ const ArbitraryShapeRenderer = struct {
         defer gl.DeleteBuffers(1, @ptrCast(&self.ebo));
     }
 
-    pub fn draw(
+    pub fn drawV2(
         self: ArbitraryShapeRenderer,
-        scratch: std.mem.Allocator,
         camera: Rect,
         parent: Point,
         positions: []const Vec2,
-        triangles: []const [3]usize,
+        triangles: []const [3]IndexType,
         color: Color,
-    ) !void {
+    ) void {
         const cpu_buffer: []const VertexData = @ptrCast(positions);
 
-        gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
-        gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * cpu_buffer.len), @ptrCast(cpu_buffer.ptr), gl.DYNAMIC_DRAW);
-        defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-        const IndexType = u16;
-        const indices: []IndexType = try scratch.alloc(IndexType, 3 * triangles.len);
-        defer scratch.free(indices);
-
-        for (triangles, 0..) |tri, i| {
-            for (0..3) |k| {
-                indices[i * 3 + k] = @intCast(tri[k]);
-            }
+        {
+            gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
+            gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * cpu_buffer.len), @ptrCast(cpu_buffer.ptr), gl.DYNAMIC_DRAW);
+            gl.BindBuffer(gl.ARRAY_BUFFER, 0);
         }
 
-        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
-        gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf(IndexType) * indices.len), indices.ptr, gl.DYNAMIC_DRAW);
-        defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+        {
+            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
+            gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf([3]IndexType) * triangles.len), triangles.ptr, gl.DYNAMIC_DRAW);
+            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+        }
 
         gl.BindVertexArray(self.vao);
         defer gl.BindVertexArray(0);
@@ -524,13 +518,13 @@ fn render(asdf_renderer: ArbitraryShapeRenderer, cmd: game.RenderQueue.Command, 
         },
         .shape => |shape| {
             // TODO: cache triangulation
+            const IndexType = u16;
             if (shape.fill) |color| {
-                const indices = try Triangulator.triangulate(scratch, shape.local_points);
-                defer scratch.free(indices);
                 assert(shape.local_points.len >= 3);
+                const indices = try Triangulator.triangulate(IndexType, scratch, shape.local_points);
+                defer scratch.free(indices);
 
-                try asdf_renderer.draw(
-                    scratch,
+                asdf_renderer.drawV2(
                     shape.camera,
                     shape.parent_world_point,
                     shape.local_points,
@@ -553,19 +547,27 @@ fn render(asdf_renderer: ArbitraryShapeRenderer, cmd: game.RenderQueue.Command, 
                 // ));
             }
         },
+        .precomputed_shape => |shape| {
+            asdf_renderer.drawV2(
+                shape.camera,
+                shape.parent_world_point,
+                shape.data.local_points,
+                shape.data.triangles,
+                shape.fill,
+            );
+        },
     }
 }
 
 pub const ProgramInfo = struct {
-    // TODO: remove
-    preamble: [:0]const u8 =
+    const preamble: [:0]const u8 =
         \\#version 300 es
         \\
-    ,
+    ;
     vertex: [:0]const u8,
     fragment: [:0]const u8,
 
-    fn doShader(stage: enum { vertex, fragment }, preamble: [:0]const u8, source: [:0]const u8) !gl.uint {
+    fn doShader(stage: enum { vertex, fragment }, source: [:0]const u8) !gl.uint {
         const result = gl.CreateShader(switch (stage) {
             .vertex => gl.VERTEX_SHADER,
             .fragment => gl.FRAGMENT_SHADER,
@@ -592,10 +594,10 @@ pub const ProgramInfo = struct {
     }
 
     pub fn load(self: ProgramInfo) !gl.uint {
-        const vertex_shader = try doShader(.vertex, self.preamble, self.vertex);
+        const vertex_shader = try doShader(.vertex, self.vertex);
         defer gl.DeleteShader(vertex_shader);
 
-        const fragment_shader = try doShader(.fragment, self.preamble, self.fragment);
+        const fragment_shader = try doShader(.fragment, self.fragment);
         defer gl.DeleteShader(fragment_shader);
 
         const program = gl.CreateProgram();

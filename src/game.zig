@@ -77,30 +77,32 @@ pub const GameState = struct {
     input_queue: kommon.CircularBuffer(IVec2, 32) = .init,
     cur_turn_duration: f32 = TURN_DURATION,
     body: std.SegmentedList(BodyPart, BOARD_SIZE.x * BOARD_SIZE.y) = .{},
-    // blk: {
-    //     var result: @FieldType(GameState, "body") = .{};
-    //     result.append(undefined, .{
-    //         .pos = initial_pos,
-    //         .t = initial_turn,
-    //         .dir = .zero,
-    //         .time_reversed = false,
-    //     }) catch unreachable;
-    //     break :blk result;
-    // },
     changes: std.SegmentedList(Change, 32) = .{},
     cur_apple: IVec2 = undefined,
     rnd_instance: std.Random.DefaultPrng,
     cur_screen_shake: struct { pos: Vec2 = .zero, target_mag: f32 = 0, actual_mag: f32 = 0 } = .{},
     cam_noise: Noise = .{},
 
+    SHAPES: struct {
+        circle: RenderQueue.PrecomputedShape,
+    },
+
     const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
     const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
 
-    // TODO: should take an allocator?
-    pub fn init() GameState {
+    pub fn init(gpa: std.mem.Allocator) !GameState {
         // TODO: get random seed as param?
         var result: GameState = .{
             .rnd_instance = .init(0),
+            .SHAPES = .{
+                .circle = try .fromPoints(gpa, &funk.map(
+                    Vec2.fromTurns,
+                    &funk.linspace01(
+                        128,
+                        false,
+                    ),
+                )),
+            },
         };
         result.restart();
         return result;
@@ -268,6 +270,7 @@ pub const GameState = struct {
         const renderer: Renderer = .{
             .render_queue = platform.render_queue,
             .camera = camera,
+            .SHAPES = &self.SHAPES,
         };
 
         const screen_center = BOARD_SIZE.tof32().scale(0.5);
@@ -354,6 +357,7 @@ pub const GameState = struct {
 const Renderer = struct {
     render_queue: *RenderQueue,
     camera: Rect,
+    SHAPES: *const @FieldType(GameState, "SHAPES"),
 
     const CIRCLE_RESOLUTION = 128;
 
@@ -386,6 +390,14 @@ const Renderer = struct {
     }
 
     fn fillCircle(self: Renderer, center: Vec2, radius: f32, color: Color) !void {
+        try self.render_queue.pending_commands.append(self.render_queue.arena.allocator(), .{
+            .precomputed_shape = .{
+                .camera = self.camera,
+                .parent_world_point = .{ .pos = center, .scale = radius },
+                .data = &self.SHAPES.circle,
+                .fill = color,
+            },
+        });
         try self.render_queue.drawShape(self.camera, .{
             .pos = center,
             .scale = radius,
@@ -418,7 +430,7 @@ pub const CApi = extern struct {
 
     fn _reload(dst: *GameState, gpa: *const std.mem.Allocator) callconv(.c) void {
         dst.deinit(gpa.*);
-        dst.* = .init();
+        dst.* = GameState.init(gpa.*) catch unreachable;
     }
 };
 

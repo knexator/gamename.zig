@@ -2,6 +2,22 @@ pub const RenderQueue = struct {
     arena: std.heap.ArenaAllocator,
     pending_commands: std.SegmentedList(Command, 32),
 
+    pub const PrecomputedShape = struct {
+        pub const IndexType = u16;
+
+        local_points: []const Vec2,
+        triangles: []const [3]IndexType,
+
+        pub fn fromPoints(gpa: std.mem.Allocator, points: []const Vec2) !PrecomputedShape {
+            std.debug.assert(points.len >= 3);
+            const triangles = try Triangulator.triangulate(IndexType, gpa, points);
+            return .{
+                .local_points = points,
+                .triangles = triangles,
+            };
+        }
+    };
+
     pub const Command = union(enum) {
         clear: Color,
         shape: struct {
@@ -10,6 +26,12 @@ pub const RenderQueue = struct {
             local_points: []const Vec2,
             stroke: ?Color,
             fill: ?Color,
+        },
+        precomputed_shape: struct {
+            camera: Rect,
+            parent_world_point: Point,
+            data: *const PrecomputedShape,
+            fill: Color,
         },
     };
 
@@ -51,9 +73,11 @@ pub const RenderQueue = struct {
 };
 
 const std = @import("std");
-const math = @import("kommon").math;
+const kommon = @import("kommon");
+const math = kommon.math;
 const Color = math.Color;
 const Camera = math.Camera;
 const Rect = math.Rect;
 const Point = math.Point;
 const Vec2 = math.Vec2;
+const Triangulator = kommon.Triangulator;
