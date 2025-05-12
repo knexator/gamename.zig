@@ -33,6 +33,15 @@ pub const RenderQueue = struct {
             data: *const PrecomputedShape,
             fill: Color,
         },
+        text: struct {
+            camera: Rect,
+            // TODO: maybe bottom_left + em should be a Point?
+            bottom_left: Vec2,
+            em: f32,
+            line: []const u8,
+            // TODO: *const Font
+            // TODO: color
+        },
     };
 
     pub fn init(parent_allocator: std.mem.Allocator) RenderQueue {

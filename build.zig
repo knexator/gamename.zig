@@ -4,10 +4,35 @@ const std = @import("std");
 // const game_name = @import("src/game.zig").metadata.name;
 const game_name = "Snakanake";
 
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
     b.reference_trace = 10;
 
+    build_game(b);
+
+    // TODO(eternal): delete this step by getting a build.zig for msdf
+    const fonts_step = b.step("fonts", "Compile the fonts (only available on win64)");
+    // TODO: make msdf an optional dependency
+    const msdf = b.dependency("msdf", .{});
+
+    const font_name = "Arial";
+    const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
+    run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
+    run_msdf.addArgs(&.{ "-type", "mtsdf", "-size", "32", "-yorigin", "top" });
+    run_msdf.addArg("-font");
+    run_msdf.addFileArg(b.path("src/fonts/" ++ font_name ++ ".ttf"));
+    run_msdf.addArg("-json");
+    const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
+    run_msdf.addArg("-imageout");
+    const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
+
+    const wf = b.addUpdateSourceFiles();
+    wf.addCopyFileToSource(font_json, "src/fonts/" ++ font_name ++ ".json");
+    wf.addCopyFileToSource(font_atlas, "src/fonts/" ++ font_name ++ ".png");
+    fonts_step.dependOn(&wf.step);
+}
+
+fn build_game(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const hot_reloadable = b.option(
@@ -136,6 +161,7 @@ fn build_for_desktop(
         .optimize = options.optimize,
     });
     exe_module.linkLibrary(sdl_lib);
+    exe_module.addImport("zstbi", b.dependency("zstbi", .{}).module("root"));
     exe_module.addImport("kommon", kommon_module);
     exe_module.addOptions("build_options", build_options);
 

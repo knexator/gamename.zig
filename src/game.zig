@@ -350,6 +350,24 @@ pub const GameState = struct {
 
         try renderer.fillTile(self.cur_apple, COLORS.APPLE);
 
+        switch (self.state) {
+            .waiting => {
+                try platform.render_queue.pending_commands.append(
+                    platform.render_queue.arena.allocator(),
+                    .{
+                        .text = .{
+                            .camera = renderer.camera,
+                            // TODO: set text's bottom center
+                            .bottom_left = BOARD_SIZE.tof32().mul(.new(0.5, 0.25)).addX(-6.25),
+                            .em = 30.0 / 32.0,
+                            .line = "WASD or Arrow Keys to move",
+                        },
+                    },
+                );
+            },
+            else => {},
+        }
+
         return false;
     }
 };
