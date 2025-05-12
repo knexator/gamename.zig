@@ -215,9 +215,9 @@ pub fn main() !void {
 
     try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));
 
-    // TODO: cleanup
-    var asdf_renderer: ArbitraryShapeRenderer = try .init();
-    defer asdf_renderer.deinit();
+    // TODO: could these be on the game layer?
+    var shape_renderer: ArbitraryShapeRenderer = try .init();
+    defer shape_renderer.deinit();
     var text_renderer: TextRenderer = try .init(gpa, gpa);
     defer text_renderer.deinit();
 
@@ -335,7 +335,7 @@ pub fn main() !void {
             defer sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
             var it = sdl_platform.render_queue.pending_commands.constIterator(0);
             // TODO: don't use gpa as the scratch allocator
-            while (it.next()) |cmd| try render(asdf_renderer, text_renderer, cmd.*, gpa);
+            while (it.next()) |cmd| try render(shape_renderer, text_renderer, cmd.*, gpa);
 
             try errify(c.SDL_GL_SwapWindow(sdl_window));
         }
@@ -344,71 +344,157 @@ pub fn main() !void {
     }
 }
 
-// TODO: remove duplication
-const TextRenderer = struct {
-    const program_info: ProgramInfo = .{
-        .vertex =
-        \\in vec2 a_position;
-        \\in vec2 a_texcoord;
-        \\
-        \\out vec2 v_texcoord;
-        \\
-        \\// 0,0 => -1,1 (top left)
-        \\// 1,0 => 1,1 (top right)
-        \\vec2 clipFromCam(vec2 p) {
-        \\  return (p * 2.0 - 1.0) * vec2(1, -1);
-        \\}
-        \\
-        \\void main() {
-        \\  v_texcoord = a_texcoord;
-        \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
-        \\}
-        ,
-        .fragment =
-        \\precision highp float;
-        \\out vec4 out_color;
-        \\
-        \\in vec2 v_texcoord;
-        \\uniform sampler2D u_texture;
-        \\
-        \\float median(float r, float g, float b) {
-        \\  return max(min(r, g), min(max(r, g), b));
-        \\}
-        \\
-        \\float inverseLerp(float a, float b, float t) {
-        \\  return (t - a) / (b - a);
-        \\}
-        \\
-        \\void main() {
-        \\  // assume square texture
-        \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
-        \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
-        // TODO: get sdf_pxrange from the font data
-        \\  float sdf_pxrange = 2.0;
-        \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
-        \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
-        \\  // density of the texture on screen; assume uniform scaling.
-        \\  // for some reason, the value is half of what it should.
-        \\  float texels_per_pixel = 2.0 * fwidth(v_texcoord) * sdf_texture_size;
-        \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
-        \\  // over how many screen pixels do the transition
-        \\  float transition_pixels = 1.0;
-        \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
-        \\  // TODO: premultiply alpha?
-        \\  out_color = vec4(vec3(1.0), alpha);
-        \\}
-        ,
-    };
+fn Renderable(VertexData: type, IndexType: type, UniformTypes: type) type {
+    return struct {
+        const Self = @This();
 
-    program: c_uint,
-    vao: c_uint, // vertex array object: the draw call state, roughly
-    vbo: c_uint, // vertex buffer object: the vertex data itself
-    ebo: c_uint, // element buffer object: the triangle indices
+        program: c_uint,
+        vao: c_uint, // vertex array object: the draw call state, roughly
+        vbo: c_uint, // vertex buffer object: the vertex data itself
+        ebo: c_uint, // element buffer object: the triangle indices
+
+        uniforms: std.EnumArray(Uniforms, c_int),
+
+        const Uniforms = std.meta.FieldEnum(UniformTypes);
+
+        pub fn init(vertex: [:0]const u8, fragment: [:0]const u8) !Self {
+            // To keep things simple, this example doesn't check for shader compilation/linking errors.
+            // A more robust program would call 'GetProgram/Shaderiv' to check for errors.
+            const program = try (ProgramInfo{ .vertex = vertex, .fragment = fragment }).load();
+
+            var vao: c_uint = undefined;
+            gl.GenVertexArrays(1, @ptrCast(&vao));
+
+            gl.BindVertexArray(vao);
+
+            var vbo: c_uint = undefined;
+            gl.GenBuffers(1, @ptrCast(&vbo));
+            var ebo: c_uint = undefined;
+            gl.GenBuffers(1, @ptrCast(&ebo));
+
+            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+            defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+
+            gl.BindBuffer(gl.ARRAY_BUFFER, vbo);
+            defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+            defer gl.BindVertexArray(0);
+
+            inline for (@typeInfo(VertexData).@"struct".fields) |field| {
+                const attrib: gl.uint = @intCast(gl.GetAttribLocation(program, "a_" ++ field.name));
+                gl.EnableVertexAttribArray(attrib);
+                gl.VertexAttribPointer(
+                    attrib,
+                    howManyElementsIn(field.type),
+                    getVertexAttribType(field.type),
+                    isVertexAttribNormalized(field.type),
+                    @sizeOf(VertexData),
+                    @offsetOf(VertexData, field.name),
+                );
+            }
+
+            var uniforms: std.EnumArray(Uniforms, c_int) = .initUndefined();
+            inline for (@typeInfo(Uniforms).@"enum".fields) |f| {
+                const uniform = gl.GetUniformLocation(program, "u_" ++ f.name);
+                assert(uniform != -1);
+                uniforms.set(@enumFromInt(f.value), uniform);
+            }
+
+            return .{
+                .program = program,
+                .vao = vao,
+                .vbo = vbo,
+                .ebo = ebo,
+                .uniforms = uniforms,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            defer gl.DeleteProgram(self.program);
+            defer gl.DeleteVertexArrays(1, @ptrCast(&self.vao));
+            defer gl.DeleteBuffers(1, @ptrCast(&self.vbo));
+            defer gl.DeleteBuffers(1, @ptrCast(&self.ebo));
+        }
+
+        pub fn draw(
+            self: Self,
+            vertices: []const VertexData,
+            triangles: []const [3]IndexType,
+            uniforms: UniformTypes,
+            // TODO: allow multiple textures
+            texture: ?c_uint,
+        ) void {
+            {
+                gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
+                gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * vertices.len), @ptrCast(vertices.ptr), gl.DYNAMIC_DRAW);
+                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+            }
+
+            {
+                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
+                gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf([3]IndexType) * triangles.len), triangles.ptr, gl.DYNAMIC_DRAW);
+                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+            }
+
+            if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t);
+            defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
+
+            gl.BindVertexArray(self.vao);
+            defer gl.BindVertexArray(0);
+
+            gl.UseProgram(self.program);
+            defer gl.UseProgram(0);
+
+            inline for (@typeInfo(Uniforms).@"enum".fields) |f| {
+                const u = self.uniforms.get(@enumFromInt(f.value));
+                const v = @field(uniforms, f.name);
+                switch (@FieldType(UniformTypes, f.name)) {
+                    FColor => gl.Uniform4f(u, v.r, v.g, v.b, v.a),
+                    Rect => gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
+                    Point => gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
+                    else => |t| @compileError(std.fmt.comptimePrint("Unhandled uniform type: {any}", .{t})),
+                }
+            }
+
+            gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (IndexType) {
+                u16 => gl.UNSIGNED_SHORT,
+                else => @compileError("not implemented"),
+            }, 0);
+        }
+
+        fn getVertexAttribType(x: type) comptime_int {
+            return switch (x) {
+                f32 => gl.FLOAT,
+                Vec2 => gl.FLOAT,
+                Color => gl.UNSIGNED_BYTE,
+                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+            };
+        }
+
+        fn howManyElementsIn(x: type) comptime_int {
+            return switch (x) {
+                f32 => 1,
+                Vec2 => 2,
+                Color => 4,
+                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+            };
+        }
+
+        fn isVertexAttribNormalized(x: type) comptime_int {
+            return switch (x) {
+                f32 => gl.FALSE,
+                Vec2 => gl.FALSE,
+                Color => gl.TRUE,
+                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+            };
+        }
+    };
+}
+
+const TextRenderer = struct {
     texture: c_uint,
     font_info: std.json.Parsed(FontJsonInfo),
-
-    const VertexData = extern struct { position: Vec2, texcoord: Vec2 };
-    const IndexType = game.RenderQueue.PrecomputedShape.IndexType;
+    renderable: Renderable(extern struct { position: Vec2, texcoord: Vec2 }, u16, struct {}),
 
     const RectSides = struct {
         left: f32,
@@ -453,99 +539,109 @@ const TextRenderer = struct {
     };
 
     pub fn init(gpa: std.mem.Allocator, scratch: std.mem.Allocator) !TextRenderer {
-        // To keep things simple, this example doesn't check for shader compilation/linking errors.
-        // A more robust program would call 'GetProgram/Shaderiv' to check for errors.
-        const program = try program_info.load();
-
-        var vao: c_uint = undefined;
-        gl.GenVertexArrays(1, @ptrCast(&vao));
-
-        gl.BindVertexArray(vao);
-
-        var vbo: c_uint = undefined;
-        gl.GenBuffers(1, @ptrCast(&vbo));
-        var ebo: c_uint = undefined;
-        gl.GenBuffers(1, @ptrCast(&ebo));
-
-        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-        defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-
-        gl.BindBuffer(gl.ARRAY_BUFFER, vbo);
-        defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-        defer gl.BindVertexArray(0);
-
-        inline for (@typeInfo(VertexData).@"struct".fields) |field| {
-            const attrib: gl.uint = @intCast(gl.GetAttribLocation(program, "a_" ++ field.name));
-            gl.EnableVertexAttribArray(attrib);
-            gl.VertexAttribPointer(
-                attrib,
-                howManyElementsIn(field.type),
-                getVertexAttribType(field.type),
-                isVertexAttribNormalized(field.type),
-                @sizeOf(VertexData),
-                @offsetOf(VertexData, field.name),
-            );
-        }
-
         var texture: c_uint = undefined;
-        gl.GenTextures(1, @ptrCast(&texture));
-        gl.BindTexture(gl.TEXTURE_2D, texture);
-        defer gl.BindTexture(gl.TEXTURE_2D, 0);
-        // gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        // gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        {
+            gl.GenTextures(1, @ptrCast(&texture));
+            gl.BindTexture(gl.TEXTURE_2D, texture);
+            defer gl.BindTexture(gl.TEXTURE_2D, 0);
+            // gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            // gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-        const zstbi = @import("zstbi");
+            const zstbi = @import("zstbi");
+            zstbi.init(scratch);
+            defer zstbi.deinit();
 
-        zstbi.init(scratch);
-        defer zstbi.deinit();
+            var image = try zstbi.Image.loadFromMemory(@embedFile("./fonts/Arial.png"), 0);
+            defer image.deinit();
+            const has_alpha = switch (image.num_components) {
+                3 => false,
+                4 => true,
+                else => unreachable,
+            };
 
-        var image = try zstbi.Image.loadFromMemory(@embedFile("./fonts/Arial.png"), 0);
-        defer image.deinit();
-        const has_alpha = switch (image.num_components) {
-            3 => false,
-            4 => true,
-            else => unreachable,
-        };
-
-        gl.TexImage2D(
-            gl.TEXTURE_2D,
-            0,
-            if (has_alpha) gl.RGBA else gl.RGB,
-            @intCast(image.width),
-            @intCast(image.height),
-            0,
-            if (has_alpha) gl.RGBA else gl.RGB,
-            gl.UNSIGNED_BYTE,
-            image.data.ptr,
-        );
-        gl.GenerateMipmap(gl.TEXTURE_2D);
+            gl.TexImage2D(
+                gl.TEXTURE_2D,
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                @intCast(image.width),
+                @intCast(image.height),
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                gl.UNSIGNED_BYTE,
+                image.data.ptr,
+            );
+            gl.GenerateMipmap(gl.TEXTURE_2D);
+        }
 
         // TODO: parse the font data at comptime
         const font_info = try std.json.parseFromSlice(FontJsonInfo, gpa, @embedFile("./fonts/Arial.json"), .{});
 
         return .{
-            .program = program,
-            .vao = vao,
-            .vbo = vbo,
-            .ebo = ebo,
             .texture = texture,
             .font_info = font_info,
+            .renderable = try .init(
+                \\in vec2 a_position;
+                \\in vec2 a_texcoord;
+                \\
+                \\out vec2 v_texcoord;
+                \\
+                \\// 0,0 => -1,1 (top left)
+                \\// 1,0 => 1,1 (top right)
+                \\vec2 clipFromCam(vec2 p) {
+                \\  return (p * 2.0 - 1.0) * vec2(1, -1);
+                \\}
+                \\
+                \\void main() {
+                \\  v_texcoord = a_texcoord;
+                \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
+                \\}
+            ,
+                \\precision highp float;
+                \\out vec4 out_color;
+                \\
+                \\in vec2 v_texcoord;
+                \\uniform sampler2D u_texture;
+                \\
+                \\float median(float r, float g, float b) {
+                \\  return max(min(r, g), min(max(r, g), b));
+                \\}
+                \\
+                \\float inverseLerp(float a, float b, float t) {
+                \\  return (t - a) / (b - a);
+                \\}
+                \\
+                \\void main() {
+                \\  // assume square texture
+                \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
+                \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
+                // TODO: get sdf_pxrange from the font data
+                \\  float sdf_pxrange = 2.0;
+                \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
+                \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
+                \\  // density of the texture on screen; assume uniform scaling.
+                \\  // for some reason, the value is half of what it should.
+                \\  float texels_per_pixel = 2.0 * fwidth(v_texcoord) * sdf_texture_size;
+                \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
+                \\  // over how many screen pixels do the transition
+                \\  float transition_pixels = 1.0;
+                \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
+                \\  // TODO: premultiply alpha?
+                \\  out_color = vec4(vec3(1.0), alpha);
+                \\}
+            ),
         };
     }
 
     pub fn deinit(self: *TextRenderer) void {
-        defer gl.DeleteProgram(self.program);
-        defer gl.DeleteVertexArrays(1, @ptrCast(&self.vao));
-        defer gl.DeleteBuffers(1, @ptrCast(&self.vbo));
-        defer gl.DeleteBuffers(1, @ptrCast(&self.ebo));
-        defer gl.DeleteTextures(1, @ptrCast(&self.texture));
-        defer self.font_info.deinit();
+        self.font_info.deinit();
+        self.renderable.deinit();
+        gl.DeleteTextures(1, @ptrCast(&self.texture));
     }
 
     // TODO: kerning
+    // TODO: single draw call, maybe
     pub fn drawText(self: TextRenderer, camera: Rect, bottom_left: Vec2, text: []const u8, em: f32) void {
         var cursor: Vec2 = bottom_left;
         for (text) |char| {
@@ -567,7 +663,7 @@ const TextRenderer = struct {
             ).tof32();
             const p = glyph_info.planeBounds orelse unreachable;
 
-            self.drawV2(&.{
+            self.renderable.draw(&.{
                 .{
                     .position = camera.localFromWorldPosition(bottom_left
                         .add(Vec2.new(p.left, p.bottom).scale(em))),
@@ -588,171 +684,54 @@ const TextRenderer = struct {
                         .add(Vec2.new(p.right, p.top).scale(em))),
                     .texcoord = Vec2.new(b.right, b.top).div(s),
                 },
-            }, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } });
+            }, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, .{}, self.texture);
         }
 
         return bottom_left.addX(em * glyph_info.advance);
     }
-
-    pub fn drawV2(
-        self: TextRenderer,
-        vertices: []const VertexData,
-        triangles: []const [3]IndexType,
-    ) void {
-        {
-            gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
-            gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * vertices.len), @ptrCast(vertices.ptr), gl.DYNAMIC_DRAW);
-            gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-        }
-
-        {
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
-            gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf([3]IndexType) * triangles.len), triangles.ptr, gl.DYNAMIC_DRAW);
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-        }
-
-        gl.BindTexture(gl.TEXTURE_2D, self.texture);
-        defer gl.BindTexture(gl.TEXTURE_2D, 0);
-
-        gl.BindVertexArray(self.vao);
-        defer gl.BindVertexArray(0);
-
-        gl.UseProgram(self.program);
-        defer gl.UseProgram(0);
-
-        gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (IndexType) {
-            u16 => gl.UNSIGNED_SHORT,
-            else => @compileError("not implemented"),
-        }, 0);
-    }
-
-    fn getVertexAttribType(x: type) comptime_int {
-        return switch (x) {
-            f32 => gl.FLOAT,
-            Vec2 => gl.FLOAT,
-            Color => gl.UNSIGNED_BYTE,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn howManyElementsIn(x: type) comptime_int {
-        return switch (x) {
-            f32 => 1,
-            Vec2 => 2,
-            Color => 4,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn isVertexAttribNormalized(x: type) comptime_int {
-        return switch (x) {
-            f32 => gl.FALSE,
-            Vec2 => gl.FALSE,
-            Color => gl.TRUE,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
 };
 
 const ArbitraryShapeRenderer = struct {
-    const program_info: ProgramInfo = .{
-        .vertex =
-        \\uniform vec4 u_rect; // as top_left, size
-        \\uniform vec4 u_point; // as pos, turns, scale
-        \\
-        \\in vec2 a_position;
-        \\
-        \\void main() {
-        \\  float c = cos(u_point.z * 6.283185307179586);
-        \\  float s = sin(u_point.z * 6.283185307179586);
-        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
-        \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
-        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-        \\}
-        ,
-        .fragment =
-        \\precision highp float;
-        \\out vec4 out_color;
-        \\
-        \\uniform vec4 u_color;
-        \\void main() {
-        \\  out_color = u_color;
-        \\}
-        ,
-    };
-
-    program: c_uint,
-    vao: c_uint, // vertex array object: the draw call state, roughly
-    vbo: c_uint, // vertex buffer object: the vertex data itself
-    ebo: c_uint, // element buffer object: the triangle indices
-
-    color_uniform: c_int,
-    rect_uniform: c_int,
-    point_uniform: c_int,
-
     // TODO: cleaning
-    const VertexData = extern struct { position: Vec2 };
-    const IndexType = game.RenderQueue.PrecomputedShape.IndexType;
+    renderable: Renderable(
+        extern struct { position: Vec2 },
+        game.RenderQueue.PrecomputedShape.IndexType,
+        struct {
+            color: FColor,
+            rect: Rect,
+            point: Point,
+        },
+    ),
 
     pub fn init() !ArbitraryShapeRenderer {
-        // To keep things simple, this example doesn't check for shader compilation/linking errors.
-        // A more robust program would call 'GetProgram/Shaderiv' to check for errors.
-        const program = try program_info.load();
-
-        var vao: c_uint = undefined;
-        gl.GenVertexArrays(1, @ptrCast(&vao));
-
-        gl.BindVertexArray(vao);
-
-        var vbo: c_uint = undefined;
-        gl.GenBuffers(1, @ptrCast(&vbo));
-        var ebo: c_uint = undefined;
-        gl.GenBuffers(1, @ptrCast(&ebo));
-
-        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-        defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-
-        gl.BindBuffer(gl.ARRAY_BUFFER, vbo);
-        defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-        defer gl.BindVertexArray(0);
-
-        inline for (@typeInfo(VertexData).@"struct".fields) |field| {
-            const attrib: gl.uint = @intCast(gl.GetAttribLocation(program, "a_" ++ field.name));
-            gl.EnableVertexAttribArray(attrib);
-            gl.VertexAttribPointer(
-                attrib,
-                howManyElementsIn(field.type),
-                getVertexAttribType(field.type),
-                isVertexAttribNormalized(field.type),
-                @sizeOf(VertexData),
-                @offsetOf(VertexData, field.name),
-            );
-        }
-
-        const color_uniform = gl.GetUniformLocation(program, "u_color");
-        assert(color_uniform != -1);
-        const rect_uniform = gl.GetUniformLocation(program, "u_rect");
-        assert(rect_uniform != -1);
-        const point_uniform = gl.GetUniformLocation(program, "u_point");
-        assert(point_uniform != -1);
-
         return .{
-            .program = program,
-            .vao = vao,
-            .vbo = vbo,
-            .ebo = ebo,
-            .color_uniform = color_uniform,
-            .rect_uniform = rect_uniform,
-            .point_uniform = point_uniform,
+            .renderable = try .init(
+                \\uniform vec4 u_rect; // as top_left, size
+                \\uniform vec4 u_point; // as pos, turns, scale
+                \\
+                \\in vec2 a_position;
+                \\
+                \\void main() {
+                \\  float c = cos(u_point.z * 6.283185307179586);
+                \\  float s = sin(u_point.z * 6.283185307179586);
+                \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+                \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
+                \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+                \\}
+            ,
+                \\precision highp float;
+                \\out vec4 out_color;
+                \\
+                \\uniform vec4 u_color;
+                \\void main() {
+                \\  out_color = u_color;
+                \\}
+            ),
         };
     }
 
     pub fn deinit(self: *ArbitraryShapeRenderer) void {
-        defer gl.DeleteProgram(self.program);
-        defer gl.DeleteVertexArrays(1, @ptrCast(&self.vao));
-        defer gl.DeleteBuffers(1, @ptrCast(&self.vbo));
-        defer gl.DeleteBuffers(1, @ptrCast(&self.ebo));
+        self.renderable.deinit();
     }
 
     pub fn drawV2(
@@ -760,66 +739,14 @@ const ArbitraryShapeRenderer = struct {
         camera: Rect,
         parent: Point,
         positions: []const Vec2,
-        triangles: []const [3]IndexType,
+        triangles: []const [3]game.RenderQueue.PrecomputedShape.IndexType,
         color: Color,
     ) void {
-        const cpu_buffer: []const VertexData = @ptrCast(positions);
-
-        {
-            gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
-            gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * cpu_buffer.len), @ptrCast(cpu_buffer.ptr), gl.DYNAMIC_DRAW);
-            gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-        }
-
-        {
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
-            gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf([3]IndexType) * triangles.len), triangles.ptr, gl.DYNAMIC_DRAW);
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-        }
-
-        gl.BindVertexArray(self.vao);
-        defer gl.BindVertexArray(0);
-
-        gl.UseProgram(self.program);
-        defer gl.UseProgram(0);
-
-        const fcol = color.toFColor();
-        gl.Uniform4f(self.color_uniform, fcol.r, fcol.g, fcol.b, fcol.a);
-
-        gl.Uniform4f(self.rect_uniform, camera.top_left.x, camera.top_left.y, camera.size.y, camera.size.y);
-        gl.Uniform4f(self.point_uniform, parent.pos.x, parent.pos.y, parent.turns, parent.scale);
-
-        gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (IndexType) {
-            u16 => gl.UNSIGNED_SHORT,
-            else => @compileError("not implemented"),
-        }, 0);
-    }
-
-    fn getVertexAttribType(x: type) comptime_int {
-        return switch (x) {
-            f32 => gl.FLOAT,
-            Vec2 => gl.FLOAT,
-            Color => gl.UNSIGNED_BYTE,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn howManyElementsIn(x: type) comptime_int {
-        return switch (x) {
-            f32 => 1,
-            Vec2 => 2,
-            Color => 4,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn isVertexAttribNormalized(x: type) comptime_int {
-        return switch (x) {
-            f32 => gl.FALSE,
-            Vec2 => gl.FALSE,
-            Color => gl.TRUE,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
+        self.renderable.draw(@ptrCast(positions), triangles, .{
+            .color = color.toFColor(),
+            .rect = camera,
+            .point = parent,
+        }, null);
     }
 };
 
@@ -1079,6 +1006,7 @@ const math = kommon.math;
 const Vec2 = math.Vec2;
 const UVec2 = math.UVec2;
 const Color = math.Color;
+const FColor = math.FColor;
 const Camera = math.Camera;
 const Point = math.Point;
 const Rect = math.Rect;
