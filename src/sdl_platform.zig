@@ -89,6 +89,8 @@ const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
 var loops: std.EnumArray(Loops, Loop) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
+const Renderables = std.meta.FieldEnum(@TypeOf(game.renderables));
+
 var gl_procs: gl.ProcTable = undefined;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -216,9 +218,23 @@ pub fn main() !void {
 
     try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));
 
-    // TODO: could these be on the game layer?
-    var shape_renderer: ArbitraryShapeRenderer = try .init();
-    defer shape_renderer.deinit();
+    // TODO: use comptime magic
+    var renderables = blk: {
+        const fill_shape = game.renderables.fill_shape;
+        break :blk .{
+            .fill_shape = try Renderable(
+                fill_shape.VertexData,
+                fill_shape.IndexType,
+                fill_shape.UniformTypes,
+            ).init(
+                fill_shape.vertex,
+                fill_shape.fragment,
+            ),
+        };
+    };
+    defer renderables.fill_shape.deinit();
+
+    // TODO: move to the game layer
     var text_renderer: TextRenderer = try .init(gpa, gpa);
     defer text_renderer.deinit();
 
@@ -336,7 +352,7 @@ pub fn main() !void {
             defer sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
             var it = sdl_platform.render_queue.pending_commands.constIterator(0);
             // TODO: don't use gpa as the scratch allocator
-            while (it.next()) |cmd| try render(shape_renderer, text_renderer, cmd.*, gpa);
+            while (it.next()) |cmd| try render(renderables, text_renderer, cmd.*, gpa);
 
             try errify(c.SDL_GL_SwapWindow(sdl_window));
         }
@@ -704,37 +720,6 @@ const ArbitraryShapeRenderer = struct {
         },
     ),
 
-    pub fn init() !ArbitraryShapeRenderer {
-        return .{
-            .renderable = try .init(
-                \\uniform vec4 u_rect; // as top_left, size
-                \\uniform vec4 u_point; // as pos, turns, scale
-                \\
-                \\in vec2 a_position;
-                \\
-                \\void main() {
-                \\  float c = cos(u_point.z * 6.283185307179586);
-                \\  float s = sin(u_point.z * 6.283185307179586);
-                \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
-                \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
-                \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-                \\}
-            ,
-                \\precision highp float;
-                \\out vec4 out_color;
-                \\
-                \\uniform vec4 u_color;
-                \\void main() {
-                \\  out_color = u_color;
-                \\}
-            ),
-        };
-    }
-
-    pub fn deinit(self: *ArbitraryShapeRenderer) void {
-        self.renderable.deinit();
-    }
-
     pub fn drawV2(
         self: ArbitraryShapeRenderer,
         camera: Rect,
@@ -751,7 +736,7 @@ const ArbitraryShapeRenderer = struct {
     }
 };
 
-fn render(asdf_renderer: ArbitraryShapeRenderer, text_renderer: TextRenderer, cmd: game.RenderQueue.Command, scratch: std.mem.Allocator) !void {
+fn render(renderables: anytype, text_renderer: TextRenderer, cmd: game.RenderQueue.Command, scratch: std.mem.Allocator) !void {
     switch (cmd) {
         .clear => |color| {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toFColor().toArray());
@@ -764,13 +749,11 @@ fn render(asdf_renderer: ArbitraryShapeRenderer, text_renderer: TextRenderer, cm
                 const indices = try Triangulator.triangulate(IndexType, scratch, shape.local_points);
                 defer scratch.free(indices);
 
-                asdf_renderer.drawV2(
-                    shape.camera,
-                    shape.parent_world_point,
-                    shape.local_points,
-                    indices,
-                    color,
-                );
+                renderables.fill_shape.draw(@ptrCast(shape.local_points), indices, .{
+                    .color = color.toFColor(),
+                    .rect = shape.camera,
+                    .point = shape.parent_world_point,
+                }, null);
             }
 
             if (shape.stroke) |color| {
@@ -788,13 +771,11 @@ fn render(asdf_renderer: ArbitraryShapeRenderer, text_renderer: TextRenderer, cm
             }
         },
         .precomputed_shape => |shape| {
-            asdf_renderer.drawV2(
-                shape.camera,
-                shape.parent_world_point,
-                shape.data.local_points,
-                shape.data.triangles,
-                shape.fill,
-            );
+            renderables.fill_shape.draw(@ptrCast(shape.data.local_points), shape.data.triangles, .{
+                .color = shape.fill.toFColor(),
+                .rect = shape.camera,
+                .point = shape.parent_world_point,
+            }, null);
         },
         .text => |text| {
             text_renderer.drawText(text.camera, text.bottom_left, text.line, text.em);

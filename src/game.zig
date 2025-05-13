@@ -20,6 +20,41 @@ pub const loops = .{
     .music = "sounds/music.wav",
 };
 
+pub const renderables = .{
+    .fill_shape = .{
+        .VertexData = extern struct { position: Vec2 },
+        .IndexType = u16,
+        .UniformTypes = struct {
+            color: FColor,
+            rect: Rect,
+            point: Point,
+        },
+        .vertex =
+        \\uniform vec4 u_rect; // as top_left, size
+        \\uniform vec4 u_point; // as pos, turns, scale
+        \\
+        \\in vec2 a_position;
+        \\#define TAU 6.283185307179586
+        \\void main() {
+        \\  float c = cos(u_point.z * TAU);
+        \\  float s = sin(u_point.z * TAU);
+        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+        \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
+        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+        \\}
+        ,
+        .fragment =
+        \\precision highp float;
+        \\out vec4 out_color;
+        \\
+        \\uniform vec4 u_color;
+        \\void main() {
+        \\  out_color = u_color;
+        \\}
+        ,
+    },
+};
+
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     render_queue: *RenderQueue,
@@ -468,6 +503,7 @@ const assert = std.debug.assert;
 const kommon = @import("kommon");
 const math = kommon.math;
 const Color = math.Color;
+const FColor = math.FColor;
 const Camera = math.Camera;
 const Rect = math.Rect;
 const Point = math.Point;
