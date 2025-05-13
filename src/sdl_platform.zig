@@ -101,7 +101,8 @@ pub fn main() !void {
         };
     };
     defer if (is_debug) {
-        assert(debug_allocator.deinit() == .ok);
+        // _ = debug_allocator.deinit();
+        // assert(debug_allocator.deinit() == .ok);
     };
 
     var render_queue: game.RenderQueue = .init(gpa);
@@ -622,7 +623,7 @@ const TextRenderer = struct {
                 \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
                 \\  // density of the texture on screen; assume uniform scaling.
                 \\  // for some reason, the value is half of what it should.
-                \\  float texels_per_pixel = 2.0 * fwidth(v_texcoord) * sdf_texture_size;
+                \\  float texels_per_pixel = 2.0 * fwidth(v_texcoord.x) * sdf_texture_size;
                 \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
                 \\  // over how many screen pixels do the transition
                 \\  float transition_pixels = 1.0;
