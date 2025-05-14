@@ -70,6 +70,7 @@ const js = struct {
 
         pub const better = struct {
             pub fn buildShader(src: []const u8, kind: ShaderType) !Shader {
+                assert(std.mem.startsWith(u8, src, "#version 300 es"));
                 const shader = webgl2.createShader(kind);
                 errdefer webgl2.deleteShader(shader);
                 webgl2.shaderSource(shader, src.ptr, src.len);
@@ -112,7 +113,7 @@ const js = struct {
                 return @intCast(location);
             }
 
-            pub fn getUniformLocation(program: Program, name: []const u8) UniformLocation {
+            pub fn getUniformLocation(program: Program, name: []const u8) !UniformLocation {
                 // TODO: check that the name exists
                 return webgl2.getUniformLocation(program, name.ptr, name.len);
             }
@@ -137,7 +138,7 @@ const js = struct {
         const GLclampf = f32;
         const GLint64 = u64;
 
-        const GLObject = u16;
+        const GLObject = c_uint;
         const Shader = enum(GLObject) { _ };
         const Program = enum(GLObject) { null = 0, _ };
         const VertexArrayObject = enum(GLObject) { null = 0, _ };
@@ -301,8 +302,6 @@ var my_game: if (@import("build_options").hot_reloadable) *game.GameState else g
 const gpa = std.heap.wasm_allocator;
 var render_queue: game.RenderQueue = .init(gpa);
 
-var asdf_renderer: ArbitraryShapeRenderer = undefined;
-
 var web_platform: PlatformGives = .{
     .gpa = gpa,
     .render_queue = &render_queue,
@@ -323,46 +322,17 @@ var web_platform: PlatformGives = .{
     .global_seconds = 0,
     .sound_queue = &sound_queue,
     .loop_volumes = &loop_volumes,
+    .gl = web_gl.vtable,
 };
 
+// TODO: delete this method
 fn render(cmd: game.RenderQueue.Command) !void {
     switch (cmd) {
-        .clear => |color| {
-            const fcolor = color.toFColor();
-            js.webgl2.clearColor(fcolor.r, fcolor.g, fcolor.b, fcolor.a);
-            js.webgl2.clear();
-        },
-        .shape => |shape| {
-            // TODO: cache triangulation
-            if (shape.fill) |color| {
-                // TODO: use another allocator
-                const IndexType = u16;
-                const indices = try Triangulator.triangulate(IndexType, gpa, shape.local_points);
-                defer gpa.free(indices);
-                assert(shape.local_points.len >= 3);
-
-                asdf_renderer.drawV2(
-                    shape.camera,
-                    shape.parent_world_point,
-                    shape.local_points,
-                    indices,
-                    color,
-                );
-            }
-
-            if (shape.stroke) |color| {
-                _ = color;
-                @panic("TODO");
-            }
-        },
-        .precomputed_shape => |shape| {
-            asdf_renderer.drawV2(
-                shape.camera,
-                shape.parent_world_point,
-                shape.data.local_points,
-                shape.data.triangles,
-                shape.fill,
-            );
+        .clear => unreachable,
+        .shape => unreachable,
+        .precomputed_shape => unreachable,
+        .text => {
+            // TODO
         },
     }
 }
@@ -375,15 +345,176 @@ const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
 var loop_ids: std.EnumArray(Loops, usize) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
+const web_gl = struct {
+    pub const vtable: game.Gl = .{
+        .clear = clear,
+        .buildRenderable = buildRenderable,
+        .useRenderable = useRenderable,
+    };
+
+    pub fn clear(color: FColor) void {
+        js.webgl2.clearColor(color.r, color.g, color.b, color.a);
+        js.webgl2.clear();
+    }
+
+    pub fn buildRenderable(
+        vertex_src: [:0]const u8,
+        fragment_src: [:0]const u8,
+        attributes: []const game.Gl.VertexInfo.In,
+        uniforms: []const game.Gl.UniformInfo.In,
+    ) !game.Gl.Renderable {
+        const program = try js.webgl2.better.buildProgram(
+            vertex_src,
+            fragment_src,
+        );
+
+        const vao = js.webgl2.createVertexArray();
+        js.webgl2.bindVertexArray(vao);
+
+        const vbo = js.webgl2.createBuffer();
+        const ebo = js.webgl2.createBuffer();
+
+        js.webgl2.bindBuffer(.ARRAY_BUFFER, vbo);
+        defer js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
+
+        js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, ebo);
+        defer js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
+
+        defer js.webgl2.bindVertexArray(.null);
+
+        for (attributes) |attribute| {
+            const attrib = try js.webgl2.better.getAttribLocation(program, attribute.name);
+            js.webgl2.enableVertexAttribArray(attrib);
+            // TODO NOW
+            const VertexData = extern struct { a_position: Vec2 };
+            const T = Vec2;
+            js.webgl2.vertexAttribPointer(
+                attrib,
+                howManyElementsIn(T),
+                getVertexAttribType(T),
+                isVertexAttribNormalized(T),
+                @sizeOf(VertexData),
+                @offsetOf(VertexData, "a_position"),
+            );
+        }
+
+        var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+        for (uniforms) |uniform| {
+            const location = try js.webgl2.better.getUniformLocation(program, uniform.name);
+            uniforms_data.append(.{
+                .location = @intCast(@intFromEnum(location)),
+                .name = uniform.name,
+                .kind = uniform.kind,
+            }) catch return error.TooManyUniforms;
+        }
+
+        return .{
+            .program = @enumFromInt(@intFromEnum(program)),
+            .vao = @enumFromInt(@intFromEnum(vao)),
+            .vbo = @enumFromInt(@intFromEnum(vbo)),
+            .ebo = @enumFromInt(@intFromEnum(ebo)),
+            .uniforms = uniforms_data,
+        };
+    }
+
+    pub fn useRenderable(
+        renderable: game.Gl.Renderable,
+        vertices_ptr: *const anyopaque,
+        vertices_len: usize,
+        // vertices: []const anyopaque,
+        // TODO: make triangles optional, since they could be precomputed
+        triangles: []const [3]game.Gl.IndexType,
+        uniforms: []const game.Gl.UniformInfo.Runtime,
+        // TODO: textures, multiple textures
+    ) void {
+        {
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo)));
+            js.webgl2.bufferData(
+                .ARRAY_BUFFER,
+                @ptrCast(vertices_ptr),
+                @intCast(renderable.sizeOfVertex() * vertices_len),
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
+        }
+
+        {
+            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.ebo)));
+            js.webgl2.bufferData(
+                .ELEMENT_ARRAY_BUFFER,
+                @ptrCast(triangles.ptr),
+                @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
+        }
+
+        // if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t);
+        // defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
+
+        js.webgl2.bindVertexArray(@enumFromInt(@intFromEnum(renderable.vao)));
+        defer js.webgl2.bindVertexArray(.null);
+
+        js.webgl2.useProgram(@enumFromInt(@intFromEnum(renderable.program)));
+        defer js.webgl2.useProgram(.null);
+
+        for (uniforms) |uniform| {
+            // const u = uniform.location;
+            // TODO
+            const u: js.webgl2.UniformLocation = @enumFromInt(blk: {
+                for (renderable.uniforms.slice()) |u| {
+                    if (std.mem.eql(u8, u.name, uniform.name)) break :blk u.location;
+                } else unreachable;
+            });
+            switch (uniform.value) {
+                .FColor => |v| js.webgl2.uniform4f(u, v.r, v.g, v.b, v.a),
+                .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
+                .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
+            }
+        }
+
+        js.webgl2.drawElements(.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+            u16 => .UNSIGNED_SHORT,
+            else => @compileError("not implemented"),
+        }, 0);
+    }
+
+    // TODO: move these elsewhere
+    fn getVertexAttribType(x: type) js.webgl2.VertexDataType {
+        return switch (x) {
+            f32 => .FLOAT,
+            Vec2 => .FLOAT,
+            Color => .UNSIGNED_BYTE,
+            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+        };
+    }
+
+    fn howManyElementsIn(x: type) comptime_int {
+        return switch (x) {
+            f32 => 1,
+            Vec2 => 2,
+            Color => 4,
+            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+        };
+    }
+
+    fn isVertexAttribNormalized(x: type) js.webgl2.GLboolean {
+        return switch (x) {
+            f32 => false,
+            Vec2 => false,
+            Color => true,
+            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
+        };
+    }
+};
+
 export fn init() void {
     if (@import("build_options").hot_reloadable) {
         my_game = gpa.create(game.GameState) catch unreachable;
-        my_game.* = game.GameState.init(gpa) catch unreachable;
+        my_game.* = game.GameState.init(gpa, web_platform.gl) catch unreachable;
     } else {
-        my_game = game.GameState.init(gpa) catch unreachable;
+        my_game = game.GameState.init(gpa, web_platform.gl) catch unreachable;
     }
-
-    asdf_renderer = ArbitraryShapeRenderer.init() catch unreachable;
 
     inline for (comptime std.enums.values(Sounds)) |sound| {
         const path = @field(game.sounds, @tagName(sound));
@@ -527,195 +658,10 @@ const math = kommon.math;
 const Vec2 = math.Vec2;
 const UVec2 = math.UVec2;
 const Color = math.Color;
+const FColor = math.FColor;
 const Camera = math.Camera;
 const Point = math.Point;
 const Rect = math.Rect;
-const Triangulator = kommon.Triangulator;
 const Mouse = game.Mouse;
 const Keyboard = game.Keyboard;
 const KeyboardButton = game.KeyboardButton;
-
-// TODO: remove this
-pub const ProgramInfo = struct {
-    // TODO: remove
-    preamble: [:0]const u8 =
-        \\#version 300 es
-        \\
-    ,
-    vertex: [:0]const u8,
-    fragment: [:0]const u8,
-};
-
-// TODO: remove duplication
-const ArbitraryShapeRenderer = struct {
-    const program_info: ProgramInfo = .{
-        .vertex =
-        \\uniform vec4 u_rect; // as top_left, size
-        \\uniform vec4 u_point; // as pos, turns, scale
-        \\
-        \\in vec2 a_position;
-        \\
-        \\void main() {
-        \\  float c = cos(u_point.z * 6.283185307179586);
-        \\  float s = sin(u_point.z * 6.283185307179586);
-        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
-        \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
-        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-        \\}
-        ,
-        .fragment =
-        \\precision highp float;
-        \\out vec4 out_color;
-        \\
-        \\uniform vec4 u_color;
-        \\void main() {
-        \\  out_color = u_color;
-        \\}
-        ,
-    };
-
-    program: js.webgl2.Program,
-    vao: js.webgl2.VertexArrayObject, // vertex array object: the draw call state, roughly
-    vbo: js.webgl2.Buffer, // vertex buffer object: the vertex data itself
-    ebo: js.webgl2.Buffer, // element buffer object: the triangle indices
-
-    color_uniform: js.webgl2.UniformLocation,
-    rect_uniform: js.webgl2.UniformLocation,
-    point_uniform: js.webgl2.UniformLocation,
-
-    // TODO: cleaning
-    const VertexData = extern struct { position: Vec2 };
-    const IndexType = game.RenderQueue.PrecomputedShape.IndexType;
-
-    pub fn init() !ArbitraryShapeRenderer {
-        const program = try js.webgl2.better.buildProgram(
-            program_info.preamble ++ program_info.vertex,
-            program_info.preamble ++ program_info.fragment,
-        );
-
-        const vao = js.webgl2.createVertexArray();
-        js.webgl2.bindVertexArray(vao);
-
-        const vbo = js.webgl2.createBuffer();
-        const ebo = js.webgl2.createBuffer();
-
-        js.webgl2.bindBuffer(.ARRAY_BUFFER, vbo);
-        defer js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
-
-        js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, ebo);
-        defer js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
-
-        defer js.webgl2.bindVertexArray(.null);
-
-        inline for (@typeInfo(VertexData).@"struct".fields) |field| {
-            const attrib = try js.webgl2.better.getAttribLocation(program, "a_" ++ "position");
-            js.webgl2.enableVertexAttribArray(attrib);
-            js.webgl2.vertexAttribPointer(
-                attrib,
-                howManyElementsIn(field.type),
-                getVertexAttribType(field.type),
-                isVertexAttribNormalized(field.type),
-                @sizeOf(VertexData),
-                @offsetOf(VertexData, field.name),
-            );
-        }
-
-        const color_uniform = js.webgl2.better.getUniformLocation(program, "u_color");
-        const rect_uniform = js.webgl2.better.getUniformLocation(program, "u_rect");
-        const point_uniform = js.webgl2.better.getUniformLocation(program, "u_point");
-
-        return .{
-            .program = program,
-            .vao = vao,
-            .vbo = vbo,
-            .ebo = ebo,
-            .color_uniform = color_uniform,
-            .rect_uniform = rect_uniform,
-            .point_uniform = point_uniform,
-        };
-    }
-
-    pub fn deinit(self: *ArbitraryShapeRenderer) void {
-        defer js.webgl2.deleteProgram(self.program);
-        defer js.webgl2.deleteVertexArray(self.vao);
-        defer js.webgl2.deleteBuffer(self.vbo);
-        defer js.webgl2.deleteBuffer(self.ebo);
-    }
-
-    pub fn drawV2(
-        self: ArbitraryShapeRenderer,
-        camera: Rect,
-        parent: Point,
-        positions: []const Vec2,
-        triangles: []const [3]IndexType,
-        color: Color,
-    ) void {
-        const cpu_buffer: []const VertexData = @ptrCast(positions);
-
-        {
-            js.webgl2.bindBuffer(.ARRAY_BUFFER, self.vbo);
-            js.webgl2.bufferData(
-                .ARRAY_BUFFER,
-                @ptrCast(cpu_buffer.ptr),
-                @sizeOf(VertexData) * cpu_buffer.len,
-                .DYNAMIC_DRAW,
-            );
-            js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
-        }
-
-        {
-            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, self.ebo);
-            js.webgl2.bufferData(
-                .ELEMENT_ARRAY_BUFFER,
-                @ptrCast(triangles.ptr),
-                @sizeOf([3]IndexType) * triangles.len,
-                .DYNAMIC_DRAW,
-            );
-            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
-        }
-
-        js.webgl2.bindVertexArray(self.vao);
-        defer js.webgl2.bindVertexArray(.null);
-
-        js.webgl2.useProgram(self.program);
-        defer js.webgl2.useProgram(.null);
-
-        const fcol = color.toFColor();
-        js.webgl2.uniform4f(self.color_uniform, fcol.r, fcol.g, fcol.b, fcol.a);
-
-        js.webgl2.uniform4f(self.rect_uniform, camera.top_left.x, camera.top_left.y, camera.size.y, camera.size.y);
-        js.webgl2.uniform4f(self.point_uniform, parent.pos.x, parent.pos.y, parent.turns, parent.scale);
-
-        js.webgl2.drawElements(.TRIANGLES, @intCast(3 * triangles.len), switch (IndexType) {
-            u16 => .UNSIGNED_SHORT,
-            else => @compileError("not implemented"),
-        }, 0);
-    }
-
-    fn getVertexAttribType(x: type) js.webgl2.VertexDataType {
-        return switch (x) {
-            f32 => .FLOAT,
-            Vec2 => .FLOAT,
-            Color => .UNSIGNED_BYTE,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn howManyElementsIn(x: type) comptime_int {
-        return switch (x) {
-            f32 => 1,
-            Vec2 => 2,
-            Color => 4,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn isVertexAttribNormalized(x: type) js.webgl2.GLboolean {
-        return switch (x) {
-            f32 => false,
-            Vec2 => false,
-            Color => true,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-};

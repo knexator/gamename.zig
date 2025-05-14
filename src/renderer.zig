@@ -1,3 +1,11 @@
+pub const RenderableInfo = struct {
+    VertexData: type,
+    IndexType: type,
+    UniformTypes: type,
+    vertex: [:0]const u8,
+    fragment: [:0]const u8,
+};
+
 pub const RenderQueue = struct {
     arena: std.heap.ArenaAllocator,
     pending_commands: std.SegmentedList(Command, 32),
@@ -12,7 +20,8 @@ pub const RenderQueue = struct {
             std.debug.assert(points.len >= 3);
             const triangles = try Triangulator.triangulate(IndexType, gpa, points);
             return .{
-                .local_points = points,
+                // TODO: clarify ownership
+                .local_points = try gpa.dupe(Vec2, points),
                 .triangles = triangles,
             };
         }
@@ -85,6 +94,7 @@ const std = @import("std");
 const kommon = @import("kommon");
 const math = kommon.math;
 const Color = math.Color;
+const FColor = math.FColor;
 const Camera = math.Camera;
 const Rect = math.Rect;
 const Point = math.Point;

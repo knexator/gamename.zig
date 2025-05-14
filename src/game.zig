@@ -20,39 +20,45 @@ pub const loops = .{
     .music = "sounds/music.wav",
 };
 
-pub const renderables = .{
-    .fill_shape = .{
-        .VertexData = extern struct { position: Vec2 },
-        .IndexType = u16,
-        .UniformTypes = struct {
-            color: FColor,
-            rect: Rect,
-            point: Point,
-        },
-        .vertex =
-        \\uniform vec4 u_rect; // as top_left, size
-        \\uniform vec4 u_point; // as pos, turns, scale
-        \\
-        \\in vec2 a_position;
-        \\#define TAU 6.283185307179586
-        \\void main() {
-        \\  float c = cos(u_point.z * TAU);
-        \\  float s = sin(u_point.z * TAU);
-        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
-        \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
-        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-        \\}
-        ,
-        .fragment =
-        \\precision highp float;
-        \\out vec4 out_color;
-        \\
-        \\uniform vec4 u_color;
-        \\void main() {
-        \\  out_color = u_color;
-        \\}
-        ,
+const fill_shape_info: RenderableInfo = .{
+    .VertexData = extern struct { position: Vec2 },
+    .IndexType = u16,
+    .UniformTypes = struct {
+        color: FColor,
+        rect: Rect,
+        point: Point,
     },
+    .vertex =
+    \\#version 300 es
+    \\
+    \\uniform vec4 u_rect; // as top_left, size
+    \\uniform vec4 u_point; // as pos, turns, scale
+    \\
+    \\in vec2 a_position;
+    \\#define TAU 6.283185307179586
+    \\void main() {
+    \\  float c = cos(u_point.z * TAU);
+    \\  float s = sin(u_point.z * TAU);
+    \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+    \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
+    \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+    \\}
+    ,
+    .fragment =
+    \\#version 300 es
+    \\
+    \\precision highp float;
+    \\out vec4 out_color;
+    \\
+    \\uniform vec4 u_color;
+    \\void main() {
+    \\  out_color = u_color;
+    \\}
+    ,
+};
+
+pub const renderables = .{
+    .fill_shape = fill_shape_info,
 };
 
 pub const PlatformGives = struct {
@@ -66,6 +72,7 @@ pub const PlatformGives = struct {
     global_seconds: f32,
     sound_queue: *std.EnumSet(std.meta.FieldEnum(@TypeOf(sounds))),
     loop_volumes: *std.EnumArray(std.meta.FieldEnum(@TypeOf(loops)), f32),
+    gl: Gl,
 };
 
 pub const GameState = struct {
@@ -122,10 +129,12 @@ pub const GameState = struct {
         circle: RenderQueue.PrecomputedShape,
     },
 
+    fill_shape: Gl.Renderable,
+
     const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
     const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
 
-    pub fn init(gpa: std.mem.Allocator) !GameState {
+    pub fn init(gpa: std.mem.Allocator, gl: Gl) !GameState {
         // TODO: get random seed as param?
         var result: GameState = .{
             .rnd_instance = .init(0),
@@ -138,6 +147,18 @@ pub const GameState = struct {
                     ),
                 )),
             },
+            .fill_shape = try gl.buildRenderable(
+                fill_shape_info.vertex,
+                fill_shape_info.fragment,
+                &.{
+                    .{ .name = "a_position" },
+                },
+                &.{
+                    .{ .name = "u_rect", .kind = .Rect },
+                    .{ .name = "u_point", .kind = .Point },
+                    .{ .name = "u_color", .kind = .FColor },
+                },
+            ),
         };
         result.restart();
         return result;
@@ -289,7 +310,7 @@ pub const GameState = struct {
             }
         }
 
-        try platform.render_queue.clear(COLORS.BACKGROUND);
+        platform.gl.clear(COLORS.BACKGROUND.toFColor());
 
         const cur_shake_mag = self.cur_screen_shake.actual_mag * (1.0 + @cos(platform.global_seconds * 0.25) * 0.25) / 32.0;
         const cur_shake_phase = self.cam_noise.genNoise2D(platform.global_seconds * 100, 0);
@@ -304,9 +325,12 @@ pub const GameState = struct {
         }).withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         const renderer: Renderer = .{
-            .render_queue = platform.render_queue,
+            // TODO
+            .scratch = platform.gpa,
             .camera = camera,
             .SHAPES = &self.SHAPES,
+            .gl = platform.gl,
+            .fill_shape = self.fill_shape,
         };
 
         const screen_center = BOARD_SIZE.tof32().scale(0.5);
@@ -346,14 +370,14 @@ pub const GameState = struct {
 
             try renderer.fillCrown(screen_center, half_side - 1.5, 1.5, clock_color);
 
-            try platform.render_queue.drawShape(camera, .{
+            try renderer.fillShape(.{
                 .pos = screen_center,
                 .turns = math.lerp(-0.75 + danger_size, 0.25 - danger_size, t),
             }, &.{
                 .new(0, -1),
                 .new(half_side - 3, 0),
                 .new(0, 1),
-            }, null, clock_color);
+            }, clock_color);
 
             try renderer.fillCircle(screen_center, 1.5, clock_color);
         }
@@ -388,6 +412,7 @@ pub const GameState = struct {
 
         switch (self.state) {
             .waiting => {
+                // TODO: move text drawing to the game layer
                 try platform.render_queue.pending_commands.append(
                     platform.render_queue.arena.allocator(),
                     .{
@@ -409,29 +434,51 @@ pub const GameState = struct {
 };
 
 const Renderer = struct {
-    render_queue: *RenderQueue,
     camera: Rect,
     SHAPES: *const @FieldType(GameState, "SHAPES"),
+    gl: Gl,
+    fill_shape: Gl.Renderable,
+    scratch: std.mem.Allocator,
 
     const CIRCLE_RESOLUTION = 128;
 
     fn fillRect(self: Renderer, rect: Rect, color: Color) !void {
-        try self.render_queue.drawShape(self.camera, .{
-            .pos = rect.top_left,
-        }, &.{
+        self.gl.useRenderable(self.fill_shape, &[4]Vec2{
             .new(0, 0),
             .new(rect.size.x, 0),
-            .new(rect.size.x, rect.size.y),
             .new(0, rect.size.y),
-        }, null, color);
+            .new(rect.size.x, rect.size.y),
+        }, 4, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, &.{
+            .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
+            .{ .name = "u_point", .value = .{ .Point = .{ .pos = rect.top_left } } },
+            .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
+        });
     }
 
     fn fillTile(self: Renderer, pos: IVec2, color: Color) !void {
         try self.fillRect(.{ .top_left = pos.tof32(), .size = .one }, color);
     }
 
+    fn fillShape(
+        self: Renderer,
+        parent: Point,
+        local_points: []const Vec2,
+        color: Color,
+    ) !void {
+        // TODO: cache triangulation
+        assert(local_points.len >= 3);
+        const indices = try Triangulator.triangulate(Gl.IndexType, self.scratch, local_points);
+        defer self.scratch.free(indices);
+
+        self.gl.useRenderable(self.fill_shape, local_points.ptr, local_points.len, indices, &.{
+            .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
+            .{ .name = "u_point", .value = .{ .Point = parent } },
+            .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
+        });
+    }
+
     fn fillArc(self: Renderer, center: Vec2, radius: f32, turns_start: f32, turns_end: f32, color: Color) !void {
-        try self.render_queue.drawShape(self.camera, .{
+        try self.fillShape(.{
             .pos = center,
             .scale = radius,
             .turns = turns_start,
@@ -440,26 +487,25 @@ const Renderer = struct {
             pub fn anon(n: usize, angle_delta: f32) Vec2 {
                 return Vec2.fromTurns(angle_delta * math.tof32(n) / math.tof32(CIRCLE_RESOLUTION));
             }
-        }.anon, turns_end - turns_start) ++ [1]Vec2{.zero}), null, color);
+        }.anon, turns_end - turns_start) ++ [1]Vec2{.zero}), color);
     }
 
     fn fillCircle(self: Renderer, center: Vec2, radius: f32, color: Color) !void {
-        try self.render_queue.pending_commands.append(self.render_queue.arena.allocator(), .{
-            .precomputed_shape = .{
-                .camera = self.camera,
-                .parent_world_point = .{ .pos = center, .scale = radius },
-                .data = &self.SHAPES.circle,
-                .fill = color,
+        self.gl.useRenderable(
+            self.fill_shape,
+            self.SHAPES.circle.local_points.ptr,
+            self.SHAPES.circle.local_points.len,
+            self.SHAPES.circle.triangles,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
+                .{ .name = "u_point", .value = .{ .Point = .{ .pos = center, .scale = radius } } },
+                .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
             },
-        });
-        try self.render_queue.drawShape(self.camera, .{
-            .pos = center,
-            .scale = radius,
-        }, &funk.map(Vec2.fromTurns, &funk.linspace01(CIRCLE_RESOLUTION, false)), null, color);
+        );
     }
 
     fn fillCrown(self: Renderer, center: Vec2, radius: f32, width: f32, color: Color) !void {
-        try self.render_queue.drawShape(self.camera, .{
+        try self.fillShape(.{
             .pos = center,
         }, &(funk.mapWithCtx(
             Vec2.fromPolar,
@@ -470,7 +516,7 @@ const Renderer = struct {
                 Vec2.fromPolar,
                 &funk.linspace(0, 1, CIRCLE_RESOLUTION, true),
                 radius + width / 2,
-            )), null, color);
+            )), color);
     }
 };
 
@@ -482,9 +528,9 @@ pub const CApi = extern struct {
         return game.update(platform_gives.*) catch unreachable;
     }
 
-    fn _reload(dst: *GameState, gpa: *const std.mem.Allocator) callconv(.c) void {
+    fn _reload(dst: *GameState, gpa: *const std.mem.Allocator, gl: *const Gl) callconv(.c) void {
         dst.deinit(gpa.*);
-        dst.* = GameState.init(gpa.*) catch unreachable;
+        dst.* = GameState.init(gpa.*, gl.*) catch unreachable;
     }
 };
 
@@ -501,6 +547,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const kommon = @import("kommon");
+const Triangulator = kommon.Triangulator;
 const math = kommon.math;
 const Color = math.Color;
 const FColor = math.FColor;
@@ -517,3 +564,5 @@ pub const Mouse = kommon.input.Mouse;
 pub const Keyboard = kommon.input.Keyboard;
 pub const KeyboardButton = kommon.input.KeyboardButton;
 pub const RenderQueue = @import("renderer.zig").RenderQueue;
+pub const RenderableInfo = @import("renderer.zig").RenderableInfo;
+pub const Gl = @import("./Gl.zig");
