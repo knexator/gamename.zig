@@ -12,7 +12,7 @@ clear: *const fn (color: FColor) void,
 buildRenderable: *const fn (
     vertex_src: [:0]const u8,
     fragment_src: [:0]const u8,
-    attributes: []const VertexInfo.In,
+    attributes: VertexInfo.Collection,
     uniforms: []const UniformInfo.In,
 ) error{
     ShaderCreationError,
@@ -38,7 +38,87 @@ useRenderable: *const fn (
 
 pub const VertexInfo = struct {
     // TODO: kind
-    pub const In = struct { name: [:0]const u8 };
+    pub const In = struct {
+        name: [:0]const u8,
+        kind: Kind,
+        offset: ?usize = null,
+    };
+
+    pub const Collection = struct {
+        attribs: []const In,
+        stride: ?usize = null,
+
+        /// assuming packed
+        pub fn getStride(collection: Collection) usize {
+            if (collection.stride) |s| return s;
+            var result: usize = 0;
+            for (collection.attribs) |attr| {
+                result += attr.kind.byteCount();
+            }
+            return result;
+        }
+
+        /// assuming packed
+        pub fn getOffset(collection: Collection, k: usize) usize {
+            if (collection.attribs[k].offset) |o| return o;
+            var result: usize = 0;
+            for (0..k) |i| {
+                result += collection.attribs[i].kind.byteCount();
+            }
+            return result;
+        }
+    };
+
+    pub const Kind = enum {
+        Vec2,
+        FColor,
+
+        pub fn byteCount(kind: Kind) usize {
+            return switch (kind) {
+                .Vec2 => @sizeOf(Vec2),
+                .FColor => @sizeOf(FColor),
+            };
+        }
+
+        pub fn @"type"(kind: Kind) VertexDataType {
+            return switch (kind) {
+                .Vec2 => .FLOAT,
+                .FColor => .FLOAT,
+            };
+        }
+
+        pub fn count(kind: Kind) enum(c_int) {
+            @"1" = 1,
+            @"2" = 2,
+            @"3" = 3,
+            @"4" = 4,
+        } {
+            return switch (kind) {
+                .Vec2 => .@"2",
+                .FColor => .@"4",
+            };
+        }
+
+        pub fn normalized(kind: Kind) bool {
+            return switch (kind) {
+                .Vec2 => false,
+                .FColor => false,
+            };
+        }
+    };
+};
+
+pub const VertexDataType = enum(c_uint) {
+    BYTE = 0x1400,
+    UNSIGNED_BYTE = 0x1401,
+    SHORT = 0x1402,
+    UNSIGNED_SHORT = 0x1403,
+    INT = 0x1404,
+    UNSIGNED_INT = 0x1405,
+    FLOAT = 0x1406,
+    HALF_FLOAT = 0x140B,
+    INT_2_10_10_10_REV = 0x8D9F,
+    UNSIGNED_INT_2_10_10_10_REV = 0x8368,
 };
 
 pub const UniformInfo = struct {

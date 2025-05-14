@@ -150,9 +150,9 @@ pub const GameState = struct {
             .fill_shape = try gl.buildRenderable(
                 fill_shape_info.vertex,
                 fill_shape_info.fragment,
-                &.{
-                    .{ .name = "a_position" },
-                },
+                .{ .attribs = &.{
+                    .{ .name = "a_position", .kind = .Vec2 },
+                } },
                 &.{
                     .{ .name = "u_rect", .kind = .Rect },
                     .{ .name = "u_point", .kind = .Point },

@@ -141,7 +141,9 @@ pub fn main() !void {
         game.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
-        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+        // TODO NOW
+        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (false) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+        // c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
     ));
     defer c.SDL_DestroyWindow(sdl_window);
 
@@ -209,7 +211,7 @@ pub fn main() !void {
         pub fn buildRenderable(
             vertex_src: [:0]const u8,
             fragment_src: [:0]const u8,
-            attributes: []const game.Gl.VertexInfo.In,
+            attributes: game.Gl.VertexInfo.Collection,
             uniforms: []const game.Gl.UniformInfo.In,
         ) !game.Gl.Renderable {
             const program = try (ProgramInfo{
@@ -235,20 +237,18 @@ pub fn main() !void {
 
             defer gl.BindVertexArray(0);
 
-            for (attributes) |attribute| {
-                // TODO: error check
-                const attrib: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
-                gl.EnableVertexAttribArray(attrib);
-                // TODO NOW
-                const VertexData = extern struct { a_position: Vec2 };
-                const T = Vec2;
+            for (attributes.attribs, 0..) |attribute, k| {
+                const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
+                if (index == -1) return error.AttributeLocationError;
+                gl.EnableVertexAttribArray(index);
                 gl.VertexAttribPointer(
-                    attrib,
-                    howManyElementsIn(T),
-                    getVertexAttribType(T),
-                    isVertexAttribNormalized(T),
-                    @sizeOf(VertexData),
-                    @offsetOf(VertexData, "a_position"),
+                    index,
+                    @intFromEnum(attribute.kind.count()),
+                    @intFromEnum(attribute.kind.type()),
+                    if (attribute.kind.normalized()) gl.TRUE else gl.FALSE,
+                    // TODO: check in debugger if this is computed once
+                    @intCast(attributes.getStride()),
+                    attributes.getOffset(k),
                 );
             }
 
@@ -332,34 +332,6 @@ pub fn main() !void {
                 u16 => gl.UNSIGNED_SHORT,
                 else => @compileError("not implemented"),
             }, 0);
-        }
-
-        // TODO: move these to Gl
-        fn getVertexAttribType(x: type) comptime_int {
-            return switch (x) {
-                f32 => gl.FLOAT,
-                Vec2 => gl.FLOAT,
-                Color => gl.UNSIGNED_BYTE,
-                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-            };
-        }
-
-        fn howManyElementsIn(x: type) comptime_int {
-            return switch (x) {
-                f32 => 1,
-                Vec2 => 2,
-                Color => 4,
-                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-            };
-        }
-
-        fn isVertexAttribNormalized(x: type) comptime_int {
-            return switch (x) {
-                f32 => gl.FALSE,
-                Vec2 => gl.FALSE,
-                Color => gl.TRUE,
-                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-            };
         }
     };
 

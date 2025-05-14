@@ -107,9 +107,7 @@ const js = struct {
 
             pub fn getAttribLocation(program: Program, name: []const u8) !GLuint {
                 const location = webgl2.getAttribLocation(program, name.ptr, name.len);
-                if (location == -1) {
-                    return error.AttributeLocationError;
-                }
+                if (location == -1) return error.AttributeLocationError;
                 return @intCast(location);
             }
 
@@ -360,7 +358,7 @@ const web_gl = struct {
     pub fn buildRenderable(
         vertex_src: [:0]const u8,
         fragment_src: [:0]const u8,
-        attributes: []const game.Gl.VertexInfo.In,
+        attributes: game.Gl.VertexInfo.Collection,
         uniforms: []const game.Gl.UniformInfo.In,
     ) !game.Gl.Renderable {
         const program = try js.webgl2.better.buildProgram(
@@ -382,19 +380,17 @@ const web_gl = struct {
 
         defer js.webgl2.bindVertexArray(.null);
 
-        for (attributes) |attribute| {
-            const attrib = try js.webgl2.better.getAttribLocation(program, attribute.name);
-            js.webgl2.enableVertexAttribArray(attrib);
-            // TODO NOW
-            const VertexData = extern struct { a_position: Vec2 };
-            const T = Vec2;
+        for (attributes.attribs, 0..) |attribute, k| {
+            const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
+            js.webgl2.enableVertexAttribArray(index);
             js.webgl2.vertexAttribPointer(
-                attrib,
-                howManyElementsIn(T),
-                getVertexAttribType(T),
-                isVertexAttribNormalized(T),
-                @sizeOf(VertexData),
-                @offsetOf(VertexData, "a_position"),
+                index,
+                @intFromEnum(attribute.kind.count()),
+                @enumFromInt(@intFromEnum(attribute.kind.type())),
+                attribute.kind.normalized(),
+                // TODO: check in debugger if this is computed once
+                @intCast(attributes.getStride()),
+                @intCast(attributes.getOffset(k)),
             );
         }
 
@@ -477,34 +473,6 @@ const web_gl = struct {
             u16 => .UNSIGNED_SHORT,
             else => @compileError("not implemented"),
         }, 0);
-    }
-
-    // TODO: move these elsewhere
-    fn getVertexAttribType(x: type) js.webgl2.VertexDataType {
-        return switch (x) {
-            f32 => .FLOAT,
-            Vec2 => .FLOAT,
-            Color => .UNSIGNED_BYTE,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn howManyElementsIn(x: type) comptime_int {
-        return switch (x) {
-            f32 => 1,
-            Vec2 => 2,
-            Color => 4,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
-    }
-
-    fn isVertexAttribNormalized(x: type) js.webgl2.GLboolean {
-        return switch (x) {
-            f32 => false,
-            Vec2 => false,
-            Color => true,
-            else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-        };
     }
 };
 
