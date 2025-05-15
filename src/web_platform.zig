@@ -10,6 +10,10 @@ const js = struct {
         extern fn getHeight() u32;
     };
 
+    pub const images = struct {
+        extern fn preloadImage(url_ptr: [*]const u8, url_len: usize) usize;
+    };
+
     // current direction: closely matching the webgl2 API
     pub const webgl2 = struct {
         extern fn clearColor(r: f32, g: f32, b: f32, a: f32) void;
@@ -66,7 +70,25 @@ const js = struct {
         extern fn drawArrays(mode: DrawMode, first: GLint, count: GLsizei) void;
         extern fn drawElements(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr) void;
         extern fn uniform4f(location: UniformLocation, v0: f32, v1: f32, v2: f32, v3: f32) void;
+        // uniform1i
         // TODO: uniform[1234][uif][v]
+        extern fn createTexture() Texture;
+        extern fn deleteTexture(texture: Texture) void;
+        extern fn bindTexture(target: TextureBindPointGeneral, texture: Texture) void;
+        // texParameteri
+        // TODO: more variants
+        extern fn texImage2D_basic(
+            target: TextureBindPointSpecific,
+            level: GLint,
+            // TODO
+            internalformat: enum(GLenum) { RGBA = 0x1908, RGB = 0x1907 },
+            // TODO
+            format: enum(GLenum) { RGBA = 0x1908, RGB = 0x1907 },
+            type: enum(GLenum) { UNSIGNED_BYTE = 0x1401 },
+            /// index of a ImageData, HTMLImageElement, HTMLCanvasElement, HTMLVideoElement, or ImageBitmap.
+            pixels: usize,
+        ) void;
+        extern fn generateMipmap(target: TextureBindPointGeneral) void;
 
         pub const better = struct {
             pub fn buildShader(src: []const u8, kind: ShaderType) !Shader {
@@ -142,6 +164,7 @@ const js = struct {
         const VertexArrayObject = enum(GLObject) { null = 0, _ };
         const Buffer = enum(GLObject) { null = 0, _ };
         const UniformLocation = enum(GLObject) { _ };
+        const Texture = enum(GLObject) { null = 0, _ };
 
         pub const Capability = enum(GLenum) {
             BLEND = 0x0BE2,
@@ -245,6 +268,24 @@ const js = struct {
             TRIANGLE_STRIP = 0x0005,
             TRIANGLE_FAN = 0x0006,
         };
+
+        pub const TextureBindPointGeneral = enum(GLenum) {
+            TEXTURE_2D = 0x0DE1,
+            TEXTURE_CUBE_MAP = 0x8513,
+            TEXTURE_3D = 0x806F,
+            TEXTURE_2D_ARRAY = 0x8C1A,
+        };
+
+        pub const TextureBindPointSpecific = enum(GLenum) {
+            TEXTURE_2D = 0x0DE1,
+            // TODO: numbers
+            // TEXTURE_CUBE_MAP_POSITIVE_X = 0x0000,
+            // TEXTURE_CUBE_MAP_NEGATIVE_X = 0x0000,
+            // TEXTURE_CUBE_MAP_POSITIVE_Y = 0x0000,
+            // TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x0000,
+            // TEXTURE_CUBE_MAP_POSITIVE_Z = 0x0000,
+            // TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x0000,
+        };
     };
 
     pub const audio = struct {
@@ -273,6 +314,12 @@ const js_better = struct {
                 .top_left = .zero,
                 .size = getSize().tof32(),
             };
+        }
+    };
+
+    pub const images = struct {
+        pub fn preloadImage(url: []const u8) usize {
+            return js.images.preloadImage(url.ptr, url.len);
         }
     };
 
@@ -343,16 +390,43 @@ const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
 var loop_ids: std.EnumArray(Loops, usize) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
+// TODO: allow loading images during the game
+const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
+var preloaded_image_ids: std.EnumArray(PreloadedImages, usize) = .initUndefined();
+var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
+
 const web_gl = struct {
     pub const vtable: game.Gl = .{
         .clear = clear,
         .buildRenderable = buildRenderable,
         .useRenderable = useRenderable,
+        .buildTexture2D = buildTexture2D,
     };
 
     pub fn clear(color: FColor) void {
         js.webgl2.clearColor(color.r, color.g, color.b, color.a);
         js.webgl2.clear();
+    }
+
+    pub fn buildTexture2D(data: *const anyopaque) game.Gl.Texture {
+        const image_id: *const usize = @alignCast(@ptrCast(data));
+
+        // TODO
+        // const has_alpha = ...;
+
+        const texture = js.webgl2.createTexture();
+        js.webgl2.bindTexture(.TEXTURE_2D, texture);
+        js.webgl2.texImage2D_basic(
+            .TEXTURE_2D,
+            0,
+            .RGBA,
+            .RGBA,
+            .UNSIGNED_BYTE,
+            image_id.*,
+        );
+        js.webgl2.generateMipmap(.TEXTURE_2D);
+
+        return .{ .id = @intFromEnum(texture) };
     }
 
     pub fn buildRenderable(
@@ -421,7 +495,8 @@ const web_gl = struct {
         // TODO: make triangles optional, since they could be precomputed
         triangles: []const [3]game.Gl.IndexType,
         uniforms: []const game.Gl.UniformInfo.Runtime,
-        // TODO: textures, multiple textures
+        // TODO: multiple textures
+        texture: ?game.Gl.Texture,
     ) void {
         {
             js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo)));
@@ -445,8 +520,8 @@ const web_gl = struct {
             js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
         }
 
-        // if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t);
-        // defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
+        if (texture) |t| js.webgl2.bindTexture(.TEXTURE_2D, @enumFromInt(t.id));
+        defer if (texture) |_| js.webgl2.bindTexture(.TEXTURE_2D, .null);
 
         js.webgl2.bindVertexArray(@enumFromInt(@intFromEnum(renderable.vao)));
         defer js.webgl2.bindVertexArray(.null);
@@ -476,14 +551,7 @@ const web_gl = struct {
     }
 };
 
-export fn init() void {
-    if (@import("build_options").hot_reloadable) {
-        my_game = gpa.create(game.GameState) catch unreachable;
-        my_game.* = game.GameState.init(gpa, web_platform.gl) catch unreachable;
-    } else {
-        my_game = game.GameState.init(gpa, web_platform.gl) catch unreachable;
-    }
-
+export fn preload() void {
     inline for (comptime std.enums.values(Sounds)) |sound| {
         const path = @field(game.sounds, @tagName(sound));
         sound_ids.set(sound, js_better.audio.loadSound(path));
@@ -493,6 +561,12 @@ export fn init() void {
         const path = @field(game.loops, @tagName(loop));
         loop_ids.set(loop, js_better.audio.loadAndStartLoop(path));
     }
+
+    inline for (comptime std.enums.values(PreloadedImages)) |image| {
+        const path = @field(game.preloaded_images, @tagName(image));
+        preloaded_image_ids.set(image, js_better.images.preloadImage(path));
+        images_pointers.set(image, preloaded_image_ids.getPtrConst(image));
+    }
 }
 
 export fn getDesiredAspectRatio() f32 {
@@ -501,6 +575,18 @@ export fn getDesiredAspectRatio() f32 {
 
 export fn getTitle() [*:0]const u8 {
     return game.metadata.name;
+}
+
+export fn init() void {
+    js.webgl2.enable(.BLEND);
+    js.webgl2.blendFunc(.SRC_ALPHA, .ONE_MINUS_SRC_ALPHA);
+
+    if (@import("build_options").hot_reloadable) {
+        my_game = gpa.create(game.GameState) catch unreachable;
+        my_game.* = game.GameState.init(gpa, web_platform.gl, images_pointers) catch unreachable;
+    } else {
+        my_game = game.GameState.init(gpa, web_platform.gl, images_pointers) catch unreachable;
+    }
 }
 
 export fn update(delta_seconds: f32) void {

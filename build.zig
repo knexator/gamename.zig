@@ -18,13 +18,22 @@ pub fn build(b: *std.Build) void {
     const font_name = "Arial";
     const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
     run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
-    run_msdf.addArgs(&.{ "-type", "mtsdf", "-size", "32", "-yorigin", "top" });
+    run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top" });
     run_msdf.addArg("-font");
     run_msdf.addFileArg(b.path("src/fonts/" ++ font_name ++ ".ttf"));
     run_msdf.addArg("-json");
     const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
     run_msdf.addArg("-imageout");
     const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
+    // TODO
+    // const asdf = run_msdf.captureStdErr();
+    // const expected_stderr =
+    //     \\Atlas image file saved.
+    //     \\Glyph layout and metadata written into JSON file.
+    //     \\
+    // ;
+    // std.debug.assert(std.mem.eql(u8, expected_stderr, asdf.))
+    // wf.addCopyFileToSource(asdf, "src/fonts/" ++ font_name ++ ".txt");
 
     const wf = b.addUpdateSourceFiles();
     wf.addCopyFileToSource(font_json, "src/fonts/" ++ font_name ++ ".json");
@@ -282,6 +291,7 @@ fn build_for_web(
     });
     steps.install.dependOn(&copy_static_files.step);
 
+    // TODO: have a generic assets folder?
     {
         const copy_sound_files = b.addInstallDirectory(.{
             .install_dir = web_install_dir,
@@ -289,6 +299,16 @@ fn build_for_web(
             .source_dir = b.path("src/sounds"),
         });
         steps.install.dependOn(&copy_sound_files.step);
+    }
+
+    // TODO: only copy the .png, to an images folder
+    {
+        const copy_font_files = b.addInstallDirectory(.{
+            .install_dir = web_install_dir,
+            .install_subdir = "fonts",
+            .source_dir = b.path("src/fonts"),
+        });
+        steps.install.dependOn(&copy_font_files.step);
     }
 
     const generate_keycodes = b.addExecutable(.{

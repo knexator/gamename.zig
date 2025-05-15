@@ -9,6 +9,11 @@ clear: *const fn (color: FColor) void,
 //     id: enum(c_uint) { null = 0, _ },
 // };
 
+// TODO: wrap, optional mips, filter
+buildTexture2D: *const fn (
+    data: *const anyopaque,
+) Texture,
+
 buildRenderable: *const fn (
     vertex_src: [:0]const u8,
     fragment_src: [:0]const u8,
@@ -33,7 +38,8 @@ useRenderable: *const fn (
     // TODO: make triangles optional, since they could be precomputed
     triangles: []const [3]IndexType,
     uniforms: []const UniformInfo.Runtime,
-    // TODO: textures, multiple textures
+    // TODO: multiple textures
+    texture: ?Texture,
 ) void,
 
 pub const VertexInfo = struct {
@@ -67,6 +73,9 @@ pub const VertexInfo = struct {
             }
             return result;
         }
+
+        // TODO
+        // pub fn fromType(attribs: type) Collection {}
     };
 
     pub const Kind = enum {
@@ -164,6 +173,10 @@ pub const Renderable = struct {
         _ = self;
         return @sizeOf(Vec2);
     }
+};
+
+pub const Texture = struct {
+    id: c_uint,
 };
 
 const std = @import("std");

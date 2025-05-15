@@ -25,8 +25,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     last_inode: std.fs.File.INode = 0,
     state: game.GameState,
 
-    fn init(gpa: std.mem.Allocator, sdl_gl: game.Gl) !Self {
-        return .{ .state = try .init(gpa, sdl_gl) };
+    fn init(gpa: std.mem.Allocator, sdl_gl: game.Gl, loaded_images: std.EnumArray(game.Images, *const anyopaque)) !Self {
+        return .{ .state = try .init(gpa, sdl_gl, loaded_images) };
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -87,6 +87,11 @@ var sound_queue: std.EnumSet(Sounds) = .initEmpty();
 const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
 var loops: std.EnumArray(Loops, Loop) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
+
+// TODO: allow loading images during the game
+const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
+var preloaded_images: std.EnumArray(PreloadedImages, zstbi.Image) = .initUndefined();
+var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
 
 const Renderables = std.meta.FieldEnum(@TypeOf(game.renderables));
 
@@ -197,15 +202,54 @@ pub fn main() !void {
 
     try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));
 
+    zstbi.init(gpa);
+    // TODO: uncomment next line
+    // defer zstbi.deinit();
+    // TODO: defer unloading images
+    inline for (comptime std.enums.values(PreloadedImages)) |image| {
+        const path = @field(game.preloaded_images, @tagName(image));
+        preloaded_images.set(image, try zstbi.Image.loadFromMemory(@embedFile(path), 0));
+        images_pointers.set(image, preloaded_images.getPtrConst(image));
+    }
+
     const sdl_gl = struct {
         pub const vtable: game.Gl = .{
             .clear = clear,
             .buildRenderable = buildRenderable,
             .useRenderable = useRenderable,
+            .buildTexture2D = buildTexture2D,
         };
 
         pub fn clear(color: FColor) void {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
+        }
+
+        pub fn buildTexture2D(data: *const anyopaque) game.Gl.Texture {
+            const image: *const zstbi.Image = @alignCast(@ptrCast(data));
+
+            const has_alpha = switch (image.num_components) {
+                3 => false,
+                4 => true,
+                else => unreachable,
+            };
+
+            var texture: c_uint = undefined;
+            gl.GenTextures(1, @ptrCast(&texture));
+            gl.BindTexture(gl.TEXTURE_2D, texture);
+            gl.TexImage2D(
+                gl.TEXTURE_2D,
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                @intCast(image.width),
+                @intCast(image.height),
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                gl.UNSIGNED_BYTE,
+                image.data.ptr,
+            );
+            gl.GenerateMipmap(gl.TEXTURE_2D);
+
+            return .{ .id = texture };
         }
 
         pub fn buildRenderable(
@@ -280,7 +324,8 @@ pub fn main() !void {
             // TODO: make triangles optional, since they could be precomputed
             triangles: []const [3]game.Gl.IndexType,
             uniforms: []const game.Gl.UniformInfo.Runtime,
-            // TODO: textures, multiple textures
+            // TODO: multiple textures
+            texture: ?game.Gl.Texture,
         ) void {
             {
                 gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo));
@@ -304,8 +349,8 @@ pub fn main() !void {
                 gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
             }
 
-            // if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t);
-            // defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
+            if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t.id);
+            defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
 
             gl.BindVertexArray(@intFromEnum(renderable.vao));
             defer gl.BindVertexArray(0);
@@ -355,10 +400,6 @@ pub fn main() !void {
     var text_renderer: TextRenderer = try .init(gpa, gpa);
     defer text_renderer.deinit();
 
-    my_game = try .init(gpa, sdl_gl.vtable);
-    // TODO: gl on deinit
-    defer my_game.deinit(gpa);
-
     var sdl_platform: PlatformGives = .{
         .gpa = gpa,
         .render_queue = &render_queue,
@@ -381,6 +422,10 @@ pub fn main() !void {
         .loop_volumes = &loop_volumes,
         .gl = sdl_gl.vtable,
     };
+
+    my_game = try .init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
+    // TODO: gl on deinit
+    defer my_game.deinit(sdl_platform.gpa);
 
     var timer = try std.time.Timer.start();
 
@@ -668,7 +713,7 @@ const TextRenderer = struct {
     };
     const FontJsonInfo = struct {
         atlas: struct {
-            type: enum { mtsdf },
+            type: enum { msdf },
             distanceRange: f32,
             distanceRangeMiddle: f32,
             /// pixels per em
@@ -703,6 +748,9 @@ const TextRenderer = struct {
     };
 
     pub fn init(gpa: std.mem.Allocator, scratch: std.mem.Allocator) !TextRenderer {
+        if (true) return undefined;
+        // TODO: remove
+        _ = scratch;
         var texture: c_uint = undefined;
         {
             gl.GenTextures(1, @ptrCast(&texture));
@@ -713,12 +761,9 @@ const TextRenderer = struct {
             gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-            const zstbi = @import("zstbi");
-            zstbi.init(scratch);
-            defer zstbi.deinit();
-
-            var image = try zstbi.Image.loadFromMemory(@embedFile("./fonts/Arial.png"), 0);
-            defer image.deinit();
+            // var image = try zstbi.Image.loadFromMemory(@embedFile("./fonts/Arial.png"), 0);
+            // defer image.deinit();
+            const image = preloaded_images.get(.arial_atlas);
             const has_alpha = switch (image.num_components) {
                 3 => false,
                 4 => true,
@@ -803,6 +848,7 @@ const TextRenderer = struct {
     }
 
     pub fn deinit(self: *TextRenderer) void {
+        if (true) return;
         self.font_info.deinit();
         self.renderable.deinit();
         gl.DeleteTextures(1, @ptrCast(&self.texture));
@@ -868,7 +914,10 @@ fn render(renderables: anytype, text_renderer: TextRenderer, cmd: game.RenderQue
         .shape => unreachable,
         .precomputed_shape => unreachable,
         .text => |text| {
-            text_renderer.drawText(text.camera, text.bottom_left, text.line, text.em);
+            // TODO NOW
+            _ = text;
+            _ = text_renderer;
+            // text_renderer.drawText(text.camera, text.bottom_left, text.line, text.em);
         },
     }
 }
@@ -1085,6 +1134,7 @@ const errify = kommon.sdl.errify;
 const Timekeeper = kommon.Timekeeper;
 const Mouse = game.Mouse;
 const Keyboard = game.Keyboard;
+const zstbi = @import("zstbi");
 const KeyboardButton = game.KeyboardButton;
 
 pub const std_options: std.Options = .{

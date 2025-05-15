@@ -38,6 +38,23 @@ function resizeCanvas() {
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
+const image_promises = [];
+
+// from https://www.fabiofranchino.com/log/load-an-image-with-javascript-using-await/
+export function imageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous'; // to avoid CORS if used with Canvas
+    img.src = url
+    img.onload = () => {
+      resolve(img);
+    }
+    img.onerror = e => {
+      reject(e);
+    }
+  })
+}
+
 const sounds = [];
 const loops = [];
 var loops_started = false;
@@ -84,7 +101,7 @@ const text_decoder = new TextDecoder();
 const text_encoder = new TextEncoder();
 
 const wasm_memory = new WebAssembly.Memory({
-  initial: 2,
+  initial: 10,
 });
 
 function wasmMem() {
@@ -131,6 +148,12 @@ async function getWasm() {
       getWidth: () => canvas.width,
       getHeight: () => canvas.height,
 
+      // images
+      preloadImage: (url_ptr, url_len) => {
+        image_promises.push(imageFromUrl(getString(url_ptr, url_len)));
+        return image_promises.length - 1;
+      },
+
       // sound
       loadSound: (url_ptr, url_len) => {
         sounds.push(new Sound(getString(url_ptr, url_len)));
@@ -158,6 +181,9 @@ async function getWasm() {
       useProgram: (program) => gl.useProgram(gl_objects[program]),
       bufferData_size: (target, size, usage) => gl.bufferData(target, size, usage),
       bufferData: (target, data_ptr, data_len, usage) => gl.bufferData(target, wasmMem().subarray(data_ptr, data_ptr + data_len), usage),
+      enable: (capability) => gl.enable(capability),
+      disable: (capability) => gl.enable(capability),
+      blendFunc: (sfactor, dfactor) => gl.blendFunc(sfactor, dfactor),
       // TODO: clear mask
       clear: () => gl.clear(gl.COLOR_BUFFER_BIT),
       clearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
@@ -175,14 +201,21 @@ async function getWasm() {
       deleteBuffer: (buffer) => gl.deleteBuffer(gl_objects[buffer]),
       getUniformLocation: (program, name_ptr, name_len) => storeGlObject(gl.getUniformLocation(gl_objects[program], getString(name_ptr, name_len))),
       uniform4f: (location, v0, v1, v2, v3) => gl.uniform4f(gl_objects[location], v0, v1, v2, v3),
+      createTexture: () => storeGlObject(gl.createTexture()),
+      deleteTexture: (texture) => gl.deleteTexture(gl_objects[texture]),
+      bindTexture: (target, texture) => gl.bindTexture(target, gl_objects[texture]),
+      texImage2D_basic: (target, level, internalformat, format, type, pixels) => gl.texImage2D(target, level, internalformat, format, type, images[pixels]),
+      generateMipmap: (target) => gl.generateMipmap(target),
     },
   });
   return wasm_module.instance.exports;
 }
 
 let wasm_exports = await getWasm();
+wasm_exports.preload();
 resizeCanvas();
 document.title = getNullTerminatedString(wasm_exports.getTitle());
+const images = await Promise.all(image_promises);
 wasm_exports.init();
 
 // TODO(eternal): some more reliable way to detect if it's a hot reloading build

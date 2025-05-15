@@ -4,6 +4,8 @@ pub const RenderableInfo = struct {
     UniformTypes: type,
     vertex: [:0]const u8,
     fragment: [:0]const u8,
+
+    // TODO: pub fn fromType(...)
 };
 
 pub const RenderQueue = struct {
