@@ -67,6 +67,7 @@ pub const renderables = .{
     .fill_shape = fill_shape_info,
 };
 
+// TODO: looks blurry on the web version!
 const TextRenderer = struct {
     atlas_texture: Gl.Texture,
     renderable: Gl.Renderable,
@@ -250,7 +251,6 @@ const TextRenderer = struct {
 
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
-    render_queue: *RenderQueue,
     getMouse: *const fn (camera: Rect) Mouse,
     keyboard: Keyboard,
     aspect_ratio: f32,
@@ -313,7 +313,7 @@ pub const GameState = struct {
     cam_noise: Noise = .{},
 
     SHAPES: struct {
-        circle: RenderQueue.PrecomputedShape,
+        circle: PrecomputedShape,
     },
 
     fill_shape: Gl.Renderable,
@@ -614,19 +614,6 @@ pub const GameState = struct {
                     "WASD or Arrow Keys to move",
                     30.0 / 32.0,
                 );
-                // // TODO: move text drawing to the game layer
-                // try platform.render_queue.pending_commands.append(
-                //     platform.render_queue.arena.allocator(),
-                //     .{
-                //         .text = .{
-                //             .camera = renderer.camera,
-                //             // TODO: set text's bottom center
-                //             .bottom_left = BOARD_SIZE.tof32().mul(.new(0.5, 0.25)).addX(-6.25),
-                //             .line = "WASD or Arrow Keys to move",
-                //             .em = 30.0 / 32.0,
-                //         },
-                //     },
-                // );
             },
             else => {},
         }
@@ -650,7 +637,7 @@ const Renderer = struct {
             .new(rect.size.x, 0),
             .new(0, rect.size.y),
             .new(rect.size.x, rect.size.y),
-        }, 4, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, &.{
+        }, 4 * @sizeOf(Vec2), &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, &.{
             .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
             .{ .name = "u_point", .value = .{ .Point = .{ .pos = rect.top_left } } },
             .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
@@ -672,7 +659,7 @@ const Renderer = struct {
         const indices = try Triangulator.triangulate(Gl.IndexType, self.scratch, local_points);
         defer self.scratch.free(indices);
 
-        self.gl.useRenderable(self.fill_shape, local_points.ptr, local_points.len, indices, &.{
+        self.gl.useRenderable(self.fill_shape, local_points.ptr, local_points.len * @sizeOf(Vec2), indices, &.{
             .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
             .{ .name = "u_point", .value = .{ .Point = parent } },
             .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
@@ -696,7 +683,7 @@ const Renderer = struct {
         self.gl.useRenderable(
             self.fill_shape,
             self.SHAPES.circle.local_points.ptr,
-            self.SHAPES.circle.local_points.len,
+            self.SHAPES.circle.local_points.len * @sizeOf(Vec2),
             self.SHAPES.circle.triangles,
             &.{
                 .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
@@ -767,6 +754,6 @@ const Noise = kommon.Noise;
 pub const Mouse = kommon.input.Mouse;
 pub const Keyboard = kommon.input.Keyboard;
 pub const KeyboardButton = kommon.input.KeyboardButton;
-pub const RenderQueue = @import("renderer.zig").RenderQueue;
+pub const PrecomputedShape = @import("renderer.zig").PrecomputedShape;
 pub const RenderableInfo = @import("renderer.zig").RenderableInfo;
 pub const Gl = @import("./Gl.zig");

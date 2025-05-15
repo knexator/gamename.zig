@@ -111,9 +111,6 @@ pub fn main() !void {
         // assert(debug_allocator.deinit() == .ok);
     };
 
-    var render_queue: game.RenderQueue = .init(gpa);
-    defer render_queue.deinit();
-
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
 
     // For programs that provide their own entry points instead of relying on SDL's main function
@@ -146,9 +143,7 @@ pub fn main() !void {
         game.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
-        // TODO NOW
-        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (false) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
-        // c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
     ));
     defer c.SDL_DestroyWindow(sdl_window);
 
@@ -319,7 +314,7 @@ pub fn main() !void {
         pub fn useRenderable(
             renderable: game.Gl.Renderable,
             vertices_ptr: *const anyopaque,
-            vertices_len: usize,
+            vertices_len_bytes: usize,
             // vertices: []const anyopaque,
             // TODO: make triangles optional, since they could be precomputed
             triangles: []const [3]game.Gl.IndexType,
@@ -331,7 +326,7 @@ pub fn main() !void {
                 gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo));
                 gl.BufferData(
                     gl.ARRAY_BUFFER,
-                    @intCast(renderable.sizeOfVertex() * vertices_len),
+                    @intCast(vertices_len_bytes),
                     @ptrCast(vertices_ptr),
                     gl.DYNAMIC_DRAW,
                 );
@@ -380,29 +375,8 @@ pub fn main() !void {
         }
     };
 
-    // TODO: use comptime magic
-    var renderables = blk: {
-        const fill_shape = game.renderables.fill_shape;
-        break :blk .{
-            .fill_shape = try Renderable(
-                fill_shape.VertexData,
-                fill_shape.IndexType,
-                fill_shape.UniformTypes,
-            ).init(
-                fill_shape.vertex,
-                fill_shape.fragment,
-            ),
-        };
-    };
-    defer renderables.fill_shape.deinit();
-
-    // TODO: move to the game layer
-    var text_renderer: TextRenderer = try .init(gpa, gpa);
-    defer text_renderer.deinit();
-
     var sdl_platform: PlatformGives = .{
         .gpa = gpa,
-        .render_queue = &render_queue,
         .getMouse = struct {
             pub fn anon(camera: Rect) Mouse {
                 var result = mouse;
@@ -486,17 +460,15 @@ pub fn main() !void {
             }
         }
 
-        // while (timekeeper.consume()) {
+        // Update & Draw
         {
             const ns_since_last_frame = timer.lap();
-            sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
             sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
             sdl_platform.global_seconds += sdl_platform.delta_seconds;
             sdl_platform.aspect_ratio = window_size.aspectRatio();
             sdl_platform.keyboard = keyboard;
             sdl_platform.sound_queue.* = .initEmpty();
             if (try my_game.update(sdl_platform)) break :main_loop;
-            // try game.update(1.0 / 60.0);
             mouse.prev = mouse.cur;
             mouse.cur.scrolled = .none;
             keyboard.prev = keyboard.cur;
@@ -534,391 +506,7 @@ pub fn main() !void {
             }
         }
 
-        // Draw
-        {
-            defer sdl_platform.render_queue.pending_commands.clearRetainingCapacity();
-            var it = sdl_platform.render_queue.pending_commands.constIterator(0);
-            // TODO: don't use gpa as the scratch allocator
-            while (it.next()) |cmd| try render(renderables, text_renderer, cmd.*, gpa);
-
-            try errify(c.SDL_GL_SwapWindow(sdl_window));
-        }
-
-        // timekeeper.produce(c.SDL_GetPerformanceCounter());
-    }
-}
-
-fn Renderable(VertexData: type, IndexType: type, UniformTypes: type) type {
-    return struct {
-        const Self = @This();
-
-        program: c_uint,
-        vao: c_uint, // vertex array object: the draw call state, roughly
-        vbo: c_uint, // vertex buffer object: the vertex data itself
-        ebo: c_uint, // element buffer object: the triangle indices
-
-        uniforms: std.EnumArray(Uniforms, c_int),
-
-        const Uniforms = std.meta.FieldEnum(UniformTypes);
-
-        pub fn init(vertex: [:0]const u8, fragment: [:0]const u8) !Self {
-            // To keep things simple, this example doesn't check for shader compilation/linking errors.
-            // A more robust program would call 'GetProgram/Shaderiv' to check for errors.
-            const program = try (ProgramInfo{ .vertex = vertex, .fragment = fragment }).load();
-
-            var vao: c_uint = undefined;
-            gl.GenVertexArrays(1, @ptrCast(&vao));
-
-            gl.BindVertexArray(vao);
-
-            var vbo: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&vbo));
-            var ebo: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&ebo));
-
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-            defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-
-            gl.BindBuffer(gl.ARRAY_BUFFER, vbo);
-            defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-            defer gl.BindVertexArray(0);
-
-            inline for (@typeInfo(VertexData).@"struct".fields) |field| {
-                const attrib: gl.uint = @intCast(gl.GetAttribLocation(program, "a_" ++ field.name));
-                gl.EnableVertexAttribArray(attrib);
-                gl.VertexAttribPointer(
-                    attrib,
-                    howManyElementsIn(field.type),
-                    getVertexAttribType(field.type),
-                    isVertexAttribNormalized(field.type),
-                    @sizeOf(VertexData),
-                    @offsetOf(VertexData, field.name),
-                );
-            }
-
-            var uniforms: std.EnumArray(Uniforms, c_int) = .initUndefined();
-            inline for (@typeInfo(Uniforms).@"enum".fields) |f| {
-                const uniform = gl.GetUniformLocation(program, "u_" ++ f.name);
-                assert(uniform != -1);
-                uniforms.set(@enumFromInt(f.value), uniform);
-            }
-
-            return .{
-                .program = program,
-                .vao = vao,
-                .vbo = vbo,
-                .ebo = ebo,
-                .uniforms = uniforms,
-            };
-        }
-
-        pub fn deinit(self: *Self) void {
-            defer gl.DeleteProgram(self.program);
-            defer gl.DeleteVertexArrays(1, @ptrCast(&self.vao));
-            defer gl.DeleteBuffers(1, @ptrCast(&self.vbo));
-            defer gl.DeleteBuffers(1, @ptrCast(&self.ebo));
-        }
-
-        pub fn draw(
-            self: Self,
-            vertices: []const VertexData,
-            // TODO: make triangles optional, since they could be precomputed
-            triangles: []const [3]IndexType,
-            uniforms: UniformTypes,
-            // TODO: allow multiple textures
-            texture: ?c_uint,
-        ) void {
-            {
-                gl.BindBuffer(gl.ARRAY_BUFFER, self.vbo);
-                gl.BufferData(gl.ARRAY_BUFFER, @intCast(@sizeOf(VertexData) * vertices.len), @ptrCast(vertices.ptr), gl.DYNAMIC_DRAW);
-                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-            }
-
-            {
-                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.ebo);
-                gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, @intCast(@sizeOf([3]IndexType) * triangles.len), triangles.ptr, gl.DYNAMIC_DRAW);
-                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-            }
-
-            if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t);
-            defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
-
-            gl.BindVertexArray(self.vao);
-            defer gl.BindVertexArray(0);
-
-            gl.UseProgram(self.program);
-            defer gl.UseProgram(0);
-
-            inline for (@typeInfo(Uniforms).@"enum".fields) |f| {
-                const u = self.uniforms.get(@enumFromInt(f.value));
-                const v = @field(uniforms, f.name);
-                switch (@FieldType(UniformTypes, f.name)) {
-                    FColor => gl.Uniform4f(u, v.r, v.g, v.b, v.a),
-                    Rect => gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
-                    Point => gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
-                    else => |t| @compileError(std.fmt.comptimePrint("Unhandled uniform type: {any}", .{t})),
-                }
-            }
-
-            gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (IndexType) {
-                u16 => gl.UNSIGNED_SHORT,
-                else => @compileError("not implemented"),
-            }, 0);
-        }
-
-        fn getVertexAttribType(x: type) comptime_int {
-            return switch (x) {
-                f32 => gl.FLOAT,
-                Vec2 => gl.FLOAT,
-                Color => gl.UNSIGNED_BYTE,
-                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-            };
-        }
-
-        fn howManyElementsIn(x: type) comptime_int {
-            return switch (x) {
-                f32 => 1,
-                Vec2 => 2,
-                Color => 4,
-                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-            };
-        }
-
-        fn isVertexAttribNormalized(x: type) comptime_int {
-            return switch (x) {
-                f32 => gl.FALSE,
-                Vec2 => gl.FALSE,
-                Color => gl.TRUE,
-                else => @compileError(std.fmt.comptimePrint("unhandled type: {any}", .{x})),
-            };
-        }
-    };
-}
-
-const TextRenderer = struct {
-    texture: c_uint,
-    font_info: std.json.Parsed(FontJsonInfo),
-    renderable: Renderable(
-        extern struct { position: Vec2, texcoord: Vec2 },
-        u16,
-        struct {},
-    ),
-
-    const RectSides = struct {
-        left: f32,
-        bottom: f32,
-        right: f32,
-        top: f32,
-    };
-    const FontJsonInfo = struct {
-        atlas: struct {
-            type: enum { msdf },
-            distanceRange: f32,
-            distanceRangeMiddle: f32,
-            /// pixels per em
-            size: f32,
-            width: usize,
-            height: usize,
-            yOrigin: enum { top },
-        },
-        metrics: struct {
-            emSize: f32,
-            lineHeight: f32,
-            /// ??
-            ascender: f32,
-            /// ??
-            descender: f32,
-            /// ??
-            underlineY: f32,
-            /// ??
-            underlineThickness: f32,
-        },
-        glyphs: []struct {
-            unicode: u8,
-            advance: f32,
-            planeBounds: ?RectSides = null,
-            atlasBounds: ?RectSides = null,
-        },
-        kerning: []struct {
-            unicode1: u8,
-            unicode2: u8,
-            advance: f32,
-        },
-    };
-
-    pub fn init(gpa: std.mem.Allocator, scratch: std.mem.Allocator) !TextRenderer {
-        if (true) return undefined;
-        // TODO: remove
-        _ = scratch;
-        var texture: c_uint = undefined;
-        {
-            gl.GenTextures(1, @ptrCast(&texture));
-            gl.BindTexture(gl.TEXTURE_2D, texture);
-            defer gl.BindTexture(gl.TEXTURE_2D, 0);
-            // gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            // gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.TexParameterf(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-            // var image = try zstbi.Image.loadFromMemory(@embedFile("./fonts/Arial.png"), 0);
-            // defer image.deinit();
-            const image = preloaded_images.get(.arial_atlas);
-            const has_alpha = switch (image.num_components) {
-                3 => false,
-                4 => true,
-                else => unreachable,
-            };
-
-            gl.TexImage2D(
-                gl.TEXTURE_2D,
-                0,
-                if (has_alpha) gl.RGBA else gl.RGB,
-                @intCast(image.width),
-                @intCast(image.height),
-                0,
-                if (has_alpha) gl.RGBA else gl.RGB,
-                gl.UNSIGNED_BYTE,
-                image.data.ptr,
-            );
-            gl.GenerateMipmap(gl.TEXTURE_2D);
-        }
-
-        // TODO: parse the font data at comptime
-        const font_info = try std.json.parseFromSlice(FontJsonInfo, gpa, @embedFile("./fonts/Arial.json"), .{});
-
-        return .{
-            .texture = texture,
-            .font_info = font_info,
-            .renderable = try .init(
-                \\#version 300 es
-                \\
-                \\in vec2 a_position;
-                \\in vec2 a_texcoord;
-                \\
-                \\out vec2 v_texcoord;
-                \\
-                \\// 0,0 => -1,1 (top left)
-                \\// 1,0 => 1,1 (top right)
-                \\vec2 clipFromCam(vec2 p) {
-                \\  return (p * 2.0 - 1.0) * vec2(1, -1);
-                \\}
-                \\
-                \\void main() {
-                \\  v_texcoord = a_texcoord;
-                \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
-                \\}
-            ,
-                \\#version 300 es
-                \\
-                \\precision highp float;
-                \\out vec4 out_color;
-                \\
-                \\in vec2 v_texcoord;
-                \\uniform sampler2D u_texture;
-                \\
-                \\float median(float r, float g, float b) {
-                \\  return max(min(r, g), min(max(r, g), b));
-                \\}
-                \\
-                \\float inverseLerp(float a, float b, float t) {
-                \\  return (t - a) / (b - a);
-                \\}
-                \\
-                \\void main() {
-                \\  // assume square texture
-                \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
-                \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
-                // TODO: get sdf_pxrange from the font data
-                \\  float sdf_pxrange = 2.0;
-                \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
-                \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
-                \\  // density of the texture on screen; assume uniform scaling.
-                \\  // for some reason, the value is half of what it should.
-                \\  float texels_per_pixel = 2.0 * fwidth(v_texcoord.x) * sdf_texture_size;
-                \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
-                \\  // over how many screen pixels do the transition
-                \\  float transition_pixels = 1.0;
-                \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
-                \\  // TODO: premultiply alpha?
-                \\  out_color = vec4(vec3(1.0), alpha);
-                \\}
-            ),
-        };
-    }
-
-    pub fn deinit(self: *TextRenderer) void {
-        if (true) return;
-        self.font_info.deinit();
-        self.renderable.deinit();
-        gl.DeleteTextures(1, @ptrCast(&self.texture));
-    }
-
-    // TODO: kerning
-    // TODO: single draw call, maybe
-    pub fn drawText(self: TextRenderer, camera: Rect, bottom_left: Vec2, text: []const u8, em: f32) void {
-        var cursor: Vec2 = bottom_left;
-        for (text) |char| {
-            cursor = self.drawLetter(camera, cursor, char, em);
-        }
-    }
-
-    // TODO: use a map
-    pub fn drawLetter(self: TextRenderer, camera: Rect, bottom_left: Vec2, letter: u8, em: f32) Vec2 {
-        const glyph_info = blk: {
-            for (self.font_info.value.glyphs) |glyph| {
-                if (glyph.unicode == letter) break :blk glyph;
-            } else unreachable;
-        };
-        if (glyph_info.atlasBounds) |b| {
-            const s = UVec2.new(
-                self.font_info.value.atlas.width,
-                self.font_info.value.atlas.height,
-            ).tof32();
-            const p = glyph_info.planeBounds orelse unreachable;
-
-            self.renderable.draw(&.{
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.left, p.bottom).scale(em))),
-                    .texcoord = Vec2.new(b.left, b.bottom).div(s),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.right, p.bottom).scale(em))),
-                    .texcoord = Vec2.new(b.right, b.bottom).div(s),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.left, p.top).scale(em))),
-                    .texcoord = Vec2.new(b.left, b.top).div(s),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.right, p.top).scale(em))),
-                    .texcoord = Vec2.new(b.right, b.top).div(s),
-                },
-            }, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, .{}, self.texture);
-        }
-
-        return bottom_left.addX(em * glyph_info.advance);
-    }
-};
-
-// TODO: delete this method
-fn render(renderables: anytype, text_renderer: TextRenderer, cmd: game.RenderQueue.Command, scratch: std.mem.Allocator) !void {
-    _ = scratch;
-    _ = renderables;
-    switch (cmd) {
-        .clear => unreachable,
-        .shape => unreachable,
-        .precomputed_shape => unreachable,
-        .text => |text| {
-            // TODO NOW
-            _ = text;
-            _ = text_renderer;
-            // text_renderer.drawText(text.camera, text.bottom_left, text.line, text.em);
-        },
+        try errify(c.SDL_GL_SwapWindow(sdl_window));
     }
 }
 

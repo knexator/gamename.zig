@@ -345,11 +345,9 @@ comptime {
 var my_game: if (@import("build_options").hot_reloadable) *game.GameState else game.GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
-var render_queue: game.RenderQueue = .init(gpa);
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
-    .render_queue = &render_queue,
     .getMouse = struct {
         pub fn anon(camera: Rect) Mouse {
             var result = mouse;
@@ -369,18 +367,6 @@ var web_platform: PlatformGives = .{
     .loop_volumes = &loop_volumes,
     .gl = web_gl.vtable,
 };
-
-// TODO: delete this method
-fn render(cmd: game.RenderQueue.Command) !void {
-    switch (cmd) {
-        .clear => unreachable,
-        .shape => unreachable,
-        .precomputed_shape => unreachable,
-        .text => {
-            // TODO
-        },
-    }
-}
 
 const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
@@ -490,7 +476,7 @@ const web_gl = struct {
     pub fn useRenderable(
         renderable: game.Gl.Renderable,
         vertices_ptr: *const anyopaque,
-        vertices_len: usize,
+        vertices_len_bytes: usize,
         // vertices: []const anyopaque,
         // TODO: make triangles optional, since they could be precomputed
         triangles: []const [3]game.Gl.IndexType,
@@ -503,7 +489,7 @@ const web_gl = struct {
             js.webgl2.bufferData(
                 .ARRAY_BUFFER,
                 @ptrCast(vertices_ptr),
-                @intCast(renderable.sizeOfVertex() * vertices_len),
+                vertices_len_bytes,
                 .DYNAMIC_DRAW,
             );
             js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
@@ -595,17 +581,13 @@ export fn update(delta_seconds: f32) void {
     web_platform.global_seconds += delta_seconds;
     web_platform.keyboard = keyboard;
     web_platform.sound_queue.* = .initEmpty();
+
+    // update and draw
     _ = my_game.update(web_platform) catch unreachable;
+
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
     keyboard.prev = keyboard.cur;
-
-    // graphics
-    {
-        defer web_platform.render_queue.pending_commands.clearRetainingCapacity();
-        var it = web_platform.render_queue.pending_commands.constIterator(0);
-        while (it.next()) |cmd| render(cmd.*) catch unreachable;
-    }
 
     // sounds
     {

@@ -34,7 +34,7 @@ useRenderable: *const fn (
     // TODO
     // vertices: []anyopaque,
     vertices_ptr: *const anyopaque,
-    vertices_len: usize,
+    vertices_len_bytes: usize,
     // TODO: make triangles optional, since they could be precomputed
     triangles: []const [3]IndexType,
     uniforms: []const UniformInfo.Runtime,
@@ -167,12 +167,6 @@ pub const Renderable = struct {
     vbo: enum(c_uint) { null = 0, _ }, // vertex buffer object: the vertex data itself
     ebo: enum(c_uint) { null = 0, _ }, // element buffer object: the triangle indices
     uniforms: std.BoundedArray(UniformInfo, 8),
-
-    pub fn sizeOfVertex(self: Renderable) usize {
-        // TODO NOW
-        _ = self;
-        return @sizeOf(Vec2);
-    }
 };
 
 pub const Texture = struct {
