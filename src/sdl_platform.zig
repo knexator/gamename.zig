@@ -512,13 +512,15 @@ pub fn main() !void {
 
 // TODO: delete/improve this
 pub const ProgramInfo = struct {
-    // TODO: remove
-    const preamble: [:0]const u8 = "";
+    const preamble: [:0]const u8 =
+        \\#version 330 core
+        \\
+    ;
     vertex: [:0]const u8,
     fragment: [:0]const u8,
 
     fn doShader(stage: enum { vertex, fragment }, source: [:0]const u8) !gl.uint {
-        assert(std.mem.startsWith(u8, source, "#version 300 es"));
+        assert(!std.mem.startsWith(u8, source, "#version"));
         const result = gl.CreateShader(switch (stage) {
             .vertex => gl.VERTEX_SHADER,
             .fragment => gl.FRAGMENT_SHADER,

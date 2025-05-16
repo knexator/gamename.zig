@@ -92,7 +92,7 @@ const js = struct {
 
         pub const better = struct {
             pub fn buildShader(src: []const u8, kind: ShaderType) !Shader {
-                assert(std.mem.startsWith(u8, src, "#version 300 es"));
+                assert(!std.mem.startsWith(u8, src, "#version"));
                 const shader = webgl2.createShader(kind);
                 errdefer webgl2.deleteShader(shader);
                 webgl2.shaderSource(shader, src.ptr, src.len);

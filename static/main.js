@@ -169,7 +169,7 @@ async function getWasm() {
 
       // webgl2
       createShader: (type) => storeGlObject(gl.createShader(type)),
-      shaderSource: (shader, source_ptr, source_len) => gl.shaderSource(gl_objects[shader], getString(source_ptr, source_len)),
+      shaderSource: (shader, source_ptr, source_len) => gl.shaderSource(gl_objects[shader], "#version 300 es\n\n" + getString(source_ptr, source_len)),
       compileShader: (shader) => gl.compileShader(gl_objects[shader]),
       getShaderParameter: (shader, pname) => gl.getShaderParameter(gl_objects[shader], pname),
       getShaderInfoLog: (shader, buf_ptr, buf_len) => storeString(gl.getShaderInfoLog(gl_objects[shader]), buf_ptr, buf_len),

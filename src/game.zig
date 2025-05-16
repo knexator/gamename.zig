@@ -35,8 +35,6 @@ const fill_shape_info: RenderableInfo = .{
         point: Point,
     },
     .vertex =
-    \\#version 300 es
-    \\
     \\uniform vec4 u_rect; // as top_left, size
     \\uniform vec4 u_point; // as pos, turns, scale
     \\
@@ -51,8 +49,6 @@ const fill_shape_info: RenderableInfo = .{
     \\}
     ,
     .fragment =
-    \\#version 300 es
-    \\
     \\precision highp float;
     \\out vec4 out_color;
     \\
@@ -126,8 +122,6 @@ const TextRenderer = struct {
                 .{},
             ),
             .renderable = try gl.buildRenderable(
-                \\#version 300 es
-                \\
                 \\in vec2 a_position;
                 \\in vec2 a_texcoord;
                 \\
@@ -144,8 +138,6 @@ const TextRenderer = struct {
                 \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
                 \\}
             ,
-                \\#version 300 es
-                \\
                 \\precision highp float;
                 \\out vec4 out_color;
                 \\

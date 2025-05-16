@@ -15,7 +15,9 @@ buildTexture2D: *const fn (
 ) Texture,
 
 buildRenderable: *const fn (
+    /// without preamble!
     vertex_src: [:0]const u8,
+    /// without preamble!
     fragment_src: [:0]const u8,
     attributes: VertexInfo.Collection,
     uniforms: []const UniformInfo.In,
