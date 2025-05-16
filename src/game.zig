@@ -63,7 +63,7 @@ pub const renderables = .{
     .fill_shape = fill_shape_info,
 };
 
-// TODO: looks blurry on the web version!
+// TODO: small text looks worse on the web version!
 const TextRenderer = struct {
     atlas_texture: Gl.Texture,
     renderable: Gl.Renderable,
@@ -141,6 +141,13 @@ const TextRenderer = struct {
                 \\precision highp float;
                 \\out vec4 out_color;
                 \\
+                \\// for some reason, on desktop, the fwidth value is half of what it should.
+                \\#ifdef GL_ES // WebGL2
+                \\  #define FWIDTH(x) fwidth(x)
+                \\#else // Desktop
+                \\  #define FWIDTH(x) (2.0 * fwidth(x))
+                \\#endif
+                \\
                 \\in vec2 v_texcoord;
                 \\uniform sampler2D u_texture;
                 \\
@@ -161,8 +168,7 @@ const TextRenderer = struct {
                 \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
                 \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
                 \\  // density of the texture on screen; assume uniform scaling.
-                \\  // for some reason, the value is half of what it should.
-                \\  float texels_per_pixel = 2.0 * fwidth(v_texcoord.x) * sdf_texture_size;
+                \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size;
                 \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
                 \\  // over how many screen pixels do the transition
                 \\  float transition_pixels = 1.0;
@@ -310,6 +316,7 @@ pub const GameState = struct {
 
     fill_shape: Gl.Renderable,
     text_renderer: TextRenderer,
+    debug_fwidth: Gl.Renderable,
 
     const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
     const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
@@ -342,6 +349,37 @@ pub const GameState = struct {
                     .{ .name = "u_point", .kind = .Point },
                     .{ .name = "u_color", .kind = .FColor },
                 },
+            ),
+            // TODO: store this in kommon for later use
+            .debug_fwidth = try gl.buildRenderable(
+                \\in vec2 a_position;
+                \\in vec2 a_texcoord;
+                \\out vec2 v_texcoord;
+                \\void main() {
+                \\  v_texcoord = a_texcoord;
+                \\  gl_Position = vec4(a_position, 0, 1);
+                \\}
+            ,
+                \\precision highp float;
+                \\out vec4 out_color;
+                \\
+                \\#ifdef GL_ES // WebGL2
+                \\  #define FWIDTH(x) fwidth(x)
+                \\#else // Desktop
+                \\  #define FWIDTH(x) (2.0 * fwidth(x))
+                \\#endif
+                \\
+                \\in vec2 v_texcoord;
+                \\void main() {
+                \\  float v = FWIDTH(v_texcoord.x) * 256.0;
+                \\  out_color = vec4(vec3(v), 1.0);
+                \\}
+            ,
+                .{ .attribs = &.{
+                    .{ .name = "a_position", .kind = .Vec2 },
+                    .{ .name = "a_texcoord", .kind = .Vec2 },
+                } },
+                &.{},
             ),
             .text_renderer = try .init("Arial", gpa, gl, loaded_images.get(.arial_atlas)),
         };
@@ -518,6 +556,30 @@ pub const GameState = struct {
             .gl = platform.gl,
             .fill_shape = self.fill_shape,
         };
+
+        if (false) {
+            // TODO: store in kommon for later use
+            // TODO: use a better api
+            const VertexData = extern struct { position: Vec2, texcoord: Vec2 };
+            defer platform.gl.useRenderable(self.debug_fwidth, &[4]VertexData{
+                .{
+                    .position = .new(-1, 1),
+                    .texcoord = .new(0, 0),
+                },
+                .{
+                    .position = .new(1, 1),
+                    .texcoord = .new(1, 0),
+                },
+                .{
+                    .position = .new(-1, -1),
+                    .texcoord = .new(0, 1),
+                },
+                .{
+                    .position = .new(1, -1),
+                    .texcoord = .new(1, 1),
+                },
+            }, 4 * @sizeOf(VertexData), &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, &.{}, null);
+        }
 
         const screen_center = BOARD_SIZE.tof32().scale(0.5);
         const half_side = math.tof32(BOARD_SIZE.x / 2);
