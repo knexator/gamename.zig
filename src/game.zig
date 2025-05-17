@@ -26,190 +26,6 @@ pub const preloaded_images = .{
 
 pub const Images = std.meta.FieldEnum(@TypeOf(preloaded_images));
 
-// TODO: small text looks worse on the web version!
-const TextRenderer = struct {
-    atlas_texture: Gl.Texture,
-    renderable: Gl.Renderable,
-    font_info: std.json.Parsed(FontJsonInfo),
-
-    const RectSides = struct {
-        left: f32,
-        bottom: f32,
-        right: f32,
-        top: f32,
-    };
-    const FontJsonInfo = struct {
-        atlas: struct {
-            type: enum { msdf },
-            distanceRange: f32,
-            distanceRangeMiddle: f32,
-            /// pixels per em
-            size: f32,
-            width: usize,
-            height: usize,
-            yOrigin: enum { top },
-        },
-        metrics: struct {
-            emSize: f32,
-            lineHeight: f32,
-            /// ??
-            ascender: f32,
-            /// ??
-            descender: f32,
-            /// ??
-            underlineY: f32,
-            /// ??
-            underlineThickness: f32,
-        },
-        glyphs: []struct {
-            unicode: u8,
-            advance: f32,
-            planeBounds: ?RectSides = null,
-            atlasBounds: ?RectSides = null,
-        },
-        kerning: []struct {
-            unicode1: u8,
-            unicode2: u8,
-            advance: f32,
-        },
-    };
-
-    pub fn init(comptime font_name: []const u8, gpa: std.mem.Allocator, gl: Gl, atlas_image: *const anyopaque) !TextRenderer {
-        return .{
-            .atlas_texture = gl.buildTexture2D(atlas_image),
-            // TODO: parse the font data at comptime
-            .font_info = try std.json.parseFromSlice(
-                FontJsonInfo,
-                gpa,
-                @embedFile("./fonts/" ++ font_name ++ ".json"),
-                .{},
-            ),
-            .renderable = try gl.buildRenderable(
-                \\in vec2 a_position;
-                \\in vec2 a_texcoord;
-                \\
-                \\out vec2 v_texcoord;
-                \\
-                \\// 0,0 => -1,1 (top left)
-                \\// 1,0 => 1,1 (top right)
-                \\vec2 clipFromCam(vec2 p) {
-                \\  return (p * 2.0 - 1.0) * vec2(1, -1);
-                \\}
-                \\
-                \\void main() {
-                \\  v_texcoord = a_texcoord;
-                \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
-                \\}
-            ,
-                \\precision highp float;
-                \\out vec4 out_color;
-                \\
-                \\// for some reason, on desktop, the fwidth value is half of what it should.
-                \\#ifdef GL_ES // WebGL2
-                \\  #define FWIDTH(x) fwidth(x)
-                \\#else // Desktop
-                \\  #define FWIDTH(x) (2.0 * fwidth(x))
-                \\#endif
-                \\
-                \\in vec2 v_texcoord;
-                \\uniform sampler2D u_texture;
-                \\
-                \\float median(float r, float g, float b) {
-                \\  return max(min(r, g), min(max(r, g), b));
-                \\}
-                \\
-                \\float inverseLerp(float a, float b, float t) {
-                \\  return (t - a) / (b - a);
-                \\}
-                \\
-                \\void main() {
-                \\  // assume square texture
-                \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
-                \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
-                // TODO: get sdf_pxrange from the font data
-                \\  float sdf_pxrange = 2.0;
-                \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
-                \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
-                \\  // density of the texture on screen; assume uniform scaling.
-                \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size;
-                \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
-                \\  // over how many screen pixels do the transition
-                \\  float transition_pixels = 1.0;
-                \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
-                \\  // TODO: premultiply alpha?
-                \\  out_color = vec4(vec3(1.0), alpha);
-                \\}
-            ,
-                .{ .attribs = &.{
-                    .{ .name = "a_position", .kind = .Vec2 },
-                    .{ .name = "a_texcoord", .kind = .Vec2 },
-                } },
-                &.{},
-            ),
-        };
-    }
-
-    pub fn deinit(self: *TextRenderer) void {
-        self.font_info.deinit();
-        // TODO
-        // gl.destroyRenderable(self.renderable);
-        // TODO
-        // gl.DeleteTextures(1, @ptrCast(&self.texture));
-    }
-
-    // TODO: kerning
-    // TODO: single draw call, maybe
-    pub fn drawText(self: TextRenderer, gl: Gl, camera: Rect, bottom_left: Vec2, text: []const u8, em: f32) void {
-        var cursor: Vec2 = bottom_left;
-        for (text) |char| {
-            cursor = self.drawLetter(gl, camera, cursor, char, em);
-        }
-    }
-
-    // TODO: use a map
-    pub fn drawLetter(self: TextRenderer, gl: Gl, camera: Rect, bottom_left: Vec2, letter: u8, em: f32) Vec2 {
-        const glyph_info = blk: {
-            for (self.font_info.value.glyphs) |glyph| {
-                if (glyph.unicode == letter) break :blk glyph;
-            } else unreachable;
-        };
-        if (glyph_info.atlasBounds) |b| {
-            const s = UVec2.new(
-                self.font_info.value.atlas.width,
-                self.font_info.value.atlas.height,
-            ).tof32();
-            const p = glyph_info.planeBounds orelse unreachable;
-
-            // TODO: use a better api
-            const VertexData = extern struct { position: Vec2, texcoord: Vec2 };
-            gl.useRenderable(self.renderable, &[4]VertexData{
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.left, p.bottom).scale(em))),
-                    .texcoord = Vec2.new(b.left, b.bottom).div(s),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.right, p.bottom).scale(em))),
-                    .texcoord = Vec2.new(b.right, b.bottom).div(s),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.left, p.top).scale(em))),
-                    .texcoord = Vec2.new(b.left, b.top).div(s),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(bottom_left
-                        .add(Vec2.new(p.right, p.top).scale(em))),
-                    .texcoord = Vec2.new(b.right, b.top).div(s),
-                },
-            }, 4 * @sizeOf(VertexData), &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, &.{}, self.atlas_texture);
-        }
-
-        return bottom_left.addX(em * glyph_info.advance);
-    }
-};
-
 pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     getMouse: *const fn (camera: Rect) Mouse,
@@ -274,8 +90,6 @@ pub const GameState = struct {
     cam_noise: Noise = .{},
 
     canvas: Canvas,
-    
-    text_renderer: TextRenderer,
     debug_fwidth: Gl.Renderable,
 
     const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
@@ -289,7 +103,7 @@ pub const GameState = struct {
         // TODO: get random seed as param?
         var result: GameState = .{
             .rnd_instance = .init(0),
-            .canvas = try .init(gl, gpa),
+            .canvas = try .init(gl, gpa, &.{"Arial"}, &.{loaded_images.get(.arial_atlas) }),
             // TODO: store this in kommon for later use
             .debug_fwidth = try gl.buildRenderable(
                 \\in vec2 a_position;
@@ -321,7 +135,6 @@ pub const GameState = struct {
                 } },
                 &.{},
             ),
-            .text_renderer = try .init("Arial", gpa, gl, loaded_images.get(.arial_atlas)),
         };
         result.restart();
         return result;
@@ -597,7 +410,7 @@ pub const GameState = struct {
 
         switch (self.state) {
             .waiting => {
-                self.text_renderer.drawText(
+                canvas.text_renderers[0].drawText(
                     platform.gl,
                     camera,
                     // TODO: set text's bottom center
@@ -612,7 +425,7 @@ pub const GameState = struct {
         return false;
     }
 };
-    
+
 fn fillTile(canvas: Canvas, camera: Rect, pos: IVec2, color: Color) void {
     canvas.fillSquare(camera, pos.tof32(), 1, color);
 }
@@ -665,3 +478,4 @@ pub const PrecomputedShape = @import("renderer.zig").PrecomputedShape;
 pub const RenderableInfo = @import("renderer.zig").RenderableInfo;
 pub const Gl = @import("./Gl.zig");
 pub const Canvas = @import("./Canvas.zig");
+pub const TextRenderer = Canvas.TextRenderer;
