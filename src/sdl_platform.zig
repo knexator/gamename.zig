@@ -93,8 +93,6 @@ const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
 var preloaded_images: std.EnumArray(PreloadedImages, zstbi.Image) = .initUndefined();
 var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
 
-const Renderables = std.meta.FieldEnum(@TypeOf(game.renderables));
-
 var gl_procs: gl.ProcTable = undefined;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;

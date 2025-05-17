@@ -26,43 +26,6 @@ pub const preloaded_images = .{
 
 pub const Images = std.meta.FieldEnum(@TypeOf(preloaded_images));
 
-const fill_shape_info: RenderableInfo = .{
-    .VertexData = extern struct { position: Vec2 },
-    .IndexType = u16,
-    .UniformTypes = struct {
-        color: FColor,
-        rect: Rect,
-        point: Point,
-    },
-    .vertex =
-    \\uniform vec4 u_rect; // as top_left, size
-    \\uniform vec4 u_point; // as pos, turns, scale
-    \\
-    \\in vec2 a_position;
-    \\#define TAU 6.283185307179586
-    \\void main() {
-    \\  float c = cos(u_point.z * TAU);
-    \\  float s = sin(u_point.z * TAU);
-    \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
-    \\  vec2 camera_position = (world_position - u_rect.xy) / u_rect.zw;
-    \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-    \\}
-    ,
-    .fragment =
-    \\precision highp float;
-    \\out vec4 out_color;
-    \\
-    \\uniform vec4 u_color;
-    \\void main() {
-    \\  out_color = u_color;
-    \\}
-    ,
-};
-
-pub const renderables = .{
-    .fill_shape = fill_shape_info,
-};
-
 // TODO: small text looks worse on the web version!
 const TextRenderer = struct {
     atlas_texture: Gl.Texture,
@@ -310,11 +273,8 @@ pub const GameState = struct {
     cur_screen_shake: struct { pos: Vec2 = .zero, target_mag: f32 = 0, actual_mag: f32 = 0 } = .{},
     cam_noise: Noise = .{},
 
-    SHAPES: struct {
-        circle: PrecomputedShape,
-    },
-
-    fill_shape: Gl.Renderable,
+    canvas: Canvas,
+    
     text_renderer: TextRenderer,
     debug_fwidth: Gl.Renderable,
 
@@ -329,27 +289,7 @@ pub const GameState = struct {
         // TODO: get random seed as param?
         var result: GameState = .{
             .rnd_instance = .init(0),
-            .SHAPES = .{
-                .circle = try .fromPoints(gpa, &funk.map(
-                    Vec2.fromTurns,
-                    &funk.linspace01(
-                        128,
-                        false,
-                    ),
-                )),
-            },
-            .fill_shape = try gl.buildRenderable(
-                fill_shape_info.vertex,
-                fill_shape_info.fragment,
-                .{ .attribs = &.{
-                    .{ .name = "a_position", .kind = .Vec2 },
-                } },
-                &.{
-                    .{ .name = "u_rect", .kind = .Rect },
-                    .{ .name = "u_point", .kind = .Point },
-                    .{ .name = "u_color", .kind = .FColor },
-                },
-            ),
+            .canvas = try .init(gl, gpa),
             // TODO: store this in kommon for later use
             .debug_fwidth = try gl.buildRenderable(
                 \\in vec2 a_position;
@@ -390,6 +330,7 @@ pub const GameState = struct {
     // TODO: take gl parameter
     pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
         self.body.deinit(gpa);
+        self.canvas.deinit(undefined, gpa);
     }
 
     fn findApplePlace(self: *GameState) IVec2 {
@@ -548,14 +489,9 @@ pub const GameState = struct {
             .size = BOARD_SIZE.tof32(),
         }).withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        const renderer: Renderer = .{
-            // TODO
-            .scratch = platform.gpa,
-            .camera = camera,
-            .SHAPES = &self.SHAPES,
-            .gl = platform.gl,
-            .fill_shape = self.fill_shape,
-        };
+        self.canvas.startFrame(platform.gl);
+        // TODO: canvas.withFixedCamera(...) that does currying of that param
+        var canvas = self.canvas;
 
         if (false) {
             // TODO: store in kommon for later use
@@ -601,7 +537,8 @@ pub const GameState = struct {
                 break :blk Color.lerp(COLORS.CLOCK.DANGER_ACTIVE, COLORS.CLOCK.DANGER, distance_to_danger / 0.2);
             };
 
-            try renderer.fillArc(
+            try canvas.fillArc(
+                camera,
                 screen_center,
                 half_side - 1.5,
                 0.25 - danger_size,
@@ -616,18 +553,18 @@ pub const GameState = struct {
             else
                 Color.lerp(COLORS.CLOCK.ACTIVE, COLORS.CLOCK.NORMAL, distance_to_danger / 0.15);
 
-            try renderer.fillCrown(screen_center, half_side - 1.5, 1.5, clock_color);
+            try canvas.fillCrown(camera, screen_center, half_side - 1.5, 1.5, clock_color);
 
-            try renderer.fillShape(.{
+            canvas.fillShape(camera, .{
                 .pos = screen_center,
                 .turns = math.lerp(-0.75 + danger_size, 0.25 - danger_size, t),
-            }, &.{
+            }, try canvas.tmpShape(&.{
                 .new(0, -1),
                 .new(half_side - 3, 0),
                 .new(0, 1),
-            }, clock_color);
+            }), clock_color);
 
-            try renderer.fillCircle(screen_center, 1.5, clock_color);
+            canvas.fillCircle(camera, screen_center, 1.5, clock_color);
         }
 
         {
@@ -635,7 +572,7 @@ pub const GameState = struct {
             while (it.next()) |change| {
                 const dt = maybeMirror(self.turn - change.t, change.time_reversed);
                 if (math.inRange(dt, 0, SNAKE_LENGTH)) {
-                    try renderer.fillRect(.{ .top_left = change.pos.tof32().sub(.half), .size = .both(2) }, COLORS.APPLE_WARNING);
+                    canvas.fillRect(camera, .{ .top_left = change.pos.tof32().sub(.half), .size = .both(2) }, COLORS.APPLE_WARNING);
                 }
             }
         }
@@ -649,20 +586,20 @@ pub const GameState = struct {
                 if (dt >= SNAKE_LENGTH) in_active_snake = false;
 
                 if (in_active_snake) {
-                    try renderer.fillTile(part.pos, COLORS.SNAKE.ACTIVE[@intCast(dt)]);
+                    fillTile(canvas, camera, part.pos, COLORS.SNAKE.ACTIVE[@intCast(dt)]);
                 } else if (math.inRange(dt, 0, SNAKE_LENGTH)) {
-                    try renderer.fillTile(part.pos, COLORS.SNAKE.PASSIVE[@intCast(dt)]);
+                    fillTile(canvas, camera, part.pos, COLORS.SNAKE.PASSIVE[@intCast(dt)]);
                 }
             }
         }
 
-        try renderer.fillTile(self.cur_apple, COLORS.APPLE);
+        fillTile(canvas, camera, self.cur_apple, COLORS.APPLE);
 
         switch (self.state) {
             .waiting => {
                 self.text_renderer.drawText(
                     platform.gl,
-                    renderer.camera,
+                    camera,
                     // TODO: set text's bottom center
                     BOARD_SIZE.tof32().mul(.new(0.5, 0.25)).addX(-6.25),
                     "WASD or Arrow Keys to move",
@@ -675,94 +612,10 @@ pub const GameState = struct {
         return false;
     }
 };
-
-const Renderer = struct {
-    camera: Rect,
-    SHAPES: *const @FieldType(GameState, "SHAPES"),
-    gl: Gl,
-    fill_shape: Gl.Renderable,
-    scratch: std.mem.Allocator,
-
-    const CIRCLE_RESOLUTION = 128;
-
-    fn fillRect(self: Renderer, rect: Rect, color: Color) !void {
-        self.gl.useRenderable(self.fill_shape, &[4]Vec2{
-            .new(0, 0),
-            .new(rect.size.x, 0),
-            .new(0, rect.size.y),
-            .new(rect.size.x, rect.size.y),
-        }, 4 * @sizeOf(Vec2), &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }, &.{
-            .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
-            .{ .name = "u_point", .value = .{ .Point = .{ .pos = rect.top_left } } },
-            .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
-        }, null);
-    }
-
-    fn fillTile(self: Renderer, pos: IVec2, color: Color) !void {
-        try self.fillRect(.{ .top_left = pos.tof32(), .size = .one }, color);
-    }
-
-    fn fillShape(
-        self: Renderer,
-        parent: Point,
-        local_points: []const Vec2,
-        color: Color,
-    ) !void {
-        // TODO: cache triangulation
-        assert(local_points.len >= 3);
-        const indices = try Triangulator.triangulate(Gl.IndexType, self.scratch, local_points);
-        defer self.scratch.free(indices);
-
-        self.gl.useRenderable(self.fill_shape, local_points.ptr, local_points.len * @sizeOf(Vec2), indices, &.{
-            .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
-            .{ .name = "u_point", .value = .{ .Point = parent } },
-            .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
-        }, null);
-    }
-
-    fn fillArc(self: Renderer, center: Vec2, radius: f32, turns_start: f32, turns_end: f32, color: Color) !void {
-        try self.fillShape(.{
-            .pos = center,
-            .scale = radius,
-            .turns = turns_start,
-        }, &(funk.fromCountAndCtx(CIRCLE_RESOLUTION, struct {
-            // TODO: maybe use linspace
-            pub fn anon(n: usize, angle_delta: f32) Vec2 {
-                return Vec2.fromTurns(angle_delta * math.tof32(n) / math.tof32(CIRCLE_RESOLUTION));
-            }
-        }.anon, turns_end - turns_start) ++ [1]Vec2{.zero}), color);
-    }
-
-    fn fillCircle(self: Renderer, center: Vec2, radius: f32, color: Color) !void {
-        self.gl.useRenderable(
-            self.fill_shape,
-            self.SHAPES.circle.local_points.ptr,
-            self.SHAPES.circle.local_points.len * @sizeOf(Vec2),
-            self.SHAPES.circle.triangles,
-            &.{
-                .{ .name = "u_color", .value = .{ .FColor = color.toFColor() } },
-                .{ .name = "u_point", .value = .{ .Point = .{ .pos = center, .scale = radius } } },
-                .{ .name = "u_rect", .value = .{ .Rect = self.camera } },
-            },
-            null,
-        );
-    }
-
-    fn fillCrown(self: Renderer, center: Vec2, radius: f32, width: f32, color: Color) !void {
-        try self.fillShape(.{
-            .pos = center,
-        }, &(funk.mapWithCtx(
-            Vec2.fromPolar,
-            &funk.linspace(1, 0, CIRCLE_RESOLUTION, true),
-            radius - width / 2,
-        ) ++
-            funk.mapWithCtx(
-                Vec2.fromPolar,
-                &funk.linspace(0, 1, CIRCLE_RESOLUTION, true),
-                radius + width / 2,
-            )), color);
-    }
-};
+    
+fn fillTile(canvas: Canvas, camera: Rect, pos: IVec2, color: Color) void {
+    canvas.fillSquare(camera, pos.tof32(), 1, color);
+}
 
 pub const CApi = extern struct {
     update: *const @TypeOf(_update),
@@ -811,3 +664,4 @@ pub const KeyboardButton = kommon.input.KeyboardButton;
 pub const PrecomputedShape = @import("renderer.zig").PrecomputedShape;
 pub const RenderableInfo = @import("renderer.zig").RenderableInfo;
 pub const Gl = @import("./Gl.zig");
+pub const Canvas = @import("./Canvas.zig");

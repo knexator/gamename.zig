@@ -1,3 +1,5 @@
+// TODO: maybe delete this file?
+
 pub const RenderableInfo = struct {
     VertexData: type,
     IndexType: type,
@@ -22,6 +24,11 @@ pub const PrecomputedShape = struct {
             .local_points = try gpa.dupe(Vec2, points),
             .triangles = triangles,
         };
+    }
+    
+    pub fn deinit(self: PrecomputedShape, gpa: std.mem.Allocator) void {
+        gpa.free(self.local_points);
+        gpa.free(self.triangles);
     }
 };
 
