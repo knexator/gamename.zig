@@ -75,7 +75,7 @@ const js = struct {
         extern fn createTexture() Texture;
         extern fn deleteTexture(texture: Texture) void;
         extern fn bindTexture(target: TextureBindPointGeneral, texture: Texture) void;
-        // texParameteri
+        extern fn texParameteri(target: TextureBindPointGeneral, pname: TexParameter, param: TexParameterValue) void;
         // TODO: more variants
         extern fn texImage2D_basic(
             target: TextureBindPointSpecific,
@@ -286,6 +286,23 @@ const js = struct {
             // TEXTURE_CUBE_MAP_POSITIVE_Z = 0x0000,
             // TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x0000,
         };
+
+        pub const TexParameter = enum(GLenum) {
+            TEXTURE_MAG_FILTER = 0x2800,
+            TEXTURE_MIN_FILTER = 0x2801,
+            // TODO: https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/texParameter
+        };
+
+        // TODO: somehow, separate these by param?
+        pub const TexParameterValue = enum(GLint) {
+            NEAREST = 0x2600,
+            LINEAR = 0x2601,
+            NEAREST_MIPMAP_NEAREST = 0x2700,
+            LINEAR_MIPMAP_NEAREST = 0x2701,
+            NEAREST_MIPMAP_LINEAR = 0x2702,
+            LINEAR_MIPMAP_LINEAR = 0x2703,
+            _,
+        };
     };
 
     pub const audio = struct {
@@ -411,6 +428,10 @@ const web_gl = struct {
             image_id.*,
         );
         js.webgl2.generateMipmap(.TEXTURE_2D);
+        // TODO: let user choose quality
+        js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .LINEAR);
+        // js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST_MIPMAP_LINEAR);
+        js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .LINEAR_MIPMAP_LINEAR);
 
         return .{ .id = @intFromEnum(texture) };
     }

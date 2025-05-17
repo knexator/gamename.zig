@@ -2,7 +2,7 @@ import { keys } from "./keycodes.js";
 
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
-const gl = canvas.getContext("webgl2");
+const gl = canvas.getContext("webgl2", { antialias: true, alpha: true });
 
 const gl_objects = [null];
 function storeGlObject(obj) {
@@ -204,6 +204,7 @@ async function getWasm() {
       createTexture: () => storeGlObject(gl.createTexture()),
       deleteTexture: (texture) => gl.deleteTexture(gl_objects[texture]),
       bindTexture: (target, texture) => gl.bindTexture(target, gl_objects[texture]),
+      texParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
       texImage2D_basic: (target, level, internalformat, format, type, pixels) => gl.texImage2D(target, level, internalformat, format, type, images[pixels]),
       generateMipmap: (target) => gl.generateMipmap(target),
     },

@@ -134,8 +134,10 @@ pub fn main() !void {
     }));
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_FLAGS, c.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG));
 
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLEBUFFERS, 1));
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
+    if (false) {
+        try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLEBUFFERS, 1));
+        try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
+    }
 
     const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
         game.metadata.name,
@@ -241,6 +243,9 @@ pub fn main() !void {
                 image.data.ptr,
             );
             gl.GenerateMipmap(gl.TEXTURE_2D);
+            gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            // TODO: let user choose quality
+            gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 
             return .{ .id = texture };
         }
