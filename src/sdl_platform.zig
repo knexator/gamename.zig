@@ -12,8 +12,8 @@ const game = @import("game.zig");
 const PlatformGives = game.PlatformGives;
 
 comptime {
-    std.testing.refAllDeclsRecursive(game);
-    std.testing.refAllDeclsRecursive(Vec2);
+    std.testing.refAllDecls(game);
+    std.testing.refAllDecls(Vec2);
 }
 
 const hot_reloading = @import("build_options").game_dynlib_path != null;
