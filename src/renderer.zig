@@ -25,7 +25,7 @@ pub const PrecomputedShape = struct {
             .triangles = triangles,
         };
     }
-    
+
     pub fn deinit(self: PrecomputedShape, gpa: std.mem.Allocator) void {
         gpa.free(self.local_points);
         gpa.free(self.triangles);

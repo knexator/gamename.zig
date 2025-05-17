@@ -23,8 +23,8 @@ DEFAULT_SHAPES: struct {
                 ),
             )),
             .square = .{
-                .local_points = &.{.zero, .e1, .e2, .one},
-                .triangles = &.{ .{0, 1, 2}, .{3, 2, 1} },
+                .local_points = &.{ .zero, .e1, .e2, .one },
+                .triangles = &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
             },
         };
     }
@@ -126,9 +126,9 @@ pub fn fillCircle(
     color: Color,
 ) void {
     self.fillShape(
-        camera, 
-        .{ .pos = center, .scale = radius }, 
-        self.DEFAULT_SHAPES.circle_128, 
+        camera,
+        .{ .pos = center, .scale = radius },
+        self.DEFAULT_SHAPES.circle_128,
         color,
     );
 }
@@ -141,9 +141,9 @@ pub fn fillSquare(
     color: Color,
 ) void {
     self.fillShape(
-        camera, 
-        .{ .pos = top_left, .scale = side }, 
-        self.DEFAULT_SHAPES.square, 
+        camera,
+        .{ .pos = top_left, .scale = side },
+        self.DEFAULT_SHAPES.square,
         color,
     );
 }
@@ -155,8 +155,8 @@ pub fn fillRect(
     color: Color,
 ) void {
     self.fillShape(
-        camera, 
-        .{ .pos = rect.top_left }, 
+        camera,
+        .{ .pos = rect.top_left },
         .{
             .local_points = &.{
                 .new(0, 0),
@@ -169,38 +169,23 @@ pub fn fillRect(
         color,
     );
 }
-    
-pub fn fillArc(
-    self: *Canvas,
-    camera: Rect,
-    center: Vec2,
-    radius: f32,
-    turns_start: f32,
-    turns_end: f32,
-    color: Color
-) !void {
+
+pub fn fillArc(self: *Canvas, camera: Rect, center: Vec2, radius: f32, turns_start: f32, turns_end: f32, color: Color) !void {
     self.fillShape(camera, .{
         .pos = center,
         .scale = radius,
     }, try self.tmpShape(&(funk.mapWithCtx(
         struct {
-            pub fn anon(ctx: struct {min: f32, max: f32}, t: f32) Vec2 {
+            pub fn anon(ctx: struct { min: f32, max: f32 }, t: f32) Vec2 {
                 return .fromTurns(std.math.lerp(ctx.min, ctx.max, t));
             }
         }.anon,
         &funk.linspace01(128, true),
-        .{.min = turns_start, .max = turns_end},
+        .{ .min = turns_start, .max = turns_end },
     ) ++ [1]Vec2{.zero})), color);
 }
 
-pub fn fillCrown(
-    self: *Canvas,
-    camera: Rect,
-    center: Vec2,
-    radius: f32,
-    width: f32,
-    color: Color
-) !void {
+pub fn fillCrown(self: *Canvas, camera: Rect, center: Vec2, radius: f32, width: f32, color: Color) !void {
     const CIRCLE_RESOLUTION = 128;
     self.fillShape(camera, .{
         .pos = center,
@@ -214,8 +199,6 @@ pub fn fillCrown(
         radius + width / 2,
     ))), color);
 }
-
-
 
 /// Performs triangulation; consider caching the result.
 pub fn tmpShape(
@@ -413,7 +396,6 @@ pub const TextRenderer = struct {
         return bottom_left.addX(em * glyph_info.advance);
     }
 };
-
 
 const std = @import("std");
 const assert = std.debug.assert;

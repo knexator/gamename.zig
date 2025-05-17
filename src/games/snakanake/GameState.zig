@@ -90,7 +90,7 @@ pub fn init(
     // TODO: get random seed as param?
     var result: GameState = .{
         .rnd_instance = .init(0),
-        .canvas = try .init(gl, gpa, &.{"Arial"}, &.{loaded_images.get(.arial_atlas) }),
+        .canvas = try .init(gl, gpa, &.{"Arial"}, &.{loaded_images.get(.arial_atlas)}),
         // TODO: store this in kommon for later use
         .debug_fwidth = try gl.buildRenderable(
             \\in vec2 a_position;
