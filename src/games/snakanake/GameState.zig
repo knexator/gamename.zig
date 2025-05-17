@@ -90,7 +90,7 @@ pub fn init(
     // TODO: get random seed as param?
     var result: GameState = .{
         .rnd_instance = .init(0),
-        .canvas = try .init(gl, gpa, &.{"Arial"}, &.{loaded_images.get(.arial_atlas)}),
+        .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         // TODO: store this in kommon for later use
         .debug_fwidth = try gl.buildRenderable(
             \\in vec2 a_position;
@@ -440,8 +440,8 @@ const Noise = kommon.Noise;
 pub const Mouse = kommon.input.Mouse;
 pub const Keyboard = kommon.input.Keyboard;
 pub const KeyboardButton = kommon.input.KeyboardButton;
-pub const PrecomputedShape = @import("../../renderer.zig").PrecomputedShape;
-pub const RenderableInfo = @import("../../renderer.zig").RenderableInfo;
-pub const Gl = @import("../../Gl.zig");
-pub const Canvas = @import("../../Canvas.zig");
+pub const PrecomputedShape = kommon.renderer.PrecomputedShape;
+pub const RenderableInfo = kommon.renderer.RenderableInfo;
+pub const Gl = kommon.Gl;
+pub const Canvas = kommon.Canvas;
 pub const TextRenderer = Canvas.TextRenderer;
