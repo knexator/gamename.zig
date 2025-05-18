@@ -275,7 +275,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    platform.gl.clear(COLORS.BACKGROUND.toFColor());
+    platform.gl.clear(COLORS.BACKGROUND);
 
     const cur_shake_mag = self.cur_screen_shake.actual_mag * (1.0 + @cos(platform.global_seconds * 0.25) * 0.25) / 32.0;
     const cur_shake_phase = self.cam_noise.genNoise2D(platform.global_seconds * 100, 0);
@@ -426,8 +426,7 @@ const assert = std.debug.assert;
 const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
 const math = kommon.math;
-const Color = math.UColor;
-const FColor = math.FColor;
+const Color = math.FColor;
 const Camera = math.Camera;
 const Rect = math.Rect;
 const Point = math.Point;
