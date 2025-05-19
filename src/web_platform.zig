@@ -611,7 +611,7 @@ export fn update(delta_seconds: f32) void {
     keyboard.prev = keyboard.cur;
 
     // sounds
-    {
+    if (@typeInfo(Sounds).@"enum".fields.len > 0) {
         var it = web_platform.sound_queue.iterator();
         while (it.next()) |id| {
             js.audio.playSound(sound_ids.get(id));
@@ -619,7 +619,7 @@ export fn update(delta_seconds: f32) void {
     }
 
     // loops
-    {
+    if (@typeInfo(Loops).@"enum".fields.len > 0) {
         var it = web_platform.loop_volumes.iterator();
         while (it.next()) |entry| {
             const id = loop_ids.get(entry.key);

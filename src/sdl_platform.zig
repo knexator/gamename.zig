@@ -478,7 +478,7 @@ pub fn main() !void {
         }
 
         // Sound
-        {
+        if (@typeInfo(Sounds).@"enum".fields.len > 0) {
             // We have created eight SDL audio streams. When we want to play a sound effect,
             // we loop through the streams for the first one that isn't playing any audio
             // and write the audio to that stream.
@@ -502,7 +502,7 @@ pub fn main() !void {
         }
 
         // Loops
-        {
+        if (@typeInfo(Loops).@"enum".fields.len > 0) {
             var it = loop_volumes.iterator();
             while (it.next()) |entry| {
                 try errify(c.SDL_SetAudioStreamGain(loops.get(entry.key).stream, entry.value.*));
