@@ -213,6 +213,8 @@ pub fn main() !void {
             .buildRenderable = buildRenderable,
             .useRenderable = useRenderable,
             .buildTexture2D = buildTexture2D,
+            .buildInstancedRenderable = buildInstancedRenderable,
+            .useInstancedRenderable = useInstancedRenderable,
         };
 
         pub fn clear(color: FColor) void {
@@ -375,6 +377,78 @@ pub fn main() !void {
                 u16 => gl.UNSIGNED_SHORT,
                 else => @compileError("not implemented"),
             }, 0);
+        }
+
+        pub fn buildInstancedRenderable(
+            vertex_src: [:0]const u8,
+            fragment_src: [:0]const u8,
+            per_vertex_attributes: game.Gl.VertexInfo.Collection,
+            per_instance_attributes: game.Gl.VertexInfo.Collection,
+            uniforms: []const game.Gl.UniformInfo.In,
+        ) !game.Gl.InstancedRenderable {
+            const program = try (ProgramInfo{
+                .vertex = vertex_src,
+                .fragment = fragment_src,
+            }).load();
+
+            var vao: c_uint = undefined;
+            gl.GenVertexArrays(1, @ptrCast(&vao));
+
+            gl.BindVertexArray(vao);
+
+            // TODO: single GenBuffers call
+            var vbo_vertices: c_uint = undefined;
+            gl.GenBuffers(1, @ptrCast(&vbo_vertices));
+            var vbo_instances: c_uint = undefined;
+            gl.GenBuffers(1, @ptrCast(&vbo_instances));
+            var ebo: c_uint = undefined;
+            gl.GenBuffers(1, @ptrCast(&ebo));
+
+            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+            defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+
+            defer gl.BindVertexArray(0);
+
+            // https://webgl2fundamentals.org/webgl/lessons/webgl-instanced-drawing.html
+
+            {
+                gl.BindBuffer(gl.ARRAY_BUFFER, vbo_vertices);
+                defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+                for (attributes.attribs, 0..) |attribute, k| {
+                    const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
+                    if (index == -1) return error.AttributeLocationError;
+                    gl.EnableVertexAttribArray(index);
+                    gl.VertexAttribPointer(
+                        index,
+                        @intFromEnum(attribute.kind.count()),
+                        @intFromEnum(attribute.kind.type()),
+                        if (attribute.kind.normalized()) gl.TRUE else gl.FALSE,
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        attributes.getOffset(k),
+                    );
+                }
+            }
+
+            var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+            for (uniforms) |uniform| {
+                const location = gl.GetUniformLocation(program, uniform.name);
+                if (location == -1) return error.UniformLocationError;
+                uniforms_data.append(.{
+                    .location = location,
+                    .name = uniform.name,
+                    .kind = uniform.kind,
+                }) catch return error.TooManyUniforms;
+            }
+
+            return .{
+                .program = @enumFromInt(program),
+                .vao = @enumFromInt(vao),
+                .vbo = @enumFromInt(vbo_vertices),
+                .ebo = @enumFromInt(ebo),
+                .uniforms = uniforms_data,
+            };
         }
     };
 

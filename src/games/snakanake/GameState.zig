@@ -395,6 +395,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     fillTile(canvas, camera, self.cur_apple, COLORS.APPLE);
 
+    // try canvas.line(camera, &.{ .one, .new(5, 1) }, 0.1, .black);
+    canvas.fillInstancedCircles(camera, &.{ .one, .new(2, 2) });
+
     switch (self.state) {
         .waiting => {
             canvas.text_renderers[0].drawText(

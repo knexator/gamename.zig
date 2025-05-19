@@ -24,8 +24,8 @@ pub const PlatformGives = struct {
 };
 
 // TODO: choose at comptime
-pub const GameState = @import("games/papuzo/GameState.zig");
-// pub const GameState = @import("games/snakanake/GameState.zig");
+// pub const GameState = @import("games/papuzo/GameState.zig");
+pub const GameState = @import("games/snakanake/GameState.zig");
 
 pub const CApi = extern struct {
     update: *const @TypeOf(_update),
