@@ -395,8 +395,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     fillTile(canvas, camera, self.cur_apple, COLORS.APPLE);
 
-    // try canvas.line(camera, &.{ .one, .new(5, 1) }, 0.1, .black);
-    canvas.fillInstancedCircles(camera, &.{ .one, .new(2, 2) });
+    if (false) {
+        canvas.fillInstancedCircles(camera, &.{ .one, .new(2, 2) });
+        canvas.line(
+            camera,
+            &.{ .new(5, 2), .new(8, 3), .new(10, 2), .new(7, 1), platform.getMouse(camera).cur.position },
+            platform.getMouse(camera).cur.position.x / 16.0,
+            .white,
+        );
+    }
 
     switch (self.state) {
         .waiting => {

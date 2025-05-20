@@ -203,6 +203,7 @@ async function getWasm() {
       deleteBuffer: (buffer) => gl.deleteBuffer(gl_objects[buffer]),
       getUniformLocation: (program, name_ptr, name_len) => storeGlObject(gl.getUniformLocation(gl_objects[program], getString(name_ptr, name_len))),
       uniform4f: (location, v0, v1, v2, v3) => gl.uniform4f(gl_objects[location], v0, v1, v2, v3),
+      uniform1f: (location, v0) => gl.uniform1f(gl_objects[location], v0),
       createTexture: () => storeGlObject(gl.createTexture()),
       deleteTexture: (texture) => gl.deleteTexture(gl_objects[texture]),
       bindTexture: (target, texture) => gl.bindTexture(target, gl_objects[texture]),

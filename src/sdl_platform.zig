@@ -134,7 +134,7 @@ pub fn main() !void {
     }));
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_FLAGS, c.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG));
 
-    if (false) {
+    if (true) {
         try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLEBUFFERS, 1));
         try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
     }
@@ -370,6 +370,7 @@ pub fn main() !void {
                     .FColor => |v| gl.Uniform4f(u, v.r, v.g, v.b, v.a),
                     .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
                     .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
+                    .f32 => |v| gl.Uniform1f(u, v),
                 }
             }
 
@@ -545,6 +546,7 @@ pub fn main() !void {
                     .FColor => |v| gl.Uniform4f(u, v.r, v.g, v.b, v.a),
                     .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
                     .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
+                    .f32 => |v| gl.Uniform1f(u, v),
                 }
             }
 
