@@ -67,8 +67,10 @@ const js = struct {
             stride: GLsizei,
             offset: GLintptr,
         ) void;
+        extern fn vertexAttribDivisor(index: GLuint, divisor: GLuint) void;
         extern fn drawArrays(mode: DrawMode, first: GLint, count: GLsizei) void;
         extern fn drawElements(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr) void;
+        extern fn drawElementsInstanced(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr, instanceCount: GLsizei) void;
         extern fn uniform4f(location: UniformLocation, v0: f32, v1: f32, v2: f32, v3: f32) void;
         // uniform1i
         // TODO: uniform[1234][uif][v]
@@ -404,6 +406,8 @@ const web_gl = struct {
         .buildRenderable = buildRenderable,
         .useRenderable = useRenderable,
         .buildTexture2D = buildTexture2D,
+        .buildInstancedRenderable = buildInstancedRenderable,
+        .useInstancedRenderable = useInstancedRenderable,
     };
 
     pub fn clear(color: FColor) void {
@@ -555,6 +559,166 @@ const web_gl = struct {
             u16 => .UNSIGNED_SHORT,
             else => @compileError("not implemented"),
         }, 0);
+    }
+
+    pub fn buildInstancedRenderable(
+        vertex_src: [:0]const u8,
+        fragment_src: [:0]const u8,
+        per_vertex_attributes: game.Gl.VertexInfo.Collection,
+        per_instance_attributes: game.Gl.VertexInfo.Collection,
+        uniforms: []const game.Gl.UniformInfo.In,
+    ) !game.Gl.InstancedRenderable {
+        const program = try js.webgl2.better.buildProgram(
+            vertex_src,
+            fragment_src,
+        );
+
+        const vao = js.webgl2.createVertexArray();
+        js.webgl2.bindVertexArray(vao);
+        defer js.webgl2.bindVertexArray(.null);
+
+        const vbo_vertices = js.webgl2.createBuffer();
+        const vbo_instances = js.webgl2.createBuffer();
+        const ebo = js.webgl2.createBuffer();
+
+        js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, ebo);
+
+        {
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, vbo_vertices);
+
+            const attributes = per_vertex_attributes;
+            for (attributes.attribs, 0..) |attribute, k| {
+                const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
+                js.webgl2.enableVertexAttribArray(index);
+                js.webgl2.vertexAttribPointer(
+                    index,
+                    @intFromEnum(attribute.kind.count()),
+                    @enumFromInt(@intFromEnum(attribute.kind.type())),
+                    attribute.kind.normalized(),
+                    // TODO: check in debugger if this is computed once
+                    @intCast(attributes.getStride()),
+                    @intCast(attributes.getOffset(k)),
+                );
+            }
+        }
+
+        {
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, vbo_instances);
+
+            const attributes = per_instance_attributes;
+            for (attributes.attribs, 0..) |attribute, k| {
+                const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
+                js.webgl2.enableVertexAttribArray(index);
+                js.webgl2.vertexAttribPointer(
+                    index,
+                    @intFromEnum(attribute.kind.count()),
+                    @enumFromInt(@intFromEnum(attribute.kind.type())),
+                    attribute.kind.normalized(),
+                    // TODO: check in debugger if this is computed once
+                    @intCast(attributes.getStride()),
+                    @intCast(attributes.getOffset(k)),
+                );
+                js.webgl2.vertexAttribDivisor(index, 1);
+            }
+        }
+
+        var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+        for (uniforms) |uniform| {
+            const location = try js.webgl2.better.getUniformLocation(program, uniform.name);
+            uniforms_data.append(.{
+                .location = @intCast(@intFromEnum(location)),
+                .name = uniform.name,
+                .kind = uniform.kind,
+            }) catch return error.TooManyUniforms;
+        }
+
+        return .{
+            .program = @enumFromInt(@intFromEnum(program)),
+            .vao = @enumFromInt(@intFromEnum(vao)),
+            .vbo_vertices = @enumFromInt(@intFromEnum(vbo_vertices)),
+            .vbo_instances = @enumFromInt(@intFromEnum(vbo_instances)),
+            .ebo = @enumFromInt(@intFromEnum(ebo)),
+            .uniforms = uniforms_data,
+        };
+    }
+
+    pub fn useInstancedRenderable(
+        renderable: game.Gl.InstancedRenderable,
+        // TODO: make the vertex data optional, since it could be precomputed
+        vertex_data_ptr: *const anyopaque,
+        vertex_data_len_bytes: usize,
+        // TODO: make triangles optional, since they could be precomputed
+        triangles: []const [3]game.Gl.IndexType,
+        instance_data_ptr: *const anyopaque,
+        instance_data_len_bytes: usize,
+        instance_count: usize,
+        uniforms: []const game.Gl.UniformInfo.Runtime,
+        // TODO: multiple textures
+        texture: ?game.Gl.Texture,
+    ) void {
+        {
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo_vertices)));
+            js.webgl2.bufferData(
+                .ARRAY_BUFFER,
+                @ptrCast(vertex_data_ptr),
+                vertex_data_len_bytes,
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
+        }
+
+        {
+            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.ebo)));
+            js.webgl2.bufferData(
+                .ELEMENT_ARRAY_BUFFER,
+                @ptrCast(triangles.ptr),
+                @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
+        }
+
+        {
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo_instances)));
+            js.webgl2.bufferData(
+                .ARRAY_BUFFER,
+                @ptrCast(instance_data_ptr),
+                instance_data_len_bytes,
+                .DYNAMIC_DRAW,
+            );
+            js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
+        }
+
+        // TODO
+        assert(texture == null);
+        // if (texture) |t| js.webgl2.bindTexture(.TEXTURE_2D, @enumFromInt(t.id));
+        // defer if (texture) |_| js.webgl2.bindTexture(.TEXTURE_2D, .null);
+
+        js.webgl2.bindVertexArray(@enumFromInt(@intFromEnum(renderable.vao)));
+        defer js.webgl2.bindVertexArray(.null);
+
+        js.webgl2.useProgram(@enumFromInt(@intFromEnum(renderable.program)));
+        defer js.webgl2.useProgram(.null);
+
+        for (uniforms) |uniform| {
+            // const u = uniform.location;
+            // TODO
+            const u: js.webgl2.UniformLocation = @enumFromInt(blk: {
+                for (renderable.uniforms.slice()) |u| {
+                    if (std.mem.eql(u8, u.name, uniform.name)) break :blk u.location;
+                } else unreachable;
+            });
+            switch (uniform.value) {
+                .FColor => |v| js.webgl2.uniform4f(u, v.r, v.g, v.b, v.a),
+                .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
+                .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
+            }
+        }
+
+        js.webgl2.drawElementsInstanced(.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+            u16 => .UNSIGNED_SHORT,
+            else => @compileError("not implemented"),
+        }, 0, @intCast(instance_count));
     }
 };
 

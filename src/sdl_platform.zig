@@ -431,7 +431,7 @@ pub fn main() !void {
                     );
                 }
             }
-            
+
             {
                 gl.BindBuffer(gl.ARRAY_BUFFER, vbo_instances);
                 // defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
@@ -474,7 +474,7 @@ pub fn main() !void {
                 .uniforms = uniforms_data,
             };
         }
-        
+
         pub fn useInstancedRenderable(
             renderable: game.Gl.InstancedRenderable,
             // TODO: make the vertex data optional, since it could be precomputed
@@ -484,6 +484,7 @@ pub fn main() !void {
             triangles: []const [3]game.Gl.IndexType,
             instance_data_ptr: *const anyopaque,
             instance_data_len_bytes: usize,
+            instance_count: usize,
             uniforms: []const game.Gl.UniformInfo.Runtime,
             // TODO: multiple textures
             texture: ?game.Gl.Texture,
@@ -509,7 +510,7 @@ pub fn main() !void {
                 );
                 gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
             }
-            
+
             {
                 gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo_instances));
                 gl.BufferData(
@@ -550,8 +551,7 @@ pub fn main() !void {
             gl.DrawElementsInstanced(gl.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
                 u16 => gl.UNSIGNED_SHORT,
                 else => @compileError("not implemented"),
-            }, null, 2);
-            // TODO: don't hardcode that 2
+            }, null, @intCast(instance_count));
         }
     };
 

@@ -2,7 +2,7 @@ import { keys } from "./keycodes.js";
 
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
-const gl = canvas.getContext("webgl2", { antialias: true, alpha: true });
+const gl = canvas.getContext("webgl2", { antialias: true });
 
 const gl_objects = [null];
 function storeGlObject(obj) {
@@ -194,10 +194,12 @@ async function getWasm() {
       bindBuffer: (target, buffer) => gl.bindBuffer(target, gl_objects[buffer]),
       enableVertexAttribArray: (index) => gl.enableVertexAttribArray(index),
       vertexAttribPointer: (index, size, type, normalized, stride, offset) => gl.vertexAttribPointer(index, size, type, normalized, stride, offset),
+      vertexAttribDivisor: (index, divisor) => gl.vertexAttribDivisor(index, divisor),
       createVertexArray: () => storeGlObject(gl.createVertexArray()),
       bindVertexArray: (vao) => gl.bindVertexArray(gl_objects[vao]),
       drawArrays: (mode, first, count) => gl.drawArrays(mode, first, count),
       drawElements: (mode, count, type, offset) => gl.drawElements(mode, count, type, offset),
+      drawElementsInstanced: (mode, count, type, offset, instanceCount) => gl.drawElementsInstanced(mode, count, type, offset, instanceCount),
       deleteBuffer: (buffer) => gl.deleteBuffer(gl_objects[buffer]),
       getUniformLocation: (program, name_ptr, name_len) => storeGlObject(gl.getUniformLocation(gl_objects[program], getString(name_ptr, name_len))),
       uniform4f: (location, v0, v1, v2, v3) => gl.uniform4f(gl_objects[location], v0, v1, v2, v3),
