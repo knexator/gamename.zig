@@ -405,7 +405,7 @@ pub fn main() !void {
             gl.GenBuffers(1, @ptrCast(&ebo));
 
             gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-            defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+            // defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
 
             defer gl.BindVertexArray(0);
 
@@ -413,8 +413,9 @@ pub fn main() !void {
 
             {
                 gl.BindBuffer(gl.ARRAY_BUFFER, vbo_vertices);
-                defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+                // defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
 
+                const attributes = per_vertex_attributes;
                 for (attributes.attribs, 0..) |attribute, k| {
                     const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
                     if (index == -1) return error.AttributeLocationError;
@@ -428,6 +429,28 @@ pub fn main() !void {
                         @intCast(attributes.getStride()),
                         attributes.getOffset(k),
                     );
+                }
+            }
+            
+            {
+                gl.BindBuffer(gl.ARRAY_BUFFER, vbo_instances);
+                // defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+                const attributes = per_instance_attributes;
+                for (attributes.attribs, 0..) |attribute, k| {
+                    const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
+                    if (index == -1) return error.AttributeLocationError;
+                    gl.EnableVertexAttribArray(index);
+                    gl.VertexAttribPointer(
+                        index,
+                        @intFromEnum(attribute.kind.count()),
+                        @intFromEnum(attribute.kind.type()),
+                        if (attribute.kind.normalized()) gl.TRUE else gl.FALSE,
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        attributes.getOffset(k),
+                    );
+                    gl.VertexAttribDivisor(index, 1);
                 }
             }
 
@@ -445,10 +468,90 @@ pub fn main() !void {
             return .{
                 .program = @enumFromInt(program),
                 .vao = @enumFromInt(vao),
-                .vbo = @enumFromInt(vbo_vertices),
+                .vbo_vertices = @enumFromInt(vbo_vertices),
+                .vbo_instances = @enumFromInt(vbo_instances),
                 .ebo = @enumFromInt(ebo),
                 .uniforms = uniforms_data,
             };
+        }
+        
+        pub fn useInstancedRenderable(
+            renderable: game.Gl.InstancedRenderable,
+            // TODO: make the vertex data optional, since it could be precomputed
+            vertex_data_ptr: *const anyopaque,
+            vertex_data_len_bytes: usize,
+            // TODO: make triangles optional, since they could be precomputed
+            triangles: []const [3]game.Gl.IndexType,
+            instance_data_ptr: *const anyopaque,
+            instance_data_len_bytes: usize,
+            uniforms: []const game.Gl.UniformInfo.Runtime,
+            // TODO: multiple textures
+            texture: ?game.Gl.Texture,
+        ) void {
+            {
+                gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo_vertices));
+                gl.BufferData(
+                    gl.ARRAY_BUFFER,
+                    @intCast(vertex_data_len_bytes),
+                    @ptrCast(vertex_data_ptr),
+                    gl.DYNAMIC_DRAW,
+                );
+                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+            }
+
+            {
+                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
+                gl.BufferData(
+                    gl.ELEMENT_ARRAY_BUFFER,
+                    @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                    triangles.ptr,
+                    gl.DYNAMIC_DRAW,
+                );
+                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+            }
+            
+            {
+                gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo_instances));
+                gl.BufferData(
+                    gl.ARRAY_BUFFER,
+                    @intCast(instance_data_len_bytes),
+                    @ptrCast(instance_data_ptr),
+                    gl.DYNAMIC_DRAW,
+                );
+                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+            }
+
+            // TODO
+            assert(texture == null);
+            // if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t.id);
+            // defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
+
+            gl.BindVertexArray(@intFromEnum(renderable.vao));
+            defer gl.BindVertexArray(0);
+
+            gl.UseProgram(@intFromEnum(renderable.program));
+            defer gl.UseProgram(0);
+
+            for (uniforms) |uniform| {
+                // const u = uniform.location;
+                // TODO
+                const u = blk: {
+                    for (renderable.uniforms.slice()) |u| {
+                        if (std.mem.eql(u8, u.name, uniform.name)) break :blk u.location;
+                    } else unreachable;
+                };
+                switch (uniform.value) {
+                    .FColor => |v| gl.Uniform4f(u, v.r, v.g, v.b, v.a),
+                    .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
+                    .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
+                }
+            }
+
+            gl.DrawElementsInstanced(gl.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+                u16 => gl.UNSIGNED_SHORT,
+                else => @compileError("not implemented"),
+            }, null, 2);
+            // TODO: don't hardcode that 2
         }
     };
 
