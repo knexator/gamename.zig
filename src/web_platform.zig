@@ -551,7 +551,7 @@ const web_gl = struct {
             });
             switch (uniform.value) {
                 .FColor => |v| js.webgl2.uniform4f(u, v.r, v.g, v.b, v.a),
-                .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
+                .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                 .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                 .f32 => |v| js.webgl2.uniform1f(u, v),
             }
@@ -712,7 +712,7 @@ const web_gl = struct {
             });
             switch (uniform.value) {
                 .FColor => |v| js.webgl2.uniform4f(u, v.r, v.g, v.b, v.a),
-                .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.y, v.size.y),
+                .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                 .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                 .f32 => |v| js.webgl2.uniform1f(u, v),
             }

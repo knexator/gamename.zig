@@ -283,7 +283,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (self.state != .main) self.cur_screen_shake.target_mag = 0;
     math.towards(&self.cur_screen_shake.actual_mag, self.cur_screen_shake.target_mag, platform.delta_seconds * 1000);
 
-    // TODO: bug here, doesn't work properly for sdl fullscreen
     const camera: Rect = (Rect{
         .top_left = self.cur_screen_shake.pos,
         .size = BOARD_SIZE.tof32(),
@@ -414,6 +413,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 BOARD_SIZE.tof32().mul(.new(0.5, 0.25)).addX(-6.25),
                 "WASD or Arrow Keys to move",
                 30.0 / 32.0,
+                .white,
             );
         },
         else => {},
