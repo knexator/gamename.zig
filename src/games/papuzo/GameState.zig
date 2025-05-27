@@ -46,9 +46,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera);
         defer self.ui.endBuild(platform.delta_seconds);
 
-        for (&[2]Vec2{.one, .both(1.5)}, 0..) |pos, k| {
+        for (&[2]Vec2{ .one, .both(1.5) }, 0..) |pos, k| {
             const box = try self.ui.build_box(
-                @enumFromInt(k + 10_123),
+                .fromFormat("button {d}", .{k}),
                 .{ .top_left = pos, .size = .one },
                 .{ .clickable = true, .visible = true },
             );
@@ -79,7 +79,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 }
 
 pub const UI = struct {
-    pub const Key = enum(usize) { none = 0, _ };
+    pub const Key = enum(u64) {
+        none = 0,
+        _,
+
+        pub fn fromString(str: []const u8) Key {
+            return @enumFromInt(std.hash.Wyhash.hash(0, str));
+        }
+
+        pub fn fromFormat(comptime fmt: []const u8, args: anytype) Key {
+            var buf: [0x1000]u8 = undefined;
+            return fromString(std.fmt.bufPrint(&buf, fmt, args) catch panic("Key fmt was too long", .{}));
+        }
+    };
     pub const Signal = struct {
         box: *Box,
         scroll: Vec2 = .zero,
@@ -142,7 +154,7 @@ pub const UI = struct {
             // draw_active_effects: bool = false,
             // TODO: many
         };
-            
+
         pub fn addChildLast(self: *Box, child: *Box) void {
             if (self.tree.first == null) {
                 assert(self.tree.last == null);
@@ -160,9 +172,9 @@ pub const UI = struct {
         }
 
         pub fn iterator(self: *Box) Iterator {
-            return .{.box = self};
+            return .{ .box = self };
         }
-        
+
         /// depth-first
         pub const Iterator = struct {
             box: ?*Box,
@@ -328,7 +340,7 @@ pub const UI = struct {
             //     ui_push_parent(root);
             //     ui_state->root = root;
             //   }
-            self.root = try self.build_box(@enumFromInt(1), root, .{});
+            self.root = try self.build_box(.fromString("root"), root, .{});
             try self.push_parent(self.root);
             errdefer comptime unreachable;
 
@@ -531,6 +543,7 @@ pub const UI = struct {
 
 const std = @import("std");
 const assert = std.debug.assert;
+const panic = std.debug.panic;
 
 const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
