@@ -43,32 +43,35 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
     {
-        try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds);
+        try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera);
         defer self.ui.endBuild(platform.delta_seconds);
 
-        const box = try self.ui.build_box(
-            @enumFromInt(1),
-            .{ .top_left = .one, .size = .one },
-            .{ .clickable = true },
-        );
-        const signal = UI.signal_from_box(&self.ui, box);
-        // std.log.debug("signal: {any}", .{signal.flags});
-        if (signal.flags.clicked) {
-            std.log.debug("click!", .{});
-        }
-        if (signal.flags.double_clicked) {
-            std.log.debug("double click!", .{});
+        for (&[2]Vec2{.one, .both(1.5)}, 0..) |pos, k| {
+            const box = try self.ui.build_box(
+                @enumFromInt(k + 10_123),
+                .{ .top_left = pos, .size = .one },
+                .{ .clickable = true, .visible = true },
+            );
+            const signal = UI.signal_from_box(&self.ui, box);
+            // std.log.debug("signal: {any}", .{signal.flags});
+            if (signal.flags.clicked) {
+                std.log.debug("click!", .{});
+            }
+            if (signal.flags.double_clicked) {
+                std.log.debug("double click!", .{});
+            }
         }
     }
     platform.gl.clear(.gray(0.5));
 
     {
-        // TODO: tree iterator
-        var it = self.ui.box_cache.valueIterator();
+        var it = self.ui.root.iterator();
         while (it.next()) |box_ptr| {
             const box = box_ptr.*;
-            self.canvas.fillRect(camera, box.rect, .gray(box.hot_t));
-            self.canvas.fillRect(camera, box.rect, FColor.black.withAlpha(box.active_t * 0.2));
+            if (box.flags.visible) {
+                self.canvas.fillRect(camera, box.rect, .gray(box.hot_t));
+                self.canvas.fillRect(camera, box.rect, FColor.black.withAlpha(box.active_t * 0.2));
+            }
         }
     }
 
@@ -132,7 +135,54 @@ pub const UI = struct {
             clamp_scroll_x: bool = false,
             clamp_scroll_y: bool = false,
             dropsite: bool = false,
+            visible: bool = false,
+            // draw_background: bool = false,
+            // draw_border: bool = false,
+            // draw_hot_effects: bool = false,
+            // draw_active_effects: bool = false,
             // TODO: many
+        };
+            
+        pub fn addChildLast(self: *Box, child: *Box) void {
+            if (self.tree.first == null) {
+                assert(self.tree.last == null);
+                assert(self.tree.child_count == 0);
+                self.tree.first = child;
+                self.tree.last = child;
+            } else {
+                assert(self.tree.last != null);
+                child.tree.prev = self.tree.last;
+                self.tree.last.?.tree.next = child;
+                self.tree.last = child;
+            }
+            self.tree.child_count += 1;
+            child.tree.parent = self;
+        }
+
+        pub fn iterator(self: *Box) Iterator {
+            return .{.box = self};
+        }
+        
+        /// depth-first
+        pub const Iterator = struct {
+            box: ?*Box,
+
+            pub fn next(self: *Iterator) ?*Box {
+                if (self.box) |cur| {
+                    if (cur.tree.first) |first| {
+                        self.box = first;
+                    } else if (cur.tree.next) |next_sibling| {
+                        self.box = next_sibling;
+                    } else if (cur.tree.parent) |parent| {
+                        self.box = parent.tree.next;
+                    } else {
+                        self.box = null;
+                    }
+                    return cur;
+                } else {
+                    return null;
+                }
+            }
         };
     };
     pub const State = struct {
@@ -145,7 +195,10 @@ pub const UI = struct {
         box_pool: std.heap.MemoryPool(Box),
 
         // roots: std.BoundedArray(*const Box, 1) = std.BoundedArray(*const Box, 1).init(0) catch unreachable,
-        // root:
+        root: *Box,
+
+        // TODO: FIFO
+        parent_stack: std.BoundedArray(*Box, 10) = .{},
 
         // user interaction state
         hot: Key = .none,
@@ -172,6 +225,15 @@ pub const UI = struct {
             return self.box_cache.get(key);
         }
 
+        fn push_parent(self: *State, box: *Box) !void {
+            try self.parent_stack.append(box);
+        }
+
+        fn active_parent(self: State) ?*Box {
+            if (self.parent_stack.len == 0) return null;
+            return self.parent_stack.get(self.parent_stack.len - 1);
+        }
+
         fn build_box(self: *State, key: Key, rect: Rect, flags: Box.Flags) !*Box {
             // const box, const is_new = blk: {
             //     self.box_from_key(key);
@@ -192,6 +254,9 @@ pub const UI = struct {
             box.rect = rect;
             box.flags = flags;
             box.tree = .{};
+            if (self.active_parent()) |parent| {
+                parent.addChildLast(box);
+            }
             return box;
         }
 
@@ -201,6 +266,7 @@ pub const UI = struct {
                 .box_pool = .init(gpa),
                 .box_cache = .init(gpa),
                 .events = .init(gpa),
+                .root = undefined,
             };
         }
 
@@ -209,7 +275,7 @@ pub const UI = struct {
             state.box_cache.deinit();
         }
 
-        pub fn beginBuild(self: *UI.State, mouse: Mouse, time: f32) !void {
+        pub fn beginBuild(self: *UI.State, mouse: Mouse, time: f32, root: Rect) !void {
             self.events.clearRetainingCapacity();
             if (!mouse.cur.position.equals(mouse.prev.position)) {
                 try self.events.append(.{
@@ -245,8 +311,10 @@ pub const UI = struct {
                     }),
                 });
             }
-            errdefer comptime unreachable;
             self.mouse = mouse.cur.position;
+
+            // reset per-build ui state
+            self.parent_stack.clear();
 
             // self.roots.clear();
             // self.roots.append()
@@ -260,6 +328,9 @@ pub const UI = struct {
             //     ui_push_parent(root);
             //     ui_state->root = root;
             //   }
+            self.root = try self.build_box(@enumFromInt(1), root, .{});
+            try self.push_parent(self.root);
+            errdefer comptime unreachable;
 
             if (self.active == .none) {
                 self.hot = .none;
