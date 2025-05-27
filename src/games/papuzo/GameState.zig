@@ -46,10 +46,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera);
         defer self.ui.endBuild(platform.delta_seconds);
 
-        for (&[2]Vec2{ .one, .both(1.5) }, 0..) |pos, k| {
+        self.ui.setActiveDesiredSize(.{
+            .{ .kind = .percent_of_parent, .value = 0.5 },
+            .{ .kind = .world, .value = 1.0 },
+        });
+        for (&[2]Vec2{ .one, .both(1.5) }, 0..) |_, k| {
             const box = try self.ui.build_box(
                 .fromFormat("button {d}", .{k}),
-                .{ .top_left = pos, .size = .one },
                 .{ .clickable = true, .visible = true },
             );
             const signal = UI.signal_from_box(&self.ui, box);
@@ -65,12 +68,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     platform.gl.clear(.gray(0.5));
 
     {
-        var it = self.ui.root.iterator();
+        var it = self.ui.root.iterator_pre();
         while (it.next()) |box_ptr| {
             const box = box_ptr.*;
+            std.log.debug("final rect: {any}", .{box.final_rect});
             if (box.flags.visible) {
-                self.canvas.fillRect(camera, box.rect, .gray(box.hot_t));
-                self.canvas.fillRect(camera, box.rect, FColor.black.withAlpha(box.active_t * 0.2));
+                self.canvas.fillRect(camera, box.final_rect, .gray(box.hot_t));
+                self.canvas.fillRect(camera, box.final_rect, FColor.black.withAlpha(box.active_t * 0.2));
             }
         }
     }
@@ -135,9 +139,13 @@ pub const UI = struct {
             prev: ?*Box = null,
             parent: ?*Box = null,
         },
+        /// x, y
+        desired_size: [2]Size,
 
         // per build artifacts
-        rect: Rect,
+        computed_relative_position: Vec2 = undefined,
+        computed_size: Vec2 = undefined,
+        final_rect: Rect,
 
         pub const Flags = struct {
             clickable: bool = false,
@@ -171,15 +179,19 @@ pub const UI = struct {
             child.tree.parent = self;
         }
 
-        pub fn iterator(self: *Box) Iterator {
+        pub fn iterator_pre(self: *Box) PreIterator {
             return .{ .box = self };
         }
 
-        /// depth-first
-        pub const Iterator = struct {
+        pub fn iterator_post(self: *Box) PostIterator {
+            return .init(self);
+        }
+
+        /// depth-first, from first to last child
+        pub const PreIterator = struct {
             box: ?*Box,
 
-            pub fn next(self: *Iterator) ?*Box {
+            pub fn next(self: *PreIterator) ?*Box {
                 if (self.box) |cur| {
                     if (cur.tree.first) |first| {
                         self.box = first;
@@ -187,6 +199,38 @@ pub const UI = struct {
                         self.box = next_sibling;
                     } else if (cur.tree.parent) |parent| {
                         self.box = parent.tree.next;
+                    } else {
+                        self.box = null;
+                    }
+                    return cur;
+                } else {
+                    return null;
+                }
+            }
+        };
+
+        /// leaf to root
+        pub const PostIterator = struct {
+            box: ?*Box,
+
+            pub fn init(root: *Box) PostIterator {
+                return .{ .box = firstLeaf(root) };
+            }
+
+            fn firstLeaf(root: *Box) *Box {
+                var box = root;
+                while (box.tree.first) |b| {
+                    box = b;
+                }
+                return box;
+            }
+
+            pub fn next(self: *PostIterator) ?*Box {
+                if (self.box) |cur| {
+                    if (cur.tree.next) |next_sibling| {
+                        self.box = firstLeaf(next_sibling);
+                    } else if (cur.tree.parent) |parent| {
+                        self.box = parent;
                     } else {
                         self.box = null;
                     }
@@ -207,10 +251,11 @@ pub const UI = struct {
         box_pool: std.heap.MemoryPool(Box),
 
         // roots: std.BoundedArray(*const Box, 1) = std.BoundedArray(*const Box, 1).init(0) catch unreachable,
-        root: *Box,
+        root: *Box = undefined,
 
         // TODO: FIFO
         parent_stack: std.BoundedArray(*Box, 10) = .{},
+        active_desired_size: [2]Size = undefined,
 
         // user interaction state
         hot: Key = .none,
@@ -241,12 +286,17 @@ pub const UI = struct {
             try self.parent_stack.append(box);
         }
 
+        // TODO: should be a stack, probably
+        fn setActiveDesiredSize(self: *State, size: [2]Size) void {
+            self.active_desired_size = size;
+        }
+
         fn active_parent(self: State) ?*Box {
             if (self.parent_stack.len == 0) return null;
             return self.parent_stack.get(self.parent_stack.len - 1);
         }
 
-        fn build_box(self: *State, key: Key, rect: Rect, flags: Box.Flags) !*Box {
+        fn build_box(self: *State, key: Key, flags: Box.Flags) !*Box {
             // const box, const is_new = blk: {
             //     self.box_from_key(key);
             //     self.box_from_key(key) orelse try self.box_pool.create();
@@ -263,9 +313,11 @@ pub const UI = struct {
                 }
             };
             box.last_touched_build_index = self.build_index;
-            box.rect = rect;
             box.flags = flags;
             box.tree = .{};
+            box.desired_size = self.active_desired_size;
+            box.computed_size = .zero;
+            box.computed_relative_position = .zero;
             if (self.active_parent()) |parent| {
                 parent.addChildLast(box);
             }
@@ -278,7 +330,6 @@ pub const UI = struct {
                 .box_pool = .init(gpa),
                 .box_cache = .init(gpa),
                 .events = .init(gpa),
-                .root = undefined,
             };
         }
 
@@ -340,8 +391,15 @@ pub const UI = struct {
             //     ui_push_parent(root);
             //     ui_state->root = root;
             //   }
-            self.root = try self.build_box(.fromString("root"), root, .{});
+            self.setActiveDesiredSize(.{
+                .{ .kind = .world, .value = root.size.x },
+                .{ .kind = .world, .value = root.size.y },
+            });
+            self.root = try self.build_box(.fromString("root"), .{});
             try self.push_parent(self.root);
+            // a bit hacky...
+            self.root.computed_relative_position = root.top_left;
+            self.root.final_rect = root;
             errdefer comptime unreachable;
 
             if (self.active == .none) {
@@ -362,7 +420,105 @@ pub const UI = struct {
 
         pub fn endBuild(self: *UI.State, delta_seconds: f32) void {
             // TODO: remove untouched boxes?
-            // TODO: layout
+
+            // layout
+            {
+                // step 1: standalone sizes
+                {
+                    var it = Box.iterator_pre(self.root);
+                    while (it.next()) |box| {
+                        inline for (box.desired_size, Vec2.coords) |size, coord| {
+                            switch (size.kind) {
+                                .world => box.computed_size.setInPlace(coord, size.value),
+                                else => {},
+                            }
+                        }
+                    }
+                }
+
+                // step 2: upwards dependent sizes
+                {
+                    var it = Box.iterator_pre(self.root);
+                    while (it.next()) |box| {
+                        inline for (box.desired_size, Vec2.coords, 0..) |size, coord, k| {
+                            switch (size.kind) {
+                                .percent_of_parent => {
+                                    // find parent that has computed a fixed size
+                                    const fixed_parent_size: f32 = blk: {
+                                        var cur = box.tree.parent;
+                                        while (cur) |b| {
+                                            if (switch (b.desired_size[k].kind) {
+                                                .world, .percent_of_parent => true,
+                                                .children_sum => false,
+                                            }) {
+                                                break :blk b.computed_size.get(coord);
+                                            }
+                                            cur = b.tree.parent;
+                                        } else unreachable;
+                                    };
+                                    box.computed_size.setInPlace(
+                                        coord,
+                                        fixed_parent_size * size.value,
+                                    );
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                }
+
+                // step 3: downwards dependent sizes
+                {
+                    var it = Box.iterator_post(self.root);
+                    while (it.next()) |box| {
+                        inline for (box.desired_size, Vec2.coords) |size, coord| {
+                            switch (size.kind) {
+                                .children_sum => {
+                                    var res: f32 = 0;
+                                    var child = box.tree.first;
+                                    while (child) |b| {
+                                        // TODO: sum in one axis, max in the other
+                                        res += b.computed_size.get(coord);
+                                        child = b.tree.next;
+                                    }
+                                    box.computed_size.setInPlace(coord, res);
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                }
+
+                // TODO step 4: solve violations
+
+                // step 5: compute final rects
+                {
+                    var it = Box.iterator_pre(self.root);
+                    while (it.next()) |box| {
+                        inline for (Vec2.coords) |coord| {
+                            var pos: f32 = 0.0;
+                            var maybe_child = box.tree.first;
+                            while (maybe_child) |child| {
+                                child.computed_relative_position.setInPlace(coord, pos);
+                                child.final_rect.top_left.setInPlace(
+                                    coord,
+                                    box.final_rect.top_left.get(coord) + pos,
+                                );
+                                child.final_rect.size.setInPlace(
+                                    coord,
+                                    child.computed_size.get(coord),
+                                );
+
+                                // TODO: depend on axis
+                                pos += child.computed_size.get(coord);
+
+                                maybe_child = child.tree.next;
+                            }
+                        }
+                    }
+                }
+            }
+
             {
                 var it = self.box_cache.valueIterator();
                 while (it.next()) |box_ptr| {
@@ -384,6 +540,14 @@ pub const UI = struct {
             // _ = self.get_build_arena().reset(.retain_capacity);
         }
     };
+    pub const Size = struct {
+        kind: Kind,
+        value: f32,
+        // TODO
+        // strictness: f32,
+
+        pub const Kind = enum { world, percent_of_parent, children_sum };
+    };
     const double_click_time = 0.3;
     const Event = struct {
         kind: enum { press, release, scroll, move },
@@ -395,11 +559,11 @@ pub const UI = struct {
         var signal: Signal = .{ .box = box };
 
         const rect: Rect = blk: {
-            var rect = box.rect;
+            var rect = box.final_rect;
             var b = box.tree.parent;
             while (b != null) : (b = b.?.tree.parent) {
                 if (b.?.flags.clip) {
-                    rect = rect.intersect(b.?.rect) orelse .{ .top_left = .zero, .size = .zero };
+                    rect = rect.intersect(b.?.final_rect) orelse .{ .top_left = .zero, .size = .zero };
                 }
             }
             break :blk rect;
