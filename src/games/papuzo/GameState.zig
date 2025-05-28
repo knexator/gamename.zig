@@ -43,13 +43,13 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
     {
-        try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera);
+        try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera, .y);
         defer self.ui.endBuild(platform.delta_seconds);
 
-        self.ui.setActiveDesiredSize(.{
+        self.ui.setActiveDesiredSizeAndLayoutAxis(.{
             .{ .kind = .percent_of_parent, .value = 0.5 },
             .{ .kind = .world, .value = 1.0 },
-        });
+        }, .y);
         for (&[2]Vec2{ .one, .both(1.5) }, 0..) |_, k| {
             const box = try self.ui.build_box(
                 .fromFormat("button {d}", .{k}),
@@ -141,6 +141,7 @@ pub const UI = struct {
         },
         /// x, y
         desired_size: [2]Size,
+        layout_axis: Vec2.Coord,
 
         // per build artifacts
         computed_relative_position: Vec2 = undefined,
@@ -255,7 +256,9 @@ pub const UI = struct {
 
         // TODO: FIFO
         parent_stack: std.BoundedArray(*Box, 10) = .{},
+        // TODO: join these into a single 'active' effect
         active_desired_size: [2]Size = undefined,
+        active_layout_axis: Vec2.Coord = undefined,
 
         // user interaction state
         hot: Key = .none,
@@ -287,8 +290,9 @@ pub const UI = struct {
         }
 
         // TODO: should be a stack, probably
-        fn setActiveDesiredSize(self: *State, size: [2]Size) void {
+        fn setActiveDesiredSizeAndLayoutAxis(self: *State, size: [2]Size, axis: Vec2.Coord) void {
             self.active_desired_size = size;
+            self.active_layout_axis = axis;
         }
 
         fn active_parent(self: State) ?*Box {
@@ -316,6 +320,7 @@ pub const UI = struct {
             box.flags = flags;
             box.tree = .{};
             box.desired_size = self.active_desired_size;
+            box.layout_axis = self.active_layout_axis;
             box.computed_size = .zero;
             box.computed_relative_position = .zero;
             if (self.active_parent()) |parent| {
@@ -338,7 +343,7 @@ pub const UI = struct {
             state.box_cache.deinit();
         }
 
-        pub fn beginBuild(self: *UI.State, mouse: Mouse, time: f32, root: Rect) !void {
+        pub fn beginBuild(self: *UI.State, mouse: Mouse, time: f32, root: Rect, default_axis: Vec2.Coord) !void {
             self.events.clearRetainingCapacity();
             if (!mouse.cur.position.equals(mouse.prev.position)) {
                 try self.events.append(.{
@@ -391,10 +396,10 @@ pub const UI = struct {
             //     ui_push_parent(root);
             //     ui_state->root = root;
             //   }
-            self.setActiveDesiredSize(.{
+            self.setActiveDesiredSizeAndLayoutAxis(.{
                 .{ .kind = .world, .value = root.size.x },
                 .{ .kind = .world, .value = root.size.y },
-            });
+            }, default_axis);
             self.root = try self.build_box(.fromString("root"), .{});
             try self.push_parent(self.root);
             // a bit hacky...
@@ -477,8 +482,11 @@ pub const UI = struct {
                                     var res: f32 = 0;
                                     var child = box.tree.first;
                                     while (child) |b| {
-                                        // TODO: sum in one axis, max in the other
-                                        res += b.computed_size.get(coord);
+                                        if (coord == box.layout_axis) {
+                                            res += b.computed_size.get(coord);
+                                        } else {
+                                            res = @max(res, b.computed_size.get(coord));
+                                        }
                                         child = b.tree.next;
                                     }
                                     box.computed_size.setInPlace(coord, res);
@@ -509,8 +517,9 @@ pub const UI = struct {
                                     child.computed_size.get(coord),
                                 );
 
-                                // TODO: depend on axis
-                                pos += child.computed_size.get(coord);
+                                if (coord == box.layout_axis) {
+                                    pos += child.computed_size.get(coord);
+                                }
 
                                 maybe_child = child.tree.next;
                             }
