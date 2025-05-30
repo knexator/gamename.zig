@@ -23,6 +23,8 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 canvas: Canvas,
 ui: UI.State,
 
+board: kommon.Grid2D(bool),
+
 pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
@@ -31,12 +33,14 @@ pub fn init(
     return .{
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .ui = .init(gpa),
+        .board = try .initFill(gpa, .both(10), false),
     };
 }
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.canvas.deinit(undefined, gpa);
+    self.board.deinit(gpa);
 }
 
 /// returns true if should quit
@@ -46,22 +50,29 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera, .y);
         defer self.ui.endBuild(platform.delta_seconds);
 
-        self.ui.setActiveDesiredSizeAndLayoutAxis(.{
-            .{ .kind = .percent_of_parent, .value = 0.5 },
-            .{ .kind = .world, .value = 1.0 },
-        }, .y);
-        for (&[2]Vec2{ .one, .both(1.5) }, 0..) |_, k| {
-            const box = try self.ui.build_box(
-                .fromFormat("button {d}", .{k}),
-                .{ .clickable = true, .visible = true },
-            );
-            const signal = UI.signal_from_box(&self.ui, box);
-            // std.log.debug("signal: {any}", .{signal.flags});
-            if (signal.flags.clicked) {
-                std.log.debug("click!", .{});
-            }
-            if (signal.flags.double_clicked) {
-                std.log.debug("double click!", .{});
+        for (0..self.board.height) |j| {
+            self.ui.setActiveDesiredSizeAndLayoutAxis(.{
+                .{ .kind = .percent_of_parent, .value = 1.0 },
+                .{ .kind = .percent_of_parent, .value = 1.0 / tof32(self.board.height) },
+            }, .x);
+            const cur_row = try self.ui.build_box(.fromFormat("row {d}", .{j}), .{});
+            try self.ui.push_parent(cur_row);
+            defer self.ui.pop_parent();
+
+            self.ui.setActiveDesiredSizeAndLayoutAxis(.{
+                .{ .kind = .percent_of_parent, .value = 1.0 / tof32(self.board.width) },
+                .{ .kind = .percent_of_parent, .value = 1.0 },
+            }, .x);
+            for (0..self.board.width) |i| {
+                const has_lamp = self.board.at(i, j) catch unreachable;
+                const box = try self.ui.build_box(
+                    .fromFormat("tile {d} {d}", .{ i, j }),
+                    .{ .clickable = true, .visible = true },
+                );
+                const signal = UI.signal_from_box(&self.ui, box);
+                if (signal.flags.clicked) {
+                    self.board.set(.new(i, j), !has_lamp) catch unreachable;
+                }
             }
         }
     }
@@ -287,6 +298,10 @@ pub const UI = struct {
 
         fn push_parent(self: *State, box: *Box) !void {
             try self.parent_stack.append(box);
+        }
+
+        fn pop_parent(self: *State) void {
+            _ = self.parent_stack.pop();
         }
 
         // TODO: should be a stack, probably
@@ -721,6 +736,7 @@ const panic = std.debug.panic;
 const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
 const math = kommon.math;
+const tof32 = math.tof32;
 const Color = math.UColor;
 const FColor = math.FColor;
 const Camera = math.Camera;
