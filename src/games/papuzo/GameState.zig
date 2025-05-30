@@ -65,6 +65,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }, .x);
             for (0..self.board.width) |i| {
                 const has_lamp = self.board.at(i, j) catch unreachable;
+                self.ui.setActiveBackgroundColor(if (has_lamp) .green else .black);
                 const box = try self.ui.build_box(
                     .fromFormat("tile {d} {d}", .{ i, j }),
                     .{ .clickable = true, .visible = true },
@@ -82,10 +83,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         var it = self.ui.root.iterator_pre();
         while (it.next()) |box_ptr| {
             const box = box_ptr.*;
-            std.log.debug("final rect: {any}", .{box.final_rect});
             if (box.flags.visible) {
-                self.canvas.fillRect(camera, box.final_rect, .gray(box.hot_t));
-                self.canvas.fillRect(camera, box.final_rect, FColor.black.withAlpha(box.active_t * 0.2));
+                self.canvas.fillRect(camera, box.final_rect, box.background_color);
+                self.canvas.fillRect(camera, box.final_rect, FColor.white.withAlpha(@max(0, box.hot_t * 0.4 - box.active_t * 0.2)));
             }
         }
     }
@@ -153,6 +153,7 @@ pub const UI = struct {
         /// x, y
         desired_size: [2]Size,
         layout_axis: Vec2.Coord,
+        background_color: FColor,
 
         // per build artifacts
         computed_relative_position: Vec2 = undefined,
@@ -267,9 +268,10 @@ pub const UI = struct {
 
         // TODO: FIFO
         parent_stack: std.BoundedArray(*Box, 10) = .{},
-        // TODO: join these into a single 'active' effect
+        // TODO: join these into a single 'active' effect, and also make it a stack
         active_desired_size: [2]Size = undefined,
         active_layout_axis: Vec2.Coord = undefined,
+        active_background_color: FColor = undefined,
 
         // user interaction state
         hot: Key = .none,
@@ -310,6 +312,10 @@ pub const UI = struct {
             self.active_layout_axis = axis;
         }
 
+        fn setActiveBackgroundColor(self: *State, background_color: FColor) void {
+            self.active_background_color = background_color;
+        }
+
         fn active_parent(self: State) ?*Box {
             if (self.parent_stack.len == 0) return null;
             return self.parent_stack.get(self.parent_stack.len - 1);
@@ -336,6 +342,7 @@ pub const UI = struct {
             box.tree = .{};
             box.desired_size = self.active_desired_size;
             box.layout_axis = self.active_layout_axis;
+            box.background_color = self.active_background_color;
             box.computed_size = .zero;
             box.computed_relative_position = .zero;
             if (self.active_parent()) |parent| {
