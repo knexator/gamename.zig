@@ -326,15 +326,15 @@ pub const UI = struct {
             //     self.box_from_key(key);
             //     self.box_from_key(key) orelse try self.box_pool.create();
             // };
-            const box = blk: {
+            const box, const existed = blk: {
                 if (self.box_from_key(key)) |box| {
-                    break :blk box;
+                    break :blk .{ box, true };
                 } else {
                     const box = try self.box_pool.create();
                     try self.box_cache.put(key, box);
                     box.first_touched_build_index = self.build_index;
                     box.key = key;
-                    break :blk box;
+                    break :blk .{ box, false };
                 }
             };
             box.last_touched_build_index = self.build_index;
@@ -342,7 +342,11 @@ pub const UI = struct {
             box.tree = .{};
             box.desired_size = self.active_desired_size;
             box.layout_axis = self.active_layout_axis;
-            box.background_color = self.active_background_color;
+            if (!existed) {
+                box.background_color = self.active_background_color;
+            } else {
+                box.background_color = .lerp(box.background_color, self.active_background_color, 0.2);
+            }
             box.computed_size = .zero;
             box.computed_relative_position = .zero;
             if (self.active_parent()) |parent| {
