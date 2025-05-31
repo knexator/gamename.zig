@@ -115,34 +115,50 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
                 self.ui.setActiveBackgroundColor(switch (tile_state.*) {
                     .block => .black,
-                    .gap => |g| if (g.mark == .lamp) .fromHex("#007F61") else if (g.lighted) .fromHex("#BBFF87") else .white,
+                    .gap => |g| if (g.lighted) .fromHex("#BBFF87") else .white,
                 });
 
                 const box = try self.ui.build_box(
                     .fromFormat("tile {d} {d}", .{ i, j }),
                     .{ .clickable = std.meta.activeTag(tile_state.*) == .gap, .visible = true },
                 );
-                switch (tile_state.*) {
-                    else => {},
-                    .block => |k| {
-                        if (k) |v| {
-                            box.text = switch (v) {
-                                0 => "0",
-                                1 => "1",
-                                2 => "2",
-                                3 => "3",
-                                4 => "4",
-                                else => unreachable,
-                            };
-                            box.text_color = .white;
-                        }
+
+                box.text = switch (tile_state.*) {
+                    .gap => |g| switch (g.mark) {
+                        .none => null,
+                        .lamp => "o",
+                        .cross => ".",
                     },
-                }
+                    .block => |k| if (k) |v| switch (v) {
+                        0 => "0",
+                        1 => "1",
+                        2 => "2",
+                        3 => "3",
+                        4 => "4",
+                        else => unreachable,
+                    } else null,
+                };
+                box.text_color = switch (tile_state.*) {
+                    .gap => |g| switch (g.mark) {
+                        .none => undefined,
+                        .lamp => .fromHex("#007F61"),
+                        .cross => .fromHex("#00A11B"),
+                    },
+                    .block => |k| if (k != null) .white else undefined,
+                };
+
                 const signal = UI.signal_from_box(&self.ui, box);
-                if (signal.flags.clicked) {
+                if (signal.flags.clicked.get(.left)) {
                     tile_state.gap.mark = switch (tile_state.gap.mark) {
                         .lamp => .none,
                         else => .lamp,
+                    };
+                }
+                // TODO: drag right to mark several
+                if (signal.flags.clicked.get(.right)) {
+                    tile_state.gap.mark = switch (tile_state.gap.mark) {
+                        .cross => .none,
+                        else => .cross,
                     };
                 }
             }
@@ -206,6 +222,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 }
 
 pub const UI = struct {
+    pub const MouseButton = enum(usize) {
+        left = 0,
+        right = 1,
+        middle = 2,
+        pub const each = std.enums.values(MouseButton);
+    };
     pub const Key = enum(u64) {
         none = 0,
         _,
@@ -224,14 +246,14 @@ pub const UI = struct {
         scroll: Vec2 = .zero,
         flags: struct {
             /// pressed while hovering
-            pressed: bool = false,
+            pressed: std.EnumArray(MouseButton, bool) = .initFill(false),
             /// still holding
-            dragging: bool = false,
+            dragging: std.EnumArray(MouseButton, bool) = .initFill(false),
             /// previously pressed, user released mouse, in or out of bounds
-            released: bool = false,
+            released: std.EnumArray(MouseButton, bool) = .initFill(false),
             /// pressed & released in bounds
-            clicked: bool = false,
-            double_clicked: bool = false,
+            clicked: std.EnumArray(MouseButton, bool) = .initFill(false),
+            double_clicked: std.EnumArray(MouseButton, bool) = .initFill(false),
             /// hovering specifically this box
             hovering: bool = false,
             /// mouse is over, but may be occluded
@@ -389,9 +411,9 @@ pub const UI = struct {
 
         // user interaction state
         hot: Key = .none,
-        active: Key = .none,
+        active: std.EnumArray(MouseButton, Key) = .initFill(.none),
         drop_hot: Key = .none,
-        last_press: ?struct { pos: Vec2, time: f32, box: Key } = null,
+        last_press: std.EnumArray(MouseButton, ?struct { pos: Vec2, time: f32, box: Key }) = .initFill(null),
         // press_history: [2]?struct { pos: Vec2, time: f32, box: Key } = .{ null, null },
         dragging_data: ?*const anyopaque = null,
         // drag_start: ?Vec2 = null,
@@ -492,27 +514,33 @@ pub const UI = struct {
                     .kind = .move,
                     .time = time,
                     .pos = mouse.cur.position,
+                    .key = undefined,
                 });
             }
-            if (mouse.wasPressed(.left)) {
-                try self.events.append(.{
-                    .kind = .press,
-                    .time = time,
-                    .pos = mouse.cur.position,
-                });
-            }
-            if (mouse.wasReleased(.left)) {
-                try self.events.append(.{
-                    .kind = .release,
-                    .time = time,
-                    .pos = mouse.cur.position,
-                });
+            inline for (.{ .left, .right, .middle }) |button| {
+                if (mouse.wasPressed(button)) {
+                    try self.events.append(.{
+                        .kind = .press,
+                        .time = time,
+                        .pos = mouse.cur.position,
+                        .key = button,
+                    });
+                }
+                if (mouse.wasReleased(button)) {
+                    try self.events.append(.{
+                        .kind = .release,
+                        .time = time,
+                        .pos = mouse.cur.position,
+                        .key = button,
+                    });
+                }
             }
             if (mouse.cur.scrolled != .none) {
                 try self.events.append(.{
                     .kind = .scroll,
                     .time = time,
                     .pos = mouse.cur.position,
+                    .key = undefined,
                     // TODO: proper units
                     .scroll = .new(0, switch (mouse.cur.scrolled) {
                         .up => 1.0,
@@ -549,19 +577,24 @@ pub const UI = struct {
             self.root.final_rect = root;
             errdefer comptime unreachable;
 
-            if (self.active == .none) {
+            // if no active box, reset hot
+            if (blk: for (self.active.values) |key| {
+                if (key != .none) break :blk false;
+            } else true) {
                 self.hot = .none;
             }
 
             self.drop_hot = .none;
 
             // reset active if it's disabled or deleted
-            if (self.box_from_key(self.active)) |box| {
-                if (box.flags.disabled) {
-                    self.active = .none;
+            for (MouseButton.each) |button| {
+                if (self.box_from_key(self.active.get(button))) |box| {
+                    if (box.flags.disabled) {
+                        self.active.set(button, .none);
+                    }
+                } else {
+                    self.active.set(button, .none);
                 }
-            } else {
-                self.active = .none;
             }
         }
 
@@ -676,7 +709,7 @@ pub const UI = struct {
                     const box = box_ptr.*;
                     const is_hot = box.key == self.hot or
                         box.key == self.drop_hot;
-                    const is_active = box.key == self.active;
+                    const is_active = box.key == self.active.get(.left);
                     const is_disabled = box.flags.disabled;
 
                     const rate = 0.2;
@@ -704,6 +737,7 @@ pub const UI = struct {
         kind: enum { press, release, scroll, move },
         pos: Vec2,
         time: f32,
+        key: MouseButton,
         scroll: Vec2 = undefined,
     };
     pub fn signal_from_box(state: *State, box: *UI.Box) Signal {
@@ -730,6 +764,7 @@ pub const UI = struct {
         var event_index: usize = 0;
         while (event_index < state.events.items.len) : (event_index += 1) {
             const event = state.events.items[event_index];
+            const mouse_button: MouseButton = event.key;
 
             var taken = false;
 
@@ -740,44 +775,44 @@ pub const UI = struct {
                 in_bounds)
             {
                 state.hot = box.key;
-                state.active = box.key;
-                signal.flags.pressed = true;
-                if (state.last_press) |last_press| {
+                state.active.set(mouse_button, box.key);
+                signal.flags.pressed.set(mouse_button, true);
+                if (state.last_press.get(mouse_button)) |last_press| {
                     if (last_press.box == box.key and
                         double_click_time > (event.time - last_press.time))
                     {
-                        signal.flags.double_clicked = true;
+                        signal.flags.double_clicked.set(mouse_button, true);
                     }
                 }
-                state.last_press = .{
+                state.last_press.set(mouse_button, .{
                     .box = box.key,
                     .time = event.time,
                     .pos = event.pos,
-                };
+                });
                 taken = true;
             }
 
             // mouse releases in active box
             if (box.flags.clickable and
                 event.kind == .release and
-                state.active == box.key and
+                state.active.get(mouse_button) == box.key and
                 in_bounds)
             {
-                state.active = .none;
-                signal.flags.released = true;
-                signal.flags.clicked = true;
+                state.active.set(mouse_button, .none);
+                signal.flags.released.set(mouse_button, true);
+                signal.flags.clicked.set(mouse_button, true);
                 taken = true;
             }
 
             // mouse releases outside active box
             if (box.flags.clickable and
                 event.kind == .release and
-                state.active == box.key and
+                state.active.get(mouse_button) == box.key and
                 !in_bounds)
             {
                 state.hot = .none;
-                state.active = .none;
-                signal.flags.released = true;
+                state.active.set(mouse_button, .none);
+                signal.flags.released.set(mouse_button, true);
                 taken = true;
             }
 
@@ -817,8 +852,10 @@ pub const UI = struct {
 
         // dragging
         if (box.flags.clickable) {
-            if (state.active == box.key or signal.flags.pressed) {
-                signal.flags.dragging = true;
+            for (MouseButton.each) |button| {
+                if (state.active.get(button) == box.key or signal.flags.pressed.get(button)) {
+                    signal.flags.dragging.set(button, true);
+                }
             }
         }
 
@@ -830,7 +867,9 @@ pub const UI = struct {
         if (box.flags.clickable and
             rect.contains(state.mouse) and
             (state.hot == .none or state.hot == box.key) and
-            (state.active == .none or state.active == box.key))
+            (state.active.get(.left) == .none or state.active.get(.left) == box.key) and
+            (state.active.get(.right) == .none or state.active.get(.right) == box.key) and
+            (state.active.get(.middle) == .none or state.active.get(.middle) == box.key))
         {
             state.hot = box.key;
             signal.flags.hovering = true;
