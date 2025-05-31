@@ -22,8 +22,44 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 canvas: Canvas,
 ui: UI.State,
+mem: struct {
+    frame: std.heap.ArenaAllocator,
 
-board: kommon.Grid2D(bool),
+    pub fn init(gpa: std.mem.Allocator) @This() {
+        return .{ .frame = .init(gpa) };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.frame.deinit();
+    }
+
+    pub fn onFrameBegin(self: *@This()) void {
+        _ = self.frame.reset(.retain_capacity);
+    }
+},
+
+board: kommon.Grid2D(TileState),
+const TileState = union(enum) {
+    block: ?u8,
+    gap: struct {
+        mark: enum { none, lamp, cross } = .none,
+        lighted: bool = false,
+    },
+};
+
+const raw_puzzle =
+    \\......0...1
+    \\.0.X...X...
+    \\...........
+    \\...2.2.....
+    \\......1....
+    \\.1..2...2..
+    \\...........
+    \\....1.X....
+    \\....X....2.
+    \\...........
+    \\.....0..1..
+;
 
 pub fn init(
     gpa: std.mem.Allocator,
@@ -33,7 +69,17 @@ pub fn init(
     return .{
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .ui = .init(gpa),
-        .board = try .initFill(gpa, .both(10), false),
+        .mem = .init(gpa),
+        .board = try .fromAsciiAndMap(gpa, raw_puzzle, struct {
+            pub fn anon(c: u8) TileState {
+                return switch (c) {
+                    '.' => .{ .gap = .{} },
+                    '0'...'4' => |n| .{ .block = n - '0' },
+                    'X' => .{ .block = null },
+                    else => panic("bad char: {d}", .{c}),
+                };
+            }
+        }.anon),
     };
 }
 
@@ -45,6 +91,7 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
+    self.mem.onFrameBegin();
     const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
     {
         try self.ui.beginBuild(platform.getMouse(camera), platform.global_seconds, camera, .y);
@@ -64,15 +111,69 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .{ .kind = .percent_of_parent, .value = 1.0 },
             }, .x);
             for (0..self.board.width) |i| {
-                const has_lamp = self.board.at(i, j) catch unreachable;
-                self.ui.setActiveBackgroundColor(if (has_lamp) .green else .black);
+                const tile_state = self.board.getPtr(.new(i, j)) catch unreachable;
+
+                self.ui.setActiveBackgroundColor(switch (tile_state.*) {
+                    .block => .black,
+                    .gap => |g| if (g.mark == .lamp) .fromHex("#007F61") else if (g.lighted) .fromHex("#BBFF87") else .white,
+                });
+
                 const box = try self.ui.build_box(
                     .fromFormat("tile {d} {d}", .{ i, j }),
-                    .{ .clickable = true, .visible = true },
+                    .{ .clickable = std.meta.activeTag(tile_state.*) == .gap, .visible = true },
                 );
+                switch (tile_state.*) {
+                    else => {},
+                    .block => |k| {
+                        if (k) |v| {
+                            box.text = switch (v) {
+                                0 => "0",
+                                1 => "1",
+                                2 => "2",
+                                3 => "3",
+                                4 => "4",
+                                else => unreachable,
+                            };
+                            box.text_color = .white;
+                        }
+                    },
+                }
                 const signal = UI.signal_from_box(&self.ui, box);
                 if (signal.flags.clicked) {
-                    self.board.set(.new(i, j), !has_lamp) catch unreachable;
+                    tile_state.gap.mark = switch (tile_state.gap.mark) {
+                        .lamp => .none,
+                        else => .lamp,
+                    };
+                }
+            }
+        }
+
+        var lamp_positions: std.ArrayList(UVec2) = try .initCapacity(self.mem.frame.allocator(), self.board.width * 4);
+        // set all tiles to off, and store lamp positions
+        {
+            var it = self.board.iterator(true);
+            while (it.next()) |tile| {
+                switch (tile.value.*) {
+                    .block => continue,
+                    .gap => {
+                        tile.value.gap.lighted = false;
+                        if (tile.value.gap.mark == .lamp) {
+                            try lamp_positions.append(tile.pos);
+                        }
+                    },
+                }
+            }
+        }
+
+        for (lamp_positions.items) |lamp_pos| {
+            for (IVec2.cardinal_directions) |dir| {
+                var it = self.board.rayIterator(lamp_pos, dir);
+                while (it.next()) |pos| {
+                    const tile = self.board.getPtr(pos) catch unreachable;
+                    switch (tile.*) {
+                        .block => break,
+                        .gap => tile.gap.lighted = true,
+                    }
                 }
             }
         }
@@ -85,7 +186,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             const box = box_ptr.*;
             if (box.flags.visible) {
                 self.canvas.fillRect(camera, box.final_rect, box.background_color);
-                self.canvas.fillRect(camera, box.final_rect, FColor.white.withAlpha(@max(0, box.hot_t * 0.4 - box.active_t * 0.2)));
+                if (box.text) |text| {
+                    try self.canvas.text_renderers[0].drawLine(
+                        platform.gl,
+                        camera,
+                        .{ .center = box.final_rect.get(.center) },
+                        text,
+                        box.final_rect.size.y,
+                        box.text_color,
+                        self.mem.frame.allocator(),
+                    );
+                }
+                self.canvas.fillRect(camera, box.final_rect, FColor.gray(0.5).withAlpha(@max(0, box.hot_t * 0.4 - box.active_t * 0.2)));
             }
         }
     }
@@ -154,6 +266,8 @@ pub const UI = struct {
         desired_size: [2]Size,
         layout_axis: Vec2.Coord,
         background_color: FColor,
+        text_color: FColor,
+        text: ?[]const u8,
 
         // per build artifacts
         computed_relative_position: Vec2 = undefined,
@@ -347,6 +461,8 @@ pub const UI = struct {
             } else {
                 box.background_color = .lerp(box.background_color, self.active_background_color, 0.2);
             }
+            box.text = null;
+            box.text_color = undefined;
             box.computed_size = .zero;
             box.computed_relative_position = .zero;
             if (self.active_parent()) |parent| {
