@@ -38,6 +38,7 @@ mem: struct {
     }
 },
 
+painting: ?enum { none, cross } = null,
 board: kommon.Grid2D(TileState),
 const TileState = union(enum) {
     block: ?u8,
@@ -112,6 +113,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }, .x);
             for (0..self.board.width) |i| {
                 const tile_state = self.board.getPtr(.new(i, j)) catch unreachable;
+                const is_gap = std.meta.activeTag(tile_state.*) == .gap;
 
                 self.ui.setActiveBackgroundColor(switch (tile_state.*) {
                     .block => .black,
@@ -120,7 +122,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
                 const box = try self.ui.build_box(
                     .fromFormat("tile {d} {d}", .{ i, j }),
-                    .{ .clickable = std.meta.activeTag(tile_state.*) == .gap, .visible = true },
+                    .{ .clickable = is_gap, .visible = true },
                 );
 
                 box.text = switch (tile_state.*) {
@@ -148,17 +150,24 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 };
 
                 const signal = UI.signal_from_box(&self.ui, box);
-                if (signal.flags.clicked.get(.left)) {
+                if (signal.flags.released.get(.right)) self.painting = null;
+                if (signal.flags.pressed.get(.right)) {
+                    self.painting = switch (tile_state.gap.mark) {
+                        .cross => .none,
+                        else => .cross,
+                    };
+                }
+                if (self.painting) |paint| {
+                    if (is_gap and signal.flags.mouse_over) {
+                        tile_state.gap.mark = switch (paint) {
+                            .cross => .cross,
+                            .none => .none,
+                        };
+                    }
+                } else if (signal.flags.pressed.get(.left)) {
                     tile_state.gap.mark = switch (tile_state.gap.mark) {
                         .lamp => .none,
                         else => .lamp,
-                    };
-                }
-                // TODO: drag right to mark several
-                if (signal.flags.clicked.get(.right)) {
-                    tile_state.gap.mark = switch (tile_state.gap.mark) {
-                        .cross => .none,
-                        else => .cross,
                     };
                 }
             }
