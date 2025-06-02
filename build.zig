@@ -1,3 +1,7 @@
+// On two terminals:
+// zig build run
+// zig build --watch -Dhot-reloadable=only_lib
+
 const std = @import("std");
 
 // TODO: doesn't work
@@ -41,14 +45,21 @@ pub fn build(b: *std.Build) void {
     fonts_step.dependOn(&wf.step);
 }
 
+const HotReloadableMode = enum {
+    no,
+    full,
+    /// only compile the library part, useful for watch mode
+    only_lib,
+};
+
 fn build_game(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
-    const hot_reloadable = b.option(
-        bool,
+    const hot_reloadable: HotReloadableMode = b.option(
+        HotReloadableMode,
         "hot-reloadable",
-        "If true, will compile the game logic as a separate dynamic library.",
-    ) orelse (optimize == .Debug);
+        "Compile the game logic as a separate dynamic library.",
+    ) orelse if (optimize == .Debug) .full else .no;
 
     const emit_llvm_ir = b.option(bool, "emit-llvm-ir", "Emit LLVM IR") orelse false;
 
@@ -100,7 +111,7 @@ fn build_for_desktop(
     options: struct {
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
-        hot_reloadable: bool,
+        hot_reloadable: HotReloadableMode,
         emit_llvm_ir: bool,
     },
 ) void {
@@ -116,7 +127,7 @@ fn build_for_desktop(
     }).module("kommon");
 
     const build_options = b.addOptions();
-    if (options.hot_reloadable) {
+    if (options.hot_reloadable != .no) {
         const game_module = b.createModule(.{
             .root_source_file = b.path("src/game.zig"),
             .target = options.target,
@@ -163,6 +174,8 @@ fn build_for_desktop(
     } else {
         build_options.addOption(?[]const u8, "game_dynlib_path", null);
     }
+
+    if (options.hot_reloadable == .only_lib) return;
 
     const exe_module = b.createModule(.{
         .root_source_file = b.path("src/sdl_platform.zig"),
@@ -235,7 +248,7 @@ fn build_for_web(
     options: struct {
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
-        hot_reloadable: bool,
+        hot_reloadable: HotReloadableMode,
         emit_llvm_ir: bool,
     },
 ) void {
@@ -257,7 +270,7 @@ fn build_for_web(
     wasm_module.addImport("kommon", kommon_module);
 
     const build_options = b.addOptions();
-    build_options.addOption(bool, "hot_reloadable", options.hot_reloadable);
+    build_options.addOption(bool, "hot_reloadable", options.hot_reloadable != .no);
     wasm_module.addOptions("build_options", build_options);
 
     const wasm = b.addExecutable(.{
