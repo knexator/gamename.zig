@@ -12,6 +12,8 @@ const js = struct {
 
     pub const images = struct {
         extern fn preloadImage(url_ptr: [*]const u8, url_len: usize) usize;
+        extern fn imageWidth(image_id: usize) usize;
+        extern fn imageHeight(image_id: usize) usize;
     };
 
     // current direction: closely matching the webgl2 API
@@ -341,6 +343,12 @@ const js_better = struct {
         pub fn preloadImage(url: []const u8) usize {
             return js.images.preloadImage(url.ptr, url.len);
         }
+        pub fn resolution(image_id: usize) UVec2 {
+            return .new(
+                js.images.imageWidth(image_id),
+                js.images.imageHeight(image_id),
+            );
+        }
     };
 
     pub const audio = struct {
@@ -416,7 +424,7 @@ const web_gl = struct {
         js.webgl2.clear();
     }
 
-    pub fn buildTexture2D(data: *const anyopaque) game.Gl.Texture {
+    pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) game.Gl.Texture {
         const image_id: *const usize = @alignCast(@ptrCast(data));
 
         // TODO
@@ -432,13 +440,18 @@ const web_gl = struct {
             .UNSIGNED_BYTE,
             image_id.*,
         );
-        js.webgl2.generateMipmap(.TEXTURE_2D);
-        // TODO: let user choose quality
-        js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .LINEAR);
-        // js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST_MIPMAP_LINEAR);
-        js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .LINEAR_MIPMAP_LINEAR);
+        if (pixelart) {
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .NEAREST);
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST);
+        } else {
+            js.webgl2.generateMipmap(.TEXTURE_2D);
+            // TODO: let user choose quality
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .LINEAR);
+            // js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST_MIPMAP_LINEAR);
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .LINEAR_MIPMAP_LINEAR);
+        }
 
-        return .{ .id = @intFromEnum(texture) };
+        return .{ .id = @intFromEnum(texture), .resolution = js_better.images.resolution(image_id.*) };
     }
 
     pub fn buildRenderable(

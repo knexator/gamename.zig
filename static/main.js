@@ -153,6 +153,8 @@ async function getWasm() {
         image_promises.push(imageFromUrl(getString(url_ptr, url_len)));
         return image_promises.length - 1;
       },
+      imageWidth: (image_id) => images[image_id].width,
+      imageHeight: (image_id) => images[image_id].height,
 
       // sound
       loadSound: (url_ptr, url_len) => {

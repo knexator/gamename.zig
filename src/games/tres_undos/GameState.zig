@@ -15,9 +15,9 @@ pub const stuff = .{
 
     .preloaded_images = .{
         .arial_atlas = "fonts/Arial.png",
-        .player = "games/tres_undos/imgs/player.png",
-        .tiles = "games/tres_undos/imgs/tiles.png",
-        .walls = "games/tres_undos/imgs/walls.png",
+        .player = "images/player.png",
+        .tiles = "images/tiles.png",
+        .walls = "images/walls.png",
     },
 };
 
@@ -109,31 +109,23 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     // const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
 
+    var geo_batch = self.canvas.spriteBatch(camera, self.textures.tiles);
     var it = self.geometry.iterator();
     while (it.next()) |pos| {
         const tile = self.geometry.at2(pos);
-        self.canvas.fillRect(camera, .{ .top_left = pos.tof32(), .size = .one }, switch (tile) {
-            .wall => .gray(0.5),
-            .air => .white,
-            .hole => .black,
-        });
         const sprite_index: ?UVec2 = switch (tile) {
             .air => .zero,
             .hole => .new(1, 0),
             .wall => null,
         };
         if (sprite_index) |s| {
-            self.canvas.sprite(
-                camera,
-                .{ .pos = pos.tof32() },
-                .top_left,
-                .fromSpriteSheet(s, .new(3, 4), Vec2.both(2.0).div(self.textures.tiles.resolution.tof32())),
-                self.textures.tiles,
-                null,
-            );
+            geo_batch.add(.{
+                .point = .{ .pos = pos.tof32() },
+                .texcoord = .fromSpriteSheet(s, .new(3, 4), Vec2.both(2.0).div(self.textures.tiles.resolution.tof32())),
+            });
         }
     }
-    // self.geometry.
+    geo_batch.draw();
     return false;
 }
 

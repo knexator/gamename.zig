@@ -324,6 +324,15 @@ fn build_for_web(
         steps.install.dependOn(&copy_font_files.step);
     }
 
+    {
+        const copy_image_files = b.addInstallDirectory(.{
+            .install_dir = web_install_dir,
+            .install_subdir = "images",
+            .source_dir = b.path("src/images"),
+        });
+        steps.install.dependOn(&copy_image_files.step);
+    }
+
     const generate_keycodes = b.addExecutable(.{
         .name = "generate_keycodes",
         .root_source_file = b.path("src/tools/generate_keycodes_js.zig"),
