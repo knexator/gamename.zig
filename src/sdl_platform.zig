@@ -221,7 +221,7 @@ pub fn main() !void {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
         }
 
-        pub fn buildTexture2D(data: *const anyopaque) game.Gl.Texture {
+        pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) game.Gl.Texture {
             const image: *const zstbi.Image = @alignCast(@ptrCast(data));
 
             const has_alpha = switch (image.num_components) {
@@ -244,12 +244,17 @@ pub fn main() !void {
                 gl.UNSIGNED_BYTE,
                 image.data.ptr,
             );
-            gl.GenerateMipmap(gl.TEXTURE_2D);
-            gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            // TODO: let user choose quality
-            gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            if (pixelart) {
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            } else {
+                gl.GenerateMipmap(gl.TEXTURE_2D);
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                // TODO: let user choose quality
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            }
 
-            return .{ .id = texture };
+            return .{ .id = texture, .resolution = .new(image.width, image.height) };
         }
 
         pub fn buildRenderable(

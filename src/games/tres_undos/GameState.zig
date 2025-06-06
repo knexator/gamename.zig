@@ -15,6 +15,9 @@ pub const stuff = .{
 
     .preloaded_images = .{
         .arial_atlas = "fonts/Arial.png",
+        .player = "games/tres_undos/imgs/player.png",
+        .tiles = "games/tres_undos/imgs/tiles.png",
+        .walls = "games/tres_undos/imgs/walls.png",
     },
 };
 
@@ -37,7 +40,27 @@ mem: struct {
     }
 },
 
-smooth: LazyState,
+smooth: @import("../akari/GameState.zig").LazyState,
+
+geometry: kommon.Grid2D(GeoKind),
+textures: struct {
+    tiles: Gl.Texture,
+},
+
+const levels: []const []const u8 = &.{
+    \\########.#####
+    \\########.#####
+    \\########.#..##
+    \\########_..1.#
+    \\########..1..#
+    \\########.#._.#
+    \\########.#####
+    \\..O...1._#####
+    \\##############
+    ,
+};
+
+const GeoKind = enum { wall, air, hole };
 
 pub fn init(
     gpa: std.mem.Allocator,
@@ -45,89 +68,74 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !GameState {
     return .{
-        .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
+        .textures = .{
+            .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
+        },
+        .canvas = try .init(
+            gl,
+            gpa,
+            &.{@embedFile("../../fonts/Arial.json")},
+            &.{loaded_images.get(.arial_atlas)},
+        ),
         .mem = .init(gpa),
         .smooth = .init(gpa),
+        .geometry = try .fromAsciiAndMap(gpa, levels[0], struct {
+            pub fn anon(c: u8) GeoKind {
+                return switch (c) {
+                    '#' => .wall,
+                    '_' => .hole,
+                    else => .air,
+                };
+            }
+        }.anon),
     };
 }
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.canvas.deinit(undefined, gpa);
+    self.geometry.deinit(gpa);
 }
-
-const LazyState = struct {
-    f32s: std.AutoHashMap(Key, f32),
-    fcolors: std.AutoHashMap(Key, FColor),
-    rects: std.AutoHashMap(Key, Rect),
-
-    pub fn init(gpa: std.mem.Allocator) LazyState {
-        return .{
-            .f32s = .init(gpa),
-            .fcolors = .init(gpa),
-            .rects = .init(gpa),
-        };
-    }
-
-    pub fn deinit(self: *LazyState) void {
-        self.arena.deinit();
-        self.f32s.deinit();
-        self.fcolors.deinit();
-        self.rects.deinit();
-    }
-
-    pub fn float(self: *LazyState, key: Key, goal: f32) !f32 {
-        const gop = try self.f32s.getOrPut(key);
-        if (gop.found_existing) {
-            gop.value_ptr.* = std.math.lerp(gop.value_ptr.*, goal, 0.2);
-        } else {
-            gop.value_ptr.* = goal;
-        }
-        return gop.value_ptr.*;
-    }
-
-    pub fn fcolor(self: *LazyState, key: Key, goal: FColor) !FColor {
-        const gop = try self.fcolors.getOrPut(key);
-        if (gop.found_existing) {
-            gop.value_ptr.* = .lerp(gop.value_ptr.*, goal, 0.2);
-        } else {
-            gop.value_ptr.* = goal;
-        }
-        return gop.value_ptr.*;
-    }
-
-    pub fn rect(self: *LazyState, key: Key, goal: Rect) !Rect {
-        const gop = try self.rects.getOrPut(key);
-        if (gop.found_existing) {
-            gop.value_ptr.* = .lerp(gop.value_ptr.*, goal, 0.2);
-        } else {
-            gop.value_ptr.* = goal;
-        }
-        return gop.value_ptr.*;
-    }
-};
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.mem.onFrameBegin();
-    // const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
+    const camera: Rect = Rect.withAspectRatio(
+        .{ .top_left = .zero, .size = self.geometry.size.tof32() },
+        platform.aspect_ratio,
+        .grow,
+        .center,
+    );
     // const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
+
+    var it = self.geometry.iterator();
+    while (it.next()) |pos| {
+        const tile = self.geometry.at2(pos);
+        self.canvas.fillRect(camera, .{ .top_left = pos.tof32(), .size = .one }, switch (tile) {
+            .wall => .gray(0.5),
+            .air => .white,
+            .hole => .black,
+        });
+        const sprite_index: ?UVec2 = switch (tile) {
+            .air => .zero,
+            .hole => .new(1, 0),
+            .wall => null,
+        };
+        if (sprite_index) |s| {
+            self.canvas.sprite(
+                camera,
+                .{ .pos = pos.tof32() },
+                .top_left,
+                .fromSpriteSheet(s, .new(3, 4), Vec2.both(2.0).div(self.textures.tiles.resolution.tof32())),
+                self.textures.tiles,
+                null,
+            );
+        }
+    }
+    // self.geometry.
     return false;
 }
-
-pub const Key = enum(u64) {
-    _,
-
-    pub fn fromString(str: []const u8) Key {
-        return @enumFromInt(std.hash.Wyhash.hash(0, str));
-    }
-
-    pub fn fromFormat(comptime fmt: []const u8, args: anytype) Key {
-        var buf: [0x1000]u8 = undefined;
-        return fromString(std.fmt.bufPrint(&buf, fmt, args) catch panic("Key fmt was too long", .{}));
-    }
-};
 
 const std = @import("std");
 const assert = std.debug.assert;

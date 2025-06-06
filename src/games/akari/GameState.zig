@@ -95,7 +95,7 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.board.deinit(gpa);
 }
 
-const LazyState = struct {
+pub const LazyState = struct {
     f32s: std.AutoHashMap(Key, f32),
     fcolors: std.AutoHashMap(Key, FColor),
     rects: std.AutoHashMap(Key, Rect),
