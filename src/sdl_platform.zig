@@ -637,6 +637,8 @@ pub fn main() !void {
                                 const key = pair[1];
                                 if (event.key.scancode == sdl_scancode) {
                                     @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
+                                    @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
+                                    @field(keyboard.last_change_at, @tagName(key)) = sdl_platform.global_seconds;
                                     break;
                                 }
                             }
@@ -825,6 +827,10 @@ const Loop = struct {
 };
 
 const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, KeyboardButton }){
+    .{ c.SDL_SCANCODE_LEFT, .ArrowLeft },
+    .{ c.SDL_SCANCODE_RIGHT, .ArrowRight },
+    .{ c.SDL_SCANCODE_UP, .ArrowUp },
+    .{ c.SDL_SCANCODE_DOWN, .ArrowDown },
     .{ c.SDL_SCANCODE_A, .KeyA },
     .{ c.SDL_SCANCODE_B, .KeyB },
     .{ c.SDL_SCANCODE_C, .KeyC },

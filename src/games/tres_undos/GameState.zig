@@ -25,6 +25,15 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 const Mem = @FieldType(GameState, "mem");
 
+const COLORS = struct {
+    CRATES: [4]FColor = .{
+        .fromHex("#CFCFCF"),
+        .fromHex("#FF9500"),
+        .fromHex("#E74059"),
+        .fromHex("#9D15EC"),
+    },
+}{};
+
 canvas: Canvas,
 mem: struct {
     /// same lifetime as a frame
@@ -67,10 +76,18 @@ mem: struct {
 
 smooth: @import("../akari/GameState.zig").LazyState,
 
-cur_level: LevelState,
 textures: struct {
     tiles: Gl.Texture,
+    player: Gl.Texture,
 },
+
+input_queue: kommon.CircularBuffer(Input, 32) = .init,
+cur_level: LevelState,
+
+const Input = union(enum) {
+    dir: IVec2,
+    undo,
+};
 
 const levels_raw: []const []const u8 = &.{
     \\########.#####
@@ -91,17 +108,28 @@ const LevelState = struct {
     player: Undoable(struct {
         pos: UVec2,
     }),
+    crates: std.ArrayList(Undoable(struct {
+        pos: UVec2,
+    })),
 
     pub fn init(mem: *Mem, ascii: []const u8) !LevelState {
-        const chars: kommon.Grid2D(u8) = try .fromAscii(mem.scratch.allocator(), ascii);
         defer _ = mem.scratch.reset(.retain_capacity);
+        const chars: kommon.Grid2D(u8) = try .fromAscii(mem.scratch.allocator(), ascii);
         const initial_player_pos: UVec2 = blk: {
             var it = chars.iterator();
             while (it.next()) |pos| {
                 if (chars.at2(pos) == 'O') break :blk pos;
             } else unreachable;
         };
-        std.log.debug("player pos: {any}", .{initial_player_pos});
+        var crates: @FieldType(LevelState, "crates") = .init(mem.level.allocator());
+        {
+            var it = chars.iterator();
+            while (it.next()) |pos| {
+                if (chars.at2(pos) == '1') {
+                    try crates.append(try .init(mem, .{ .pos = pos }));
+                }
+            }
+        }
 
         return .{
             .geometry = try chars.map(mem.level.allocator(), GeoKind, struct {
@@ -114,6 +142,7 @@ const LevelState = struct {
                 }
             }.anon),
             .player = try .init(mem, .{ .pos = initial_player_pos }),
+            .crates = crates,
         };
     }
 
@@ -134,12 +163,18 @@ const LevelState = struct {
                 });
             }
         }
-        // TODO: actually draw the player
-        geo_batch.add(.{
-            .point = .{ .pos = self.player.cur().pos.tof32() },
-            .texcoord = .fromSpriteSheet(.new(0, 3), .new(3, 4), Vec2.both(2.0).div(textures.tiles.resolution.tof32())),
-        });
+        for (self.crates.items) |crate| {
+            geo_batch.add(.{
+                .point = .{ .pos = crate.cur().pos.tof32() },
+                .texcoord = .fromSpriteSheet(.new(0, 2), .new(3, 4), Vec2.both(2.0).div(textures.tiles.resolution.tof32())),
+                .tint = COLORS.CRATES[0],
+            });
+        }
         geo_batch.draw();
+        canvas.drawSpriteBatch(camera, &.{.{
+            .point = .{ .pos = self.player.cur().pos.tof32() },
+            .texcoord = .fromSpriteSheet(.new(3, 1), .new(4, 4), .zero),
+        }}, textures.player);
     }
 };
 
@@ -150,7 +185,7 @@ pub fn Undoable(T: type) type {
         true_values: std.ArrayList(T),
 
         pub fn init(mem: *Mem, initial_value: T) !Self {
-            var true_values: std.ArrayList(T) = try .initCapacity(mem.get(.level), 64);
+            var true_values: std.ArrayList(T) = try .initCapacity(mem.level.allocator(), 64);
             true_values.appendAssumeCapacity(initial_value);
             return .{ .true_values = true_values };
         }
@@ -159,7 +194,7 @@ pub fn Undoable(T: type) type {
             try self.true_values.append(value);
         }
 
-        pub fn cur(self: *Self) T {
+        pub fn cur(self: Self) T {
             return self.true_values.getLast();
         }
     };
@@ -177,6 +212,7 @@ pub fn init(
     return .{
         .textures = .{
             .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
+            .player = gl.buildTexture2D(loaded_images.get(.player), true),
         },
         .canvas = try .init(
             gl,
@@ -200,10 +236,29 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
 
-    if (platform.keyboard.wasPressed(.KeyD)) {
-        var player = self.cur_level.player.cur();
-        player.pos = player.pos.addX(1);
-        try self.cur_level.player.append(player);
+    // TODO: getKeyRetriggerTime
+    for ([_]std.meta.Tuple(&.{ KeyboardButton, IVec2 }){
+        .{ .KeyD, .new(1, 0) },  .{ .ArrowRight, .new(1, 0) },
+        .{ .KeyA, .new(-1, 0) }, .{ .ArrowLeft, .new(-1, 0) },
+        .{ .KeyW, .new(0, -1) }, .{ .ArrowUp, .new(0, -1) },
+        .{ .KeyS, .new(0, 1) },  .{ .ArrowDown, .new(0, 1) },
+    }) |binding| {
+        const key, const dir = binding;
+        if (platform.keyboard.wasPressed(key)) {
+            try self.input_queue.append(.{ .dir = dir });
+        }
+    }
+
+    if (self.input_queue.popFirst()) |input| {
+        std.log.debug("foo", .{});
+        switch (input) {
+            .dir => |dir| {
+                var player = self.cur_level.player.cur();
+                player.pos = player.pos.addSigned(dir);
+                try self.cur_level.player.append(player);
+            },
+            else => @panic("todo"),
+        }
     }
 
     const camera: Rect = Rect.withAspectRatio(
