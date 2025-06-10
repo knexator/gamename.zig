@@ -111,6 +111,7 @@ const LevelState = struct {
     true_timeline_undos: std.ArrayList(usize),
     player: Undoable(struct {
         pos: IVec2,
+        in_hole: bool,
         dir: IVec2,
         par: bool,
 
@@ -157,7 +158,7 @@ const LevelState = struct {
                     };
                 }
             }.anon),
-            .player = try .init(mem, .{ .pos = initial_player_pos, .dir = enter_dir, .par = true }),
+            .player = try .init(mem, .{ .pos = initial_player_pos, .in_hole = false, .dir = enter_dir, .par = true }),
             .true_timeline_undos = .init(mem.level.allocator()),
             .crates = crates,
         };
@@ -186,15 +187,17 @@ const LevelState = struct {
         defer _ = mem.scratch.reset(.retain_capacity);
         switch (input) {
             .dir => |dir| {
-                const new_pos = self.player.cur().pos.cast(isize).add(dir);
-                if (self.isWall(new_pos)) return .wall_crash;
+                if (self.player.cur().in_hole) return .wall_crash;
+
+                const new_player_pos = self.player.cur().pos.cast(isize).add(dir);
+                if (self.isWall(new_player_pos)) return .wall_crash;
 
                 var pushing_crates: std.ArrayList(usize) = .init(mem.scratch.allocator());
                 for (self.crates.items, 0..) |crate, k| {
-                    if (crate.cur().pos.equals(new_pos) and !crate.cur().in_hole) try pushing_crates.append(k);
+                    if (crate.cur().pos.equals(new_player_pos) and !crate.cur().in_hole) try pushing_crates.append(k);
                 }
                 if (pushing_crates.items.len > 0) {
-                    const new_crates_pos = new_pos.add(dir);
+                    const new_crates_pos = new_player_pos.add(dir);
                     if (self.isWall(new_crates_pos) or self.anyCrateBlockingAt(new_crates_pos)) {
                         return .wall_crash;
                     }
@@ -207,7 +210,7 @@ const LevelState = struct {
                     }
                 }
 
-                try self.player.append(.{ .pos = new_pos, .dir = dir, .par = !self.player.cur().par });
+                try self.player.append(.{ .pos = new_player_pos, .dir = dir, .par = !self.player.cur().par, .in_hole = self.openHoleAt(new_player_pos) });
 
                 return .usual;
             },
@@ -264,11 +267,20 @@ const LevelState = struct {
             });
         }
         layers.basement.draw(camera);
+        if (self.player.cur().in_hole) {
+            canvas.drawSpriteBatch(camera, &.{.{
+                .point = .{ .pos = self.player.cur().pos.tof32() },
+                .texcoord = players.at(self.player.cur().spriteIndex()),
+                .tint = FColor.white.scaleRGB(0.4),
+            }}, textures.player);
+        }
         layers.main.draw(camera);
-        canvas.drawSpriteBatch(camera, &.{.{
-            .point = .{ .pos = self.player.cur().pos.tof32() },
-            .texcoord = players.at(self.player.cur().spriteIndex()),
-        }}, textures.player);
+        if (!self.player.cur().in_hole) {
+            canvas.drawSpriteBatch(camera, &.{.{
+                .point = .{ .pos = self.player.cur().pos.tof32() },
+                .texcoord = players.at(self.player.cur().spriteIndex()),
+            }}, textures.player);
+        }
     }
 };
 
