@@ -89,7 +89,7 @@ cur_level: LevelState,
 
 const Input = union(enum) {
     dir: IVec2,
-    undo,
+    undo: usize,
 };
 
 const levels_raw: []const []const u8 = &.{
@@ -214,7 +214,13 @@ const LevelState = struct {
 
                 return .usual;
             },
-            .undo => @panic("TODO"),
+            .undo => |k| {
+                // TODO
+                try self.player.undo(k);
+                // @panic("todo");
+                // return .undoed{k}
+                return .usual;
+            },
         }
     }
 
@@ -303,6 +309,13 @@ pub fn Undoable(T: type) type {
         pub fn cur(self: Self) T {
             return self.true_values.getLast();
         }
+
+        // TODO
+        pub fn undo(self: *Self, undo_level: usize) !void {
+            assert(undo_level > 0);
+            assert(self.true_values.items.len > 0);
+            try self.append(self.true_values.items[self.true_values.items.len - 2]);
+        }
     };
 }
 
@@ -352,6 +365,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const key, const dir = binding;
         if (platform.keyboard.wasPressed(key)) {
             try self.input_queue.append(.{ .dir = dir });
+        }
+    }
+
+    for ([_]KeyboardButton{ .KeyZ, .KeyX, .KeyC, .KeyV }, 0..) |undo_key, undo_level| {
+        if (platform.keyboard.wasPressed(undo_key)) {
+            try self.input_queue.append(.{ .undo = undo_level + 1 });
         }
     }
 
