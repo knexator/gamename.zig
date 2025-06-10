@@ -37,7 +37,7 @@ jobs:
         uses: mlugg/setup-zig@v1.2.1
         with:
           version: 0.14.0
-      - run: zig build install -p .
+      - run: zig build install -p . -Dweb
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
