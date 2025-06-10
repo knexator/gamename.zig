@@ -24,10 +24,10 @@ pub const PlatformGives = struct {
 };
 
 // TODO: choose at comptime
-pub const GameState = @import("games/tres_undos/GameState.zig");
+// pub const GameState = @import("games/tres_undos/GameState.zig");
 // pub const GameState = @import("games/akari/GameState.zig");
 // pub const GameState = @import("games/fleury_ui/GameState.zig");
-// pub const GameState = @import("games/snakanake/GameState.zig");
+pub const GameState = @import("games/snakanake/GameState.zig");
 
 pub const CApi = extern struct {
     update: *const @TypeOf(_update),
