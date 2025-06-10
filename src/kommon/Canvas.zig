@@ -1,0 +1,1062 @@
+//! Game-layer wrapper around Gl, with common drawing utilities
+
+// TODO: have this outside
+/// for stuff that lives only for this frame
+frame_arena: std.heap.ArenaAllocator,
+/// only valid for a frame!
+gl: Gl,
+
+fill_instanced_shapes_renderable: Gl.InstancedRenderable,
+fill_instanced_circles_renderable: Gl.InstancedRenderable,
+instanced_rounded_lines_renderable: Gl.InstancedRenderable,
+fill_shape_renderable: Gl.Renderable,
+// TODO: instancing
+sprite_renderable: Gl.Renderable,
+text_renderers: []TextRenderer,
+
+DEFAULT_SHAPES: struct {
+    circle_128: PrecomputedShape,
+    circle_32: PrecomputedShape,
+    circle_8: PrecomputedShape,
+    square: PrecomputedShape,
+
+    // TODO(zig): remove once we get comptime allocation
+    pub fn init(gpa: std.mem.Allocator) !@This() {
+        return .{
+            .circle_128 = try .fromPoints(gpa, &funk.map(
+                Vec2.fromTurns,
+                &funk.linspace01(
+                    128,
+                    false,
+                ),
+            )),
+            .circle_32 = try .fromPoints(gpa, &funk.map(
+                Vec2.fromTurns,
+                &funk.linspace01(
+                    32,
+                    false,
+                ),
+            )),
+            .circle_8 = try .fromPoints(gpa, &funk.map(
+                Vec2.fromTurns,
+                &funk.linspace01(
+                    8,
+                    false,
+                ),
+            )),
+            .square = .{
+                .local_points = &.{ .zero, .e1, .e2, .one },
+                .triangles = &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
+            },
+        };
+    }
+
+    pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
+        self.circle_128.deinit(gpa);
+        self.circle_32.deinit(gpa);
+        self.circle_8.deinit(gpa);
+    }
+},
+
+const Canvas = @This();
+
+pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const u8, font_atlases: []const *const anyopaque) !Canvas {
+    const fill_shape_info: RenderableInfo = .{
+        .VertexData = extern struct { position: Vec2 },
+        .IndexType = u16,
+        .UniformTypes = struct {
+            color: FColor,
+            rect: Rect,
+            point: Point,
+        },
+        .vertex =
+        \\precision highp float;
+        \\uniform vec4 u_camera; // as top_left, size
+        \\uniform vec4 u_point; // as pos, turns, scale
+        \\
+        \\in vec2 a_position;
+        \\#define TAU 6.283185307179586
+        \\void main() {
+        \\  float c = cos(u_point.z * TAU);
+        \\  float s = sin(u_point.z * TAU);
+        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+        \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+        \\}
+        ,
+        .fragment =
+        \\precision highp float;
+        \\out vec4 out_color;
+        \\
+        \\uniform vec4 u_color;
+        \\void main() {
+        \\  out_color = u_color;
+        \\}
+        ,
+    };
+
+    assert(font_jsons.len == font_atlases.len);
+    const text_renderers = try gpa.alloc(TextRenderer, font_jsons.len);
+    inline for (font_jsons, font_atlases, text_renderers) |json, atlas, *dst| {
+        dst.* = try .init(json, gpa, gl, atlas);
+    }
+
+    return .{
+        .gl = gl,
+        .frame_arena = .init(gpa),
+        .sprite_renderable = try gl.buildRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\
+            \\in vec2 a_position;
+            \\in vec2 a_texcoord;
+            \\in vec4 a_color;
+            \\out vec2 v_texcoord;
+            \\out vec4 v_color;
+            \\void main() {
+            \\  vec2 camera_position = (a_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\  v_texcoord = a_texcoord;
+            \\  v_color = a_color;
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec2 v_texcoord;
+            \\in vec4 v_color;
+            \\uniform sampler2D u_texture;
+            \\void main() {
+            \\  out_color = v_color * texture(u_texture, v_texcoord);
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_position", .kind = .Vec2 },
+                .{ .name = "a_texcoord", .kind = .Vec2 },
+                .{ .name = "a_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
+        .fill_shape_renderable = try gl.buildRenderable(
+            fill_shape_info.vertex,
+            fill_shape_info.fragment,
+            .{ .attribs = &.{
+                .{ .name = "a_position", .kind = .Vec2 },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+                .{ .name = "u_point", .kind = .Point },
+                .{ .name = "u_color", .kind = .FColor },
+            },
+        ),
+        .fill_instanced_shapes_renderable = try gl.buildInstancedRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\#define TAU 6.283185307179586
+            \\in vec2 a_vertex_position;
+            \\in vec4 a_point;
+            \\in vec4 a_color;
+            \\out vec4 v_color;
+            \\void main() {
+            \\  float c = cos(a_point.z * TAU);
+            \\  float s = sin(a_point.z * TAU);
+            \\  vec2 world_position = a_point.xy + a_point.w * (mat2x2(c,s,-s,c) * a_vertex_position);
+            \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\  v_color = a_color;
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec4 v_color;
+            \\void main() {
+            \\  out_color = v_color;
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_vertex_position", .kind = .Vec2 },
+            } },
+            .{ .attribs = &.{
+                .{ .name = "a_point", .kind = .Point },
+                .{ .name = "a_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
+        .fill_instanced_circles_renderable = try gl.buildInstancedRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\
+            \\in vec2 a_vertex_position;
+            \\in vec2 a_center;
+            \\void main() {
+            \\  vec2 camera_position = (a_center + a_vertex_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\
+            \\void main() {
+            \\  out_color = vec4(1.0);
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_vertex_position", .kind = .Vec2 },
+            } },
+            .{ .attribs = &.{
+                .{ .name = "a_center", .kind = .Vec2 },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
+        .instanced_rounded_lines_renderable = try gl.buildInstancedRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\uniform float u_width;
+            \\in vec2 a_vertex_position;
+            \\in float a_vertex_is_b_side;
+            \\in vec2 a_line_a;
+            \\in vec2 a_line_b;
+            \\void main() {
+            \\  vec2 basis_x = normalize(a_line_b - a_line_a);
+            \\  vec2 basis_y = vec2(-basis_x.y, basis_x.x);
+            \\  vec2 world_position = mix(a_line_a, a_line_b, a_vertex_is_b_side) + u_width * (a_vertex_position.x * basis_x + a_vertex_position.y * basis_y);
+            \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\uniform vec4 u_color;
+            \\void main() {
+            \\  out_color = u_color;
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_vertex_position", .kind = .Vec2 },
+                .{ .name = "a_vertex_is_b_side", .kind = .f32 },
+            } },
+            .{ .attribs = &.{
+                .{ .name = "a_line_a", .kind = .Vec2 },
+                .{ .name = "a_line_b", .kind = .Vec2 },
+            }, .stride = @sizeOf(Vec2) },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+                .{ .name = "u_width", .kind = .f32 },
+                .{ .name = "u_color", .kind = .FColor },
+            },
+        ),
+        .DEFAULT_SHAPES = try .init(gpa),
+        .text_renderers = text_renderers,
+    };
+}
+
+pub fn deinit(self: *Canvas, gl: Gl, gpa: std.mem.Allocator) void {
+    self.DEFAULT_SHAPES.deinit(gpa);
+    for (self.text_renderers) |*t| t.deinit();
+    gpa.free(self.text_renderers);
+    _ = gl;
+}
+
+pub fn drawDirty(
+    self: Canvas,
+    comptime renderable_info: struct {
+        /// without preamble!
+        vertex_src: [:0]const u8,
+        /// without preamble!
+        fragment_src: [:0]const u8,
+        attributes: Gl.VertexInfo.Collection,
+        uniforms: []const Gl.UniformInfo.In,
+    },
+    asdf: struct {
+        vertices_ptr: *const anyopaque,
+        vertices_len_bytes: usize,
+        triangles: []const [3]Gl.IndexType,
+        uniforms: []const Gl.UniformInfo.Runtime,
+        texture: ?Gl.Texture,
+    },
+) !void {
+    const S = struct {
+        pub var renderable: ?Gl.Renderable = null;
+    };
+    if (S.renderable == null) {
+        S.renderable = try self.gl.buildRenderable(
+            renderable_info.vertex_src,
+            renderable_info.fragment_src,
+            renderable_info.attributes,
+            renderable_info.uniforms,
+        );
+        std.log.warn("built a renderable", .{});
+    }
+    self.gl.useRenderable(
+        S.renderable.?,
+        asdf.vertices_ptr,
+        asdf.vertices_len_bytes,
+        asdf.triangles,
+        asdf.uniforms,
+        asdf.texture,
+    );
+}
+
+// TODO: multiple shapes in one draw call
+pub fn fillShape(
+    self: Canvas,
+    camera: Rect,
+    parent: Point,
+    shape: PrecomputedShape,
+    color: FColor,
+) void {
+    self.gl.useRenderable(
+        self.fill_shape_renderable,
+        shape.local_points.ptr,
+        shape.local_points.len * @sizeOf(Vec2),
+        shape.triangles,
+        &.{
+            .{ .name = "u_color", .value = .{ .FColor = color } },
+            .{ .name = "u_point", .value = .{ .Point = parent } },
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        null,
+    );
+}
+
+pub fn fillCircle(
+    self: Canvas,
+    camera: Rect,
+    center: Vec2,
+    radius: f32,
+    color: FColor,
+) void {
+    self.fillShape(
+        camera,
+        .{ .pos = center, .scale = radius },
+        self.DEFAULT_SHAPES.circle_128,
+        color,
+    );
+}
+
+pub fn fillSquare(
+    self: Canvas,
+    camera: Rect,
+    top_left: Vec2,
+    side: f32,
+    color: FColor,
+) void {
+    self.fillShape(
+        camera,
+        .{ .pos = top_left, .scale = side },
+        self.DEFAULT_SHAPES.square,
+        color,
+    );
+}
+
+pub const SpriteSheet = struct {
+    count: UVec2,
+    margin_px: usize,
+    resolution: UVec2,
+
+    pub fn at(self: SpriteSheet, k: usize) Rect {
+        return self.atV(.new(
+            @mod(k, self.count.x),
+            @divFloor(k, self.count.x),
+        ));
+    }
+
+    pub fn atV(self: SpriteSheet, v: UVec2) Rect {
+        return .fromSpriteSheet(v, self.count, Vec2.both(@floatFromInt(self.margin_px)).div(self.resolution.tof32()));
+    }
+};
+
+pub const Sprite = struct {
+    point: Point,
+    pivot: Rect.MeasureKind = .top_left,
+    texcoord: Rect,
+    tint: FColor = .white,
+};
+
+pub const SpriteBatch = struct {
+    canvas: *Canvas,
+    sprites: std.ArrayListUnmanaged(Sprite),
+    texture: Gl.Texture,
+
+    pub fn add(self: *SpriteBatch, sprite: Sprite) void {
+        self.sprites.append(self.canvas.frame_arena.allocator(), sprite) catch @panic("OoM");
+    }
+
+    pub fn draw(self: *SpriteBatch, camera: Rect) void {
+        self.canvas.drawSpriteBatch(camera, self.sprites.items, self.texture);
+    }
+};
+
+pub fn spriteBatch(
+    self: *Canvas,
+    texture: Gl.Texture,
+) SpriteBatch {
+    return .{
+        .canvas = self,
+        .texture = texture,
+        .sprites = .empty,
+    };
+}
+
+// TODO: instancing?
+pub fn drawSpriteBatch(
+    self: *Canvas,
+    camera: Rect,
+    sprites: []const Sprite,
+    texture: Gl.Texture,
+) void {
+    const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
+    const vertices = self.frame_arena.allocator().alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
+    const triangles = self.frame_arena.allocator().alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
+    for (sprites, 0..) |sprite, i| {
+        for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+            if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+            vertices[i * 4 + k] = .{
+                .pos = sprite.point.applyToLocalPosition(vertex),
+                .texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                .color = sprite.tint,
+            };
+        }
+        const k: Gl.IndexType = @intCast(4 * i);
+        triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+        triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+    }
+    self.gl.useRenderable(
+        self.sprite_renderable,
+        vertices.ptr,
+        vertices.len * @sizeOf(VertexData),
+        // .local_points = &.{ .zero, .e1, .e2, .one },
+        triangles,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        texture,
+    );
+}
+
+// pub fn sprite(
+//     self: Canvas,
+//     camera: Rect,
+//     point: Point,
+//     pivot: Rect.MeasureKind,
+//     texcoord: Rect,
+//     texture: Gl.Texture,
+//     tint: ?FColor,
+// ) void {
+//     if (pivot != .top_left) @panic("TODO: other pivots");
+//     const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
+//     const vertices: [4]VertexData = .{ .{
+//         .pos = point.applyToLocalPosition(.zero),
+//         .texcoord = texcoord.applyToLocalPosition(.zero),
+//         .color = tint orelse .white,
+//     }, .{
+//         .pos = point.applyToLocalPosition(.e1),
+//         .texcoord = texcoord.applyToLocalPosition(.e1),
+//         .color = tint orelse .white,
+//     }, .{
+//         .pos = point.applyToLocalPosition(.e2),
+//         .texcoord = texcoord.applyToLocalPosition(.e2),
+//         .color = tint orelse .white,
+//     }, .{
+//         .pos = point.applyToLocalPosition(.one),
+//         .texcoord = texcoord.applyToLocalPosition(.one),
+//         .color = tint orelse .white,
+//     } };
+//     self.gl.useRenderable(
+//         self.sprite_renderable,
+//         &vertices,
+//         4 * @sizeOf(VertexData),
+//         // .local_points = &.{ .zero, .e1, .e2, .one },
+//         &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
+//         &.{
+//             .{ .name = "u_camera", .value = .{ .Rect = camera } },
+//         },
+//         texture,
+//     );
+// }
+
+pub fn fillRect(
+    self: Canvas,
+    camera: Rect,
+    rect: Rect,
+    color: FColor,
+) void {
+    self.fillShape(
+        camera,
+        .{ .pos = rect.top_left },
+        .{
+            .local_points = &.{
+                .new(0, 0),
+                .new(rect.size.x, 0),
+                .new(0, rect.size.y),
+                .new(rect.size.x, rect.size.y),
+            },
+            .triangles = self.DEFAULT_SHAPES.square.triangles,
+        },
+        color,
+    );
+}
+
+pub fn strokeRect(
+    self: Canvas,
+    camera: Rect,
+    rect: Rect,
+    width: f32,
+    color: FColor,
+) void {
+    self.line(
+        camera,
+        &.{
+            rect.top_left,
+            rect.get(.top_right),
+            rect.get(.bottom_right),
+            rect.get(.bottom_left),
+            rect.top_left,
+        },
+        width,
+        color,
+    );
+}
+
+pub fn strokeCircle(
+    self: Canvas,
+    comptime resolution: usize,
+    camera: Rect,
+    center: Vec2,
+    radius: f32,
+    width: f32,
+    color: FColor,
+) void {
+    self.line(
+        camera,
+        &funk.mapWithCtx(
+            struct {
+                pub fn anon(ctx: struct { radius: f32, center: Vec2 }, t: f32) Vec2 {
+                    return ctx.center.add(.fromPolar(ctx.radius, t));
+                }
+            }.anon,
+            &funk.linspace01(resolution, true),
+            .{ .radius = radius, .center = center },
+        ),
+        width,
+        color,
+    );
+}
+
+pub fn fillArc(self: *Canvas, camera: Rect, center: Vec2, radius: f32, turns_start: f32, turns_end: f32, color: FColor) !void {
+    self.fillShape(camera, .{
+        .pos = center,
+        .scale = radius,
+    }, try self.tmpShape(&(funk.mapWithCtx(
+        struct {
+            pub fn anon(ctx: struct { min: f32, max: f32 }, t: f32) Vec2 {
+                return .fromTurns(std.math.lerp(ctx.min, ctx.max, t));
+            }
+        }.anon,
+        &funk.linspace01(128, true),
+        .{ .min = turns_start, .max = turns_end },
+    ) ++ [1]Vec2{.zero})), color);
+}
+
+pub fn fillCrown(self: *Canvas, camera: Rect, center: Vec2, radius: f32, width: f32, color: FColor) !void {
+    const CIRCLE_RESOLUTION = 128;
+    self.fillShape(camera, .{
+        .pos = center,
+    }, try self.tmpShape(&(funk.mapWithCtx(
+        Vec2.fromPolar,
+        &funk.linspace(1, 0, CIRCLE_RESOLUTION, true),
+        radius - width / 2,
+    ) ++ funk.mapWithCtx(
+        Vec2.fromPolar,
+        &funk.linspace(0, 1, CIRCLE_RESOLUTION, true),
+        radius + width / 2,
+    ))), color);
+}
+
+pub const InstancedShapeInfo = extern struct {
+    point: Point,
+    color: FColor,
+};
+
+pub fn fillShapesInstanced(
+    self: Canvas,
+    camera: Rect,
+    shape: PrecomputedShape,
+    instances: []const InstancedShapeInfo,
+) void {
+    self.gl.useInstancedRenderable(
+        self.fill_instanced_shapes_renderable,
+        shape.local_points.ptr,
+        shape.local_points.len * @sizeOf(Vec2),
+        shape.triangles,
+        instances.ptr,
+        instances.len * @sizeOf(InstancedShapeInfo),
+        instances.len,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        null,
+    );
+}
+
+pub fn fillInstancedCircles(
+    self: *Canvas,
+    camera: Rect,
+    points: []const Vec2,
+) void {
+    self.gl.useInstancedRenderable(
+        self.fill_instanced_circles_renderable,
+        self.DEFAULT_SHAPES.circle_128.local_points.ptr,
+        self.DEFAULT_SHAPES.circle_128.local_points.len * @sizeOf(Vec2),
+        self.DEFAULT_SHAPES.circle_128.triangles,
+        points.ptr,
+        points.len * @sizeOf(Vec2),
+        points.len,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        null,
+    );
+}
+
+// // https://wwwtyro.net/2019/11/18/instanced-lines.html
+pub fn line(
+    self: Canvas,
+    camera: Rect,
+    points: []const Vec2,
+    world_width: f32,
+    color: FColor,
+) void {
+    const VertexData = extern struct {
+        a_vertex_position: Vec2,
+        a_vertex_is_b_side: f32,
+    };
+    // TODO
+    const rounded_line_data: []const VertexData = &.{
+        // basic rect
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 1 },
+
+        // rounded cap for a
+        .{ .a_vertex_position = .new(0, 0), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = Vec2.new(-0.5, -0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(-0.5, 0), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = Vec2.new(-0.5, 0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 0 },
+
+        // rounded cap for b
+        .{ .a_vertex_position = .new(0, 0), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = Vec2.new(0.5, -0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0.5, 0), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = Vec2.new(0.5, 0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 1 },
+    };
+    self.gl.useInstancedRenderable(
+        self.instanced_rounded_lines_renderable,
+        rounded_line_data.ptr,
+        rounded_line_data.len * @sizeOf(VertexData),
+        &.{
+            // basic rect
+            .{ 0, 1, 2 },
+            .{ 3, 2, 1 },
+
+            // rounded cap for a
+            .{ 4, 5, 6 },
+            .{ 4, 6, 7 },
+            .{ 4, 7, 8 },
+            .{ 4, 8, 9 },
+
+            // rounded cap for b
+            .{ 10, 11, 12 },
+            .{ 10, 12, 13 },
+            .{ 10, 13, 14 },
+            .{ 10, 14, 15 },
+        },
+        points.ptr,
+        points.len * @sizeOf(Vec2),
+        points.len - 1,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            .{ .name = "u_width", .value = .{ .f32 = world_width } },
+            .{ .name = "u_color", .value = .{ .FColor = color } },
+        },
+        null,
+    );
+}
+
+/// Performs triangulation; consider caching the result.
+pub fn tmpShape(
+    self: *Canvas,
+    local_points: []const Vec2,
+) !PrecomputedShape {
+    return try .fromPoints(self.frame_arena.allocator(), local_points);
+}
+
+pub fn startFrame(self: *Canvas, gl: Gl) void {
+    self.gl = gl;
+    _ = self.frame_arena.reset(.retain_capacity);
+}
+
+// TODO: small text looks worse on the web version!
+pub const TextRenderer = struct {
+    atlas_texture: Gl.Texture,
+    renderable: Gl.Renderable,
+    font_info: std.json.Parsed(FontJsonInfo),
+
+    const RectSides = struct {
+        left: f32,
+        bottom: f32,
+        right: f32,
+        top: f32,
+    };
+    const FontJsonInfo = struct {
+        atlas: struct {
+            type: enum { msdf },
+            distanceRange: f32,
+            distanceRangeMiddle: f32,
+            /// pixels per em
+            size: f32,
+            width: usize,
+            height: usize,
+            yOrigin: enum { top },
+        },
+        metrics: struct {
+            emSize: f32,
+            lineHeight: f32,
+            /// ??
+            ascender: f32,
+            /// ??
+            descender: f32,
+            /// ??
+            underlineY: f32,
+            /// ??
+            underlineThickness: f32,
+        },
+        glyphs: []struct {
+            unicode: u8,
+            advance: f32,
+            planeBounds: ?RectSides = null,
+            atlasBounds: ?RectSides = null,
+        },
+        kerning: []struct {
+            unicode1: u8,
+            unicode2: u8,
+            advance: f32,
+        },
+    };
+
+    pub fn init(font_json: []const u8, gpa: std.mem.Allocator, gl: Gl, atlas_image: *const anyopaque) !TextRenderer {
+        return .{
+            .atlas_texture = gl.buildTexture2D(atlas_image, false),
+            // TODO: parse the font data at comptime
+            .font_info = try std.json.parseFromSlice(
+                FontJsonInfo,
+                gpa,
+                font_json,
+                .{},
+            ),
+            .renderable = try gl.buildRenderable(
+                \\precision highp float;
+                \\in vec2 a_position;
+                \\in vec2 a_texcoord;
+                \\
+                \\out vec2 v_texcoord;
+                \\
+                \\// 0,0 => -1,1 (top left)
+                \\// 1,0 => 1,1 (top right)
+                \\vec2 clipFromCam(vec2 p) {
+                \\  return (p * 2.0 - 1.0) * vec2(1, -1);
+                \\}
+                \\
+                \\void main() {
+                \\  v_texcoord = a_texcoord;
+                \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
+                \\}
+            ,
+                \\precision highp float;
+                \\out vec4 out_color;
+                \\
+                \\// for some reason, on desktop, the fwidth value is half of what it should.
+                \\#ifdef GL_ES // WebGL2
+                \\  #define FWIDTH(x) fwidth(x)
+                \\#else // Desktop
+                \\  #define FWIDTH(x) (2.0 * fwidth(x))
+                \\#endif
+                \\
+                \\in vec2 v_texcoord;
+                \\uniform sampler2D u_texture;
+                \\uniform vec4 u_color;
+                \\
+                \\float median(float r, float g, float b) {
+                \\  return max(min(r, g), min(max(r, g), b));
+                \\}
+                \\
+                \\float inverseLerp(float a, float b, float t) {
+                \\  return (t - a) / (b - a);
+                \\}
+                \\
+                \\void main() {
+                \\  // assume square texture
+                \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
+                \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
+                // TODO: get sdf_pxrange from the font data
+                \\  float sdf_pxrange = 2.0;
+                \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
+                \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
+                \\  // density of the texture on screen; assume uniform scaling.
+                \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size;
+                \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
+                \\  // over how many screen pixels do the transition
+                \\  float transition_pixels = 1.0;
+                \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
+                \\  // TODO: premultiply alpha?
+                \\  out_color = mix(vec4(u_color.rgb, 0), u_color, alpha);
+                \\}
+            ,
+                .{ .attribs = &.{
+                    .{ .name = "a_position", .kind = .Vec2 },
+                    .{ .name = "a_texcoord", .kind = .Vec2 },
+                } },
+                &.{
+                    .{ .name = "u_color", .kind = .FColor },
+                },
+            ),
+        };
+    }
+
+    pub fn deinit(self: *TextRenderer) void {
+        self.font_info.deinit();
+        // TODO
+        // gl.destroyRenderable(self.renderable);
+        // TODO
+        // gl.DeleteTextures(1, @ptrCast(&self.texture));
+    }
+
+    // TODO: kerning
+    // TODO: single draw call, maybe
+    pub fn drawLine(
+        self: TextRenderer,
+        gl: Gl,
+        camera: Rect,
+        pos: Rect.Measure,
+        text: []const u8,
+        em: f32,
+        color: FColor,
+        scratch: std.mem.Allocator,
+    ) !void {
+        var quads: std.ArrayList(Quad) = try .initCapacity(scratch, text.len);
+        defer quads.deinit();
+        var cursor: Vec2 = .zero;
+        for (text) |char| {
+            cursor, const quad = self.addLetter(cursor, char, em, color);
+            if (quad) |q| quads.appendAssumeCapacity(q);
+        }
+        if (quads.items.len == 0) return;
+        var bounds = quads.items[0].pos;
+        for (quads.items[1..]) |q| bounds = Rect.bounding(&.{ bounds, q.pos });
+        const delta = bounds.with(pos, .size).top_left.sub(bounds.top_left);
+        for (quads.items) |q| self.drawQuad(gl, camera.move(delta.neg()), q);
+    }
+
+    // TODO: kerning
+    // TODO: single draw call, maybe
+    /// deprecated, call drawLine
+    pub fn drawText(
+        self: TextRenderer,
+        gl: Gl,
+        camera: Rect,
+        bottom_left: Vec2,
+        text: []const u8,
+        em: f32,
+        color: FColor,
+    ) void {
+        // self.drawText(gl, camera, .{.bottom_left = bottom_left}, text, em, color)
+        var cursor: Vec2 = bottom_left;
+        for (text) |char| {
+            cursor = self.drawLetter(
+                gl,
+                camera,
+                cursor,
+                char,
+                em,
+                color,
+            );
+        }
+    }
+
+    const Quad = struct {
+        pos: Rect,
+        tex: Rect,
+        color: FColor,
+    };
+
+    pub fn drawQuad(self: TextRenderer, gl: Gl, camera: Rect, quad: Quad) void {
+        // TODO: use a better api
+        const VertexData = extern struct { position: Vec2, texcoord: Vec2 };
+        gl.useRenderable(
+            self.renderable,
+            &[4]VertexData{
+                .{
+                    .position = camera.localFromWorldPosition(quad.pos.get(.bottom_left)),
+                    .texcoord = quad.tex.get(.bottom_left),
+                },
+                .{
+                    .position = camera.localFromWorldPosition(quad.pos.get(.bottom_right)),
+                    .texcoord = quad.tex.get(.bottom_right),
+                },
+                .{
+                    .position = camera.localFromWorldPosition(quad.pos.get(.top_left)),
+                    .texcoord = quad.tex.get(.top_left),
+                },
+                .{
+                    .position = camera.localFromWorldPosition(quad.pos.get(.top_right)),
+                    .texcoord = quad.tex.get(.top_right),
+                },
+            },
+            4 * @sizeOf(VertexData),
+            &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = quad.color } },
+            },
+            self.atlas_texture,
+        );
+    }
+
+    pub fn addLetter(
+        self: TextRenderer,
+        bottom_left: Vec2,
+        letter: u8,
+        em: f32,
+        color: FColor,
+    ) std.meta.Tuple(&.{ Vec2, ?Quad }) {
+        const default_glyph_info = blk: {
+            for (self.font_info.value.glyphs) |glyph| {
+                if (glyph.unicode == '?') break :blk glyph;
+            } else unreachable;
+        };
+        // TODO: use a map
+        const glyph_info = blk: {
+            for (self.font_info.value.glyphs) |glyph| {
+                if (glyph.unicode == letter) break :blk glyph;
+            } else break :blk default_glyph_info;
+        };
+        const quad: ?Quad = if (glyph_info.atlasBounds) |b| blk: {
+            const s = UVec2.new(
+                self.font_info.value.atlas.width,
+                self.font_info.value.atlas.height,
+            ).tof32();
+            const p = glyph_info.planeBounds orelse unreachable;
+
+            const quad: Quad = .{
+                .color = color,
+                .pos = .from(.{
+                    .{ .top_left = bottom_left.add(Vec2.new(p.left, p.top).scale(em)) },
+                    .{ .bottom_right = bottom_left.add(Vec2.new(p.right, p.bottom).scale(em)) },
+                }),
+                .tex = .from(.{
+                    .{ .top_left = Vec2.new(b.left, b.top).div(s) },
+                    .{ .bottom_right = Vec2.new(b.right, b.bottom).div(s) },
+                }),
+            };
+
+            break :blk quad;
+        } else null;
+
+        return .{ bottom_left.addX(em * glyph_info.advance), quad };
+    }
+
+    pub fn drawLetter(
+        self: TextRenderer,
+        gl: Gl,
+        camera: Rect,
+        bottom_left: Vec2,
+        letter: u8,
+        em: f32,
+        color: FColor,
+    ) Vec2 {
+        const new_cursor, const quad = self.addLetter(bottom_left, letter, em, color);
+        if (quad) |q| self.drawQuad(gl, camera, q);
+        return new_cursor;
+    }
+};
+
+// TODO
+// pub const SpritesheetRenderer = struct {
+//     texture: Gl.Texture,
+//     renderable: Gl.InstancedRenderable,
+
+//     pub fn init(gl: Gl, texture: Gl.Texture) SpritesheetRenderer {
+//         return .{
+//             .texture = texture,
+//             .renderable = try gl.buildInstancedRenderable(
+//                 \\precision highp float;
+//                 \\uniform vec4 u_camera; // as top_left, size
+//                 \\in vec2 a_quad_vertex; // (0,0) .. (1,1)
+//                 \\in vec4 a_position; // as top_left, size
+//                 \\in vec4 a_texcoord; // as top_left, size
+//                 \\in vec4 a_color;
+//                 \\out vec4 v_color;
+//                 \\out vec2 v_texcoord;
+//                 \\void main() {
+//                 \\  vec2 world_position = a_position.xy + a_position.zw * a_quad_vertex;
+//                 \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+//                 \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+//                 \\  v_color = a_color;
+//                 \\  v_texcoord = a_texcoord.xy + a_quad_vertex * a_texcoord.zw;
+//                 \\}
+//             ,
+//                 \\precision highp float;
+//                 \\out vec4 out_color;
+//                 \\in vec4 v_color;
+//                 \\in vec2 v_texcoord;
+//                 \\void main() {
+//                 \\  out_color = v_color * vec4(v_texcoord, 1, 1);
+//                 \\}
+//             ,
+//                 .{ .attribs = &.{
+//                     .{ .name = "a_quad_vertex", .kind = .Vec2 },
+//                 } },
+//                 .{ .attribs = &.{
+//                     .{ .name = "a_position", .kind = .Rect },
+//                     .{ .name = "a_color", .kind = .FColor },
+//                     .{ .name = "a_texcoord", .kind = .Rect },
+//                 } },
+//                 &.{
+//                     .{ .name = "u_camera", .kind = .Rect },
+//                 },
+//             ),
+//         };
+//     }
+
+//     // pub fn deinit()
+
+//     // pub fn add(self: *SpritesheetRenderer, pos: Rect, tex: Rect) !void {}
+
+//     // pub fn end(self: *SpritesheetRenderer, camera: Rect) void {}
+// };
+
+const std = @import("std");
+const assert = std.debug.assert;
+const math = @import("math.zig");
+const UColor = math.UColor;
+const FColor = math.FColor;
+const Camera = math.Camera;
+const Rect = math.Rect;
+const Point = math.Point;
+const Vec2 = math.Vec2;
+const UVec2 = math.UVec2;
+const IVec2 = math.IVec2;
+const funk = @import("funktional.zig");
+const Gl = @import("Gl.zig");
+const renderer = @import("renderer.zig");
+const PrecomputedShape = renderer.PrecomputedShape;
+const RenderableInfo = renderer.RenderableInfo;

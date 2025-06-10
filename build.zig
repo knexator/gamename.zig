@@ -12,6 +12,13 @@ pub fn build(b: *std.Build) void {
     // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
     b.reference_trace = 10;
 
+    // To use in other projects
+    _ = b.addModule("kommon", .{
+        .root_source_file = b.path("src/kommon/kommon.zig"),
+        // .target = target,
+        // .optimize = optimize,
+    });
+
     build_game(b);
 
     // TODO(eternal): delete this step by getting a build.zig for msdf
@@ -120,11 +127,11 @@ fn build_for_desktop(
         .optimize = options.optimize,
     }).artifact("SDL3");
 
-    // TODO: delete this variable
-    const kommon_module = b.dependency("kommon", .{
+    const kommon_module = b.addModule("kommon", .{
+        .root_source_file = b.path("src/kommon/kommon.zig"),
         .target = options.target,
         .optimize = options.optimize,
-    }).module("kommon");
+    });
 
     const build_options = b.addOptions();
     if (options.hot_reloadable != .no) {
@@ -254,11 +261,11 @@ fn build_for_web(
 ) void {
     const web_install_dir = std.Build.InstallDir{ .custom = "web_static" };
 
-    // TODO: delete this variable
-    const kommon_module = b.dependency("kommon", .{
+    const kommon_module = b.addModule("kommon", .{
+        .root_source_file = b.path("src/kommon/kommon.zig"),
         .target = options.target,
         .optimize = options.optimize,
-    }).module("kommon");
+    });
 
     const wasm_module = b.createModule(.{
         .root_source_file = b.path("src/web_platform.zig"),
