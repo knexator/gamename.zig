@@ -105,7 +105,7 @@ pub fn main() !void {
         };
     };
     defer if (is_debug) {
-        // _ = debug_allocator.deinit();
+        // TODO: uncomment
         // assert(debug_allocator.deinit() == .ok);
     };
 

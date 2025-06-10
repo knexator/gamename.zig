@@ -9,7 +9,10 @@ pub const stuff = .{
         .desired_aspect_ratio = 1152.0 / 648.0,
     },
 
-    .sounds = .{},
+    .sounds = .{
+        .crash = "sounds/crash.wav",
+        .step = "sounds/step1.wav",
+    },
 
     .loops = .{},
 
@@ -105,20 +108,33 @@ const levels_raw: []const []const u8 = &.{
 const LevelState = struct {
     const GeoKind = enum { wall, air, hole };
     geometry: kommon.Grid2D(GeoKind),
+    true_timeline_undos: std.ArrayList(usize),
     player: Undoable(struct {
-        pos: UVec2,
+        pos: IVec2,
+        dir: IVec2,
+        par: bool,
+
+        pub fn spriteIndex(self: @This()) usize {
+            var index: usize = blk: inline for (IVec2.cardinal_directions, &.{ 6, 2, 4, 0 }) |d, k| {
+                if (self.dir.equals(d)) break :blk k;
+            } else unreachable;
+            // if (self.pushing) index += 8;
+            if (self.par) index += 1;
+            return index;
+        }
     }),
     crates: std.ArrayList(Undoable(struct {
-        pos: UVec2,
+        pos: IVec2,
+        in_hole: bool,
     })),
 
-    pub fn init(mem: *Mem, ascii: []const u8) !LevelState {
+    pub fn init(mem: *Mem, ascii: []const u8, enter_dir: IVec2) !LevelState {
         defer _ = mem.scratch.reset(.retain_capacity);
         const chars: kommon.Grid2D(u8) = try .fromAscii(mem.scratch.allocator(), ascii);
-        const initial_player_pos: UVec2 = blk: {
+        const initial_player_pos: IVec2 = blk: {
             var it = chars.iterator();
             while (it.next()) |pos| {
-                if (chars.at2(pos) == 'O') break :blk pos;
+                if (chars.at2(pos) == 'O') break :blk pos.cast(isize);
             } else unreachable;
         };
         var crates: @FieldType(LevelState, "crates") = .init(mem.level.allocator());
@@ -126,7 +142,7 @@ const LevelState = struct {
             var it = chars.iterator();
             while (it.next()) |pos| {
                 if (chars.at2(pos) == '1') {
-                    try crates.append(try .init(mem, .{ .pos = pos }));
+                    try crates.append(try .init(mem, .{ .pos = pos.cast(isize), .in_hole = false }));
                 }
             }
         }
@@ -141,39 +157,117 @@ const LevelState = struct {
                     };
                 }
             }.anon),
-            .player = try .init(mem, .{ .pos = initial_player_pos }),
+            .player = try .init(mem, .{ .pos = initial_player_pos, .dir = enter_dir, .par = true }),
+            .true_timeline_undos = .init(mem.level.allocator()),
             .crates = crates,
         };
     }
 
-    pub fn draw(self: *LevelState, camera: Rect, canvas: *Canvas, textures: @FieldType(GameState, "textures")) void {
-        var geo_batch = canvas.spriteBatch(camera, textures.tiles);
+    pub fn isWall(self: LevelState, pos: IVec2) bool {
+        return !self.geometry.inBoundsSigned(pos) or self.geometry.atSigned(pos) == .wall;
+    }
+
+    pub fn anyCrateBlockingAt(self: LevelState, pos: IVec2) bool {
+        for (self.crates.items) |crate| {
+            if (crate.cur().pos.equals(pos) and !crate.cur().in_hole) return true;
+        } else return false;
+    }
+
+    pub fn openHoleAt(self: LevelState, pos: IVec2) bool {
+        if (self.geometry.atSigned(pos) == .hole) {
+            for (self.crates.items) |crate| {
+                if (crate.cur().pos.equals(pos) and crate.cur().in_hole)
+                    return false;
+            } else return true;
+        } else return false;
+    }
+
+    pub fn doTurn(self: *LevelState, mem: *Mem, input: Input) !union(enum) { usual, wall_crash } {
+        defer _ = mem.scratch.reset(.retain_capacity);
+        switch (input) {
+            .dir => |dir| {
+                const new_pos = self.player.cur().pos.cast(isize).add(dir);
+                if (self.isWall(new_pos)) return .wall_crash;
+
+                var pushing_crates: std.ArrayList(usize) = .init(mem.scratch.allocator());
+                for (self.crates.items, 0..) |crate, k| {
+                    if (crate.cur().pos.equals(new_pos) and !crate.cur().in_hole) try pushing_crates.append(k);
+                }
+                if (pushing_crates.items.len > 0) {
+                    const new_crates_pos = new_pos.add(dir);
+                    if (self.isWall(new_crates_pos) or self.anyCrateBlockingAt(new_crates_pos)) {
+                        return .wall_crash;
+                    }
+                    const fell_on_hole = self.openHoleAt(new_crates_pos);
+                    for (pushing_crates.items) |pushed_crate_index| {
+                        var cur = self.crates.items[pushed_crate_index].cur();
+                        cur.pos = new_crates_pos;
+                        cur.in_hole = fell_on_hole;
+                        try self.crates.items[pushed_crate_index].append(cur);
+                    }
+                }
+
+                try self.player.append(.{ .pos = new_pos, .dir = dir, .par = !self.player.cur().par });
+
+                return .usual;
+            },
+            .undo => @panic("TODO"),
+        }
+    }
+
+    pub fn draw(self: *LevelState, mem: *Mem, camera: Rect, canvas: *Canvas, textures: @FieldType(GameState, "textures")) void {
+        const tiles: Canvas.SpriteSheet = .{
+            .count = .new(3, 4),
+            .margin_px = 2,
+            .resolution = textures.tiles.resolution,
+        };
+        const players: Canvas.SpriteSheet = .{
+            .count = .new(4, 4),
+            .margin_px = 0,
+            .resolution = textures.player.resolution,
+        };
+        _ = mem;
+        var layers = .{
+            .basement = canvas.spriteBatch(textures.tiles),
+            .main = canvas.spriteBatch(textures.tiles),
+        };
         var it = self.geometry.iterator();
         while (it.next()) |pos| {
             const tile = self.geometry.at2(pos);
-            const sprite_index: ?UVec2 = switch (tile) {
-                .air => .zero,
-                .hole => .new(1, 0),
-                .wall => null,
-            };
-            if (sprite_index) |s| {
-                geo_batch.add(.{
-                    .point = .{ .pos = pos.tof32() },
-                    .texcoord = .fromSpriteSheet(s, .new(3, 4), Vec2.both(2.0).div(textures.tiles.resolution.tof32())),
-                });
+            switch (tile) {
+                .air => {
+                    layers.main.add(.{
+                        .point = .{ .pos = pos.tof32() },
+                        .texcoord = tiles.at(0),
+                    });
+                },
+                .hole => {
+                    layers.main.add(.{
+                        .point = .{ .pos = pos.tof32() },
+                        .texcoord = tiles.at(1),
+                    });
+                    layers.basement.add(.{
+                        .point = .{ .pos = pos.tof32() },
+                        .texcoord = tiles.at(3),
+                    });
+                },
+                .wall => {},
             }
         }
         for (self.crates.items) |crate| {
-            geo_batch.add(.{
+            const layer = if (crate.cur().in_hole) &layers.basement else &layers.main;
+            const color = COLORS.CRATES[0];
+            layer.add(.{
                 .point = .{ .pos = crate.cur().pos.tof32() },
-                .texcoord = .fromSpriteSheet(.new(0, 2), .new(3, 4), Vec2.both(2.0).div(textures.tiles.resolution.tof32())),
-                .tint = COLORS.CRATES[0],
+                .texcoord = tiles.at(6),
+                .tint = if (crate.cur().in_hole) color.scaleRGB(0.4) else color,
             });
         }
-        geo_batch.draw();
+        layers.basement.draw(camera);
+        layers.main.draw(camera);
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = self.player.cur().pos.tof32() },
-            .texcoord = .fromSpriteSheet(.new(3, 1), .new(4, 4), .zero),
+            .texcoord = players.at(self.player.cur().spriteIndex()),
         }}, textures.player);
     }
 };
@@ -221,7 +315,7 @@ pub fn init(
             &.{loaded_images.get(.arial_atlas)},
         ),
         .smooth = .init(mem.forever.allocator()),
-        .cur_level = try .init(mem, levels_raw[0]),
+        .cur_level = try .init(mem, levels_raw[0], .e1),
         .mem = mem.*,
     };
 }
@@ -250,14 +344,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (self.input_queue.popFirst()) |input| {
-        std.log.debug("foo", .{});
-        switch (input) {
-            .dir => |dir| {
-                var player = self.cur_level.player.cur();
-                player.pos = player.pos.addSigned(dir);
-                try self.cur_level.player.append(player);
-            },
-            else => @panic("todo"),
+        switch (try self.cur_level.doTurn(&self.mem, input)) {
+            .usual => platform.sound_queue.insert(.step),
+            .wall_crash => platform.sound_queue.insert(.crash),
         }
     }
 
@@ -269,7 +358,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     );
     // const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
-    self.cur_level.draw(camera, &self.canvas, self.textures);
+    self.cur_level.draw(&self.mem, camera, &self.canvas, self.textures);
     return false;
 }
 
