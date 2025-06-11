@@ -39,8 +39,8 @@ pub const CApi = extern struct {
 
     fn _reload(dst: *GameState, gpa: *const std.mem.Allocator, gl: *const Gl) callconv(.c) void {
         dst.deinit(gpa.*);
-        // TODO
-        dst.* = GameState.init(gpa.*, gl.*, undefined) catch unreachable;
+        // TODO: remove undefined
+        dst.init(gpa.*, gl.*, undefined) catch unreachable;
     }
 };
 

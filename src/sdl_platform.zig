@@ -25,8 +25,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     last_inode: std.fs.File.INode = 0,
     state: game.GameState,
 
-    fn init(gpa: std.mem.Allocator, sdl_gl: game.Gl, loaded_images: std.EnumArray(game.Images, *const anyopaque)) !Self {
-        return .{ .state = try .init(gpa, sdl_gl, loaded_images) };
+    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: game.Gl, loaded_images: std.EnumArray(game.Images, *const anyopaque)) !void {
+        try dst.state.init(gpa, sdl_gl, loaded_images);
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -584,7 +584,7 @@ pub fn main() !void {
         .gl = sdl_gl.vtable,
     };
 
-    my_game = try .init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
+    try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
     // TODO: gl on deinit
     defer my_game.deinit(sdl_platform.gpa);
 

@@ -129,39 +129,45 @@ const LevelState = struct {
         in_hole: bool,
     })),
 
-    pub fn init(mem: *Mem, ascii: []const u8, enter_dir: IVec2) !LevelState {
+    pub fn init(dst: *LevelState, mem: *Mem, ascii: []const u8, enter_dir: IVec2) !void {
         defer _ = mem.scratch.reset(.retain_capacity);
+        _ = mem.level.reset(.retain_capacity);
+
+        dst.true_timeline_undos = .init(mem.level.allocator());
+
         const chars: kommon.Grid2D(u8) = try .fromAscii(mem.scratch.allocator(), ascii);
+
         const initial_player_pos: IVec2 = blk: {
             var it = chars.iterator();
             while (it.next()) |pos| {
                 if (chars.at2(pos) == 'O') break :blk pos.cast(isize);
             } else unreachable;
         };
-        var crates: @FieldType(LevelState, "crates") = .init(mem.level.allocator());
-        {
-            var it = chars.iterator();
-            while (it.next()) |pos| {
-                if (chars.at2(pos) == '1') {
-                    try crates.append(try .init(mem, .{ .pos = pos.cast(isize), .in_hole = false }));
-                }
+        dst.player = try .init(mem, &dst.true_timeline_undos, 0, .{ .pos = initial_player_pos, .in_hole = false, .dir = enter_dir, .par = true });
+
+        dst.crates = .init(mem.level.allocator());
+        var it = chars.iterator();
+        while (it.next()) |pos| {
+            const char = chars.at2(pos);
+            if ('1' <= char and char <= '9') {
+                try dst.crates.append(try .init(
+                    mem,
+                    &dst.true_timeline_undos,
+                    char - '1',
+                    .{ .pos = pos.cast(isize), .in_hole = false },
+                ));
             }
         }
 
-        return .{
-            .geometry = try chars.map(mem.level.allocator(), GeoKind, struct {
-                pub fn anon(c: u8) GeoKind {
-                    return switch (c) {
-                        '#' => .wall,
-                        '_' => .hole,
-                        else => .air,
-                    };
-                }
-            }.anon),
-            .player = try .init(mem, .{ .pos = initial_player_pos, .in_hole = false, .dir = enter_dir, .par = true }),
-            .true_timeline_undos = .init(mem.level.allocator()),
-            .crates = crates,
-        };
+        dst.geometry = try chars.map(mem.level.allocator(), GeoKind, struct {
+            pub fn anon(c: u8) GeoKind {
+                return switch (c) {
+                    '#' => .wall,
+                    '_' => .hole,
+                    else => .air,
+                };
+            }
+        }.anon);
     }
 
     pub fn isWall(self: LevelState, pos: IVec2) bool {
@@ -185,6 +191,10 @@ const LevelState = struct {
 
     pub fn doTurn(self: *LevelState, mem: *Mem, input: Input) !union(enum) { usual, wall_crash } {
         defer _ = mem.scratch.reset(.retain_capacity);
+        try self.true_timeline_undos.append(switch (input) {
+            .dir => 0,
+            .undo => |k| k,
+        });
         switch (input) {
             .dir => |dir| {
                 if (self.player.cur().in_hole) return .wall_crash;
@@ -206,19 +216,24 @@ const LevelState = struct {
                         var cur = self.crates.items[pushed_crate_index].cur();
                         cur.pos = new_crates_pos;
                         cur.in_hole = fell_on_hole;
-                        try self.crates.items[pushed_crate_index].append(cur);
+                        try self.crates.items[pushed_crate_index].setCurrent(cur);
                     }
                 }
 
-                try self.player.append(.{ .pos = new_player_pos, .dir = dir, .par = !self.player.cur().par, .in_hole = self.openHoleAt(new_player_pos) });
+                try self.player.setCurrent(.{
+                    .pos = new_player_pos,
+                    .dir = dir,
+                    .par = !self.player.cur().par,
+                    .in_hole = self.openHoleAt(new_player_pos),
+                });
 
                 return .usual;
             },
             .undo => |k| {
-                // TODO
                 try self.player.undo(k);
-                // @panic("todo");
-                // return .undoed{k}
+                for (self.crates.items) |*crate| {
+                    try crate.undo(k);
+                }
                 return .usual;
             },
         }
@@ -294,15 +309,26 @@ pub fn Undoable(T: type) type {
     return struct {
         const Self = @This();
 
+        true_timeline_undos: *const std.ArrayList(usize),
         true_values: std.ArrayList(T),
+        immune_to: usize,
 
-        pub fn init(mem: *Mem, initial_value: T) !Self {
+        pub fn init(mem: *Mem, true_timeline_undos: *const std.ArrayList(usize), immune_to: usize, initial_value: T) !Self {
             var true_values: std.ArrayList(T) = try .initCapacity(mem.level.allocator(), 64);
             true_values.appendAssumeCapacity(initial_value);
-            return .{ .true_values = true_values };
+            return .{
+                .true_values = true_values,
+                .immune_to = immune_to,
+                .true_timeline_undos = true_timeline_undos,
+            };
         }
 
-        pub fn append(self: *Self, value: T) !void {
+        pub fn setCurrent(self: *Self, value: T) !void {
+            const prev = self.cur();
+            const real_tick = self.true_timeline_undos.items.len;
+            while (self.true_values.items.len < real_tick) {
+                try self.true_values.append(prev);
+            }
             try self.true_values.append(value);
         }
 
@@ -310,39 +336,75 @@ pub fn Undoable(T: type) type {
             return self.true_values.getLast();
         }
 
-        // TODO
+        pub fn at(self: Self, tick: usize) T {
+            if (tick < self.true_values.items.len) {
+                return self.true_values.items[tick];
+            } else {
+                return self.true_values.getLast();
+            }
+        }
+
         pub fn undo(self: *Self, undo_level: usize) !void {
             assert(undo_level > 0);
             assert(self.true_values.items.len > 0);
-            try self.append(self.true_values.items[self.true_values.items.len - 2]);
+            if (self.immune_to >= undo_level) {
+                try self.setCurrent(self.cur());
+            } else {
+                const tick = get_original_tick(
+                    self.true_values.items.len,
+                    self.immune_to,
+                    self.true_timeline_undos.items,
+                );
+                try self.setCurrent(self.at(tick));
+            }
+        }
+
+        fn get_original_tick(tick: usize, immune_to: usize, true_timeline_undos: []const usize) usize {
+            assert(tick <= true_timeline_undos.len);
+            if (true_timeline_undos[tick - 1] <= immune_to) {
+                return tick;
+            } else {
+                const travel_depth = true_timeline_undos[tick - 1];
+                var counter: usize = 1;
+                var res = tick - 1;
+                while (counter > 0 and res > 0) {
+                    const cur_depth = true_timeline_undos[res - 1];
+                    if (cur_depth == travel_depth) {
+                        counter += 1;
+                        res -= 1;
+                    } else if (cur_depth < travel_depth) {
+                        counter -= 1;
+                        res -= 1;
+                    } else {
+                        res = get_original_tick(res, immune_to, true_timeline_undos);
+                    }
+                }
+                return res;
+            }
         }
     };
 }
 
 pub fn init(
+    dst: *GameState,
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
-) !GameState {
-    // TODO: revise
-    var mem: *Mem = try gpa.create(Mem);
-    mem.* = .init(gpa);
+) !void {
+    dst.mem = .init(gpa);
+    try dst.cur_level.init(&dst.mem, levels_raw[0], .e1);
 
-    return .{
-        .textures = .{
-            .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
-            .player = gl.buildTexture2D(loaded_images.get(.player), true),
-        },
-        .canvas = try .init(
-            gl,
-            gpa,
-            &.{@embedFile("../../fonts/Arial.json")},
-            &.{loaded_images.get(.arial_atlas)},
-        ),
-        .smooth = .init(mem.forever.allocator()),
-        .cur_level = try .init(mem, levels_raw[0], .e1),
-        .mem = mem.*,
+    dst.textures = .{
+        .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
+        .player = gl.buildTexture2D(loaded_images.get(.player), true),
     };
+    dst.canvas = try .init(
+        gl,
+        gpa,
+        &.{@embedFile("../../fonts/Arial.json")},
+        &.{loaded_images.get(.arial_atlas)},
+    );
+    dst.smooth = .init(dst.mem.forever.allocator());
 }
 
 // TODO: take gl parameter
