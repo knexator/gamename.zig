@@ -253,6 +253,19 @@ pub fn Grid2D(T: type) type {
             );
         }
 
+        pub fn findSingle(self: Self, value: T) !UVec2 {
+            var result: ?UVec2 = null;
+            var it = self.iterator();
+            while (it.next()) |pos| {
+                if (std.meta.eql(self.at2(pos), value)) {
+                    if (result != null) return error.TooMany;
+                    result = pos;
+                }
+            }
+            if (result == null) return error.TooFew;
+            return result.?;
+        }
+
         pub fn filterValues(self: Self, allocator: std.mem.Allocator, values: []const T) !Grid2D(bool) {
             return try self.mapWithCtx(allocator, bool, values, struct {
                 pub fn anon(v: T, vs: []const T) bool {

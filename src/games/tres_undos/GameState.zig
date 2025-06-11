@@ -93,9 +93,15 @@ const Input = union(enum) {
     undo: usize,
 };
 
-const levels_raw: []const []const u8 = &.{
+const LevelData = struct {
+    ascii: []const u8,
+    in_dir: IVec2,
+    out_dir: IVec2,
+};
+const levels_raw: []const LevelData = &.{
+    .{ .ascii = 
     \\########.#####
-    \\########.#####
+    \\########*#####
     \\########.#..##
     \\########_..1.#
     \\########..1..#
@@ -103,7 +109,15 @@ const levels_raw: []const []const u8 = &.{
     \\########.#####
     \\..O...1._#####
     \\##############
-    ,
+    , .in_dir = .e1, .out_dir = .new(0, -1) },
+    .{ .ascii = 
+    \\##########
+    \\##....####
+    \\#.1.2.####
+    \\#..#..__.#
+    \\##O#####*#
+    \\##.#####.#
+    , .in_dir = .new(0, -1), .out_dir = .e2 },
 };
 
 const LevelState = struct {
@@ -129,22 +143,21 @@ const LevelState = struct {
         pos: IVec2,
         in_hole: bool,
     })),
+    target_player_pos: IVec2,
+    out_dir: IVec2,
 
-    pub fn init(dst: *LevelState, mem: *Mem, ascii: []const u8, enter_dir: IVec2) !void {
+    pub fn init(dst: *LevelState, mem: *Mem, data: LevelData) !void {
         defer _ = mem.scratch.reset(.retain_capacity);
         _ = mem.level.reset(.retain_capacity);
 
         dst.true_timeline_undos = .init(mem.level.allocator());
 
-        const chars: kommon.Grid2D(u8) = try .fromAscii(mem.scratch.allocator(), ascii);
+        const chars: kommon.Grid2D(u8) = try .fromAscii(mem.scratch.allocator(), data.ascii);
 
-        const initial_player_pos: IVec2 = blk: {
-            var it = chars.iterator();
-            while (it.next()) |pos| {
-                if (chars.at2(pos) == 'O') break :blk pos.cast(isize);
-            } else unreachable;
-        };
-        dst.player = try .init(mem, &dst.true_timeline_undos, 0, .{ .pos = initial_player_pos, .in_hole = false, .dir = enter_dir, .par = true });
+        const initial_player_pos: IVec2 = (try chars.findSingle('O')).cast(isize);
+        dst.player = try .init(mem, &dst.true_timeline_undos, 0, .{ .pos = initial_player_pos, .in_hole = false, .dir = data.in_dir, .par = true });
+
+        dst.target_player_pos = (try chars.findSingle('*')).cast(isize);
 
         dst.crates = .init(mem.level.allocator());
         var it = chars.iterator();
@@ -169,6 +182,8 @@ const LevelState = struct {
                 };
             }
         }.anon);
+
+        dst.out_dir = data.out_dir;
     }
 
     pub fn isWall(self: LevelState, pos: IVec2) bool {
@@ -288,10 +303,10 @@ const LevelState = struct {
         }
         for (self.crates.items) |crate| {
             const layer = if (crate.cur().in_hole) &layers.basement else &layers.main;
-            const color = COLORS.CRATES[0];
+            const color = COLORS.CRATES[crate.immune_to];
             layer.add(.{
                 .point = .{ .pos = crate.cur().pos.tof32() },
-                .texcoord = tiles.at(6),
+                .texcoord = tiles.at(6 + crate.immune_to),
                 .tint = if (crate.cur().in_hole) color.scaleRGB(0.4) else color,
             });
         }
@@ -451,7 +466,7 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.mem = .init(gpa);
-    try dst.cur_level.init(&dst.mem, levels_raw[0], .e1);
+    try dst.cur_level.init(&dst.mem, levels_raw[1]);
 
     dst.textures = .{
         .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
