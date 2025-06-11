@@ -82,6 +82,7 @@ smooth: @import("../akari/GameState.zig").LazyState,
 textures: struct {
     tiles: Gl.Texture,
     player: Gl.Texture,
+    walls: Gl.Texture,
 },
 
 input_queue: kommon.CircularBuffer(Input, 32) = .init,
@@ -250,10 +251,17 @@ const LevelState = struct {
             .margin_px = 0,
             .resolution = textures.player.resolution,
         };
+        const walls: Canvas.SpriteSheet = .{
+            .count = .new(4, 7),
+            .margin_px = 2,
+            .resolution = textures.walls.resolution,
+        };
         _ = mem;
         var layers = .{
             .basement = canvas.spriteBatch(textures.tiles),
             .main = canvas.spriteBatch(textures.tiles),
+            .walls = canvas.spriteBatch(textures.walls),
+            .gradients = canvas.spriteBatch(textures.walls),
         };
         var it = self.geometry.iterator();
         while (it.next()) |pos| {
@@ -302,6 +310,57 @@ const LevelState = struct {
                 .texcoord = players.at(self.player.cur().spriteIndex()),
             }}, textures.player);
         }
+
+        for (0..self.geometry.size.y + 1) |j| {
+            for (0..self.geometry.size.x + 1) |i| {
+                const p: IVec2 = UVec2.new(i, j).cast(isize);
+                const Asdf = enum {
+                    wall,
+                    air,
+                    outside,
+
+                    pub fn from(geo: ?GeoKind) @This() {
+                        return if (geo) |v| switch (v) {
+                            .wall => .wall,
+                            else => .air,
+                        } else .outside;
+                    }
+
+                    pub fn corner(str: *const [4:0]u8) [4]@This() {
+                        var res: [4]@This() = undefined;
+                        for (str, &res) |c, *dst| {
+                            dst.* = switch (c) {
+                                '#' => .wall,
+                                '.' => .air,
+                                ',' => .outside,
+                                else => unreachable,
+                            };
+                        }
+                        return res;
+                    }
+                };
+                const tl: Asdf = .from(self.geometry.atSignedSafe(p.sub(.one)));
+                const tr: Asdf = .from(self.geometry.atSignedSafe(p.sub(.e2)));
+                const bl: Asdf = .from(self.geometry.atSignedSafe(p.sub(.e1)));
+                const br: Asdf = .from(self.geometry.atSignedSafe(p.sub(.zero)));
+                const wall_sprites = funk.map(Asdf.corner, comptime &.{
+                    "###.", "##.#", ".#.#", "..##",
+                    "#.##", ".###", "##..", "#.#.",
+                    "...#", "..#.", "#..#", ".##.",
+                    ".#..", "#...",
+                });
+                inline for (wall_sprites, 0..) |combo, k| {
+                    if (std.meta.eql(combo, .{ tl, tr, bl, br })) {
+                        layers.walls.add(.{
+                            .point = .{ .pos = p.tof32().sub(.half) },
+                            .texcoord = walls.at(k),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        layers.walls.draw(camera);
     }
 };
 
@@ -397,6 +456,7 @@ pub fn init(
     dst.textures = .{
         .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
         .player = gl.buildTexture2D(loaded_images.get(.player), true),
+        .walls = gl.buildTexture2D(loaded_images.get(.walls), true),
     };
     dst.canvas = try .init(
         gl,

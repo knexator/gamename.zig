@@ -43,6 +43,11 @@ pub fn Grid2D(T: type) type {
             return self.data[self.indexOfSigned(pos)];
         }
 
+        pub fn atSignedSafe(self: Self, pos: IVec2) ?T {
+            if (!self.inBoundsSigned(pos)) return null;
+            return self.data[self.indexOfSigned(pos)];
+        }
+
         pub fn getPtr(self: Self, pos: UVec2) *T {
             return &self.data[self.indexOf(pos)];
         }
