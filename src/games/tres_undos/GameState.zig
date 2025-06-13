@@ -86,7 +86,14 @@ textures: struct {
 },
 
 input_queue: kommon.CircularBuffer(Input, 32) = .init,
+cur_transition: ?struct {
+    t: f32 = -1,
+    target_index: usize,
+    done: bool = false,
+} = null,
 cur_level: LevelState,
+// TODO: store in level?
+cur_level_index: usize = 0,
 anim_t: f32 = 1.0,
 
 const Input = union(enum) {
@@ -101,15 +108,14 @@ const LevelData = struct {
 };
 const levels_raw: []const LevelData = &.{
     .{ .ascii = 
-    \\########.#####
-    \\########*#####
-    \\########.#..##
-    \\########_..1.#
-    \\########..1..#
-    \\########.#._.#
-    \\########.#####
-    \\..O...1._#####
-    \\##############
+    \\#######*#####
+    \\#######.#..##
+    \\#######_..1.#
+    \\#######..1..#
+    \\#######.#._.#
+    \\#######.#####
+    \\O....1._#####
+    \\#############
     , .in_dir = .e1, .out_dir = .new(0, -1) },
     .{ .ascii = 
     \\##########
@@ -117,7 +123,6 @@ const levels_raw: []const LevelData = &.{
     \\#.1.2.####
     \\#..#..__.#
     \\##O#####*#
-    \\##.#####.#
     , .in_dir = .new(0, -1), .out_dir = .e2 },
 };
 
@@ -145,6 +150,7 @@ const LevelState = struct {
         in_hole: bool,
     })),
     target_player_pos: IVec2,
+    in_dir: IVec2,
     out_dir: IVec2,
 
     pub fn init(dst: *LevelState, mem: *Mem, data: LevelData) !void {
@@ -184,6 +190,7 @@ const LevelState = struct {
             }
         }.anon);
 
+        dst.in_dir = data.in_dir;
         dst.out_dir = data.out_dir;
     }
 
@@ -206,7 +213,7 @@ const LevelState = struct {
         } else return false;
     }
 
-    pub fn doTurn(self: *LevelState, mem: *Mem, input: Input) !union(enum) { usual, wall_crash } {
+    pub fn doTurn(self: *LevelState, mem: *Mem, input: Input) !union(enum) { usual, wall_crash, won } {
         defer _ = mem.scratch.reset(.retain_capacity);
         try self.true_timeline_undos.append(switch (input) {
             .dir => 0,
@@ -214,9 +221,19 @@ const LevelState = struct {
         });
         switch (input) {
             .dir => |dir| {
+                if (self.player.cur().pos.equals(self.target_player_pos) and dir.equals(self.out_dir)) {
+                    try self.player.setCurrent(.{
+                        .pos = self.player.cur().pos.add(dir),
+                        .dir = dir,
+                        .par = !self.player.cur().par,
+                        .in_hole = false,
+                    });
+                    return .won;
+                }
+
                 if (self.player.cur().in_hole) return .wall_crash;
 
-                const new_player_pos = self.player.cur().pos.cast(isize).add(dir);
+                const new_player_pos = self.player.cur().pos.add(dir);
                 if (self.isWall(new_player_pos)) return .wall_crash;
 
                 var pushing_crates: std.ArrayList(usize) = .init(mem.scratch.allocator());
@@ -412,6 +429,7 @@ pub fn Undoable(T: type) type {
         }
 
         pub fn prev(self: Self) T {
+            if (self.true_timeline_undos.items.len == 0) return self.cur();
             return self.at(self.true_timeline_undos.items.len - 1);
         }
 
@@ -483,7 +501,6 @@ pub fn init(
     dst.* = kommon.meta.initDefaultFields(GameState);
 
     dst.mem = .init(gpa);
-    try dst.cur_level.init(&dst.mem, levels_raw[1]);
 
     dst.textures = .{
         .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
@@ -497,6 +514,9 @@ pub fn init(
         &.{loaded_images.get(.arial_atlas)},
     );
     dst.smooth = .init(dst.mem.forever.allocator());
+
+    assert(dst.cur_level_index == 0);
+    try dst.cur_level.init(&dst.mem, levels_raw[0]);
 }
 
 // TODO: take gl parameter
@@ -528,6 +548,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    if (self.cur_transition) |*transition| {
+        math.towards(&transition.t, 1, platform.delta_seconds / 0.2);
+        if (!transition.done and transition.t >= 0) {
+            try self.cur_level.init(&self.mem, levels_raw[transition.target_index]);
+            self.cur_level_index = transition.target_index;
+            transition.done = true;
+            self.anim_t = 0;
+        }
+        if (transition.done and transition.t >= 1) {
+            self.cur_transition = null;
+        }
+    }
+
     if (self.anim_t == 1) {
         if (self.input_queue.popFirst()) |input| {
             switch (try self.cur_level.doTurn(&self.mem, input)) {
@@ -536,6 +569,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     self.anim_t = 0;
                 },
                 .wall_crash => platform.sound_queue.insert(.crash),
+                .won => {
+                    if (self.cur_level_index + 1 < levels_raw.len) {
+                        self.cur_transition = .{ .target_index = self.cur_level_index + 1 };
+                    }
+                    self.anim_t = 0;
+                },
             }
         }
     } else {
@@ -549,8 +588,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .center,
     );
     // const mouse = platform.getMouse(camera);
-    platform.gl.clear(.gray(0.5));
+    platform.gl.clear(.fromHex("#4E4E4E"));
     self.cur_level.draw(self.anim_t, &self.mem, camera, &self.canvas, self.textures);
+
+    if (self.cur_transition) |transition| {
+        if (transition.t <= 0) {
+            const t = math.remap(transition.t, -1, 0, 0, 1);
+            self.canvas.fillRect(
+                .fromCenterAndSize(.zero, .one),
+                .fromCenterAndSize(self.cur_level.out_dir.tof32().neg().scale(1 - t), .one),
+                .fromHex("#383D68"),
+            );
+        } else {
+            const t = math.remap(transition.t, 0, 1, 0, 1);
+            self.canvas.fillRect(
+                .fromCenterAndSize(.zero, .one),
+                .fromCenterAndSize(self.cur_level.in_dir.tof32().scale(t), .one),
+                .fromHex("#383D68"),
+            );
+        }
+    }
+
     return false;
 }
 
