@@ -38,6 +38,29 @@ pub fn StructFromEnum(fields: type, T: type, @"packed": bool) type {
     } });
 }
 
+pub fn initDefaultFields(comptime T: type) T {
+    switch (@typeInfo(T)) {
+        .@"struct" => |struct_info| {
+            var value: T = undefined;
+
+            inline for (struct_info.fields) |field| {
+                if (field.is_comptime) {
+                    continue;
+                }
+
+                if (field.defaultValue()) |val| {
+                    @field(value, field.name) = val;
+                }
+            }
+
+            return value;
+        },
+        else => {
+            @compileError("Can't default init a " ++ @typeName(T));
+        },
+    }
+}
+
 const std = @import("std");
 const assert = std.debug.assert;
 

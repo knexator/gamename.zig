@@ -87,6 +87,7 @@ textures: struct {
 
 input_queue: kommon.CircularBuffer(Input, 32) = .init,
 cur_level: LevelState,
+anim_t: f32 = 1.0,
 
 const Input = union(enum) {
     dir: IVec2,
@@ -255,7 +256,7 @@ const LevelState = struct {
         }
     }
 
-    pub fn draw(self: *LevelState, mem: *Mem, camera: Rect, canvas: *Canvas, textures: @FieldType(GameState, "textures")) void {
+    pub fn draw(self: *LevelState, anim_t: f32, mem: *Mem, camera: Rect, canvas: *Canvas, textures: @FieldType(GameState, "textures")) void {
         const tiles: Canvas.SpriteSheet = .{
             .count = .new(3, 4),
             .margin_px = 2,
@@ -305,13 +306,13 @@ const LevelState = struct {
             const layer = if (crate.cur().in_hole) &layers.basement else &layers.main;
             const color = COLORS.CRATES[crate.immune_to];
             layer.add(.{
-                .point = .{ .pos = crate.cur().pos.tof32() },
+                .point = .{ .pos = crate.curPos(anim_t) },
                 .texcoord = tiles.at(6 + crate.immune_to),
                 .tint = if (crate.cur().in_hole) color.scaleRGB(0.4) else color,
             });
         }
         layers.basement.draw(camera);
-        if (self.player.cur().in_hole) {
+        if (self.player.cur().in_hole and anim_t == 1.0) {
             canvas.drawSpriteBatch(camera, &.{.{
                 .point = .{ .pos = self.player.cur().pos.tof32() },
                 .texcoord = players.at(self.player.cur().spriteIndex()),
@@ -319,9 +320,9 @@ const LevelState = struct {
             }}, textures.player);
         }
         layers.main.draw(camera);
-        if (!self.player.cur().in_hole) {
+        if (!self.player.cur().in_hole or anim_t < 1.0) {
             canvas.drawSpriteBatch(camera, &.{.{
-                .point = .{ .pos = self.player.cur().pos.tof32() },
+                .point = .{ .pos = self.player.curPos(anim_t) },
                 .texcoord = players.at(self.player.cur().spriteIndex()),
             }}, textures.player);
         }
@@ -398,16 +399,30 @@ pub fn Undoable(T: type) type {
         }
 
         pub fn setCurrent(self: *Self, value: T) !void {
-            const prev = self.cur();
+            const last_known = self.cur();
             const real_tick = self.true_timeline_undos.items.len;
             while (self.true_values.items.len < real_tick) {
-                try self.true_values.append(prev);
+                try self.true_values.append(last_known);
             }
             try self.true_values.append(value);
         }
 
         pub fn cur(self: Self) T {
-            return self.true_values.getLast();
+            return self.at(self.true_timeline_undos.items.len);
+        }
+
+        pub fn prev(self: Self) T {
+            return self.at(self.true_timeline_undos.items.len - 1);
+        }
+
+        pub fn curPos(self: Self, anim_t: f32) Vec2 {
+            assert(@hasField(T, "pos"));
+            assert(@FieldType(T, "pos") == IVec2);
+            if (anim_t == 1.0) {
+                return self.cur().pos.tof32();
+            } else {
+                return .lerp(self.prev().pos.tof32(), self.cur().pos.tof32(), anim_t);
+            }
         }
 
         pub fn at(self: Self, tick: usize) T {
@@ -465,6 +480,8 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
+    dst.* = kommon.meta.initDefaultFields(GameState);
+
     dst.mem = .init(gpa);
     try dst.cur_level.init(&dst.mem, levels_raw[1]);
 
@@ -480,8 +497,6 @@ pub fn init(
         &.{loaded_images.get(.arial_atlas)},
     );
     dst.smooth = .init(dst.mem.forever.allocator());
-
-    dst.input_queue = .init;
 }
 
 // TODO: take gl parameter
@@ -513,11 +528,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (self.input_queue.popFirst()) |input| {
-        switch (try self.cur_level.doTurn(&self.mem, input)) {
-            .usual => platform.sound_queue.insert(.step),
-            .wall_crash => platform.sound_queue.insert(.crash),
+    if (self.anim_t == 1) {
+        if (self.input_queue.popFirst()) |input| {
+            switch (try self.cur_level.doTurn(&self.mem, input)) {
+                .usual => {
+                    platform.sound_queue.insert(.step);
+                    self.anim_t = 0;
+                },
+                .wall_crash => platform.sound_queue.insert(.crash),
+            }
         }
+    } else {
+        math.towards(&self.anim_t, 1.0, platform.delta_seconds / 0.125);
     }
 
     const camera: Rect = Rect.withAspectRatio(
@@ -528,7 +550,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     );
     // const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
-    self.cur_level.draw(&self.mem, camera, &self.canvas, self.textures);
+    self.cur_level.draw(self.anim_t, &self.mem, camera, &self.canvas, self.textures);
     return false;
 }
 
