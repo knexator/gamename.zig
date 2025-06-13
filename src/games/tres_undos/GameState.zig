@@ -480,6 +480,8 @@ pub fn init(
         &.{loaded_images.get(.arial_atlas)},
     );
     dst.smooth = .init(dst.mem.forever.allocator());
+
+    dst.input_queue = .init;
 }
 
 // TODO: take gl parameter

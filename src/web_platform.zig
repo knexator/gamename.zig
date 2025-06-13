@@ -770,9 +770,9 @@ export fn init() void {
 
     if (@import("build_options").hot_reloadable) {
         my_game = gpa.create(game.GameState) catch unreachable;
-        my_game.* = game.GameState.init(gpa, web_platform.gl, images_pointers) catch unreachable;
+        my_game.init(gpa, web_platform.gl, images_pointers) catch unreachable;
     } else {
-        my_game = game.GameState.init(gpa, web_platform.gl, images_pointers) catch unreachable;
+        my_game.init(gpa, web_platform.gl, images_pointers) catch unreachable;
     }
 }
 
