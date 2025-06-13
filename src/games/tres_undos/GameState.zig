@@ -95,6 +95,7 @@ cur_level: LevelState,
 // TODO: store in level?
 cur_level_index: usize = 0,
 anim_t: f32 = 1.0,
+in_menu: bool = false,
 
 const Input = union(enum) {
     dir: IVec2,
@@ -529,6 +530,55 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
 
+    if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
+
+    if (self.in_menu) {
+        const ui_cam: Rect = Rect.fromCenterAndSize(.zero, Vec2.new(6, 3).scale(1.75)).withAspectRatio(platform.aspect_ratio, .grow, .center);
+        const asdf: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), .new(6, 3));
+        var buttons: std.ArrayList(Rect) = .init(self.mem.frame.allocator());
+        var it = asdf.iterator();
+        while (it.next()) |p| {
+            try buttons.append(asdf.getTileRect(.fromCenterAndSize(.zero, .new(6, 3)), p).plusMargin(-0.05));
+        }
+
+        const mouse = platform.getMouse(ui_cam);
+        const hovered: ?usize = blk: for (buttons.items, 0..) |r, k| {
+            if (r.contains(mouse.cur.position)) break :blk k;
+        } else null;
+
+        try self.drawGame(platform);
+        self.canvas.fillRect(.unit, .unit, FColor.black.withAlpha(0.5));
+
+        self.canvas.fillRect(
+            ui_cam,
+            Rect.fromCenterAndSize(.zero, .new(6, 3)).plusMargin(0.05),
+            .fromHex("#383F69"),
+        );
+        for (buttons.items, 0..) |r, k| {
+            const is_hovered = k == hovered;
+            self.canvas.fillRect(ui_cam, r, .fromHex("#565EA1"));
+            self.canvas.fillRect(ui_cam, r.plusMargin(-0.025), try self.smooth.fcolor(
+                .fromFormat("bg {d}", .{k}),
+                if (is_hovered) .fromHex("#7988C0") else .fromHex("#4F69BA"),
+            ));
+            try self.canvas.drawTextLine(
+                0,
+                ui_cam,
+                .{ .center = r.getCenter() },
+                "1.0",
+                0.3,
+                try self.smooth.fcolor(.fromFormat("text {d}", .{k}), if (is_hovered) .white else .black),
+            );
+        }
+    } else {
+        try self.updateGame(platform);
+        try self.drawGame(platform);
+    }
+
+    return false;
+}
+
+fn updateGame(self: *GameState, platform: PlatformGives) !void {
     // TODO: getKeyRetriggerTime
     for ([_]std.meta.Tuple(&.{ KeyboardButton, IVec2 }){
         .{ .KeyD, .new(1, 0) },  .{ .ArrowRight, .new(1, 0) },
@@ -580,7 +630,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     } else {
         math.towards(&self.anim_t, 1.0, platform.delta_seconds / 0.125);
     }
+}
 
+fn drawGame(self: *GameState, platform: PlatformGives) !void {
     const camera: Rect = Rect.withAspectRatio(
         .{ .top_left = .zero, .size = self.cur_level.geometry.size.tof32() },
         platform.aspect_ratio,
@@ -608,8 +660,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             );
         }
     }
-
-    return false;
 }
 
 const std = @import("std");

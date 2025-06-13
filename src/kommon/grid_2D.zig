@@ -287,7 +287,7 @@ pub fn Grid2D(T: type) type {
 
         pub fn getTileRect(self: Self, whole_rect: Rect, tile: UVec2) Rect {
             assert(self.inBoundsUnsigned(tile));
-            const tile_size = whole_rect.size.div(self.sizeVec().tof32());
+            const tile_size = whole_rect.size.div(self.size.tof32());
             return .{
                 .top_left = whole_rect.top_left.add(tile_size.mul(tile.tof32())),
                 .size = tile_size,

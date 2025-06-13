@@ -706,6 +706,26 @@ pub fn startFrame(self: *Canvas, gl: Gl) void {
     _ = self.frame_arena.reset(.retain_capacity);
 }
 
+pub fn drawTextLine(
+    self: *Canvas,
+    font_index: usize,
+    camera: Rect,
+    pos: Rect.Measure,
+    text: []const u8,
+    em: f32,
+    color: FColor,
+) !void {
+    try self.text_renderers[font_index].drawLine(
+        self.gl,
+        camera,
+        pos,
+        text,
+        em,
+        color,
+        self.frame_arena.allocator(),
+    );
+}
+
 // TODO: small text looks worse on the web version!
 pub const TextRenderer = struct {
     atlas_texture: Gl.Texture,
