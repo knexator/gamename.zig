@@ -19,7 +19,7 @@ comptime {
     std.testing.refAllDeclsRecursive(@This());
 }
 
-pub fn safeAt(T: type, arr: []T, index: usize) ?T {
+pub fn safeAt(T: type, arr: []const T, index: usize) ?T {
     if (index >= arr.len) {
         return null;
     }

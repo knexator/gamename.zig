@@ -106,6 +106,7 @@ const LevelData = struct {
     ascii: []const u8,
     in_dir: IVec2,
     out_dir: IVec2,
+    label: []const u8,
 };
 const levels_raw: []const LevelData = &.{
     .{ .ascii = 
@@ -117,14 +118,14 @@ const levels_raw: []const LevelData = &.{
     \\#######.#####
     \\O....1._#####
     \\#############
-    , .in_dir = .e1, .out_dir = .new(0, -1) },
+    , .in_dir = .e1, .out_dir = .new(0, -1), .label = "1.0" },
     .{ .ascii = 
     \\##########
     \\##....####
     \\#.1.2.####
     \\#..#..__.#
     \\##O#####*#
-    , .in_dir = .new(0, -1), .out_dir = .e2 },
+    , .in_dir = .new(0, -1), .out_dir = .e2, .label = "1.1" },
 };
 
 const LevelState = struct {
@@ -532,6 +533,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
 
+    if (self.cur_transition) |*transition| {
+        math.towards(&transition.t, 1, platform.delta_seconds / 0.25);
+        if (!transition.done and transition.t >= 0) {
+            try self.cur_level.init(&self.mem, levels_raw[transition.target_index]);
+            self.cur_level_index = transition.target_index;
+            transition.done = true;
+            self.anim_t = 0;
+            self.in_menu = false;
+        }
+        if (transition.done and transition.t >= 1) {
+            self.cur_transition = null;
+        }
+    }
+
     if (self.in_menu) {
         const ui_cam: Rect = Rect.fromCenterAndSize(.zero, Vec2.new(6, 3).scale(1.75)).withAspectRatio(platform.aspect_ratio, .grow, .center);
         const asdf: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), .new(6, 3));
@@ -567,14 +582,37 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 0,
                 ui_cam,
                 .{ .center = r.getCenter() },
-                "1.0",
+                (kommon.safeAt(LevelData, levels_raw, k) orelse std.mem.zeroInit(LevelData, .{ .label = "???" })).label,
                 0.3,
                 try self.smooth.fcolor(.fromFormat("text {d}", .{k}), if (is_hovered) .white else .black),
             );
         }
+
+        if (mouse.wasPressed(.left) and hovered != null) {
+            self.cur_transition = .{ .target_index = hovered.? };
+        }
     } else {
         try self.updateGame(platform);
         try self.drawGame(platform);
+    }
+
+    if (self.cur_transition) |transition| {
+        const dir = levels_raw[transition.target_index].in_dir;
+        if (transition.t <= 0) {
+            const t = math.remap(transition.t, -1, 0, 0, 1);
+            self.canvas.fillRect(
+                .fromCenterAndSize(.zero, .one),
+                .fromCenterAndSize(dir.tof32().neg().scale(1 - t), .one),
+                .fromHex("#383D68"),
+            );
+        } else {
+            const t = math.remap(transition.t, 0, 1, 0, 1);
+            self.canvas.fillRect(
+                .fromCenterAndSize(.zero, .one),
+                .fromCenterAndSize(dir.tof32().scale(t), .one),
+                .fromHex("#383D68"),
+            );
+        }
     }
 
     return false;
@@ -597,19 +635,6 @@ fn updateGame(self: *GameState, platform: PlatformGives) !void {
     for ([_]KeyboardButton{ .KeyZ, .KeyX, .KeyC, .KeyV }, 0..) |undo_key, undo_level| {
         if (platform.keyboard.wasPressed(undo_key)) {
             try self.input_queue.append(.{ .undo = undo_level + 1 });
-        }
-    }
-
-    if (self.cur_transition) |*transition| {
-        math.towards(&transition.t, 1, platform.delta_seconds / 0.2);
-        if (!transition.done and transition.t >= 0) {
-            try self.cur_level.init(&self.mem, levels_raw[transition.target_index]);
-            self.cur_level_index = transition.target_index;
-            transition.done = true;
-            self.anim_t = 0;
-        }
-        if (transition.done and transition.t >= 1) {
-            self.cur_transition = null;
         }
     }
 
@@ -645,22 +670,12 @@ fn drawGame(self: *GameState, platform: PlatformGives) !void {
     platform.gl.clear(.fromHex("#4E4E4E"));
     self.cur_level.draw(self.anim_t, &self.mem, camera, &self.canvas, self.textures);
 
-    if (self.cur_transition) |transition| {
-        if (transition.t <= 0) {
-            const t = math.remap(transition.t, -1, 0, 0, 1);
-            self.canvas.fillRect(
-                .fromCenterAndSize(.zero, .one),
-                .fromCenterAndSize(self.cur_level.out_dir.tof32().neg().scale(1 - t), .one),
-                .fromHex("#383D68"),
-            );
-        } else {
-            const t = math.remap(transition.t, 0, 1, 0, 1);
-            self.canvas.fillRect(
-                .fromCenterAndSize(.zero, .one),
-                .fromCenterAndSize(self.cur_level.in_dir.tof32().scale(t), .one),
-                .fromHex("#383D68"),
-            );
-        }
+    if (self.cur_level_index == 0) {
+        // TODO: multiline
+        try self.canvas.drawTextLine(0, camera, .{ .center = .new(10.5, 6) }, "WASD / Arrow", 0.5, .fromHex("#7988C0"));
+        try self.canvas.drawTextLine(0, camera, .{ .center = .new(10.5, 6.5) }, "Keys to Move", 0.5, .fromHex("#7988C0"));
+
+        try self.canvas.drawTextLine(0, camera, .{ .center = .new(10.5, 7.2) }, "Z to Undo", 0.5, .fromHex("#7988C0"));
     }
 }
 
