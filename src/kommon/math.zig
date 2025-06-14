@@ -261,8 +261,33 @@ pub const Vec2 = extern struct {
         return new(a.x, a.y + b);
     }
 
+    /// deprecated
     pub fn perpCW(v: Self) Self {
+        return v.rotPosQuarter();
+    }
+
+    pub fn rotPosQuarter(v: Self) Self {
         return new(-v.y, v.x);
+    }
+
+    test "rotate quarter" {
+        try Vec2.expectApproxEqAbs(Vec2.e2, Vec2.e1.rotPosQuarter(), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e1.neg(), Vec2.e2.rotPosQuarter(), 0.001);
+    }
+
+    pub fn rotQuarters(v: Self, k: isize) Self {
+        var res = v;
+        for (0..@abs(k)) |_| {
+            res = rotPosQuarter(res);
+        }
+        if (k < 0) res = res.neg();
+        return res;
+    }
+
+    test "rotate quarters" {
+        try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e1.rotQuarters(4), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e1.rotQuarters(-4), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e2.neg(), Vec2.e1.rotQuarters(-1), 0.001);
     }
 
     pub fn rotate(v: Self, turns: f32) Self {
@@ -853,8 +878,22 @@ pub const Rect = struct {
         try Vec2.expectApproxEqAbs(expected.size, actual.size, tolerance);
     }
 
+    /// renamed to worldFromLocal
     pub fn applyToLocalPosition(self: Rect, p: Vec2) Vec2 {
+        return self.worldFromLocal(p);
+    }
+
+    /// takes p in the 0..1 range
+    pub fn worldFromLocal(self: Rect, p: Vec2) Vec2 {
         return self.top_left.add(p.mul(self.size));
+    }
+
+    /// takes p in the -1..1 range
+    pub fn worldFromCenterLocal(self: Rect, p: Vec2) Vec2 {
+        return self.worldFromLocal(.new(
+            remap(p.x, -1, 1, 0, 1),
+            remap(p.y, -1, 1, 0, 1),
+        ));
     }
 
     pub fn localFromWorldPosition(self: Rect, p: Vec2) Vec2 {

@@ -502,6 +502,33 @@ pub fn fillRect(
     );
 }
 
+pub fn borderRect(
+    self: Canvas,
+    camera: Rect,
+    rect: Rect,
+    width: f32,
+    mode: enum { inner, middle, outer },
+    color: FColor,
+) void {
+    const t: f32 = switch (mode) {
+        .inner => 0,
+        .middle => 0.5,
+        .outer => 1,
+    };
+
+    inline for (
+        [4]Vec2{ .new(-1, -1), .new(1, -1), .new(1, 1), .new(-1, 1) },
+        0..,
+        .{ rect.size.x, rect.size.y, rect.size.x, rect.size.y },
+    ) |corner_dir, k, longitud| {
+        const top_left = rect.worldFromCenterLocal(corner_dir).add(corner_dir.scale(t * width));
+        const long_dim = longitud + width * std.math.lerp(-1, 1, t);
+        const short_dim = width;
+
+        self.fillRect(camera, .{ .top_left = top_left, .size = Vec2.new(long_dim, short_dim).rotQuarters(@intCast(k)) }, color);
+    }
+}
+
 pub fn strokeRect(
     self: Canvas,
     camera: Rect,

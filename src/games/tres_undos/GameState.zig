@@ -556,8 +556,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         );
         for (buttons.items, 0..) |r, k| {
             const is_hovered = k == hovered;
-            self.canvas.fillRect(ui_cam, r, .fromHex("#565EA1"));
-            self.canvas.fillRect(ui_cam, r.plusMargin(-0.025), try self.smooth.fcolor(
+            const is_active = k == self.cur_level_index;
+            defer self.canvas.borderRect(ui_cam, r, 0.025, .inner, .fromHex("#565EA1"));
+            defer if (is_active) self.canvas.borderRect(ui_cam, r, 0.15, .inner, .fromHex("#7988C0"));
+            self.canvas.fillRect(ui_cam, r, try self.smooth.fcolor(
                 .fromFormat("bg {d}", .{k}),
                 if (is_hovered) .fromHex("#7988C0") else .fromHex("#4F69BA"),
             ));
