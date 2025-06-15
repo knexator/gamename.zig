@@ -687,7 +687,11 @@ fn updateGame(self: *GameState, platform: PlatformGives) !void {
                     platform.sound_queue.insert(.step);
                     self.anim_t = 0;
                 },
-                .wall_crash => platform.sound_queue.insert(.crash),
+                .wall_crash => {
+                    platform.sound_queue.insert(.crash);
+                    // hacky, should be on the levelstate itself
+                    _ = self.cur_level.true_timeline_undos.pop();
+                },
                 .won => {
                     if (self.cur_level_index + 1 < levels_raw.len) {
                         self.cur_transition = .{ .target_index = self.cur_level_index + 1 };

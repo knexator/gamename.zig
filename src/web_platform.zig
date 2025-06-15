@@ -388,6 +388,7 @@ var web_platform: PlatformGives = .{
         }
     }.anon,
     .keyboard = undefined,
+    .setKeyChanged = setKeyChanged,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,
@@ -777,6 +778,7 @@ export fn init() void {
 }
 
 export fn update(delta_seconds: f32) void {
+    keyboard.cur_time = web_platform.global_seconds;
     web_platform.aspect_ratio = js_better.canvas.getSize().aspectRatio();
     web_platform.delta_seconds = delta_seconds;
     web_platform.global_seconds += delta_seconds;
@@ -848,7 +850,10 @@ export fn wheel(delta_y: i32) void {
         .up;
 }
 
-var keyboard = Keyboard{ .cur = .init, .prev = .init };
+var keyboard = Keyboard{ .cur = .init, .prev = .init, .cur_time = 0 };
+fn setKeyChanged(key: KeyboardButton) void {
+    keyboard.setChanged(key);
+}
 const KeyCode = KeyboardButton;
 
 export fn keydown(code: KeyCode) void {
@@ -861,7 +866,10 @@ export fn keyup(code: KeyCode) void {
 
 fn keychanged(key: KeyCode, is_pressed: bool) void {
     switch (key) {
-        inline else => |x| @field(keyboard.cur.keys, @tagName(x)) = is_pressed,
+        inline else => |x| {
+            @field(keyboard.cur.keys, @tagName(x)) = is_pressed;
+            @field(keyboard.last_change_at, @tagName(x)) = web_platform.global_seconds;
+        },
     }
 }
 
