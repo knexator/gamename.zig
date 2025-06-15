@@ -86,9 +86,30 @@ pub fn CustomKeyboard(CustomKeyboardButton: type) type {
         cur: CustomKeyboardState(CustomKeyboardButton),
         prev: CustomKeyboardState(CustomKeyboardButton),
         last_change_at: kommon.meta.StructFromEnum(CustomKeyboardButton, f32, false) = undefined,
+        cur_time: f32,
+
+        pub fn lastChangeAt(self: @This(), button: CustomKeyboardButton) f32 {
+            return switch (button) {
+                inline else => |x| @field(self.last_change_at, @tagName(x)),
+            };
+        }
+
+        pub fn timeSinceChange(self: @This(), button: CustomKeyboardButton) f32 {
+            return self.cur_time - self.lastChangeAt(button);
+        }
+
+        pub fn setChanged(self: *@This(), button: CustomKeyboardButton) void {
+            return switch (button) {
+                inline else => |x| @field(self.last_change_at, @tagName(x)) = self.cur_time,
+            };
+        }
 
         pub fn wasPressed(self: @This(), button: CustomKeyboardButton) bool {
             return self.cur.isDown(button) and !self.prev.isDown(button);
+        }
+
+        pub fn wasReleased(self: @This(), button: CustomKeyboardButton) bool {
+            return !self.cur.isDown(button) and self.prev.isDown(button);
         }
     };
 }

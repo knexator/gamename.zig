@@ -78,7 +78,10 @@ fn getWindowRect() Rect {
 
 /// positions are in [0..1]x[0..1]
 var mouse = Mouse{ .cur = .init, .prev = .init };
-var keyboard = Keyboard{ .cur = .init, .prev = .init };
+var keyboard = Keyboard{ .cur = .init, .prev = .init, .cur_time = 0 };
+fn setKeyChanged(key: KeyboardButton) void {
+    keyboard.setChanged(key);
+}
 
 const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
 var sound_data: std.EnumArray(Sounds, Sound) = .initUndefined();
@@ -576,6 +579,7 @@ pub fn main() !void {
             }
         }.anon,
         .keyboard = keyboard,
+        .setKeyChanged = setKeyChanged,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
         .global_seconds = 0,
@@ -631,6 +635,7 @@ pub fn main() !void {
                             // TODO: rename this to reset
                             my_game.reload(gpa, sdl_platform.gl);
                         } else {
+                            if (event.key.repeat) continue;
                             const is_pressed = event.type == c.SDL_EVENT_KEY_DOWN;
                             inline for (sdl_scancode_to_keyboard_button) |pair| {
                                 const sdl_scancode = pair[0];
@@ -651,6 +656,7 @@ pub fn main() !void {
 
         // Update & Draw
         {
+            keyboard.cur_time = sdl_platform.global_seconds;
             const ns_since_last_frame = timer.lap();
             sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
             sdl_platform.global_seconds += sdl_platform.delta_seconds;

@@ -39,6 +39,7 @@ const COLORS = struct {
 
 const turn_duration = 0.111;
 const transition_duration = turn_duration * 5;
+const key_retrigger_time = 0.2;
 
 canvas: Canvas,
 mem: struct {
@@ -99,6 +100,7 @@ cur_level: LevelState,
 cur_level_index: usize = 0,
 anim_t: f32 = 1.0,
 in_menu: bool = false,
+pressed_undos_in_a_row: usize = 0,
 
 const Input = union(enum) {
     dir: IVec2,
@@ -569,6 +571,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             transition.done = true;
             self.anim_t = 0;
             self.in_menu = false;
+            self.pressed_undos_in_a_row = 0;
         }
         if (transition.done and transition.t >= 1) {
             self.cur_transition = null;
@@ -655,14 +658,25 @@ fn updateGame(self: *GameState, platform: PlatformGives) !void {
         .{ .KeyS, .new(0, 1) },  .{ .ArrowDown, .new(0, 1) },
     }) |binding| {
         const key, const dir = binding;
-        if (platform.keyboard.wasPressed(key)) {
+        if (platform.wasKeyPressedOrRetriggered(key, key_retrigger_time)) {
+            platform.setKeyChanged(key);
             try self.input_queue.append(.{ .dir = dir });
         }
     }
 
     for ([_]KeyboardButton{ .KeyZ, .KeyX, .KeyC, .KeyV }, 0..) |undo_key, undo_level| {
-        if (platform.keyboard.wasPressed(undo_key)) {
+        if (platform.wasKeyPressedOrRetriggered(
+            undo_key,
+            key_retrigger_time *
+                if (self.pressed_undos_in_a_row < 2)
+                    @as(f32, 1.2)
+                else
+                    @as(f32, 0.5),
+        )) {
             try self.input_queue.append(.{ .undo = undo_level + 1 });
+            self.pressed_undos_in_a_row += 1;
+        } else if (platform.keyboard.wasReleased(undo_key)) {
+            self.pressed_undos_in_a_row = 0;
         }
     }
 

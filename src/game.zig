@@ -14,6 +14,7 @@ pub const PlatformGives = struct {
     gpa: std.mem.Allocator,
     getMouse: *const fn (camera: Rect) Mouse,
     keyboard: Keyboard,
+    setKeyChanged: *const fn (key: KeyboardButton) void,
     aspect_ratio: f32,
     delta_seconds: f32,
     // idk if this should be given by the platform
@@ -21,6 +22,15 @@ pub const PlatformGives = struct {
     sound_queue: *std.EnumSet(std.meta.FieldEnum(@TypeOf(sounds))),
     loop_volumes: *std.EnumArray(std.meta.FieldEnum(@TypeOf(loops)), f32),
     gl: Gl,
+
+    pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
+        if (self.keyboard.wasPressed(key)) return true;
+        if (self.keyboard.cur.isDown(key) and self.keyboard.timeSinceChange(key) > retrigger_time) {
+            self.setKeyChanged(key);
+            return true;
+        }
+        return false;
+    }
 };
 
 // TODO: choose at comptime
