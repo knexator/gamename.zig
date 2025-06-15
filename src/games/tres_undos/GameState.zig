@@ -294,7 +294,9 @@ const LevelState = struct {
         _ = mem;
         var layers = .{
             .basement = canvas.spriteBatch(textures.tiles),
+            .basement_player = canvas.spriteBatch(textures.player),
             .main = canvas.spriteBatch(textures.tiles),
+            .main_player = canvas.spriteBatch(textures.player),
             .walls = canvas.spriteBatch(textures.walls),
             .gradients = canvas.spriteBatch(textures.walls),
         };
@@ -322,29 +324,31 @@ const LevelState = struct {
             }
         }
         for (self.crates.items) |crate| {
-            const layer = if (crate.cur().in_hole) &layers.basement else &layers.main;
+            const in_hole = crate.cur().in_hole and (anim_t == 1.0 or crate.prev().in_hole);
+            const layer = if (in_hole) &layers.basement else &layers.main;
             const color = COLORS.CRATES[crate.immune_to];
             layer.add(.{
-                .point = .{ .pos = crate.curPos(anim_t) },
+                .point = .{ .pos = if (in_hole) crate.cur().pos.tof32() else crate.curPos(anim_t) },
                 .texcoord = tiles.at(6 + crate.immune_to),
-                .tint = if (crate.cur().in_hole) color.scaleRGB(0.4) else color,
+                .tint = color,
             });
         }
+        {
+            const in_hole = self.player.cur().in_hole and anim_t == 1.0;
+            const layer = if (in_hole) &layers.basement_player else &layers.main_player;
+            layer.add(.{
+                .point = .{ .pos = if (in_hole) self.player.cur().pos.tof32() else self.player.curPos(anim_t) },
+                .texcoord = players.at(self.player.cur().spriteIndex()),
+            });
+        }
+
+        for (layers.basement.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
+        for (layers.basement_player.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
+
         layers.basement.draw(camera);
-        if (self.player.cur().in_hole and anim_t == 1.0) {
-            canvas.drawSpriteBatch(camera, &.{.{
-                .point = .{ .pos = self.player.cur().pos.tof32() },
-                .texcoord = players.at(self.player.cur().spriteIndex()),
-                .tint = FColor.white.scaleRGB(0.4),
-            }}, textures.player);
-        }
+        layers.basement_player.draw(camera);
         layers.main.draw(camera);
-        if (!self.player.cur().in_hole or anim_t < 1.0) {
-            canvas.drawSpriteBatch(camera, &.{.{
-                .point = .{ .pos = self.player.curPos(anim_t) },
-                .texcoord = players.at(self.player.cur().spriteIndex()),
-            }}, textures.player);
-        }
+        layers.main_player.draw(camera);
 
         for (0..self.geometry.size.y + 1) |j| {
             for (0..self.geometry.size.x + 1) |i| {
