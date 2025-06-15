@@ -37,6 +37,9 @@ const COLORS = struct {
     },
 }{};
 
+const turn_duration = 0.111;
+const transition_duration = turn_duration * 5;
+
 canvas: Canvas,
 mem: struct {
     /// same lifetime as a frame
@@ -110,14 +113,15 @@ const LevelData = struct {
 };
 const levels_raw: []const LevelData = &.{
     .{ .ascii = 
-    \\#######*#####
-    \\#######.#..##
-    \\#######_..1.#
-    \\#######..1..#
-    \\#######.#._.#
-    \\#######.#####
-    \\O....1._#####
-    \\#############
+    \\########.#####
+    \\########*#####
+    \\########.#..##
+    \\########_..1.#
+    \\########..1..#
+    \\########.#._.#
+    \\########.#####
+    \\..O...1._#####
+    \\##############
     , .in_dir = .e1, .out_dir = .new(0, -1), .label = "1.0" },
     .{ .ascii = 
     \\##########
@@ -125,6 +129,7 @@ const levels_raw: []const LevelData = &.{
     \\#.1.2.####
     \\#..#..__.#
     \\##O#####*#
+    \\##.#####.#
     , .in_dir = .new(0, -1), .out_dir = .e2, .label = "1.1" },
 };
 
@@ -333,7 +338,13 @@ const LevelState = struct {
                 .tint = color,
             });
         }
-        {
+        // first turn: enter level animation
+        if (self.true_timeline_undos.items.len == 0) {
+            layers.main_player.add(.{
+                .point = .{ .pos = self.player.cur().pos.tof32().sub(self.in_dir.tof32().scale(1 - anim_t)) },
+                .texcoord = players.at(self.player.cur().spriteIndex()),
+            });
+        } else {
             const in_hole = self.player.cur().in_hole and anim_t == 1.0;
             const layer = if (in_hole) &layers.basement_player else &layers.main_player;
             layer.add(.{
@@ -386,12 +397,25 @@ const LevelState = struct {
                     "###.", "##.#", ".#.#", "..##",
                     "#.##", ".###", "##..", "#.#.",
                     "...#", "..#.", "#..#", ".##.",
-                    ".#..", "#...",
+                    ".#..", "#...", ",,,,", ",,,,",
+                    "#.,,", ".#,,", "#,.,", ",#,.",
+                    ",,#.", ",,.#", ".,#,", ",.,#",
+                    "..,,", ",,..", ".,.,", ",.,.",
                 });
                 inline for (wall_sprites, 0..) |combo, k| {
                     if (std.meta.eql(combo, .{ tl, tr, bl, br })) {
+                        var pos = p.tof32().sub(.half);
+                        if (bl == .outside and br == .outside) {
+                            pos.y -= 0.5;
+                        } else if (tr == .outside and tr == .outside) {
+                            pos.y += 0.5;
+                        } else if (tr == .outside and br == .outside) {
+                            pos.x -= 0.5;
+                        } else if (tl == .outside and bl == .outside) {
+                            pos.x += 0.5;
+                        }
                         layers.walls.add(.{
-                            .point = .{ .pos = p.tof32().sub(.half) },
+                            .point = .{ .pos = pos },
                             .texcoord = walls.at(k),
                         });
                         break;
@@ -538,7 +562,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
 
     if (self.cur_transition) |*transition| {
-        math.towards(&transition.t, 1, platform.delta_seconds / 0.25);
+        math.towards(&transition.t, 1, platform.delta_seconds * 2.0 / transition_duration);
         if (!transition.done and transition.t >= 0) {
             try self.cur_level.init(&self.mem, levels_raw[transition.target_index]);
             self.cur_level_index = transition.target_index;
@@ -603,7 +627,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (self.cur_transition) |transition| {
         const dir = levels_raw[transition.target_index].in_dir;
         if (transition.t <= 0) {
-            const t = math.remap(transition.t, -1, 0, 0, 1);
+            const t = math.remapClamped(transition.t, -1, 0, 0, 1);
             self.canvas.fillRect(
                 .fromCenterAndSize(.zero, .one),
                 .fromCenterAndSize(dir.tof32().neg().scale(1 - t), .one),
@@ -659,7 +683,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !void {
             }
         }
     } else {
-        math.towards(&self.anim_t, 1.0, platform.delta_seconds / 0.125);
+        math.towards(&self.anim_t, 1.0, platform.delta_seconds / turn_duration);
     }
 }
 
@@ -676,10 +700,10 @@ fn drawGame(self: *GameState, platform: PlatformGives) !void {
 
     if (self.cur_level_index == 0) {
         // TODO: multiline
-        try self.canvas.drawTextLine(0, camera, .{ .center = .new(10.5, 6) }, "WASD / Arrow", 0.5, .fromHex("#7988C0"));
-        try self.canvas.drawTextLine(0, camera, .{ .center = .new(10.5, 6.5) }, "Keys to Move", 0.5, .fromHex("#7988C0"));
+        try self.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 7) }, "WASD / Arrow", 0.5, .fromHex("#7988C0"));
+        try self.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 7.5) }, "Keys to Move", 0.5, .fromHex("#7988C0"));
 
-        try self.canvas.drawTextLine(0, camera, .{ .center = .new(10.5, 7.2) }, "Z to Undo", 0.5, .fromHex("#7988C0"));
+        try self.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 8.2) }, "Z to Undo", 0.5, .fromHex("#7988C0"));
     }
 }
 
