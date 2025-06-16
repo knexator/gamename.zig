@@ -90,7 +90,32 @@ textures: struct {
 },
 
 renderables: struct {
-    wobbly: Gl.Renderable,
+    wobbly: Canvas.Drawable(
+        Canvas.SpriteVertex,
+        Canvas.Sprite,
+        struct {
+            u_camera: Rect,
+            u_time: f32,
+        },
+        .{
+            .vertices_per_sprite = 4,
+            .triangles_per_sprite = 2,
+            .sprite_triangles = undefined,
+        },
+        Canvas.sprite_renderable_vertex_src,
+        \\precision highp float;
+        \\out vec4 out_color;
+        \\in vec2 v_texcoord;
+        \\in vec4 v_color;
+        \\uniform float u_time;
+        \\uniform sampler2D u_texture;
+    ++ @embedFile("perlin_noise.glsl") ++
+        \\void main() {
+        \\  float a = smoothstep(0.09, 0.11, perlin_noise(vec3(v_texcoord * 20.0, u_time)));
+        \\  out_color = v_color * texture(u_texture, v_texcoord) * vec4(vec3(1.0), a);
+        \\}
+        ,
+    ),
 },
 
 input_queue: kommon.CircularBuffer(Input, 32) = .init,
@@ -296,6 +321,7 @@ const LevelState = struct {
         renderables: @FieldType(GameState, "renderables"),
         global_t: f32,
     ) void {
+        _ = mem;
         const tiles: Canvas.SpriteSheet = .{
             .count = .new(3, 4),
             .margin_px = 2,
@@ -314,10 +340,10 @@ const LevelState = struct {
         var layers = .{
             .basement = canvas.spriteBatch(textures.tiles),
             .basement_player = canvas.spriteBatch(textures.player),
-            .basement_wobbly_crates = canvas.spriteBatch(textures.tiles),
+            .basement_wobbly_crates = renderables.wobbly.batch(),
             .main = canvas.spriteBatch(textures.tiles),
             .main_player = canvas.spriteBatch(textures.player),
-            .main_wobbly_crates = canvas.spriteBatch(textures.tiles),
+            .main_wobbly_crates = renderables.wobbly.batch(),
             .walls = canvas.spriteBatch(textures.walls),
             .gradients = canvas.spriteBatch(textures.walls),
         };
@@ -379,70 +405,10 @@ const LevelState = struct {
 
         layers.basement.draw(camera);
         layers.basement_player.draw(camera);
-        for (layers.basement_wobbly_crates.sprites.items) |spr| {
-            const scr = mem.scratch.allocator();
-            const sprites: []const Canvas.Sprite = &.{spr};
-            const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
-            const vertices = scr.alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
-            const triangles = scr.alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
-            for (sprites, 0..) |sprite, i| {
-                for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
-                    if (sprite.pivot != .top_left) @panic("TODO: other pivots");
-                    vertices[i * 4 + k] = .{
-                        .pos = sprite.point.applyToLocalPosition(vertex),
-                        .texcoord = sprite.texcoord.applyToLocalPosition(vertex),
-                        .color = sprite.tint,
-                    };
-                }
-                const k: Gl.IndexType = @intCast(4 * i);
-                triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
-                triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
-            }
-            canvas.gl.useRenderable(
-                renderables.wobbly,
-                vertices.ptr,
-                vertices.len * @sizeOf(VertexData),
-                triangles,
-                &.{
-                    .{ .name = "u_camera", .value = .{ .Rect = camera } },
-                    .{ .name = "u_time", .value = .{ .f32 = global_t } },
-                },
-                layers.basement_wobbly_crates.texture,
-            );
-        }
+        layers.basement_wobbly_crates.draw(.{ .u_camera = camera, .u_time = global_t }, textures.tiles);
         layers.main.draw(camera);
         layers.main_player.draw(camera);
-        for (layers.main_wobbly_crates.sprites.items) |spr| {
-            const scr = mem.scratch.allocator();
-            const sprites: []const Canvas.Sprite = &.{spr};
-            const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
-            const vertices = scr.alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
-            const triangles = scr.alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
-            for (sprites, 0..) |sprite, i| {
-                for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
-                    if (sprite.pivot != .top_left) @panic("TODO: other pivots");
-                    vertices[i * 4 + k] = .{
-                        .pos = sprite.point.applyToLocalPosition(vertex),
-                        .texcoord = sprite.texcoord.applyToLocalPosition(vertex),
-                        .color = sprite.tint,
-                    };
-                }
-                const k: Gl.IndexType = @intCast(4 * i);
-                triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
-                triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
-            }
-            canvas.gl.useRenderable(
-                renderables.wobbly,
-                vertices.ptr,
-                vertices.len * @sizeOf(VertexData),
-                triangles,
-                &.{
-                    .{ .name = "u_camera", .value = .{ .Rect = camera } },
-                    .{ .name = "u_time", .value = .{ .f32 = global_t } },
-                },
-                layers.main_wobbly_crates.texture,
-            );
-        }
+        layers.main_wobbly_crates.draw(.{ .u_camera = camera, .u_time = global_t }, textures.tiles);
 
         for (0..self.geometry.size.y + 1) |j| {
             for (0..self.geometry.size.x + 1) |i| {
@@ -631,30 +597,31 @@ pub fn init(
     assert(dst.cur_level_index == 0);
     try dst.cur_level.init(&dst.mem, levels_raw[0]);
 
-    dst.renderables.wobbly = try gl.buildRenderable(
-        Canvas.sprite_renderable_vertex_src,
-        \\precision highp float;
-        \\out vec4 out_color;
-        \\in vec2 v_texcoord;
-        \\in vec4 v_color;
-        \\uniform float u_time;
-        \\uniform sampler2D u_texture;
-    ++ @embedFile("perlin_noise.glsl") ++
-        \\void main() {
-        \\  float a = smoothstep(0.09, 0.11, perlin_noise(vec3(v_texcoord * 20.0, u_time)));
-        \\  out_color = v_color * texture(u_texture, v_texcoord) * vec4(vec3(1.0), a);
-        \\}
-    ,
-        .{ .attribs = &.{
-            .{ .name = "a_position", .kind = .Vec2 },
-            .{ .name = "a_texcoord", .kind = .Vec2 },
-            .{ .name = "a_color", .kind = .FColor },
-        } },
-        &.{
-            .{ .name = "u_camera", .kind = .Rect },
-            .{ .name = "u_time", .kind = .f32 },
-        },
-    );
+    dst.renderables.wobbly = try .init(&dst.canvas);
+    // try gl.buildRenderable(
+    //     Canvas.sprite_renderable_vertex_src,
+    //     \\precision highp float;
+    //     \\out vec4 out_color;
+    //     \\in vec2 v_texcoord;
+    //     \\in vec4 v_color;
+    //     \\uniform float u_time;
+    //     \\uniform sampler2D u_texture;
+    // ++ @embedFile("perlin_noise.glsl") ++
+    //     \\void main() {
+    //     \\  float a = smoothstep(0.09, 0.11, perlin_noise(vec3(v_texcoord * 20.0, u_time)));
+    //     \\  out_color = v_color * texture(u_texture, v_texcoord) * vec4(vec3(1.0), a);
+    //     \\}
+    // ,
+    //     .{ .attribs = &.{
+    //         .{ .name = "a_position", .kind = .Vec2 },
+    //         .{ .name = "a_texcoord", .kind = .Vec2 },
+    //         .{ .name = "a_color", .kind = .FColor },
+    //     } },
+    //     &.{
+    //         .{ .name = "u_camera", .kind = .Rect },
+    //         .{ .name = "u_time", .kind = .f32 },
+    //     },
+    // );
 }
 
 // TODO: take gl parameter

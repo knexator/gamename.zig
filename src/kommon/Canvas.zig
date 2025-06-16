@@ -384,6 +384,8 @@ pub const Sprite = struct {
     tint: FColor = .white,
 };
 
+pub const SpriteVertex = extern struct { a_position: Vec2, a_texcoord: Vec2, a_color: FColor };
+
 pub const SpriteBatch = struct {
     canvas: *Canvas,
     sprites: std.ArrayListUnmanaged(Sprite),
@@ -395,6 +397,7 @@ pub const SpriteBatch = struct {
 
     pub fn draw(self: *SpriteBatch, camera: Rect) void {
         self.canvas.drawSpriteBatch(camera, self.sprites.items, self.texture);
+        self.sprites.clearRetainingCapacity();
     }
 };
 
@@ -416,16 +419,16 @@ pub fn drawSpriteBatch(
     sprites: []const Sprite,
     texture: Gl.Texture,
 ) void {
-    const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
+    const VertexData = SpriteVertex;
     const vertices = self.frame_arena.allocator().alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
     const triangles = self.frame_arena.allocator().alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
     for (sprites, 0..) |sprite, i| {
         for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
             if (sprite.pivot != .top_left) @panic("TODO: other pivots");
             vertices[i * 4 + k] = .{
-                .pos = sprite.point.applyToLocalPosition(vertex),
-                .texcoord = sprite.texcoord.applyToLocalPosition(vertex),
-                .color = sprite.tint,
+                .a_position = sprite.point.applyToLocalPosition(vertex),
+                .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                .a_color = sprite.tint,
             };
         }
         const k: Gl.IndexType = @intCast(4 * i);
@@ -445,7 +448,113 @@ pub fn drawSpriteBatch(
     );
 }
 
-// pub fn Drawable(VertexData: type, SpriteData: type, UniformData: type) type {}
+pub const DrawableTriangulation = struct {
+    vertices_per_sprite: usize,
+    triangles_per_sprite: usize,
+    sprite_triangles: []const [3]Gl.IndexType,
+
+    // TODO: from triangles
+};
+
+pub fn Drawable(
+    VertexData: type,
+    SpriteData: type,
+    UniformData: type,
+    triangulation: DrawableTriangulation,
+    vertex_src: [:0]const u8,
+    fragment_src: [:0]const u8,
+) type {
+    return struct {
+        const Self = @This();
+
+        pub const Batch = struct {
+            drawable: Self,
+            sprites: std.ArrayListUnmanaged(SpriteData),
+
+            pub fn add(self: *Batch, sprite: SpriteData) void {
+                self.sprites.append(self.drawable.canvas.frame_arena.allocator(), sprite) catch @panic("OoM");
+            }
+
+            pub fn draw(self: *Batch, uniforms: UniformData, texture: ?Gl.Texture) void {
+                self.drawable.draw(self.sprites.items, uniforms, texture);
+                self.sprites.clearRetainingCapacity();
+            }
+        };
+
+        // TODO: maybe remove ref
+        canvas: *Canvas,
+        renderable: Gl.Renderable,
+
+        pub fn batch(self: Self) Batch {
+            return .{
+                .drawable = self,
+                .sprites = .empty,
+            };
+        }
+
+        pub fn init(canvas: *Canvas) !Self {
+            const vertex_info = @typeInfo(VertexData).@"struct";
+            assert(vertex_info.layout == .@"extern");
+            var attributes: [vertex_info.fields.len]Gl.VertexInfo.In = undefined;
+            inline for (&attributes, vertex_info.fields) |*dst, info| {
+                dst.* = .{ .name = info.name, .kind = .fromType(info.type) };
+            }
+
+            const uniform_info = @typeInfo(UniformData).@"struct";
+            var uniforms: [uniform_info.fields.len]Gl.UniformInfo.In = undefined;
+            inline for (&uniforms, uniform_info.fields) |*dst, info| {
+                dst.* = .{ .name = info.name, .kind = .fromType(info.type) };
+            }
+
+            return .{
+                .canvas = canvas,
+                .renderable = try canvas.gl.buildRenderable(
+                    vertex_src,
+                    fragment_src,
+                    .{ .attribs = &attributes },
+                    &uniforms,
+                ),
+            };
+        }
+
+        pub fn draw(self: Self, sprites: []const SpriteData, uniforms: UniformData, texture: ?Gl.Texture) void {
+            const scratch = self.canvas.frame_arena.allocator();
+            const vertices = scratch.alloc(VertexData, triangulation.vertices_per_sprite * sprites.len) catch @panic("OoM");
+            const triangles = scratch.alloc([3]Gl.IndexType, triangulation.triangles_per_sprite * sprites.len) catch @panic("OoM");
+            for (sprites, 0..) |sprite, i| {
+                // TODO: generalize
+                assert(triangulation.vertices_per_sprite == 4);
+                assert(triangulation.triangles_per_sprite == 2);
+                for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+                    if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+                    vertices[i * 4 + k] = .{
+                        .a_position = sprite.point.applyToLocalPosition(vertex),
+                        .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                        .a_color = sprite.tint,
+                    };
+                }
+                const k: Gl.IndexType = @intCast(4 * i);
+                triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+                triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+            }
+
+            const uniform_info = @typeInfo(UniformData).@"struct";
+            var uniforms_gl: [uniform_info.fields.len]Gl.UniformInfo.Runtime = undefined;
+            inline for (&uniforms_gl, uniform_info.fields) |*dst, info| {
+                dst.* = .{ .name = info.name, .value = .fromValue(@field(uniforms, info.name)) };
+            }
+
+            self.canvas.gl.useRenderable(
+                self.renderable,
+                vertices.ptr,
+                vertices.len * @sizeOf(VertexData),
+                triangles,
+                &uniforms_gl,
+                texture,
+            );
+        }
+    };
+}
 
 // pub fn sprite(
 //     self: Canvas,

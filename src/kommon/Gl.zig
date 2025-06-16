@@ -118,6 +118,16 @@ pub const VertexInfo = struct {
         Point,
         f32,
 
+        pub fn fromType(t: type) Kind {
+            return switch (t) {
+                Vec2 => .Vec2,
+                FColor => .FColor,
+                Point => .Point,
+                f32 => .f32,
+                else => @compileError("TODO"),
+            };
+        }
+
         pub fn byteCount(kind: Kind) usize {
             return switch (kind) {
                 .Vec2 => @sizeOf(Vec2),
@@ -193,6 +203,16 @@ pub const UniformInfo = struct {
             FColor: FColor,
             Rect: Rect,
             Point: Point,
+
+            pub fn fromValue(v: anytype) @This() {
+                return switch (@TypeOf(v)) {
+                    f32 => .{ .f32 = v },
+                    FColor => .{ .FColor = v },
+                    Rect => .{ .Rect = v },
+                    Point => .{ .Point = v },
+                    else => @compileError(std.fmt.comptimePrint("Unhandled type: {s}", .{@typeName(@TypeOf(v))})),
+                };
+            }
         },
     };
 
@@ -201,6 +221,16 @@ pub const UniformInfo = struct {
         FColor,
         Rect,
         Point,
+
+        pub fn fromType(t: type) Kind {
+            return switch (t) {
+                Rect => .Rect,
+                FColor => .FColor,
+                Point => .Point,
+                f32 => .f32,
+                else => @compileError(std.fmt.comptimePrint("Unhandled type: {s}", .{@typeName(t)})),
+            };
+        }
     };
 };
 

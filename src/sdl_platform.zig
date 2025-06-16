@@ -290,8 +290,12 @@ pub fn main() !void {
             defer gl.BindVertexArray(0);
 
             for (attributes.attribs, 0..) |attribute, k| {
-                const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
-                if (index == -1) return error.AttributeLocationError;
+                const maybe_index = gl.GetAttribLocation(program, attribute.name);
+                if (maybe_index == -1) {
+                    std.log.err("Attribute not found: {s}", .{attribute.name});
+                    return error.AttributeLocationError;
+                }
+                const index: gl.uint = @intCast(maybe_index);
                 gl.EnableVertexAttribArray(index);
                 gl.VertexAttribPointer(
                     index,
