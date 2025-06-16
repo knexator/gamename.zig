@@ -89,6 +89,10 @@ textures: struct {
     walls: Gl.Texture,
 },
 
+renderables: struct {
+    wobbly: Gl.Renderable,
+},
+
 input_queue: kommon.CircularBuffer(Input, 32) = .init,
 cur_transition: ?struct {
     t: f32 = -1,
@@ -282,7 +286,16 @@ const LevelState = struct {
         }
     }
 
-    pub fn draw(self: *LevelState, anim_t: f32, mem: *Mem, camera: Rect, canvas: *Canvas, textures: @FieldType(GameState, "textures")) void {
+    pub fn draw(
+        self: *LevelState,
+        anim_t: f32,
+        mem: *Mem,
+        camera: Rect,
+        canvas: *Canvas,
+        textures: @FieldType(GameState, "textures"),
+        renderables: @FieldType(GameState, "renderables"),
+        global_t: f32,
+    ) void {
         const tiles: Canvas.SpriteSheet = .{
             .count = .new(3, 4),
             .margin_px = 2,
@@ -298,12 +311,13 @@ const LevelState = struct {
             .margin_px = 2,
             .resolution = textures.walls.resolution,
         };
-        _ = mem;
         var layers = .{
             .basement = canvas.spriteBatch(textures.tiles),
             .basement_player = canvas.spriteBatch(textures.player),
+            .basement_wobbly_crates = canvas.spriteBatch(textures.tiles),
             .main = canvas.spriteBatch(textures.tiles),
             .main_player = canvas.spriteBatch(textures.player),
+            .main_wobbly_crates = canvas.spriteBatch(textures.tiles),
             .walls = canvas.spriteBatch(textures.walls),
             .gradients = canvas.spriteBatch(textures.walls),
         };
@@ -334,11 +348,15 @@ const LevelState = struct {
             const in_hole = crate.cur().in_hole and (anim_t == 1.0 or crate.prev().in_hole);
             const layer = if (in_hole) &layers.basement else &layers.main;
             const color = COLORS.CRATES[crate.immune_to];
-            layer.add(.{
+            const sprite: Canvas.Sprite = .{
                 .point = .{ .pos = if (in_hole) crate.cur().pos.tof32() else crate.curPos(anim_t) },
                 .texcoord = tiles.at(6 + crate.immune_to),
                 .tint = color,
-            });
+            };
+            layer.add(sprite);
+
+            const wobbly_layer = if (in_hole) &layers.basement_wobbly_crates else &layers.main_wobbly_crates;
+            wobbly_layer.add(sprite);
         }
         // first turn: enter level animation
         if (self.true_timeline_undos.items.len == 0) {
@@ -357,11 +375,74 @@ const LevelState = struct {
 
         for (layers.basement.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
         for (layers.basement_player.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
+        for (layers.basement_wobbly_crates.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
 
         layers.basement.draw(camera);
         layers.basement_player.draw(camera);
+        for (layers.basement_wobbly_crates.sprites.items) |spr| {
+            const scr = mem.scratch.allocator();
+            const sprites: []const Canvas.Sprite = &.{spr};
+            const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
+            const vertices = scr.alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
+            const triangles = scr.alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
+            for (sprites, 0..) |sprite, i| {
+                for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+                    if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+                    vertices[i * 4 + k] = .{
+                        .pos = sprite.point.applyToLocalPosition(vertex),
+                        .texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                        .color = sprite.tint,
+                    };
+                }
+                const k: Gl.IndexType = @intCast(4 * i);
+                triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+                triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+            }
+            canvas.gl.useRenderable(
+                renderables.wobbly,
+                vertices.ptr,
+                vertices.len * @sizeOf(VertexData),
+                triangles,
+                &.{
+                    .{ .name = "u_camera", .value = .{ .Rect = camera } },
+                    .{ .name = "u_time", .value = .{ .f32 = global_t } },
+                },
+                layers.basement_wobbly_crates.texture,
+            );
+        }
         layers.main.draw(camera);
         layers.main_player.draw(camera);
+        for (layers.main_wobbly_crates.sprites.items) |spr| {
+            const scr = mem.scratch.allocator();
+            const sprites: []const Canvas.Sprite = &.{spr};
+            const VertexData = extern struct { pos: Vec2, texcoord: Vec2, color: FColor };
+            const vertices = scr.alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
+            const triangles = scr.alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
+            for (sprites, 0..) |sprite, i| {
+                for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+                    if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+                    vertices[i * 4 + k] = .{
+                        .pos = sprite.point.applyToLocalPosition(vertex),
+                        .texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                        .color = sprite.tint,
+                    };
+                }
+                const k: Gl.IndexType = @intCast(4 * i);
+                triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+                triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+            }
+            canvas.gl.useRenderable(
+                renderables.wobbly,
+                vertices.ptr,
+                vertices.len * @sizeOf(VertexData),
+                triangles,
+                &.{
+                    .{ .name = "u_camera", .value = .{ .Rect = camera } },
+                    .{ .name = "u_time", .value = .{ .f32 = global_t } },
+                },
+                layers.main_wobbly_crates.texture,
+            );
+        }
 
         for (0..self.geometry.size.y + 1) |j| {
             for (0..self.geometry.size.x + 1) |i| {
@@ -549,6 +630,31 @@ pub fn init(
 
     assert(dst.cur_level_index == 0);
     try dst.cur_level.init(&dst.mem, levels_raw[0]);
+
+    dst.renderables.wobbly = try gl.buildRenderable(
+        Canvas.sprite_renderable_vertex_src,
+        \\precision highp float;
+        \\out vec4 out_color;
+        \\in vec2 v_texcoord;
+        \\in vec4 v_color;
+        \\uniform float u_time;
+        \\uniform sampler2D u_texture;
+    ++ @embedFile("perlin_noise.glsl") ++
+        \\void main() {
+        \\  float a = smoothstep(0.09, 0.11, perlin_noise(vec3(v_texcoord * 20.0, u_time)));
+        \\  out_color = v_color * texture(u_texture, v_texcoord) * vec4(vec3(1.0), a);
+        \\}
+    ,
+        .{ .attribs = &.{
+            .{ .name = "a_position", .kind = .Vec2 },
+            .{ .name = "a_texcoord", .kind = .Vec2 },
+            .{ .name = "a_color", .kind = .FColor },
+        } },
+        &.{
+            .{ .name = "u_camera", .kind = .Rect },
+            .{ .name = "u_time", .kind = .f32 },
+        },
+    );
 }
 
 // TODO: take gl parameter
@@ -714,7 +820,7 @@ fn drawGame(self: *GameState, platform: PlatformGives) !void {
     );
     // const mouse = platform.getMouse(camera);
     platform.gl.clear(.fromHex("#4E4E4E"));
-    self.cur_level.draw(self.anim_t, &self.mem, camera, &self.canvas, self.textures);
+    self.cur_level.draw(self.anim_t, &self.mem, camera, &self.canvas, self.textures, self.renderables, platform.global_seconds);
 
     if (self.cur_level_index == 0) {
         // TODO: multiline

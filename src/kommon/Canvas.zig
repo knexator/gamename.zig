@@ -58,6 +58,34 @@ DEFAULT_SHAPES: struct {
     }
 },
 
+pub const sprite_renderable_vertex_src =
+    \\precision highp float;
+    \\uniform vec4 u_camera; // as top_left, size
+    \\
+    \\in vec2 a_position;
+    \\in vec2 a_texcoord;
+    \\in vec4 a_color;
+    \\out vec2 v_texcoord;
+    \\out vec4 v_color;
+    \\void main() {
+    \\  vec2 camera_position = (a_position - u_camera.xy) / u_camera.zw;
+    \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+    \\  v_texcoord = a_texcoord;
+    \\  v_color = a_color;
+    \\}
+;
+
+pub const sprite_renderable_frag_src =
+    \\precision highp float;
+    \\out vec4 out_color;
+    \\in vec2 v_texcoord;
+    \\in vec4 v_color;
+    \\uniform sampler2D u_texture;
+    \\void main() {
+    \\  out_color = v_color * texture(u_texture, v_texcoord);
+    \\}
+;
+
 const Canvas = @This();
 
 pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const u8, font_atlases: []const *const anyopaque) !Canvas {
@@ -105,30 +133,8 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
         .gl = gl,
         .frame_arena = .init(gpa),
         .sprite_renderable = try gl.buildRenderable(
-            \\precision highp float;
-            \\uniform vec4 u_camera; // as top_left, size
-            \\
-            \\in vec2 a_position;
-            \\in vec2 a_texcoord;
-            \\in vec4 a_color;
-            \\out vec2 v_texcoord;
-            \\out vec4 v_color;
-            \\void main() {
-            \\  vec2 camera_position = (a_position - u_camera.xy) / u_camera.zw;
-            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-            \\  v_texcoord = a_texcoord;
-            \\  v_color = a_color;
-            \\}
-        ,
-            \\precision highp float;
-            \\out vec4 out_color;
-            \\in vec2 v_texcoord;
-            \\in vec4 v_color;
-            \\uniform sampler2D u_texture;
-            \\void main() {
-            \\  out_color = v_color * texture(u_texture, v_texcoord);
-            \\}
-        ,
+            sprite_renderable_vertex_src,
+            sprite_renderable_frag_src,
             .{ .attribs = &.{
                 .{ .name = "a_position", .kind = .Vec2 },
                 .{ .name = "a_texcoord", .kind = .Vec2 },
@@ -438,6 +444,8 @@ pub fn drawSpriteBatch(
         texture,
     );
 }
+
+// pub fn Drawable(VertexData: type, SpriteData: type, UniformData: type) type {}
 
 // pub fn sprite(
 //     self: Canvas,
