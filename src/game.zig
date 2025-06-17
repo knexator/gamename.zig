@@ -41,21 +41,13 @@ pub const GameState = @import("games/tres_undos/GameState.zig");
 
 pub const CApi = extern struct {
     update: *const @TypeOf(_update),
-    reload: *const @TypeOf(_reload),
 
     fn _update(game: *GameState, platform_gives: *const PlatformGives) callconv(.c) bool {
         return game.update(platform_gives.*) catch unreachable;
     }
-
-    fn _reload(dst: *GameState, gpa: *const std.mem.Allocator, gl: *const Gl) callconv(.c) void {
-        dst.deinit(gpa.*);
-        // TODO: remove undefined
-        dst.init(gpa.*, gl.*, undefined) catch unreachable;
-    }
 };
 
 pub export const game_api: CApi = .{
-    .reload = CApi._reload,
     .update = CApi._update,
 };
 

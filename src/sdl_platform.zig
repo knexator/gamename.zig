@@ -33,10 +33,6 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         self.state.deinit(gpa);
     }
 
-    fn reload(self: *Self, gpa: std.mem.Allocator, sdl_gl: game.Gl) void {
-        self.api.reload(&self.state, &gpa, &sdl_gl);
-    }
-
     fn update(self: *Self, platform_gives: PlatformGives) !bool {
         try self.maybeReloadApi();
         return self.api.update(&self.state, &platform_gives);
@@ -636,8 +632,7 @@ pub fn main() !void {
                     c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
                         if (hot_reloading and event.key.scancode == c.SDL_SCANCODE_F5) {
                             // TODO: complete reload, respawning the window etc
-                            // TODO: rename this to reset
-                            my_game.reload(gpa, sdl_platform.gl);
+                            // my_game.reset(gpa, sdl_platform.gl);
                         } else {
                             if (event.key.repeat) continue;
                             const is_pressed = event.type == c.SDL_EVENT_KEY_DOWN;

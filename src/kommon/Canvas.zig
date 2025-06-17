@@ -492,6 +492,10 @@ pub fn Drawable(
             };
         }
 
+        pub fn reload(self: *Self) !void {
+            self.* = try .init(self.canvas);
+        }
+
         pub fn init(canvas: *Canvas) !Self {
             const vertex_info = @typeInfo(VertexData).@"struct";
             assert(vertex_info.layout == .@"extern");

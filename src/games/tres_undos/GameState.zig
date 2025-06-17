@@ -634,6 +634,9 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
 
+    // TODO: not every frame
+    try self.renderables.wobbly.reload();
+
     if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
 
     if (self.cur_transition) |*transition| {
