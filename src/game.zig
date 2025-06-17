@@ -41,14 +41,26 @@ pub const GameState = @import("games/tres_undos/GameState.zig");
 
 pub const CApi = extern struct {
     update: *const @TypeOf(_update),
+    beforeHotReload: *const @TypeOf(_beforeHotReload),
+    afterHotReload: *const @TypeOf(_afterHotReload),
 
     fn _update(game: *GameState, platform_gives: *const PlatformGives) callconv(.c) bool {
         return game.update(platform_gives.*) catch unreachable;
+    }
+
+    fn _beforeHotReload(game: *GameState) callconv(.c) void {
+        return game.beforeHotReload() catch unreachable;
+    }
+
+    fn _afterHotReload(game: *GameState) callconv(.c) void {
+        return game.afterHotReload() catch unreachable;
     }
 };
 
 pub export const game_api: CApi = .{
     .update = CApi._update,
+    .beforeHotReload = CApi._beforeHotReload,
+    .afterHotReload = CApi._afterHotReload,
 };
 
 comptime {

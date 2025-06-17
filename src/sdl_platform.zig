@@ -52,7 +52,10 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
 
         if (!should_reload) return;
 
-        if (self.dyn_lib) |*dyn_lib| dyn_lib.close();
+        if (self.dyn_lib) |*dyn_lib| {
+            self.api.beforeHotReload(&self.state);
+            dyn_lib.close();
+        }
         // const path = "./zig-out/lib/libgame.so";
         const path = if (@import("builtin").os.tag == .windows) blk: {
             try std.fs.copyFileAbsolute(game_dynlib_path, game_dynlib_path ++ ".tmp", .{});
@@ -60,6 +63,7 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         } else game_dynlib_path;
         self.dyn_lib = try .open(path);
         self.api = self.dyn_lib.?.lookup(*const game.CApi, "game_api") orelse return error.LookupFail;
+        self.api.afterHotReload(&self.state);
         std.log.debug("reloaded game code", .{});
     }
 } else game.GameState = undefined;

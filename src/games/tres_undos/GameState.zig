@@ -630,12 +630,17 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.mem.deinit();
 }
 
+pub fn beforeHotReload(self: *GameState) !void {
+    _ = self;
+}
+
+pub fn afterHotReload(self: *GameState) !void {
+    try self.renderables.wobbly.reload();
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
-
-    // TODO: not every frame
-    try self.renderables.wobbly.reload();
 
     if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
 
