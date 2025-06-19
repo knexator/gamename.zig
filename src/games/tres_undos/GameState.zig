@@ -399,9 +399,9 @@ const LevelState = struct {
             });
         }
 
-        for (layers.basement.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
-        for (layers.basement_player.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
-        for (layers.basement_wobbly_crates.sprites.items) |*spr| spr.tint = spr.tint.scaleRGB(0.4);
+        for (layers.basement.sprites.items) |*spr| spr.tint = spr.tint.scaleRGBClamped(0.4);
+        for (layers.basement_player.sprites.items) |*spr| spr.tint = spr.tint.scaleRGBClamped(0.4);
+        for (layers.basement_wobbly_crates.sprites.items) |*spr| spr.tint = spr.tint.scaleRGBClamped(0.4);
 
         layers.basement.draw(camera);
         layers.basement_player.draw(camera);
