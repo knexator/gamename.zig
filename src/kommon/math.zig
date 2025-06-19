@@ -1026,18 +1026,22 @@ pub const FColor = extern struct {
         return .{ .h = h, .s = s, .v = v, .a = color.a };
     }
 
-    pub fn scaleRGB(color: FColor, v: f32) FColor {
+    pub fn scaleRGBClamped(color: FColor, v: f32) FColor {
         return .{
-            .r = color.r * v,
-            .g = color.g * v,
-            .b = color.b * v,
+            .r = clamp01(color.r * v),
+            .g = clamp01(color.g * v),
+            .b = clamp01(color.b * v),
             .a = color.a,
         };
     }
 
+    pub fn toUColor(color: FColor) UColor {
+        return UColor.fromFColor(color);
+    }
+
     // TODO
     pub fn lighter(color: FColor) FColor {
-        return color.scaleRGB(1.5);
+        return color.scaleRGBClamped(1.5);
         // const delta_s = 0.2;
         // const delta_v = 0.2;
         // const hsv = color.toHsv();
@@ -1107,19 +1111,19 @@ pub const UColor = extern struct {
 
     pub fn toFColor(c: UColor) FColor {
         return .{
-            .r = tof32(c.r) / 255,
-            .g = tof32(c.g) / 255,
-            .b = tof32(c.b) / 255,
-            .a = tof32(c.a) / 255,
+            .r = tof32(c.r) / 255.0,
+            .g = tof32(c.g) / 255.0,
+            .b = tof32(c.b) / 255.0,
+            .a = tof32(c.a) / 255.0,
         };
     }
 
     pub fn fromFColor(c: FColor) UColor {
         return .{
-            .r = @intFromFloat(c.r * 255),
-            .g = @intFromFloat(c.g * 255),
-            .b = @intFromFloat(c.b * 255),
-            .a = @intFromFloat(c.a * 255),
+            .r = @intFromFloat(c.r * 255.0),
+            .g = @intFromFloat(c.g * 255.0),
+            .b = @intFromFloat(c.b * 255.0),
+            .a = @intFromFloat(c.a * 255.0),
         };
     }
 
