@@ -68,11 +68,12 @@ const raw_puzzle =
 ;
 
 pub fn init(
+    dst: *GameState,
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
-) !GameState {
-    return .{
+) !void {
+    dst.* = .{
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .mem = .init(gpa),
         .smooth = .init(gpa),
@@ -93,6 +94,14 @@ pub fn init(
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.canvas.deinit(undefined, gpa);
     self.board.deinit(gpa);
+}
+
+pub fn beforeHotReload(self: *GameState) !void {
+    _ = self;
+}
+
+pub fn afterHotReload(self: *GameState) !void {
+    _ = self;
 }
 
 pub const LazyState = struct {
@@ -215,12 +224,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
 
-    var it = self.board.iterator(true);
-    while (it.next()) |p| {
-        const pos = p.pos;
+    var it = self.board.iterator();
+    while (it.next()) |pos| {
         const key = Key.fromFormat("tile {d} {d}", .{ pos.x, pos.y });
         const rect = self.board.getTileRect(camera, pos);
-        const tile: *TileState = p.value;
+        const tile: *TileState = self.board.getPtr(pos);
         switch (tile.*) {
             .block => |b| {
                 self.canvas.fillRect(camera, rect, .black);
@@ -330,18 +338,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 }
 
 fn updateLighted(self: *GameState) !void {
-    var lamp_positions: std.ArrayList(UVec2) = try .initCapacity(self.mem.frame.allocator(), self.board.width * 4);
+    var lamp_positions: std.ArrayList(UVec2) = try .initCapacity(self.mem.frame.allocator(), self.board.size.x * 4);
 
     // set all tiles to off, and store lamp positions
     {
-        var it = self.board.iterator(true);
-        while (it.next()) |tile| {
-            switch (tile.value.*) {
+        var it = self.board.iterator();
+        while (it.next()) |pos| {
+            const tile = self.board.getPtr(pos);
+            switch (tile.*) {
                 .block => continue,
                 .gap => {
-                    tile.value.gap.lighted = false;
-                    if (tile.value.gap.mark == .lamp) {
-                        try lamp_positions.append(tile.pos);
+                    tile.gap.lighted = false;
+                    if (tile.gap.mark == .lamp) {
+                        try lamp_positions.append(pos);
                     }
                 },
             }
@@ -352,7 +361,7 @@ fn updateLighted(self: *GameState) !void {
         for (IVec2.cardinal_directions) |dir| {
             var it = self.board.rayIterator(lamp_pos, dir);
             while (it.next()) |pos| {
-                const tile = self.board.getPtr(pos) catch unreachable;
+                const tile = self.board.getPtr(pos);
                 switch (tile.*) {
                     .block => break,
                     .gap => tile.gap.lighted = true,

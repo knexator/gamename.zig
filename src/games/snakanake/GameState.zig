@@ -83,12 +83,13 @@ const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
 const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
 
 pub fn init(
+    dst: *GameState,
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
-) !GameState {
+) !void {
     // TODO: get random seed as param?
-    var result: GameState = .{
+    dst.* = .{
         .rnd_instance = .init(0),
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         // TODO: store this in kommon for later use
@@ -123,14 +124,21 @@ pub fn init(
             &.{},
         ),
     };
-    result.restart();
-    return result;
+    dst.restart();
 }
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.body.deinit(gpa);
     self.canvas.deinit(undefined, gpa);
+}
+
+pub fn beforeHotReload(self: *GameState) !void {
+    _ = self;
+}
+
+pub fn afterHotReload(self: *GameState) !void {
+    _ = self;
 }
 
 fn findApplePlace(self: *GameState) IVec2 {
