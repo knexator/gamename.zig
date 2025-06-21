@@ -17,8 +17,7 @@ line_starts_raw = [
     [2, 4],
     [2, 3],
 ]
-
-line_starts = [line_starts_raw["B456789A".index(hex(line_len)[2:].upper())] for line_len in line_lens]
+line_starts = [line_starts_raw["456789AB".index(hex(line_len)[2:].upper())] for line_len in line_lens]
 
 # 456789AB => yes
 # 546789AB => no
@@ -30,6 +29,29 @@ line_starts = [line_starts_raw["B456789A".index(hex(line_len)[2:].upper())] for 
 # B468A579 => yes
 # in a 8x8 board, even corners leave/take a gap
 # full rule: even corner must have an odd neighbour
+
+# Single solution!
+line_ends = [
+    None, #[5, 1],
+    None, #[7, 3],
+    [6, 5],
+    [6, 7],
+    None, #[5, 7],
+    None, #[0, 4],
+    [1, 2],
+    [6, 1],
+]
+
+#   01234567
+# 
+# 0 AABBBBBB
+# 1 AAB444BB
+# 2 AAB45555
+# 3 AAB..665
+# 4 9AA..766
+# 5 99998766
+# 6 99888777
+# 7 99888877
 
 lines = [[[
     model.NewIntVar(0, board_size[0] - 1, f"line_{line_id}_cell_{k}_x"),
@@ -59,6 +81,14 @@ for line, line_start in zip(lines, line_starts):
     model.Add(line[0][0] == line_start[0])
     model.Add(line[0][1] == line_start[1])
 
+# Line ends at the given positions
+for line, line_end in zip(lines, line_ends):
+    if line_end is None:
+        continue
+    model.Add(line[-1][0] == line_end[0])
+    model.Add(line[-1][1] == line_end[1])
+
+
 # Lines are continuous (adjacent cells are connected horizontally or vertically)
 for line_id, line in enumerate(lines):
     for i in range(len(line) - 1):
@@ -86,9 +116,20 @@ for line_id, line in enumerate(lines):
         model.AddExactlyOne(bool_vars)
 
 # Solve the model
-solver = cp_model.CpSolver()
-status = solver.Solve(model)
+class SolutionCounter(cp_model.CpSolverSolutionCallback):
+    def __init__(self):
+        cp_model.CpSolverSolutionCallback.__init__(self)
+        self.solution_count = 0
 
+    def OnSolutionCallback(self):
+        self.solution_count += 1
+
+solver = cp_model.CpSolver()
+counter = SolutionCounter()
+solver.SearchForAllSolutions(model, counter)
+print('Number of solutions:', counter.solution_count)
+
+status = solver.Solve(model)
 if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
     visual_board = [['.' for _ in range(board_size[0])]
                     for _ in range(board_size[1])]
