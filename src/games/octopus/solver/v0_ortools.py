@@ -1,11 +1,15 @@
 from ortools.sat.python import cp_model
 
+def addVec(a, b):
+    return [a[0] + b[0], a[1] + b[1]]
+
 model = cp_model.CpModel()
 
-board_size = [8, 8]
+board_size = [9, 8]
+octopus_position = [3, 3]
 forbidden_cells = [
-    [3, 3], [3, 4], [4, 3], [4, 4],
-]
+    [3, 1], [8, 3], [5, 7], [8, 5], [1, 2], [7, 6] # [6, 7], [1, 2], [6, 1],
+] + [addVec(octopus_position, vec) for vec in [[0, 0], [0, 1], [1, 0], [1, 1]]]
 line_lens = list(range(4, 4 + 8))
 line_starts_raw = [
     [3, 2],
@@ -17,7 +21,8 @@ line_starts_raw = [
     [2, 4],
     [2, 3],
 ]
-line_starts = [line_starts_raw["456789AB".index(hex(line_len)[2:].upper())] for line_len in line_lens]
+line_starts = [line_starts_raw["456789AB".index(
+    hex(line_len)[2:].upper())] for line_len in line_lens]
 
 # 456789AB => yes
 # 546789AB => no
@@ -32,18 +37,18 @@ line_starts = [line_starts_raw["456789AB".index(hex(line_len)[2:].upper())] for 
 
 # Single solution!
 line_ends = [
-    None, #[5, 1],
-    None, #[7, 3],
+    None,  # [5, 1],
+    None,  # [7, 3],
     [6, 5],
     [6, 7],
-    None, #[5, 7],
-    None, #[0, 4],
+    None,  # [5, 7],
+    None,  # [0, 4],
     [1, 2],
     [6, 1],
 ]
 
 #   01234567
-# 
+#
 # 0 AABBBBBB
 # 1 AAB444BB
 # 2 AAB45555
@@ -81,12 +86,12 @@ for line, line_start in zip(lines, line_starts):
     model.Add(line[0][0] == line_start[0])
     model.Add(line[0][1] == line_start[1])
 
-# Line ends at the given positions
-for line, line_end in zip(lines, line_ends):
-    if line_end is None:
-        continue
-    model.Add(line[-1][0] == line_end[0])
-    model.Add(line[-1][1] == line_end[1])
+# # Line ends at the given positions
+# for line, line_end in zip(lines, line_ends):
+#     if line_end is None:
+#         continue
+#     model.Add(line[-1][0] == line_end[0])
+#     model.Add(line[-1][1] == line_end[1])
 
 # Lines are continuous (adjacent cells are connected horizontally or vertically)
 all_deltas = []
@@ -139,6 +144,7 @@ class SolutionCounter(cp_model.CpSolverSolutionCallback):
         if self.solution_count % 100 == 0:
             print('Solution #', self.solution_count)
 
+
 solver = cp_model.CpSolver()
 counter = SolutionCounter()
 solver.SearchForAllSolutions(model, counter)
@@ -153,6 +159,8 @@ if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
             x = solver.Value(cell[0])
             y = solver.Value(cell[1])
             visual_board[y][x] = hex(line_lens[line_id])[2:].upper()
+    for (x, y) in forbidden_cells:
+        visual_board[y][x] = '#'
     print('\n'.join([''.join(row) for row in visual_board]))
 else:
     print("No solution found.")
