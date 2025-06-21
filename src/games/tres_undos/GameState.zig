@@ -26,7 +26,7 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-const Mem = @FieldType(GameState, "mem");
+pub const Mem = @FieldType(GameState, "mem");
 
 const COLORS = struct {
     CRATES: [4]FColor = .{
