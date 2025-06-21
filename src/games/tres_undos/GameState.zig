@@ -641,6 +641,7 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
+    self.smooth.last_delta_seconds = platform.delta_seconds;
 
     if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
 
@@ -652,6 +653,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             transition.done = true;
             self.anim_t = 0;
             self.in_menu = false;
+            try self.smooth.set(f32, .fromString("menu_t"), 0.0);
             self.pressed_undos_in_a_row = 0;
         }
         if (transition.done and transition.t >= 1) {
@@ -659,13 +661,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (self.in_menu) {
+    try self.drawGame(platform);
+
+    const menu_t = try self.smooth.floatLinear(.fromString("menu_t"), if (self.in_menu) 1.0 else 0.0, 0.15);
+    if (menu_t > 0) {
         const ui_cam: Rect = Rect.fromCenterAndSize(.zero, Vec2.new(6, 3).scale(1.75)).withAspectRatio(platform.aspect_ratio, .grow, .center);
+        const menu_panel: Rect = .lerp(
+            .fromCenterAndSize(.new(maybeMirror(7.0, self.in_menu), 0), .new(6, 3)),
+            .fromCenterAndSize(.zero, .new(6, 3)),
+            math.easings.easeInOutCubic(menu_t),
+        );
         const asdf: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), .new(6, 3));
         var buttons: std.ArrayList(Rect) = .init(self.mem.frame.allocator());
         var it = asdf.iterator();
         while (it.next()) |p| {
-            try buttons.append(asdf.getTileRect(.fromCenterAndSize(.zero, .new(6, 3)), p).plusMargin(-0.05));
+            try buttons.append(asdf.getTileRect(menu_panel, p).plusMargin(-0.05));
         }
 
         const mouse = platform.getMouse(ui_cam);
@@ -673,12 +683,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (r.contains(mouse.cur.position)) break :blk k;
         } else null;
 
-        try self.drawGame(platform);
-        self.canvas.fillRect(.unit, .unit, FColor.black.withAlpha(0.5));
+        self.canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.lerp(0, 0.5, menu_t)));
 
         self.canvas.fillRect(
             ui_cam,
-            Rect.fromCenterAndSize(.zero, .new(6, 3)).plusMargin(0.05),
+            menu_panel.plusMargin(0.05),
             .fromHex("#383F69"),
         );
         for (buttons.items, 0..) |r, k| {
@@ -705,7 +714,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     } else {
         try self.updateGame(platform);
-        try self.drawGame(platform);
     }
 
     if (self.cur_transition) |transition| {
