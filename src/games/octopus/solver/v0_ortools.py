@@ -88,9 +88,10 @@ for line, line_end in zip(lines, line_ends):
     model.Add(line[-1][0] == line_end[0])
     model.Add(line[-1][1] == line_end[1])
 
-
 # Lines are continuous (adjacent cells are connected horizontally or vertically)
+all_deltas = []
 for line_id, line in enumerate(lines):
+    line_deltas = []
     for i in range(len(line) - 1):
         a = line[i]
         b = line[i + 1]
@@ -101,6 +102,8 @@ for line_id, line in enumerate(lines):
 
         model.Add(delta_x == b[0] - a[0])
         model.Add(delta_y == b[1] - a[1])
+
+        line_deltas.append((delta_x, delta_y))
 
         valid_deltas = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
@@ -114,6 +117,16 @@ for line_id, line in enumerate(lines):
 
         # Exactly one valid delta must be chosen
         model.AddExactlyOne(bool_vars)
+    all_deltas.append(line_deltas)
+
+# # All twists
+# for line_deltas in all_deltas:
+#     for i in range(len(line_deltas) - 1):
+#         dx1, dy1 = line_deltas[i]
+#         dx2, dy2 = line_deltas[i + 1]
+#         model.Add(dx1 != dx2)
+#         model.Add(dy1 != dy2)
+
 
 # Solve the model
 class SolutionCounter(cp_model.CpSolverSolutionCallback):
@@ -123,6 +136,8 @@ class SolutionCounter(cp_model.CpSolverSolutionCallback):
 
     def OnSolutionCallback(self):
         self.solution_count += 1
+        if self.solution_count % 100 == 0:
+            print('Solution #', self.solution_count)
 
 solver = cp_model.CpSolver()
 counter = SolutionCounter()
