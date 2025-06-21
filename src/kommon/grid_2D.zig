@@ -66,67 +66,12 @@ pub fn Grid2D(T: type) type {
             return self.indexOf(pos.cast(usize));
         }
 
-        const GridSignedIterator = struct {
-            grid_iterator: GridIterator,
-
-            pub fn reset(self: *GridSignedIterator) void {
-                self.grid_iterator.reset();
-            }
-
-            pub fn next(self: *GridSignedIterator) ?IVec2 {
-                if (self.grid_iterator.next()) |p|
-                    return p.cast(isize)
-                else
-                    return null;
-            }
-        };
-
-        const GridIterator = struct {
-            grid: Self,
-            i: kommon.itertools.Iterator(usize),
-            j: kommon.itertools.Iterator(usize),
-
-            pub fn init(grid: Self) GridIterator {
-                return .{
-                    .grid = grid,
-                    .i = .init(0, grid.size.x - 1),
-                    .j = .init(0, grid.size.y - 1),
-                };
-            }
-
-            pub fn reset(self: *GridIterator) void {
-                self.i.reset();
-                self.j.reset();
-            }
-
-            pub fn next(self: *GridIterator) ?UVec2 {
-                // ideal:
-                // for (0..self.grid.height) |j| {
-                //     for (0..self.grid.width) |i| {
-                //         yield .new(i, j);
-                //     }
-                // }
-
-                if (self.j.cur()) |j| {
-                    if (self.i.next()) |i| {
-                        return .new(i, j);
-                    } else {
-                        self.j.advance();
-                        self.i.reset();
-                        return self.next();
-                    }
-                } else {
-                    return null;
-                }
-            }
-        };
-
         pub fn iterator(self: Self) GridIterator {
-            return .init(self);
+            return .init(self.size);
         }
 
         pub fn iteratorSigned(self: Self) GridSignedIterator {
-            return .{ .grid_iterator = .init(self) };
+            return .{ .grid_iterator = .init(self.size) };
         }
 
         const RayIterator = struct {
@@ -294,12 +239,135 @@ pub fn Grid2D(T: type) type {
             };
         }
 
+        // TODO: improve performance trivially
+        pub fn tileAt(self: Self, pos: kommon.math.Vec2, whole_rect: Rect) ?UVec2 {
+            var it = self.iterator();
+            while (it.next()) |tile| {
+                if (self.getTileRect(whole_rect, tile).contains(pos)) return tile;
+            } else return null;
+        }
+
         pub fn inBoundsSigned(self: Self, pos: IVec2) bool {
             return pos.x >= 0 and pos.y >= 0 and self.inBoundsUnsigned(pos.cast(usize));
         }
 
         pub fn inBoundsUnsigned(self: Self, pos: UVec2) bool {
             return pos.x < self.size.x and pos.y < self.size.y;
+        }
+    };
+}
+
+pub const EdgePos = struct {
+    pos: UVec2,
+    dir: IVec2,
+
+    pub fn between(a: UVec2, b: UVec2) ?EdgePos {
+        const r: EdgePos = .{ .pos = a, .dir = b.subToSigned(a) };
+        if (!r.validDir()) return null;
+        return r;
+    }
+
+    fn validDir(self: EdgePos) bool {
+        return self.dir.isCardinalDirection();
+    }
+};
+
+/// only inner edges
+pub fn Grid2DEdges(T: type) type {
+    // x 0 x 1 x
+    // 0   1   2
+    // x 2 x 3 x
+    // 3   4   5
+    // x 4 x 5 x
+    return struct {
+        size: UVec2,
+        data_hor: []T,
+        data_ver: []T,
+
+        const Self = @This();
+
+        pub fn initUndefined(allocator: std.mem.Allocator, size: UVec2) !Self {
+            return .{
+                .size = size,
+                .data_hor = try allocator.alloc(T, size.x * (size.y - 1)),
+                .data_ver = try allocator.alloc(T, (size.x - 1) * size.y),
+            };
+        }
+
+        pub fn initFill(allocator: std.mem.Allocator, size: UVec2, fill: T) !Self {
+            const result: Self = try .initUndefined(allocator, size);
+            @memset(result.data_hor, fill);
+            @memset(result.data_ver, fill);
+            return result;
+        }
+
+        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.data_hor);
+            allocator.free(self.data_ver);
+        }
+
+        pub fn at(self: Self, edge: EdgePos) T {
+            return self.atSafePtr(edge).?.*;
+        }
+
+        pub fn atSafePtr(self: Self, edge: EdgePos) ?*T {
+            assert(edge.validDir());
+            if (!self.inBounds(edge)) return null;
+            if (edge.dir.x == 0) {
+                return &self.data_hor[self.indexOfHorBelow(if (edge.dir.y > 0) edge.pos else edge.pos.decY())];
+            } else {
+                return &self.data_ver[self.indexOfVerRight(if (edge.dir.x > 0) edge.pos else edge.pos.decX())];
+            }
+        }
+
+        fn indexOfHorBelow(self: Self, pos: UVec2) usize {
+            assert(pos.x < self.size.x);
+            assert(pos.y < self.size.y - 1);
+            return pos.y * self.size.x + pos.x;
+        }
+
+        fn indexOfVerRight(self: Self, pos: UVec2) usize {
+            assert(pos.x < self.size.x - 1);
+            assert(pos.y < self.size.y);
+            return pos.y * (self.size.x - 1) + pos.x;
+        }
+
+        pub fn inBounds(self: Self, edge: EdgePos) bool {
+            assert(edge.validDir());
+            const big_pos = edge.pos.scale(2).addSigned(edge.dir);
+            return 0 <= big_pos.x and big_pos.x < self.size.x * 2 and
+                0 <= big_pos.y and big_pos.y < self.size.y * 2;
+        }
+
+        const EdgeIterator = struct {
+            hor: GridIterator,
+            ver: GridIterator,
+
+            pub fn init(size: UVec2) EdgeIterator {
+                return .{
+                    .hor = .init(size.decY()),
+                    .ver = .init(size.decX()),
+                };
+            }
+
+            pub fn reset(self: *EdgeIterator) void {
+                self.hor.reset();
+                self.ver.reset();
+            }
+
+            pub fn next(self: *EdgeIterator) ?EdgePos {
+                if (self.hor.next()) |pos| {
+                    return .{ .pos = pos, .dir = .e2 };
+                } else if (self.ver.next()) |pos| {
+                    return .{ .pos = pos, .dir = .e1 };
+                } else {
+                    return null;
+                }
+            }
+        };
+
+        pub fn iterator(self: Self) EdgeIterator {
+            return .init(self.size);
         }
     };
 }
@@ -322,3 +390,56 @@ test "foo" {
         .inner_size = .new(2, 1),
     }, rect);
 }
+
+const GridIterator = struct {
+    i: kommon.itertools.Iterator(usize),
+    j: kommon.itertools.Iterator(usize),
+
+    pub fn init(size: UVec2) GridIterator {
+        return .{
+            .i = .init(0, size.x - 1),
+            .j = .init(0, size.y - 1),
+        };
+    }
+
+    pub fn reset(self: *GridIterator) void {
+        self.i.reset();
+        self.j.reset();
+    }
+
+    pub fn next(self: *GridIterator) ?UVec2 {
+        // ideal:
+        // for (0..self.size.height) |j| {
+        //     for (0..self.size.width) |i| {
+        //         yield .new(i, j);
+        //     }
+        // }
+
+        if (self.j.cur()) |j| {
+            if (self.i.next()) |i| {
+                return .new(i, j);
+            } else {
+                self.j.advance();
+                self.i.reset();
+                return self.next();
+            }
+        } else {
+            return null;
+        }
+    }
+};
+
+const GridSignedIterator = struct {
+    grid_iterator: GridIterator,
+
+    pub fn reset(self: *GridSignedIterator) void {
+        self.grid_iterator.reset();
+    }
+
+    pub fn next(self: *GridSignedIterator) ?IVec2 {
+        if (self.grid_iterator.next()) |p|
+            return p.cast(isize)
+        else
+            return null;
+    }
+};

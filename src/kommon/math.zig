@@ -105,6 +105,11 @@ pub fn ZVec2(T: type) type {
             .new(0, -1),
         };
 
+        pub fn isCardinalDirection(v: Self) bool {
+            return (v.x == 0 and @abs(v.y) == 1) or
+                (v.y == 0 and @abs(v.x) == 1);
+        }
+
         pub fn tof32(v: Self) Vec2 {
             return .new(@floatFromInt(v.x), @floatFromInt(v.y));
         }
@@ -131,6 +136,18 @@ pub fn ZVec2(T: type) type {
 
         pub fn addSigned(a: UVec2, b: IVec2) UVec2 {
             return a.cast(isize).add(b).cast(usize);
+        }
+
+        pub fn subToSigned(a: UVec2, b: UVec2) IVec2 {
+            return a.cast(isize).sub(b.cast(isize));
+        }
+
+        pub fn decX(v: Self) Self {
+            return new(v.x - 1, v.y);
+        }
+
+        pub fn decY(v: Self) Self {
+            return new(v.x, v.y - 1);
         }
 
         pub fn sub(a: Self, b: Self) Self {

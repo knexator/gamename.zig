@@ -28,9 +28,9 @@ canvas: Canvas,
 mem: Mem,
 smooth: LazyState,
 
-focus: union(enum) {
-    none,
-} = .none,
+focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
+
+edges: kommon.Grid2DEdges(bool),
 
 pub fn init(
     dst: *GameState,
@@ -38,9 +38,11 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
+    var mem: Mem = .init(gpa);
     dst.* = .{
+        .edges = try .initFill(mem.level.allocator(), board_size, false),
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
-        .mem = .init(gpa),
+        .mem = mem,
         .smooth = .init(gpa),
     };
 }
@@ -48,6 +50,7 @@ pub fn init(
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.canvas.deinit(undefined, gpa);
+    self.edges.deinit(self.mem.level.allocator());
 }
 
 pub fn beforeHotReload(self: *GameState) !void {
@@ -71,14 +74,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const key: Key = .fromFormat("tile {d} {d}", .{ pos.x, pos.y });
         const rect = board.getTileRect(camera, pos);
         const mouse_over = rect.contains(mouse.cur.position);
-        const is_active = mouse_over;
+        const is_active = switch (self.focus) {
+            .none => false,
+            .lines => |l| l.tile.equals(pos),
+        };
+        const is_hot = mouse_over and (self.focus == .none or is_active);
         const hot_t = try self.smooth.float(
             .fromFormat("hot {d}", .{key}),
-            if (mouse_over and (self.focus == .none or is_active)) 1.0 else 0.0,
+            if (is_hot) 1.0 else 0.0,
         );
         const active_t = try self.smooth.float(
             .fromFormat("active {d}", .{key}),
-            if (mouse_over and is_active) 1.0 else 0.0,
+            if (is_active) 1.0 else 0.0,
         );
         self.canvas.fillRect(camera, rect, try self.smooth.fcolor(
             .fromFormat("bg {d}", .{key}),
@@ -86,11 +93,52 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         ));
         self.canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
     }
+
+    switch (self.focus) {
+        .none => {
+            if (mouse.wasPressed(.left)) {
+                if (board.tileAt(mouse.cur.position, camera)) |tile| {
+                    self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                }
+            }
+        },
+        .lines => |*l| {
+            if (mouse.wasReleased(.left)) {
+                self.focus = .none;
+            } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
+                if (!new_tile.equals(l.tile)) {
+                    if (kommon.grid2D.EdgePos.between(l.tile, new_tile)) |edge_pos| {
+                        const edge_ptr = self.edges.atSafePtr(edge_pos).?;
+                        switch (l.which) {
+                            .idk => {
+                                l.which = if (edge_ptr.*) .erase else .draw;
+                                edge_ptr.* = !edge_ptr.*;
+                            },
+                            .erase => edge_ptr.* = false,
+                            .draw => edge_ptr.* = true,
+                        }
+                    }
+                    l.tile = new_tile;
+                }
+            }
+        },
+    }
+
     for (0..board_size.x + 1) |k| {
         self.canvas.line(camera, &.{ .new(tof32(k), 0), .new(tof32(k), board_size.y) }, 0.02, .black);
     }
     for (0..board_size.y + 1) |k| {
         self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
+    }
+    var edge_it = self.edges.iterator();
+    while (edge_it.next()) |edge| {
+        const has_line = self.edges.at(edge);
+        if (has_line) {
+            self.canvas.line(camera, &.{
+                edge.pos.tof32().add(.half),
+                edge.pos.addSigned(edge.dir).tof32().add(.half),
+            }, 0.1, octopus_color);
+        }
     }
 
     self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
