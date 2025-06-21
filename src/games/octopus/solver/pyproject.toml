@@ -1,0 +1,8 @@
+[project]
+name = "solver"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "ortools>=9.14.6206",
+    "z3-solver>=4.15.1.0",
+]
