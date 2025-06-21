@@ -21,7 +21,7 @@ pub fn Grid2D(T: type) type {
         }
 
         pub fn initFill(allocator: std.mem.Allocator, size: UVec2, fill: T) !Self {
-            const result: Self = .{ .size = size, .data = try allocator.alloc(T, size.x * size.y) };
+            const result: Self = try .initUndefined(allocator, size);
             @memset(result.data, fill);
             return result;
         }
