@@ -39,8 +39,17 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     var mem: Mem = .init(gpa);
+    const edges: kommon.Grid2DEdges(bool) = try .initFill(mem.level.allocator(), board_size, false);
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = IVec2.e1.neg() }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = IVec2.e2.neg() }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = IVec2.e1 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = IVec2.e2.neg() }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = IVec2.e1.neg() }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = IVec2.e2 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = IVec2.e1 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = IVec2.e2 }).?.* = true;
     dst.* = .{
-        .edges = try .initFill(mem.level.allocator(), board_size, false),
+        .edges = edges,
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .mem = mem,
         .smooth = .init(gpa),
