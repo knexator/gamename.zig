@@ -40,6 +40,37 @@ smooth: LazyState,
 
 focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
 edges: kommon.Grid2DEdges(bool),
+clues_tiles: kommon.Grid2D(?TileClue),
+
+const ClueLen = union(enum) {
+    exact: usize,
+    odd,
+    even,
+    idk,
+    pub fn fits(self: ClueLen, n: usize) bool {
+        return switch (self) {
+            .exact => |v| n == v,
+            .idk => true,
+            .odd => @mod(n, 2) == 1,
+            .even => @mod(n, 2) == 0,
+        };
+    }
+};
+const TileClue = union(enum) {
+    starts_here_with_len: ClueLen,
+    ends_here_with_len: ClueLen,
+
+    pub fn isSatisfied(clue: TileClue, pos: UVec2, tentacles: [8]std.ArrayList(EdgePos)) bool {
+        switch (clue) {
+            .starts_here_with_len => |l| for (tentacles) |tentacle| {
+                if (tentacle.items[0].nextPos().equals(pos)) return l.fits(tentacle.items.len);
+            } else return false,
+            .ends_here_with_len => |l| for (tentacles) |tentacle| {
+                if (tentacle.getLast().nextPos().equals(pos)) return l.fits(tentacle.items.len);
+            } else return false,
+        }
+    }
+};
 
 pub fn init(
     dst: *GameState,
@@ -57,7 +88,17 @@ pub fn init(
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .mem = mem,
         .smooth = .init(gpa),
+        .clues_tiles = try .initFill(mem.level.allocator(), board_size, null),
     };
+    dst.clues_tiles.set(.new(2, 3), .{ .starts_here_with_len = .{ .exact = 8 } });
+    dst.clues_tiles.set(.new(3, 5), .{ .starts_here_with_len = .{ .exact = 8 } });
+    dst.clues_tiles.set(.new(1, 6), .{ .ends_here_with_len = .{ .exact = 8 } });
+    dst.clues_tiles.set(.new(1, 7), .{ .ends_here_with_len = .{ .exact = 8 } });
+    dst.clues_tiles.set(.new(1, 1), .{ .ends_here_with_len = .{ .exact = 6 } });
+    dst.clues_tiles.set(.new(6, 1), .{ .ends_here_with_len = .{ .exact = 5 } });
+    dst.clues_tiles.set(.new(0, 4), .{ .ends_here_with_len = .odd });
+    dst.clues_tiles.set(.new(6, 6), .{ .ends_here_with_len = .odd });
+    dst.clues_tiles.set(.new(7, 6), .{ .ends_here_with_len = .idk });
 }
 
 // TODO: take gl parameter
@@ -88,14 +129,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     blocked.set(octopus_pos.add(.one), true);
 
     // const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
-    // const tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
+    const tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
 
     const board: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), board_size);
     var it = board.iterator();
     while (it.next()) |pos| {
         const key: Key = .fromFormat("tile {d} {d}", .{ pos.x, pos.y });
         const rect = board.getTileRect(camera, pos);
-        const mouse_over = rect.contains(mouse.cur.position);
+        const mouse_over = rect.contains(mouse.cur.position) and !blocked.at2(pos);
         const is_active = switch (self.focus) {
             .none => false,
             .lines => |l| l.tile.equals(pos),
@@ -120,7 +161,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .none => {
             if (mouse.wasPressed(.left)) {
                 if (board.tileAt(mouse.cur.position, camera)) |tile| {
-                    self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                    if (!blocked.at2(tile)) {
+                        self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                    }
                 }
             }
         },
@@ -128,7 +171,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (mouse.wasReleased(.left)) {
                 self.focus = .none;
             } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
-                if (!new_tile.equals(l.tile)) {
+                if (!new_tile.equals(l.tile) and !blocked.at2(new_tile)) {
                     if (kommon.grid2D.EdgePos.between(l.tile, new_tile)) |edge_pos| {
                         // if (tentacle_at.at2(new_tile) == null or tentacle_at.at2(new_tile) == tentacle_at.at2(l.tile)) {
                         if (true) {
@@ -181,6 +224,39 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
+
+    for (tentacles, 0..) |tentacle, k| {
+        const len = try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{tentacle.items.len});
+        try self.canvas.drawTextLine(
+            0,
+            camera,
+            .{ .center = octopus_pos.add(.one).tof32().add(Vec2.fromTurns((5.5 + tof32(k)) / 8.0).scale(0.75)) },
+            len,
+            0.4,
+            .black,
+        );
+    }
+
+    it.reset();
+    while (it.next()) |pos| {
+        if (self.clues_tiles.at2(pos)) |clue| {
+            switch (clue) {
+                .starts_here_with_len, .ends_here_with_len => |c| try self.canvas.drawTextLine(
+                    0,
+                    camera,
+                    .{ .center = pos.tof32().add(.half) },
+                    switch (c) {
+                        .exact => |v| "0123456789ABCD"[v .. v + 1],
+                        .odd => ".",
+                        .even => ":",
+                        .idk => "?",
+                    },
+                    1,
+                    if (clue.isSatisfied(pos, tentacles)) .green else .red,
+                ),
+            }
+        }
+    }
 
     return false;
 }
