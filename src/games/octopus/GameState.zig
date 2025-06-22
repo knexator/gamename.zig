@@ -18,6 +18,10 @@ pub const stuff = .{
     },
 };
 
+const DESIGN = .{
+    .allow_drawing = false,
+};
+
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
 const board_size: UVec2 = .both(8);
@@ -110,6 +114,29 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.shrinkTentacle(tentacle);
             } else {
                 self.maybeGrowTentacle(tentacle, tentacle_at);
+                break;
+            }
+        }
+    }
+
+    for ([8]KeyboardButton{
+        .KeyQ, .KeyW, .KeyE, .KeyR,
+        .KeyU, .KeyI, .KeyO, .KeyP,
+    }, tentacles) |key, tentacle| {
+        if (platform.wasKeyPressedOrRetriggered(key, 0.2)) {
+            self.shrinkTentacle(tentacle);
+        }
+    }
+    for ([8]KeyboardButton{
+        .KeyA, .KeyS, .KeyD, .KeyF,
+        .KeyJ, .KeyK, .KeyL, .Semicolon,
+    }, tentacles) |key, tentacle| {
+        if (platform.wasKeyPressedOrRetriggered(key, 0.2)) {
+            if (platform.keyboard.cur.isDown(.ShiftLeft) or platform.keyboard.cur.isDown(.ShiftRight)) {
+                self.shrinkTentacle(tentacle);
+            } else {
+                self.maybeGrowTentacle(tentacle, tentacle_at);
+                break;
             }
         }
     }
@@ -142,28 +169,36 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     switch (self.focus) {
         .none => {
-            if (platform.wasButtonPressedOrRetriggered(.left, 0.2)) {
-                if (board.tileAt(mouse.cur.position, camera)) |tile| {
-                    // self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
-                    if (tentacle_at.at2(tile)) |id| {
-                        self.maybeGrowTentacle(tentacles[id], tentacle_at);
+            if (DESIGN.allow_drawing) {
+                if (mouse.wasPressed(.left)) {
+                    if (board.tileAt(mouse.cur.position, camera)) |tile| {
+                        self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
                     }
                 }
-            } else if (platform.wasButtonPressedOrRetriggered(.right, 0.2)) {
-                if (board.tileAt(mouse.cur.position, camera)) |tile| {
-                    if (tentacle_at.at2(tile)) |id| {
-                        if (tentacles[id].getLast().nextPos().equals(tile)) {
-                            self.shrinkTentacle(tentacles[id]);
-                        } else while (!tentacles[id].getLast().nextPos().equals(tile)) {
-                            self.shrinkTentacle(tentacles[id]);
-                            tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
+            } else {
+                if (platform.wasButtonPressedOrRetriggered(.left, 0.2)) {
+                    if (board.tileAt(mouse.cur.position, camera)) |tile| {
+                        // self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                        if (tentacle_at.at2(tile)) |id| {
+                            self.maybeGrowTentacle(tentacles[id], tentacle_at);
+                        }
+                    }
+                } else if (platform.wasButtonPressedOrRetriggered(.right, 0.2)) {
+                    if (board.tileAt(mouse.cur.position, camera)) |tile| {
+                        if (tentacle_at.at2(tile)) |id| {
+                            if (tentacles[id].getLast().nextPos().equals(tile)) {
+                                self.shrinkTentacle(tentacles[id]);
+                            } else while (!tentacles[id].getLast().nextPos().equals(tile)) {
+                                self.shrinkTentacle(tentacles[id]);
+                                tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
+                            }
                         }
                     }
                 }
             }
         },
         .lines => |*l| {
-            if (true) unreachable;
+            if (!DESIGN.allow_drawing) unreachable;
             if (mouse.wasReleased(.left)) {
                 self.focus = .none;
             } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
@@ -206,16 +241,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     for (0..board_size.y + 1) |k| {
         self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
     }
-    // var edge_it = self.edges.iterator();
-    // while (edge_it.next()) |edge| {
-    //     const has_line = self.edges.at(edge);
-    //     if (has_line) {
-    //         self.canvas.line(camera, &.{
-    //             edge.pos.tof32().add(.half),
-    //             edge.pos.addSigned(edge.dir).tof32().add(.half),
-    //         }, 0.1, octopus_color);
-    //     }
-    // }
+
+    if (DESIGN.allow_drawing) {
+        var edge_it = self.edges.iterator();
+        while (edge_it.next()) |edge| {
+            const has_line = self.edges.at(edge);
+            if (has_line) {
+                self.canvas.line(camera, &.{
+                    edge.pos.tof32().add(.half),
+                    edge.pos.addSigned(edge.dir).tof32().add(.half),
+                }, 0.1, octopus_color);
+            }
+        }
+    }
 
     inline for (@typeInfo(@TypeOf(target)).@"struct".fields, starting_edges_local) |field, starting_edge_local| {
         const dirs = @field(target, field.name);
