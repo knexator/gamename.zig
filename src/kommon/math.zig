@@ -97,6 +97,8 @@ pub fn ZVec2(T: type) type {
         pub const one = new(1, 1);
         pub const e1 = new(1, 0);
         pub const e2 = new(0, 1);
+        pub const ne1 = new(-1, 0);
+        pub const ne2 = new(0, -1);
 
         pub const cardinal_directions = [4]IVec2{
             .new(1, 0),
@@ -212,6 +214,8 @@ pub const Vec2 = extern struct {
     pub const half = new(0.5, 0.5);
     pub const e1 = new(1, 0);
     pub const e2 = new(0, 1);
+    pub const ne1 = new(-1, 0);
+    pub const ne2 = new(0, -1);
 
     pub const Coord = enum { x, y };
     pub const coords: [2]Coord = .{ .x, .y };
@@ -946,6 +950,7 @@ pub const FColor = extern struct {
     pub const black = UColor.black.toFColor();
     pub const cyan = UColor.cyan.toFColor();
     pub const green = UColor.green.toFColor();
+    pub const red = UColor.red.toFColor();
 
     pub fn new(r: f32, g: f32, b: f32) FColor {
         return .{ .r = r, .g = g, .b = b };
@@ -1019,7 +1024,11 @@ pub const FColor = extern struct {
         }
     };
 
-    fn toHsv(color: FColor) HSV {
+    pub fn fromHsv(h: f32, s: f32, v: f32) FColor {
+        return HSV.toRgb(.{ .h = h, .s = s, .v = v, .a = 1 });
+    }
+
+    pub fn toHsv(color: FColor) HSV {
         const max = @max(color.r, color.g, color.b);
         const min = @min(color.r, color.g, color.b);
         const delta = max - min;
@@ -1078,6 +1087,7 @@ pub const UColor = extern struct {
     pub const black = new(0, 0, 0);
     pub const cyan = new(0, 255, 255);
     pub const green = new(0, 255, 0);
+    pub const red = new(255, 0, 0);
 
     pub fn new(r: u8, g: u8, b: u8) UColor {
         return .{ .r = r, .g = g, .b = b };

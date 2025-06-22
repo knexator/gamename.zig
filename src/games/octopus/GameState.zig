@@ -40,14 +40,14 @@ pub fn init(
 ) !void {
     var mem: Mem = .init(gpa);
     const edges: kommon.Grid2DEdges(bool) = try .initFill(mem.level.allocator(), board_size, false);
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = IVec2.e1.neg() }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = IVec2.e2.neg() }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = IVec2.e1 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = IVec2.e2.neg() }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = IVec2.e1.neg() }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = IVec2.e2 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = IVec2.e1 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = IVec2.e2 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = .ne1 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = .ne2 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = .e1 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = .ne2 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = .ne1 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = .e2 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = .e1 }).?.* = true;
+    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = .e2 }).?.* = true;
     dst.* = .{
         .edges = edges,
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
@@ -76,6 +76,37 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const camera: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
     const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
+
+    const blocked: kommon.Grid2D(bool) = try .initFill(self.mem.frame.allocator(), board_size, false);
+    blocked.set(octopus_pos.add(.zero), true);
+    blocked.set(octopus_pos.add(.e1), true);
+    blocked.set(octopus_pos.add(.e2), true);
+    blocked.set(octopus_pos.add(.one), true);
+
+    const tentacle_at: kommon.Grid2D(?usize) = try .initFill(self.mem.frame.allocator(), board_size, null);
+    for ([_]IVec2{
+        .new(0, -1), .new(1, -1),
+        .new(2, 0),  .new(2, 1),
+        .new(1, 2),  .new(0, 2),
+        .new(-1, 1), .new(-1, 0),
+    }, 0..) |delta, k| {
+        tentacle_at.set(octopus_pos.addSigned(delta), k);
+        var queue: std.fifo.LinearFifo(UVec2, .Dynamic) = .init(self.mem.frame.allocator());
+        try queue.writeItem(octopus_pos.addSigned(delta));
+        while (queue.readItem()) |pos| {
+            for (IVec2.cardinal_directions) |dir| {
+                const new_pos = pos.cast(isize).add(dir);
+                if (tentacle_at.inBoundsSigned(new_pos) and
+                    tentacle_at.atSigned(new_pos) == null and
+                    blocked.atSigned(new_pos) == false and
+                    self.edges.at(.{ .pos = pos, .dir = dir }) == true)
+                {
+                    tentacle_at.setSigned(new_pos, k);
+                    try queue.writeItem(new_pos.cast(usize));
+                }
+            }
+        }
+    }
 
     const board: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), board_size);
     var it = board.iterator();
@@ -117,20 +148,32 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
                 if (!new_tile.equals(l.tile)) {
                     if (kommon.grid2D.EdgePos.between(l.tile, new_tile)) |edge_pos| {
-                        const edge_ptr = self.edges.atSafePtr(edge_pos).?;
-                        switch (l.which) {
-                            .idk => {
-                                l.which = if (edge_ptr.*) .erase else .draw;
-                                edge_ptr.* = !edge_ptr.*;
-                            },
-                            .erase => edge_ptr.* = false,
-                            .draw => edge_ptr.* = true,
+                        if (tentacle_at.at2(new_tile) == null or tentacle_at.at2(new_tile) == tentacle_at.at2(l.tile)) {
+                            const edge_ptr = self.edges.atSafePtr(edge_pos).?;
+                            switch (l.which) {
+                                .idk => {
+                                    l.which = if (edge_ptr.*) .erase else .draw;
+                                    edge_ptr.* = !edge_ptr.*;
+                                },
+                                .erase => edge_ptr.* = false,
+                                .draw => edge_ptr.* = true,
+                            }
                         }
                     }
                     l.tile = new_tile;
                 }
             }
         },
+    }
+
+    {
+        var asdf_it = tentacle_at.iterator();
+        while (asdf_it.next()) |pos| {
+            const rect = board.getTileRect(camera, pos);
+            if (tentacle_at.at2(pos)) |id| {
+                self.canvas.fillRect(camera, rect, FColor.fromHsv(tof32(id) / 8.0, 1.0, 1.0).withAlpha(0.6));
+            }
+        }
     }
 
     for (0..board_size.x + 1) |k| {

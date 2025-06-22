@@ -56,6 +56,10 @@ pub fn Grid2D(T: type) type {
             self.data[self.indexOf(pos)] = value;
         }
 
+        pub fn setSigned(self: Self, pos: IVec2, value: T) void {
+            self.data[self.indexOfSigned(pos)] = value;
+        }
+
         fn indexOf(self: Self, pos: UVec2) usize {
             if (!self.inBoundsUnsigned(pos)) std.debug.panic("OoB: Grid2D of size {any} accessed at position {any}", .{ self.size, pos });
             return pos.y * self.size.x + pos.x;
