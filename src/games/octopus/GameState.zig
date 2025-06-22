@@ -23,6 +23,16 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 const board_size: UVec2 = .both(8);
 const octopus_pos: UVec2 = .new(3, 3);
 const octopus_color: FColor = .fromHex("#D819FF");
+const starting_edges_local: [8]EdgePos = .{
+    .{ .pos = .zero, .dir = .ne2 },
+    .{ .pos = .e1, .dir = .ne2 },
+    .{ .pos = .e1, .dir = .e1 },
+    .{ .pos = .one, .dir = .e1 },
+    .{ .pos = .one, .dir = .e2 },
+    .{ .pos = .e2, .dir = .e2 },
+    .{ .pos = .e2, .dir = .ne1 },
+    .{ .pos = .zero, .dir = .ne1 },
+};
 
 canvas: Canvas,
 mem: Mem,
@@ -40,14 +50,9 @@ pub fn init(
 ) !void {
     var mem: Mem = .init(gpa);
     const edges: kommon.Grid2DEdges(bool) = try .initFill(mem.level.allocator(), board_size, false);
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = .ne1 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.zero), .dir = .ne2 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = .e1 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e1), .dir = .ne2 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = .ne1 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.e2), .dir = .e2 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = .e1 }).?.* = true;
-    edges.atSafePtr(.{ .pos = octopus_pos.add(.one), .dir = .e2 }).?.* = true;
+    for (starting_edges_local) |edge| {
+        edges.atSafePtr(edge.translate(octopus_pos)).?.* = true;
+    }
     dst.* = .{
         .edges = edges,
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
@@ -108,6 +113,41 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    var tentacles: [8]std.ArrayList(kommon.grid2D.EdgePos) = undefined;
+    for (&tentacles, starting_edges_local) |*dst, starting_edge_local| {
+        dst.* = .init(self.mem.frame.allocator());
+        try dst.append(starting_edge_local.translate(octopus_pos));
+        main: while (true) {
+            const cur_end = dst.getLast().pos.addSigned(dst.getLast().dir);
+            // TODO: remove this check
+            for (dst.items) |e| if (e.pos.equals(cur_end)) break :main;
+
+            const next_dir: ?IVec2 = blk: for (IVec2.cardinal_directions) |dir| {
+                if (!dir.equals(dst.getLast().dir.neg()) and
+                    self.edges.atSafe(.{ .pos = cur_end, .dir = dir }) orelse false)
+                {
+                    break :blk dir;
+                }
+            } else null;
+            if (next_dir) |d| {
+                try dst.append(.{ .pos = cur_end, .dir = d });
+            } else break;
+        }
+    }
+
+    for ([8]KeyboardButton{
+        .Digit1, .Digit2, .Digit3, .Digit4,
+        .Digit5, .Digit6, .Digit7, .Digit8,
+    }, tentacles) |key, tentacle| {
+        if (platform.wasKeyPressedOrRetriggered(key, 0.2)) {
+            if (platform.keyboard.cur.isDown(.ShiftLeft) or platform.keyboard.cur.isDown(.ShiftRight)) {
+                self.shrinkTentacle(tentacle);
+            } else {
+                self.maybeGrowTentacle(tentacle, tentacle_at);
+            }
+        }
+    }
+
     const board: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), board_size);
     var it = board.iterator();
     while (it.next()) |pos| {
@@ -138,11 +178,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .none => {
             if (mouse.wasPressed(.left)) {
                 if (board.tileAt(mouse.cur.position, camera)) |tile| {
-                    self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                    // self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                    if (tentacle_at.at2(tile)) |id| {
+                        self.maybeGrowTentacle(tentacles[id], tentacle_at);
+                    }
+                }
+            } else if (mouse.wasPressed(.right)) {
+                if (board.tileAt(mouse.cur.position, camera)) |tile| {
+                    if (tentacle_at.at2(tile)) |id| {
+                        self.shrinkTentacle(tentacles[id]);
+                    }
                 }
             }
         },
         .lines => |*l| {
+            if (true) unreachable;
             if (mouse.wasReleased(.left)) {
                 self.focus = .none;
             } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
@@ -166,13 +216,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         },
     }
 
-    {
-        var asdf_it = tentacle_at.iterator();
-        while (asdf_it.next()) |pos| {
-            const rect = board.getTileRect(camera, pos);
-            if (tentacle_at.at2(pos)) |id| {
-                self.canvas.fillRect(camera, rect, FColor.fromHsv(tof32(id) / 8.0, 1.0, 1.0).withAlpha(0.6));
-            }
+    for (tentacles, 0..) |lst, k| {
+        for (lst.items) |edge| {
+            const color = FColor.fromHsv(tof32(k) / 8.0, 1.0, 1.0);
+            const cam = camera.move(Vec2.half.neg());
+            self.canvas.line(cam, &.{
+                edge.pos.tof32(),
+                edge.pos.addSigned(edge.dir).tof32(),
+            }, 0.25, color);
+            self.canvas.fillCircle(cam, edge.pos.tof32(), 0.3, color);
+            self.canvas.fillCircle(cam, edge.pos.addSigned(edge.dir).tof32(), 0.25, color);
         }
     }
 
@@ -182,20 +235,53 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     for (0..board_size.y + 1) |k| {
         self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
     }
-    var edge_it = self.edges.iterator();
-    while (edge_it.next()) |edge| {
-        const has_line = self.edges.at(edge);
-        if (has_line) {
-            self.canvas.line(camera, &.{
-                edge.pos.tof32().add(.half),
-                edge.pos.addSigned(edge.dir).tof32().add(.half),
-            }, 0.1, octopus_color);
-        }
-    }
+    // var edge_it = self.edges.iterator();
+    // while (edge_it.next()) |edge| {
+    //     const has_line = self.edges.at(edge);
+    //     if (has_line) {
+    //         self.canvas.line(camera, &.{
+    //             edge.pos.tof32().add(.half),
+    //             edge.pos.addSigned(edge.dir).tof32().add(.half),
+    //         }, 0.1, octopus_color);
+    //     }
+    // }
 
     self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
 
     return false;
+}
+
+fn shrinkTentacle(self: *GameState, tentacle: std.ArrayList(EdgePos)) void {
+    const last_edge = tentacle.getLast();
+    if (tentacle.items.len > 1) {
+        self.edges.set(last_edge, false);
+    }
+}
+
+fn maybeGrowTentacle(self: *GameState, tentacle: std.ArrayList(EdgePos), tentacle_at: kommon.Grid2D(?usize)) void {
+    const last_edge = tentacle.getLast();
+    const last_pos = last_edge.pos.addSigned(last_edge.dir);
+    const desired_edge: EdgePos = .{ .pos = last_pos, .dir = last_edge.dir };
+    if (isFreeAfterEdge(tentacle_at, desired_edge)) {
+        self.edges.set(desired_edge, true);
+    } else {
+        const turn_p: EdgePos = .{ .pos = last_pos, .dir = last_edge.dir.rotate(1) };
+        const turn_n: EdgePos = .{ .pos = last_pos, .dir = last_edge.dir.rotate(-1) };
+        if (isFreeAfterEdge(tentacle_at, turn_p) and
+            !isFreeAfterEdge(tentacle_at, turn_n))
+        {
+            self.edges.set(turn_p, true);
+        } else if (!isFreeAfterEdge(tentacle_at, turn_p) and
+            isFreeAfterEdge(tentacle_at, turn_n))
+        {
+            self.edges.set(turn_n, true);
+        }
+    }
+}
+
+fn isFreeAfterEdge(tentacle_at: kommon.Grid2D(?usize), edge: EdgePos) bool {
+    if (!tentacle_at.inBoundsSigned(edge.pos.cast(isize).add(edge.dir))) return false;
+    return tentacle_at.at2(edge.pos.addSigned(edge.dir)) == null;
 }
 
 const std = @import("std");
@@ -228,3 +314,4 @@ pub const TextRenderer = Canvas.TextRenderer;
 pub const Mem = @import("../tres_undos/GameState.zig").Mem;
 pub const Key = @import("../akari/GameState.zig").Key;
 pub const LazyState = @import("../akari/GameState.zig").LazyState;
+pub const EdgePos = kommon.grid2D.EdgePos;

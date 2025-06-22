@@ -265,6 +265,11 @@ pub const EdgePos = struct {
     pos: UVec2,
     dir: IVec2,
 
+    pub fn translate(self: EdgePos, p: UVec2) EdgePos {
+        assert(self.validDir());
+        return .{ .pos = self.pos.add(p), .dir = self.dir };
+    }
+
     pub fn between(a: UVec2, b: UVec2) ?EdgePos {
         const r: EdgePos = .{ .pos = a, .dir = b.subToSigned(a) };
         if (!r.validDir()) return null;
@@ -314,6 +319,16 @@ pub fn Grid2DEdges(T: type) type {
             return self.atSafePtr(edge).?.*;
         }
 
+        pub fn atSafe(self: Self, edge: EdgePos) ?T {
+            if (self.atSafePtr(edge)) |ptr| {
+                return ptr.*;
+            } else return null;
+        }
+
+        pub fn set(self: *Self, edge: EdgePos, value: T) void {
+            self.atSafePtr(edge).?.* = value;
+        }
+
         pub fn atSafePtr(self: Self, edge: EdgePos) ?*T {
             assert(edge.validDir());
             if (!self.inBounds(edge)) return null;
@@ -338,9 +353,9 @@ pub fn Grid2DEdges(T: type) type {
 
         pub fn inBounds(self: Self, edge: EdgePos) bool {
             assert(edge.validDir());
-            const big_pos = edge.pos.scale(2).addSigned(edge.dir);
-            return 0 <= big_pos.x and big_pos.x < self.size.x * 2 and
-                0 <= big_pos.y and big_pos.y < self.size.y * 2;
+            const big_pos = edge.pos.scale(2).cast(isize).add(edge.dir);
+            return 0 <= big_pos.x and big_pos.x < self.size.x * 2 - 1 and
+                0 <= big_pos.y and big_pos.y < self.size.y * 2 - 1;
         }
 
         const EdgeIterator = struct {

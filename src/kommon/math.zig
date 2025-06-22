@@ -185,6 +185,19 @@ pub fn ZVec2(T: type) type {
             return a.x * b.x + a.y * b.y;
         }
 
+        pub fn rotateOnce(v: Self) Self {
+            return new(-v.y, v.x);
+        }
+
+        pub fn rotate(v: Self, k: isize) Self {
+            var res = v;
+            for (0..@abs(k)) |_| {
+                res = rotateOnce(res);
+            }
+            if (k < 0) res = res.neg();
+            return res;
+        }
+
         pub fn mod(a: Self, m: UVec2) Self {
             return new(
                 @mod(a.x, m.cast(Scalar).x),

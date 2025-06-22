@@ -905,6 +905,8 @@ const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, Ke
     .{ c.SDL_SCANCODE_F10, .F10 },
     .{ c.SDL_SCANCODE_F11, .F11 },
     .{ c.SDL_SCANCODE_F12, .F12 },
+    .{ c.SDL_SCANCODE_LSHIFT, .ShiftLeft },
+    .{ c.SDL_SCANCODE_RSHIFT, .ShiftRight },
 };
 
 const std = @import("std");
