@@ -15,6 +15,7 @@ pub const PlatformGives = struct {
     getMouse: *const fn (camera: Rect) Mouse,
     keyboard: Keyboard,
     setKeyChanged: *const fn (key: KeyboardButton) void,
+    setButtonChanged: *const fn (button: kommon.input.MouseButton) void,
     aspect_ratio: f32,
     delta_seconds: f32,
     // idk if this should be given by the platform
@@ -27,6 +28,16 @@ pub const PlatformGives = struct {
         if (self.keyboard.wasPressed(key)) return true;
         if (self.keyboard.cur.isDown(key) and self.keyboard.timeSinceChange(key) > retrigger_time) {
             self.setKeyChanged(key);
+            return true;
+        }
+        return false;
+    }
+
+    pub fn wasButtonPressedOrRetriggered(self: @This(), button: kommon.input.MouseButton, retrigger_time: f32) bool {
+        const mouse = self.getMouse(.unit);
+        if (mouse.wasPressed(button)) return true;
+        if (mouse.cur.isDown(button) and mouse.timeSinceChange(button) > retrigger_time) {
+            self.setButtonChanged(button);
             return true;
         }
         return false;

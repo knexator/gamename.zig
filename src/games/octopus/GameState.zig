@@ -186,14 +186,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     switch (self.focus) {
         .none => {
-            if (mouse.wasPressed(.left)) {
+            if (platform.wasButtonPressedOrRetriggered(.left, 0.2)) {
                 if (board.tileAt(mouse.cur.position, camera)) |tile| {
                     // self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
                     if (tentacle_at.at2(tile)) |id| {
                         self.maybeGrowTentacle(tentacles[id], tentacle_at);
                     }
                 }
-            } else if (mouse.wasPressed(.right)) {
+            } else if (platform.wasButtonPressedOrRetriggered(.right, 0.2)) {
                 if (board.tileAt(mouse.cur.position, camera)) |tile| {
                     if (tentacle_at.at2(tile)) |id| {
                         self.shrinkTentacle(tentacles[id]);

@@ -56,6 +56,24 @@ pub const MouseState = struct {
 pub const Mouse = struct {
     cur: MouseState,
     prev: MouseState,
+    last_change_at: kommon.meta.StructFromEnum(MouseButton, f32, false) = undefined,
+    cur_time: f32,
+
+    pub fn lastChangeAt(self: @This(), button: MouseButton) f32 {
+        return switch (button) {
+            inline else => |x| @field(self.last_change_at, @tagName(x)),
+        };
+    }
+
+    pub fn timeSinceChange(self: @This(), button: MouseButton) f32 {
+        return self.cur_time - self.lastChangeAt(button);
+    }
+
+    pub fn setChanged(self: *@This(), button: MouseButton) void {
+        return switch (button) {
+            inline else => |x| @field(self.last_change_at, @tagName(x)) = self.cur_time,
+        };
+    }
 
     pub fn wasPressed(self: Mouse, button: MouseButton) bool {
         return self.cur.isDown(button) and !self.prev.isDown(button);

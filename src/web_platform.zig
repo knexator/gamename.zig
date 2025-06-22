@@ -389,6 +389,7 @@ var web_platform: PlatformGives = .{
     }.anon,
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,
+    .setButtonChanged = setButtonChanged,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,
@@ -779,6 +780,7 @@ export fn init() void {
 
 export fn update(delta_seconds: f32) void {
     keyboard.cur_time = web_platform.global_seconds;
+    mouse.cur_time = web_platform.global_seconds;
     web_platform.aspect_ratio = js_better.canvas.getSize().aspectRatio();
     web_platform.delta_seconds = delta_seconds;
     web_platform.global_seconds += delta_seconds;
@@ -811,7 +813,11 @@ export fn update(delta_seconds: f32) void {
 }
 
 /// positions are in [0..1]x[0..1]
-var mouse: Mouse = .{ .cur = .init, .prev = .init };
+var mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 };
+fn setButtonChanged(key: kommon.input.MouseButton) void {
+    mouse.setChanged(key);
+}
+
 export fn pointermove(x: f32, y: f32) void {
     mouse.cur.position = js_better.canvas.getRect().localFromWorldPosition(.new(x, y));
 }
@@ -823,22 +829,30 @@ const MouseButton = enum(u8) {
     _,
 };
 
-export fn pointerup(button: MouseButton) void {
+fn buttonchanged(button: MouseButton, is_pressed: bool) void {
     switch (button) {
-        .left => mouse.cur.buttons.left = false,
-        .middle => mouse.cur.buttons.middle = false,
-        .right => mouse.cur.buttons.right = false,
+        .left => {
+            mouse.cur.buttons.left = is_pressed;
+            mouse.last_change_at.left = web_platform.global_seconds;
+        },
+        .middle => {
+            mouse.cur.buttons.middle = is_pressed;
+            mouse.last_change_at.middle = web_platform.global_seconds;
+        },
+        .right => {
+            mouse.cur.buttons.right = is_pressed;
+            mouse.last_change_at.right = web_platform.global_seconds;
+        },
         _ => {},
     }
 }
 
+export fn pointerup(button: MouseButton) void {
+    buttonchanged(button, false);
+}
+
 export fn pointerdown(button: MouseButton) void {
-    switch (button) {
-        .left => mouse.cur.buttons.left = true,
-        .middle => mouse.cur.buttons.middle = true,
-        .right => mouse.cur.buttons.right = true,
-        _ => {},
-    }
+    buttonchanged(button, true);
 }
 
 export fn wheel(delta_y: i32) void {

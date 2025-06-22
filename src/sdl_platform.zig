@@ -77,7 +77,10 @@ fn getWindowRect() Rect {
 }
 
 /// positions are in [0..1]x[0..1]
-var mouse = Mouse{ .cur = .init, .prev = .init };
+var mouse = Mouse{ .cur = .init, .prev = .init, .cur_time = 0 };
+fn setButtonChanged(button: kommon.input.MouseButton) void {
+    mouse.setChanged(button);
+}
 var keyboard = Keyboard{ .cur = .init, .prev = .init, .cur_time = 0 };
 fn setKeyChanged(key: KeyboardButton) void {
     keyboard.setChanged(key);
@@ -584,6 +587,7 @@ pub fn main() !void {
         }.anon,
         .keyboard = keyboard,
         .setKeyChanged = setKeyChanged,
+        .setButtonChanged = setButtonChanged,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
         .global_seconds = 0,
@@ -613,11 +617,14 @@ pub fn main() !void {
                     },
                     c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_EVENT_MOUSE_BUTTON_UP => {
                         const is_pressed = event.button.down;
-                        switch (event.button.button) {
-                            c.SDL_BUTTON_LEFT => mouse.cur.buttons.left = is_pressed,
-                            c.SDL_BUTTON_RIGHT => mouse.cur.buttons.right = is_pressed,
-                            c.SDL_BUTTON_MIDDLE => mouse.cur.buttons.middle = is_pressed,
-                            else => {},
+                        inline for (sdl_button_to_mouse_button) |pair| {
+                            const sdl_button = pair[0];
+                            const button = pair[1];
+                            if (event.button.button == sdl_button) {
+                                @field(mouse.cur.buttons, @tagName(button)) = is_pressed;
+                                @field(mouse.last_change_at, @tagName(button)) = sdl_platform.global_seconds;
+                                break;
+                            }
                         }
                     },
                     c.SDL_EVENT_MOUSE_MOTION => {
@@ -659,6 +666,7 @@ pub fn main() !void {
         // Update & Draw
         {
             keyboard.cur_time = sdl_platform.global_seconds;
+            mouse.cur_time = sdl_platform.global_seconds;
             const ns_since_last_frame = timer.lap();
             sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
             sdl_platform.global_seconds += sdl_platform.delta_seconds;
@@ -832,6 +840,12 @@ const Loop = struct {
         const data = self.data;
         errify(c.SDL_PutAudioStreamData(stream.?, data.ptr, @intCast(data.len))) catch unreachable;
     }
+};
+
+const sdl_button_to_mouse_button = [_]std.meta.Tuple(&.{ c_int, kommon.input.MouseButton }){
+    .{ c.SDL_BUTTON_LEFT, .left },
+    .{ c.SDL_BUTTON_RIGHT, .right },
+    .{ c.SDL_BUTTON_MIDDLE, .middle },
 };
 
 const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, KeyboardButton }){
