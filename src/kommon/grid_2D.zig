@@ -265,6 +265,11 @@ pub const EdgePos = struct {
     pos: UVec2,
     dir: IVec2,
 
+    pub fn nextPos(self: EdgePos) UVec2 {
+        assert(self.validDir());
+        return self.pos.addSigned(self.dir);
+    }
+
     pub fn translate(self: EdgePos, p: UVec2) EdgePos {
         assert(self.validDir());
         return .{ .pos = self.pos.add(p), .dir = self.dir };

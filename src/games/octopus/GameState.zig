@@ -98,52 +98,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     blocked.set(octopus_pos.add(.e2), true);
     blocked.set(octopus_pos.add(.one), true);
 
-    const tentacle_at: kommon.Grid2D(?usize) = try .initFill(self.mem.frame.allocator(), board_size, null);
-    for ([_]IVec2{
-        .new(0, -1), .new(1, -1),
-        .new(2, 0),  .new(2, 1),
-        .new(1, 2),  .new(0, 2),
-        .new(-1, 1), .new(-1, 0),
-    }, 0..) |delta, k| {
-        tentacle_at.set(octopus_pos.addSigned(delta), k);
-        var queue: std.fifo.LinearFifo(UVec2, .Dynamic) = .init(self.mem.frame.allocator());
-        try queue.writeItem(octopus_pos.addSigned(delta));
-        while (queue.readItem()) |pos| {
-            for (IVec2.cardinal_directions) |dir| {
-                const new_pos = pos.cast(isize).add(dir);
-                if (tentacle_at.inBoundsSigned(new_pos) and
-                    tentacle_at.atSigned(new_pos) == null and
-                    blocked.atSigned(new_pos) == false and
-                    self.edges.at(.{ .pos = pos, .dir = dir }) == true)
-                {
-                    tentacle_at.setSigned(new_pos, k);
-                    try queue.writeItem(new_pos.cast(usize));
-                }
-            }
-        }
-    }
-
-    var tentacles: [8]std.ArrayList(kommon.grid2D.EdgePos) = undefined;
-    for (&tentacles, starting_edges_local) |*dst, starting_edge_local| {
-        dst.* = .init(self.mem.frame.allocator());
-        try dst.append(starting_edge_local.translate(octopus_pos));
-        main: while (true) {
-            const cur_end = dst.getLast().pos.addSigned(dst.getLast().dir);
-            // TODO: remove this check
-            for (dst.items) |e| if (e.pos.equals(cur_end)) break :main;
-
-            const next_dir: ?IVec2 = blk: for (IVec2.cardinal_directions) |dir| {
-                if (!dir.equals(dst.getLast().dir.neg()) and
-                    self.edges.atSafe(.{ .pos = cur_end, .dir = dir }) orelse false)
-                {
-                    break :blk dir;
-                }
-            } else null;
-            if (next_dir) |d| {
-                try dst.append(.{ .pos = cur_end, .dir = d });
-            } else break;
-        }
-    }
+    const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
+    var tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
 
     for ([8]KeyboardButton{
         .Digit1, .Digit2, .Digit3, .Digit4,
@@ -196,7 +152,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             } else if (platform.wasButtonPressedOrRetriggered(.right, 0.2)) {
                 if (board.tileAt(mouse.cur.position, camera)) |tile| {
                     if (tentacle_at.at2(tile)) |id| {
-                        self.shrinkTentacle(tentacles[id]);
+                        if (tentacles[id].getLast().nextPos().equals(tile)) {
+                            self.shrinkTentacle(tentacles[id]);
+                        } else while (!tentacles[id].getLast().nextPos().equals(tile)) {
+                            self.shrinkTentacle(tentacles[id]);
+                            tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
+                        }
                     }
                 }
             }
@@ -275,6 +236,59 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
 
     return false;
+}
+
+fn tentacleAtFromEdges(edges: kommon.Grid2DEdges(bool), blocked: kommon.Grid2D(bool), allocator: std.mem.Allocator) !kommon.Grid2D(?usize) {
+    const tentacle_at: kommon.Grid2D(?usize) = try .initFill(allocator, board_size, null);
+    for ([_]IVec2{
+        .new(0, -1), .new(1, -1),
+        .new(2, 0),  .new(2, 1),
+        .new(1, 2),  .new(0, 2),
+        .new(-1, 1), .new(-1, 0),
+    }, 0..) |delta, k| {
+        tentacle_at.set(octopus_pos.addSigned(delta), k);
+        var queue: std.fifo.LinearFifo(UVec2, .Dynamic) = .init(allocator);
+        try queue.writeItem(octopus_pos.addSigned(delta));
+        while (queue.readItem()) |pos| {
+            for (IVec2.cardinal_directions) |dir| {
+                const new_pos = pos.cast(isize).add(dir);
+                if (tentacle_at.inBoundsSigned(new_pos) and
+                    tentacle_at.atSigned(new_pos) == null and
+                    blocked.atSigned(new_pos) == false and
+                    edges.at(.{ .pos = pos, .dir = dir }) == true)
+                {
+                    tentacle_at.setSigned(new_pos, k);
+                    try queue.writeItem(new_pos.cast(usize));
+                }
+            }
+        }
+    }
+    return tentacle_at;
+}
+
+fn tentaclesFromEdges(edges: kommon.Grid2DEdges(bool), allocator: std.mem.Allocator) ![8]std.ArrayList(EdgePos) {
+    var tentacles: [8]std.ArrayList(kommon.grid2D.EdgePos) = undefined;
+    for (&tentacles, starting_edges_local) |*dst, starting_edge_local| {
+        dst.* = .init(allocator);
+        try dst.append(starting_edge_local.translate(octopus_pos));
+        main: while (true) {
+            const cur_end = dst.getLast().pos.addSigned(dst.getLast().dir);
+            // TODO: remove this check
+            for (dst.items) |e| if (e.pos.equals(cur_end)) break :main;
+
+            const next_dir: ?IVec2 = blk: for (IVec2.cardinal_directions) |dir| {
+                if (!dir.equals(dst.getLast().dir.neg()) and
+                    edges.atSafe(.{ .pos = cur_end, .dir = dir }) orelse false)
+                {
+                    break :blk dir;
+                }
+            } else null;
+            if (next_dir) |d| {
+                try dst.append(.{ .pos = cur_end, .dir = d });
+            } else break;
+        }
+    }
+    return tentacles;
 }
 
 fn shrinkTentacle(self: *GameState, tentacle: std.ArrayList(EdgePos)) void {
