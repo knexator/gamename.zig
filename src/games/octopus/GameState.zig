@@ -33,6 +33,16 @@ const starting_edges_local: [8]EdgePos = .{
     .{ .pos = .e2, .dir = .ne1 },
     .{ .pos = .zero, .dir = .ne1 },
 };
+const target = .{
+    [_]IVec2{ .ne2, .e1, .e1 },
+    [_]IVec2{ .e1, .e1, .e1, .e2 },
+    [_]IVec2{ .e1, .e2, .e2, .e1, .ne2 },
+    [_]IVec2{ .e2, .e2, .e1, .e1, .e2, .ne1 },
+    [_]IVec2{ .e2, .ne1, .ne1, .e2, .e1, .e1, .e1 },
+    [_]IVec2{ .ne1, .ne1, .e2, .e2, .ne1, .ne2, .ne2, .ne2 },
+    [_]IVec2{ .ne1, .ne2, .ne1, .ne2, .ne2, .ne2, .e1, .e2, .e2 },
+    [_]IVec2{ .ne2, .ne2, .ne2, .e1, .e1, .e1, .e1, .e1, .e2, .ne1 },
+};
 
 canvas: Canvas,
 mem: Mem,
@@ -245,6 +255,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     //         }, 0.1, octopus_color);
     //     }
     // }
+
+    inline for (@typeInfo(@TypeOf(target)).@"struct".fields, starting_edges_local) |field, starting_edge_local| {
+        const dirs = @field(target, field.name);
+        var cur = starting_edge_local.translate(octopus_pos);
+        self.canvas.line(camera, &.{
+            cur.pos.tof32().add(.half),
+            cur.pos.addSigned(cur.dir).tof32().add(.half),
+        }, 0.1, octopus_color.withAlpha(0.1));
+        for (dirs) |d| {
+            cur = .{ .pos = cur.pos.addSigned(cur.dir), .dir = d };
+            self.canvas.line(camera, &.{
+                cur.pos.tof32().add(.half),
+                cur.pos.addSigned(cur.dir).tof32().add(.half),
+            }, 0.1, octopus_color.withAlpha(0.1));
+        }
+    }
 
     self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
 
