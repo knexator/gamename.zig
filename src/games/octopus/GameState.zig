@@ -41,6 +41,9 @@ smooth: LazyState,
 focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
 edges: kommon.Grid2DEdges(bool),
 clues_tiles: kommon.Grid2D(?TileClue),
+move_history: std.ArrayList(DeltaMove),
+
+const DeltaMove = struct { where: EdgePos, added: bool };
 
 const ClueLen = union(enum) {
     exact: usize,
@@ -88,6 +91,7 @@ pub fn init(
         .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .mem = mem,
         .smooth = .init(gpa),
+        .move_history = .init(gpa),
         .clues_tiles = try .initFill(mem.level.allocator(), board_size, null),
     };
     dst.clues_tiles.set(.new(2, 3), .{ .starts_here_with_len = .{ .exact = 8 } });
@@ -128,6 +132,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     blocked.set(octopus_pos.add(.e2), true);
     blocked.set(octopus_pos.add(.one), true);
 
+    if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
+        if (self.move_history.pop()) |delta| {
+            self.edges.set(delta.where, !delta.added);
+        }
+    }
+
     // const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
     const tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
 
@@ -150,10 +160,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .fromFormat("active {d}", .{key}),
             if (is_active) 1.0 else 0.0,
         );
-        self.canvas.fillRect(camera, rect, try self.smooth.fcolor(
-            .fromFormat("bg {d}", .{key}),
-            .white,
-        ));
+        self.canvas.fillRect(camera, rect, if (pos.isEven()) .fromHex("#72FFD2") else .fromHex("#32FFD9"));
         self.canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
     }
 
@@ -176,6 +183,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         // if (tentacle_at.at2(new_tile) == null or tentacle_at.at2(new_tile) == tentacle_at.at2(l.tile)) {
                         if (true) {
                             const edge_ptr = self.edges.atSafePtr(edge_pos).?;
+                            const old_value = edge_ptr.*;
                             switch (l.which) {
                                 .idk => {
                                     l.which = if (edge_ptr.*) .erase else .draw;
@@ -183,6 +191,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                 },
                                 .erase => edge_ptr.* = false,
                                 .draw => edge_ptr.* = true,
+                            }
+                            if (edge_ptr.* != old_value) {
+                                try self.move_history.append(.{ .where = edge_pos, .added = edge_ptr.* });
                             }
                         }
                     }
@@ -205,12 +216,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     //     }
     // }
 
-    for (0..board_size.x + 1) |k| {
-        self.canvas.line(camera, &.{ .new(tof32(k), 0), .new(tof32(k), board_size.y) }, 0.02, .black);
-    }
-    for (0..board_size.y + 1) |k| {
-        self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
-    }
+    // for (0..board_size.x + 1) |k| {
+    //     self.canvas.line(camera, &.{ .new(tof32(k), 0), .new(tof32(k), board_size.y) }, 0.02, .black);
+    // }
+    // for (0..board_size.y + 1) |k| {
+    //     self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
+    // }
 
     var edge_it = self.edges.iterator();
     while (edge_it.next()) |edge| {
@@ -219,7 +230,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.canvas.line(camera, &.{
                 edge.pos.tof32().add(.half),
                 edge.pos.addSigned(edge.dir).tof32().add(.half),
-            }, 0.1, octopus_color);
+            }, 0.3, octopus_color);
         }
     }
 

@@ -112,6 +112,10 @@ pub fn ZVec2(T: type) type {
                 (v.y == 0 and @abs(v.x) == 1);
         }
 
+        pub fn isEven(v: Self) bool {
+            return @mod(v.x + v.y, 2) == 0;
+        }
+
         pub fn tof32(v: Self) Vec2 {
             return .new(@floatFromInt(v.x), @floatFromInt(v.y));
         }
