@@ -23,6 +23,9 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 const board_size: UVec2 = .both(8);
 const octopus_pos: UVec2 = .new(3, 3);
 const octopus_color: FColor = .fromHex("#D819FF");
+const octopus_color_2: FColor = .fromHex("#C31EFF");
+const octopus_color_body: FColor = .fromHex("#AE23FF");
+const spot_color: FColor = .fromHex("#D866FF");
 const starting_edges_local: [8]EdgePos = .{
     .{ .pos = .zero, .dir = .ne2 },
     .{ .pos = .e1, .dir = .ne2 },
@@ -42,6 +45,7 @@ focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw,
 edges: kommon.Grid2DEdges(bool),
 clues_tiles: kommon.Grid2D(?TileClue),
 move_history: std.ArrayList(DeltaMove),
+time_of_last_move: f32 = -std.math.inf(f32),
 
 const DeltaMove = struct { where: EdgePos, added: bool };
 
@@ -135,10 +139,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
         if (self.move_history.pop()) |delta| {
             self.edges.set(delta.where, !delta.added);
+            self.time_of_last_move = -std.math.inf(f32);
         }
     }
 
-    // const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
+    const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
     const tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
 
     const board: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), board_size);
@@ -194,6 +199,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             }
                             if (edge_ptr.* != old_value) {
                                 try self.move_history.append(.{ .where = edge_pos, .added = edge_ptr.* });
+                                self.time_of_last_move = platform.global_seconds;
                             }
                         }
                     }
@@ -225,6 +231,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     var edge_it = self.edges.iterator();
     while (edge_it.next()) |edge| {
+        if (tentacle_at.at2(edge.pos) != null or tentacle_at.at2(edge.nextPos()) != null) continue;
         const has_line = self.edges.at(edge);
         if (has_line) {
             self.canvas.line(camera, &.{
@@ -234,19 +241,62 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
-
-    for (tentacles, 0..) |tentacle, k| {
-        const len = try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{tentacle.items.len});
-        try self.canvas.drawTextLine(
-            0,
-            camera,
-            .{ .center = octopus_pos.add(.one).tof32().add(Vec2.fromTurns((5.5 + tof32(k)) / 8.0).scale(0.75)) },
-            len,
-            0.4,
-            .black,
-        );
+    for (tentacles) |tentacle| {
+        for (tentacle.items, 0..) |edge, k| {
+            const dist_to_tip = tentacle.items.len - k;
+            const color: FColor = if (@mod(dist_to_tip, 2) == 0) octopus_color_2 else octopus_color;
+            var spot_pos = edge.middle();
+            if (k == 0) {
+                const end = edge.nextPos().tof32();
+                const start = octopus_pos.tof32().add(.half);
+                const middle_1 = Vec2.lerp(
+                    edge.pos.tof32(),
+                    .lerp(start, end, 0.4),
+                    0.5,
+                );
+                const middle_2 = Vec2.lerp(
+                    edge.pos.tof32(),
+                    .lerp(start, end, 0.8),
+                    0.5,
+                );
+                self.canvas.line(camera, &.{
+                    start.add(.half),
+                    middle_1.add(.half),
+                    middle_2.add(.half),
+                    end.add(.half),
+                }, 0.3, color);
+                spot_pos = .lerp(middle_2, end, 0.3);
+            } else {
+                self.canvas.line(camera, &.{
+                    edge.pos.tof32().add(.half),
+                    edge.pos.addSigned(edge.dir).tof32().add(.half),
+                }, 0.3, color);
+                self.canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
+            }
+            self.canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
+            switch (@mod(dist_to_tip, 3)) {
+                1 => {},
+                2 => {},
+                0 => self.canvas.fillCircle(camera, spot_pos.add(.half), 0.15, spot_color),
+                else => unreachable,
+            }
+        }
     }
+
+    // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
+    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
+
+    // for (tentacles, 0..) |tentacle, k| {
+    //     const len = try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{tentacle.items.len});
+    //     try self.canvas.drawTextLine(
+    //         0,
+    //         camera,
+    //         .{ .center = octopus_pos.add(.one).tof32().add(Vec2.fromTurns((5.5 + tof32(k)) / 8.0).scale(0.75)) },
+    //         len,
+    //         0.4,
+    //         .black,
+    //     );
+    // }
 
     it.reset();
     while (it.next()) |pos| {

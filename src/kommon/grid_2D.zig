@@ -270,6 +270,11 @@ pub const EdgePos = struct {
         return self.pos.addSigned(self.dir);
     }
 
+    pub fn middle(self: EdgePos) kommon.math.Vec2 {
+        assert(self.validDir());
+        return self.pos.tof32().add(self.dir.tof32().scale(0.5));
+    }
+
     pub fn translate(self: EdgePos, p: UVec2) EdgePos {
         assert(self.validDir());
         return .{ .pos = self.pos.add(p), .dir = self.dir };
