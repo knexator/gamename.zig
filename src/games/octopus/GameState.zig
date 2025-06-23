@@ -67,13 +67,13 @@ const TileClue = union(enum) {
     starts_here_with_len: ClueLen,
     ends_here_with_len: ClueLen,
 
-    pub fn isSatisfied(clue: TileClue, pos: UVec2, tentacles: [8]std.ArrayList(EdgePos)) bool {
+    pub fn isSatisfied(clue: TileClue, pos: UVec2, tentacles: []const []const EdgePos) bool {
         switch (clue) {
             .starts_here_with_len => |l| for (tentacles) |tentacle| {
-                if (tentacle.items[0].nextPos().equals(pos)) return l.fits(tentacle.items.len);
+                if (tentacle[0].nextPos().equals(pos)) return l.fits(tentacle.len);
             } else return false,
             .ends_here_with_len => |l| for (tentacles) |tentacle| {
-                if (tentacle.getLast().nextPos().equals(pos)) return l.fits(tentacle.items.len);
+                if (tentacle[tentacle.len - 1].nextPos().equals(pos)) return l.fits(tentacle.len);
             } else return false,
         }
     }
@@ -136,6 +136,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     blocked.set(octopus_pos.add(.e2), true);
     blocked.set(octopus_pos.add(.one), true);
 
+    for (starting_edges_local) |s| {
+        self.edges.set(s.translate(octopus_pos), true);
+    }
+
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
         if (self.move_history.pop()) |delta| {
             self.edges.set(delta.where, !delta.added);
@@ -143,8 +147,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
-    const tentacles = try tentaclesFromEdges(self.edges, self.mem.frame.allocator());
+    // const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
+    const info = try infoFromEdges(self.edges, blocked, self.mem.frame.allocator());
+    const tentacles = info.all_tentacles[0..8];
+    const tentacle_at = info.tentacle_at;
 
     const board: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), board_size);
     var it = board.iterator();
@@ -184,22 +190,54 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.focus = .none;
             } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
                 if (!new_tile.equals(l.tile) and !blocked.at2(new_tile)) {
-                    if (kommon.grid2D.EdgePos.between(l.tile, new_tile)) |edge_pos| {
-                        // if (tentacle_at.at2(new_tile) == null or tentacle_at.at2(new_tile) == tentacle_at.at2(l.tile)) {
-                        if (true) {
-                            const edge_ptr = self.edges.atSafePtr(edge_pos).?;
-                            const old_value = edge_ptr.*;
-                            switch (l.which) {
-                                .idk => {
-                                    l.which = if (edge_ptr.*) .erase else .draw;
-                                    edge_ptr.* = !edge_ptr.*;
-                                },
-                                .erase => edge_ptr.* = false,
-                                .draw => edge_ptr.* = true,
-                            }
-                            if (edge_ptr.* != old_value) {
-                                try self.move_history.append(.{ .where = edge_pos, .added = edge_ptr.* });
-                                self.time_of_last_move = platform.global_seconds;
+                    if (EdgePos.between(l.tile, new_tile)) |edge_pos| {
+                        const edge_ptr = self.edges.atSafePtr(edge_pos).?;
+                        const old_value = edge_ptr.*;
+                        switch (l.which) {
+                            .idk => {
+                                l.which = if (edge_ptr.*) .erase else .draw;
+                                edge_ptr.* = !edge_ptr.*;
+                            },
+                            .erase => edge_ptr.* = false,
+                            .draw => edge_ptr.* = true,
+                        }
+                        if (edge_ptr.* != old_value) {
+                            try self.move_history.append(.{ .where = edge_pos, .added = edge_ptr.* });
+                            self.time_of_last_move = platform.global_seconds;
+                            // when adding an edge, check that it's all still valid
+                            if (edge_ptr.* and isInitial(l.tile) and isInitial(new_tile)) {
+                                _ = self.move_history.pop();
+                                edge_ptr.* = false;
+                            } else if (edge_ptr.*) {
+                                const illegal_connection: bool = blk: {
+                                    if (tentacle_at.at2(l.tile) == null) break :blk false;
+                                    if (tentacle_at.at2(new_tile) == null) break :blk false;
+                                    const id_1 = tentacle_at.at2(l.tile).?.id;
+                                    const id_2 = tentacle_at.at2(new_tile).?.id;
+                                    if (id_1 == id_2) break :blk true;
+                                    if (id_1 < 8 and id_2 < 8) break :blk true;
+                                    break :blk false;
+                                };
+
+                                edge_ptr.* = false;
+                                defer edge_ptr.* = true;
+                                var edges_to_remove: std.ArrayList(EdgePos) = .init(self.mem.frame.allocator());
+
+                                inline for (&.{ l.tile, new_tile }) |p| {
+                                    var edges = activeEdgesAround(self.edges, p);
+                                    assert(edges.len <= 2);
+                                    if (illegal_connection or edges.len == 2) {
+                                        for (edges.constSlice()) |e| {
+                                            try edges_to_remove.append(e);
+                                        }
+                                    }
+                                }
+
+                                for (edges_to_remove.items) |edge| {
+                                    assert(self.edges.at(edge));
+                                    try self.move_history.append(.{ .where = edge, .added = false });
+                                    self.edges.set(edge, false);
+                                }
                             }
                         }
                     }
@@ -209,19 +247,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         },
     }
 
-    // for (tentacles, 0..) |lst, k| {
-    //     for (lst.items) |edge| {
-    //         const color = FColor.fromHsv(tof32(k) / 8.0, 1.0, 1.0);
-    //         const cam = camera.move(Vec2.half.neg());
-    //         self.canvas.line(cam, &.{
-    //             edge.pos.tof32(),
-    //             edge.pos.addSigned(edge.dir).tof32(),
-    //         }, 0.25, color);
-    //         self.canvas.fillCircle(cam, edge.pos.tof32(), 0.3, color);
-    //         self.canvas.fillCircle(cam, edge.pos.addSigned(edge.dir).tof32(), 0.25, color);
-    //     }
-    // }
-
     // for (0..board_size.x + 1) |k| {
     //     self.canvas.line(camera, &.{ .new(tof32(k), 0), .new(tof32(k), board_size.y) }, 0.02, .black);
     // }
@@ -229,21 +254,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     //     self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
     // }
 
-    var edge_it = self.edges.iterator();
-    while (edge_it.next()) |edge| {
-        if (tentacle_at.at2(edge.pos) != null or tentacle_at.at2(edge.nextPos()) != null) continue;
-        const has_line = self.edges.at(edge);
-        if (has_line) {
+    for (info.all_tentacles[8..]) |tentacle| {
+        for (tentacle) |edge| {
+            const color = octopus_color;
             self.canvas.line(camera, &.{
                 edge.pos.tof32().add(.half),
                 edge.pos.addSigned(edge.dir).tof32().add(.half),
-            }, 0.3, octopus_color);
+            }, 0.3, color);
+            self.canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
+            self.canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
         }
     }
 
     for (tentacles) |tentacle| {
-        for (tentacle.items, 0..) |edge, k| {
-            const dist_to_tip = tentacle.items.len - k;
+        for (tentacle, 0..) |edge, k| {
+            const dist_to_tip = tentacle.len - k;
             const color: FColor = if (@mod(dist_to_tip, 2) == 0) octopus_color_2 else octopus_color;
             var spot_pos = edge.middle();
             if (k == 0) {
@@ -319,44 +344,51 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    return false;
-}
-
-fn tentacleAtFromEdges(edges: kommon.Grid2DEdges(bool), blocked: kommon.Grid2D(bool), allocator: std.mem.Allocator) !kommon.Grid2D(?usize) {
-    const tentacle_at: kommon.Grid2D(?usize) = try .initFill(allocator, board_size, null);
-    for ([_]IVec2{
-        .new(0, -1), .new(1, -1),
-        .new(2, 0),  .new(2, 1),
-        .new(1, 2),  .new(0, 2),
-        .new(-1, 1), .new(-1, 0),
-    }, 0..) |delta, k| {
-        tentacle_at.set(octopus_pos.addSigned(delta), k);
-        var queue: std.fifo.LinearFifo(UVec2, .Dynamic) = .init(allocator);
-        try queue.writeItem(octopus_pos.addSigned(delta));
-        while (queue.readItem()) |pos| {
-            for (IVec2.cardinal_directions) |dir| {
-                const new_pos = pos.cast(isize).add(dir);
-                if (tentacle_at.inBoundsSigned(new_pos) and
-                    tentacle_at.atSigned(new_pos) == null and
-                    blocked.atSigned(new_pos) == false and
-                    edges.at(.{ .pos = pos, .dir = dir }) == true)
-                {
-                    tentacle_at.setSigned(new_pos, k);
-                    try queue.writeItem(new_pos.cast(usize));
-                }
+    if (false) {
+        var edge_it = self.edges.iterator();
+        while (edge_it.next()) |edge| {
+            if (self.edges.at(edge)) {
+                self.canvas.line(camera, &.{
+                    edge.pos.tof32().add(.half),
+                    edge.pos.addSigned(edge.dir).tof32().add(.half),
+                }, 0.2, .black);
             }
         }
     }
-    return tentacle_at;
+
+    return false;
 }
 
-fn tentaclesFromEdges(edges: kommon.Grid2DEdges(bool), allocator: std.mem.Allocator) ![8]std.ArrayList(EdgePos) {
-    var tentacles: [8]std.ArrayList(kommon.grid2D.EdgePos) = undefined;
-    for (&tentacles, starting_edges_local) |*dst, starting_edge_local| {
-        dst.* = .init(allocator);
+fn isInitial(pos: UVec2) bool {
+    for (starting_edges_local) |e| {
+        if (e.translate(octopus_pos).nextPos().equals(pos)) return true;
+    } else return false;
+}
+
+fn activeEdgesAround(edges: kommon.Grid2DEdges(bool), pos: UVec2) std.BoundedArray(EdgePos, 4) {
+    var res = std.BoundedArray(EdgePos, 4).init(0) catch unreachable;
+    for (IVec2.cardinal_directions) |d| {
+        if (edges.atSafe(.{ .pos = pos, .dir = d }) orelse false) {
+            res.append(.{ .pos = pos, .dir = d }) catch unreachable;
+        }
+    }
+    return res;
+}
+
+const TentacleTile = struct { id: usize, dist: usize };
+fn infoFromEdges(edges: kommon.Grid2DEdges(bool), blocked: kommon.Grid2D(bool), allocator: std.mem.Allocator) !struct {
+    all_tentacles: []const []const EdgePos,
+    tentacle_at: kommon.Grid2D(?TentacleTile),
+} {
+    var all_tentacles: std.ArrayList([]const EdgePos) = .init(allocator);
+    const tentacle_at: kommon.Grid2D(?TentacleTile) = try .initFill(allocator, board_size, null);
+    for (starting_edges_local, 0..) |starting_edge_local, k| {
+        var dst: std.ArrayList(EdgePos) = .init(allocator);
         try dst.append(starting_edge_local.translate(octopus_pos));
         main: while (true) {
-            const cur_end = dst.getLast().pos.addSigned(dst.getLast().dir);
+            const cur_end = dst.getLast().nextPos();
+            tentacle_at.set(cur_end, .{ .id = k, .dist = dst.items.len });
+
             // TODO: remove this check
             for (dst.items) |e| if (e.pos.equals(cur_end)) break :main;
 
@@ -371,8 +403,46 @@ fn tentaclesFromEdges(edges: kommon.Grid2DEdges(bool), allocator: std.mem.Alloca
                 try dst.append(.{ .pos = cur_end, .dir = d });
             } else break;
         }
+        try all_tentacles.append(try dst.toOwnedSlice());
     }
-    return tentacles;
+    var it = tentacle_at.iterator();
+    while (it.next()) |first_pos| {
+        if (blocked.at2(first_pos)) continue;
+        if (tentacle_at.at2(first_pos) == null) {
+            var all_tiles: std.ArrayList(EdgePos) = .init(allocator);
+            for (IVec2.cardinal_directions) |dir| {
+                if (edges.atSafe(.{ .pos = first_pos, .dir = dir }) orelse false) {
+                    try all_tiles.append(.{ .pos = first_pos, .dir = dir });
+                }
+            }
+
+            if (all_tiles.items.len > 0) {
+                // TODO: proper dist
+                tentacle_at.set(first_pos, .{ .id = all_tentacles.items.len, .dist = 0 });
+
+                var pending = try all_tiles.clone();
+                defer pending.deinit();
+                while (pending.pop()) |cur_edge| {
+                    // TODO: proper dist
+                    tentacle_at.set(cur_edge.nextPos(), .{ .id = all_tentacles.items.len, .dist = 0 });
+                    const cur = cur_edge.nextPos();
+                    for (IVec2.cardinal_directions) |dir| {
+                        if (edges.atSafe(.{ .pos = cur, .dir = dir }) orelse false) {
+                            if (tentacle_at.at2(cur.addSigned(dir)) == null) {
+                                try all_tiles.append(.{ .pos = cur, .dir = dir });
+                                try pending.append(.{ .pos = cur, .dir = dir });
+                            }
+                        }
+                    }
+                }
+                try all_tentacles.append(try all_tiles.toOwnedSlice());
+            }
+        }
+    }
+    return .{
+        .all_tentacles = try all_tentacles.toOwnedSlice(),
+        .tentacle_at = tentacle_at,
+    };
 }
 
 fn shrinkTentacle(self: *GameState, tentacle: std.ArrayList(EdgePos)) void {
@@ -427,6 +497,7 @@ const IVec2 = math.IVec2;
 const funk = kommon.funktional;
 const maybeMirror = math.maybeMirror;
 const Noise = kommon.Noise;
+const last = kommon.last;
 pub const Mouse = kommon.input.Mouse;
 pub const Keyboard = kommon.input.Keyboard;
 pub const KeyboardButton = kommon.input.KeyboardButton;

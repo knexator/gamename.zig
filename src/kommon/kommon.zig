@@ -28,7 +28,21 @@ pub fn safeAt(T: type, arr: []const T, index: usize) ?T {
     return arr[index];
 }
 
-pub fn last(T: type, arr: []T) ?T {
+pub fn last(arr: anytype) ?std.meta.Elem(@TypeOf(arr)) {
+    switch (@typeInfo(@TypeOf(arr))) {
+        .array => @compileError("TODO"),
+        .vector => @compileError("TODO"),
+        .pointer => |info| switch (info.size) {
+            .one => @compileError("no"),
+            .many, .c => @compileError("TODO"),
+            .slice => return lastExplicit(info.child, arr),
+        },
+        else => {},
+    }
+    @compileError("Expected pointer, slice, array or vector type, found '" ++ @typeName(@TypeOf(arr)) ++ "'");
+}
+
+pub fn lastExplicit(T: type, arr: []T) ?T {
     if (arr.len == 0) return null;
     return arr[arr.len - 1];
 }
