@@ -843,6 +843,7 @@ pub const Rect = struct {
             .size => |size| switch (keep) {
                 else => @panic("TODO"),
                 .center => .fromCenterAndSize(original.get(.center), size),
+                .top_center => .from(.{ .{ .top_center = original.get(.top_center) }, .{ .size = size } }),
             },
         };
     }

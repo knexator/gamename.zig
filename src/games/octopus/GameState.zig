@@ -6,7 +6,7 @@ pub const stuff = .{
     .metadata = .{
         .name = "octopus",
         .author = "knexator",
-        .desired_aspect_ratio = 1.0,
+        .desired_aspect_ratio = 3.0 / 4.0,
     },
 
     .sounds = .{},
@@ -174,9 +174,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const board_size = self.level_state.board_size;
 
-    const camera: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
+    const board_rect: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
+
+    const camera = board_rect.withAspectRatio(platform.aspect_ratio, .grow, .top_center);
     const mouse = platform.getMouse(camera);
-    platform.gl.clear(.gray(0.5));
+    platform.gl.clear(.fromHex("#43B0D8"));
 
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
         self.level_state.undo();
@@ -196,7 +198,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var it = board.iterator();
     while (it.next()) |pos| {
         const key: Key = .fromFormat("tile {d} {d}", .{ pos.x, pos.y });
-        const rect = board.getTileRect(camera, pos);
+        const rect = board.getTileRect(board_rect, pos);
         const mouse_over = rect.contains(mouse.cur.position) and !blocked.at2(pos);
         const is_active = switch (self.focus) {
             .none => false,
@@ -218,7 +220,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     switch (self.focus) {
         .none => {
             if (mouse.wasPressed(.left)) {
-                if (board.tileAt(mouse.cur.position, camera)) |tile| {
+                if (board.tileAt(mouse.cur.position, board_rect)) |tile| {
                     if (!blocked.at2(tile)) {
                         self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
                     }
@@ -228,7 +230,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .lines => |*l| {
             if (mouse.wasReleased(.left)) {
                 self.focus = .none;
-            } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
+            } else if (board.tileAt(mouse.cur.position, board_rect)) |new_tile| {
                 if (!new_tile.equals(l.tile) and !blocked.at2(new_tile)) {
                     if (EdgePos.between(l.tile, new_tile)) |edge_pos| {
                         const edge_ptr = edges.atSafePtr(edge_pos).?;
@@ -378,8 +380,45 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         .idk => "?",
                     },
                     1,
-                    if (clue.isSatisfied(pos, tentacles)) .green else .red,
+                    if (clue.isSatisfied(pos, tentacles)) .black else .red,
                 ),
+            }
+        }
+    }
+
+    if (self.level_state.clues_tiles.tileAt(mouse.cur.position, board_rect)) |pos| {
+        if (self.level_state.clues_tiles.at2(pos)) |clue| {
+            const extra_panel_rect: Rect = .from(.{
+                .{ .top_center = board_rect.get(.bottom_center) },
+                .{ .size = camera.get(.size).addY(-board_rect.size.x) },
+            });
+            switch (clue) {
+                .starts_here_with_len, .ends_here_with_len => |c| {
+                    // const text = std.fmt.allocPrint(self.mem.frame.allocator(), "with odd length", args: anytype)
+                    const len_text = switch (c) {
+                        .exact => |v| try std.fmt.allocPrint(self.mem.frame.allocator(), "of length {d}", .{v}),
+                        .odd => "with odd length",
+                        .even => "with even length",
+                        .idk => "with unknown length",
+                    };
+                    const lines: []const []const u8 = &.{
+                        "A tentacle", len_text, switch (clue) {
+                            .starts_here_with_len => "starts here.",
+                            .ends_here_with_len => "ends here.",
+                        },
+                    };
+                    // TODO: canvas.drawlines
+                    inline for (lines, &.{ -1.2, 0, 1 }) |l, k| {
+                        try self.canvas.drawTextLine(
+                            0,
+                            camera,
+                            .{ .center = extra_panel_rect.get(.center).addY(k * 0.6) },
+                            l,
+                            0.6,
+                            if (clue.isSatisfied(pos, tentacles)) .black else .red,
+                        );
+                    }
+                },
             }
         }
     }
