@@ -20,8 +20,74 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-const board_size: UVec2 = .both(8);
-const octopus_pos: UVec2 = .new(3, 3);
+const LevelInfo = struct {
+    board_size: UVec2 = .both(8),
+    octopus_pos: UVec2 = .new(3, 3),
+    clues: []const struct { pos: UVec2, clue: TileClue },
+    blocks: []const UVec2,
+};
+
+const level_infos: []const LevelInfo = &.{
+    .{
+        .clues = &.{
+            .{ .pos = .new(2, 3), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
+            .{ .pos = .new(3, 5), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
+            .{ .pos = .new(1, 6), .clue = .{ .ends_here_with_len = .{ .exact = 8 } } },
+            .{ .pos = .new(1, 7), .clue = .{ .ends_here_with_len = .{ .exact = 8 } } },
+            .{ .pos = .new(1, 1), .clue = .{ .ends_here_with_len = .{ .exact = 6 } } },
+            .{ .pos = .new(6, 1), .clue = .{ .ends_here_with_len = .{ .exact = 5 } } },
+            .{ .pos = .new(0, 4), .clue = .{ .ends_here_with_len = .odd } },
+            .{ .pos = .new(6, 6), .clue = .{ .ends_here_with_len = .odd } },
+            .{ .pos = .new(7, 6), .clue = .{ .ends_here_with_len = .idk } },
+        },
+        .blocks = &.{},
+    },
+};
+
+const LevelState = struct {
+    board_size: UVec2 = .both(8),
+    octopus_pos: UVec2 = .new(3, 3),
+    edges: kommon.Grid2DEdges(bool),
+    clues_tiles: kommon.Grid2D(?TileClue),
+    blocked: kommon.Grid2D(bool),
+    move_history: std.ArrayList(DeltaMove),
+    time_of_last_move: f32 = -std.math.inf(f32),
+
+    fn init(dst: *LevelState, info: LevelInfo, alloc: std.mem.Allocator) !void {
+        const board_size = info.board_size;
+        dst.* = .{
+            .board_size = info.board_size,
+            .octopus_pos = info.octopus_pos,
+            .edges = try .initFill(alloc, board_size, false),
+            .clues_tiles = try .initFill(alloc, board_size, null),
+            .blocked = try .initFill(alloc, board_size, false),
+            .move_history = try .initCapacity(alloc, 1),
+        };
+        for (starting_edges_local) |edge| {
+            dst.edges.set(edge.translate(info.octopus_pos), true);
+        }
+        for ([4]UVec2{ .zero, .e1, .e2, .one }) |d| {
+            dst.blocked.set(info.octopus_pos.add(d), true);
+        }
+        for (info.clues) |c| {
+            dst.clues_tiles.set(c.pos, c.clue);
+        }
+    }
+
+    fn isInitial(self: LevelState, pos: UVec2) bool {
+        for (starting_edges_local) |e| {
+            if (e.translate(self.octopus_pos).nextPos().equals(pos)) return true;
+        } else return false;
+    }
+
+    fn undo(self: *LevelState) void {
+        if (self.move_history.pop()) |delta| {
+            self.edges.set(delta.where, !delta.added);
+            self.time_of_last_move = -std.math.inf(f32);
+        }
+    }
+};
+
 const octopus_color: FColor = .fromHex("#D819FF");
 const octopus_color_2: FColor = .fromHex("#C31EFF");
 const octopus_color_body: FColor = .fromHex("#AE23FF");
@@ -42,10 +108,7 @@ mem: Mem,
 smooth: LazyState,
 
 focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
-edges: kommon.Grid2DEdges(bool),
-clues_tiles: kommon.Grid2D(?TileClue),
-move_history: std.ArrayList(DeltaMove),
-time_of_last_move: f32 = -std.math.inf(f32),
+level_state: LevelState,
 
 const DeltaMove = struct { where: EdgePos, added: bool };
 
@@ -85,34 +148,16 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
-    var mem: Mem = .init(gpa);
-    const edges: kommon.Grid2DEdges(bool) = try .initFill(mem.level.allocator(), board_size, false);
-    for (starting_edges_local) |edge| {
-        edges.atSafePtr(edge.translate(octopus_pos)).?.* = true;
-    }
-    dst.* = .{
-        .edges = edges,
-        .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
-        .mem = mem,
-        .smooth = .init(gpa),
-        .move_history = .init(gpa),
-        .clues_tiles = try .initFill(mem.level.allocator(), board_size, null),
-    };
-    dst.clues_tiles.set(.new(2, 3), .{ .starts_here_with_len = .{ .exact = 8 } });
-    dst.clues_tiles.set(.new(3, 5), .{ .starts_here_with_len = .{ .exact = 8 } });
-    dst.clues_tiles.set(.new(1, 6), .{ .ends_here_with_len = .{ .exact = 8 } });
-    dst.clues_tiles.set(.new(1, 7), .{ .ends_here_with_len = .{ .exact = 8 } });
-    dst.clues_tiles.set(.new(1, 1), .{ .ends_here_with_len = .{ .exact = 6 } });
-    dst.clues_tiles.set(.new(6, 1), .{ .ends_here_with_len = .{ .exact = 5 } });
-    dst.clues_tiles.set(.new(0, 4), .{ .ends_here_with_len = .odd });
-    dst.clues_tiles.set(.new(6, 6), .{ .ends_here_with_len = .odd });
-    dst.clues_tiles.set(.new(7, 6), .{ .ends_here_with_len = .idk });
+    dst.mem = .init(gpa);
+    try dst.level_state.init(level_infos[0], dst.mem.level.allocator());
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.smooth = .init(gpa);
 }
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.canvas.deinit(undefined, gpa);
-    self.edges.deinit(self.mem.level.allocator());
+    // self.mem.deinit();
 }
 
 pub fn beforeHotReload(self: *GameState) !void {
@@ -126,29 +171,24 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
+
+    const board_size = self.level_state.board_size;
+
     const camera: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
     const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
 
-    const blocked: kommon.Grid2D(bool) = try .initFill(self.mem.frame.allocator(), board_size, false);
-    blocked.set(octopus_pos.add(.zero), true);
-    blocked.set(octopus_pos.add(.e1), true);
-    blocked.set(octopus_pos.add(.e2), true);
-    blocked.set(octopus_pos.add(.one), true);
-
-    for (starting_edges_local) |s| {
-        self.edges.set(s.translate(octopus_pos), true);
-    }
-
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
-        if (self.move_history.pop()) |delta| {
-            self.edges.set(delta.where, !delta.added);
-            self.time_of_last_move = -std.math.inf(f32);
-        }
+        self.level_state.undo();
     }
 
-    // const tentacle_at = try tentacleAtFromEdges(self.edges, blocked, self.mem.frame.allocator());
-    const info = try infoFromEdges(self.edges, blocked, self.mem.frame.allocator());
+    const octopus_pos = self.level_state.octopus_pos;
+    const edges = &self.level_state.edges;
+    for (starting_edges_local) |s| {
+        edges.set(s.translate(octopus_pos), true);
+    }
+    const blocked = self.level_state.blocked;
+    const info = try infoFromEdges(edges.*, blocked, board_size, octopus_pos, self.mem.frame.allocator());
     const tentacles = info.all_tentacles[0..8];
     const tentacle_at = info.tentacle_at;
 
@@ -191,7 +231,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             } else if (board.tileAt(mouse.cur.position, camera)) |new_tile| {
                 if (!new_tile.equals(l.tile) and !blocked.at2(new_tile)) {
                     if (EdgePos.between(l.tile, new_tile)) |edge_pos| {
-                        const edge_ptr = self.edges.atSafePtr(edge_pos).?;
+                        const edge_ptr = edges.atSafePtr(edge_pos).?;
                         const old_value = edge_ptr.*;
                         switch (l.which) {
                             .idk => {
@@ -202,11 +242,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             .draw => edge_ptr.* = true,
                         }
                         if (edge_ptr.* != old_value) {
-                            try self.move_history.append(.{ .where = edge_pos, .added = edge_ptr.* });
-                            self.time_of_last_move = platform.global_seconds;
+                            try self.level_state.move_history.append(.{ .where = edge_pos, .added = edge_ptr.* });
+                            self.level_state.time_of_last_move = platform.global_seconds;
                             // when adding an edge, check that it's all still valid
-                            if (edge_ptr.* and isInitial(l.tile) and isInitial(new_tile)) {
-                                _ = self.move_history.pop();
+                            if (edge_ptr.* and self.level_state.isInitial(l.tile) and self.level_state.isInitial(new_tile)) {
+                                _ = self.level_state.move_history.pop();
                                 edge_ptr.* = false;
                             } else if (edge_ptr.*) {
                                 const illegal_connection: bool = blk: {
@@ -224,19 +264,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                 var edges_to_remove: std.ArrayList(EdgePos) = .init(self.mem.frame.allocator());
 
                                 inline for (&.{ l.tile, new_tile }) |p| {
-                                    var edges = activeEdgesAround(self.edges, p);
-                                    assert(edges.len <= 2);
-                                    if (illegal_connection or edges.len == 2) {
-                                        for (edges.constSlice()) |e| {
+                                    var local_edges = activeEdgesAround(edges.*, p);
+                                    assert(local_edges.len <= 2);
+                                    if (illegal_connection or local_edges.len == 2) {
+                                        for (local_edges.constSlice()) |e| {
                                             try edges_to_remove.append(e);
                                         }
                                     }
                                 }
 
                                 for (edges_to_remove.items) |edge| {
-                                    assert(self.edges.at(edge));
-                                    try self.move_history.append(.{ .where = edge, .added = false });
-                                    self.edges.set(edge, false);
+                                    assert(edges.at(edge));
+                                    try self.level_state.move_history.append(.{ .where = edge, .added = false });
+                                    edges.set(edge, false);
                                 }
                             }
                         }
@@ -325,7 +365,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     it.reset();
     while (it.next()) |pos| {
-        if (self.clues_tiles.at2(pos)) |clue| {
+        if (self.level_state.clues_tiles.at2(pos)) |clue| {
             switch (clue) {
                 .starts_here_with_len, .ends_here_with_len => |c| try self.canvas.drawTextLine(
                     0,
@@ -359,12 +399,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     return false;
 }
 
-fn isInitial(pos: UVec2) bool {
-    for (starting_edges_local) |e| {
-        if (e.translate(octopus_pos).nextPos().equals(pos)) return true;
-    } else return false;
-}
-
 fn activeEdgesAround(edges: kommon.Grid2DEdges(bool), pos: UVec2) std.BoundedArray(EdgePos, 4) {
     var res = std.BoundedArray(EdgePos, 4).init(0) catch unreachable;
     for (IVec2.cardinal_directions) |d| {
@@ -376,7 +410,7 @@ fn activeEdgesAround(edges: kommon.Grid2DEdges(bool), pos: UVec2) std.BoundedArr
 }
 
 const TentacleTile = struct { id: usize, dist: usize };
-fn infoFromEdges(edges: kommon.Grid2DEdges(bool), blocked: kommon.Grid2D(bool), allocator: std.mem.Allocator) !struct {
+fn infoFromEdges(edges: kommon.Grid2DEdges(bool), blocked: kommon.Grid2D(bool), board_size: UVec2, octopus_pos: UVec2, allocator: std.mem.Allocator) !struct {
     all_tentacles: []const []const EdgePos,
     tentacle_at: kommon.Grid2D(?TentacleTile),
 } {
