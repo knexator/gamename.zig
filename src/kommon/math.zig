@@ -1532,4 +1532,8 @@ pub const easings = struct {
     pub fn easeInOutCubic(x: f32) f32 {
         return if (x < 0.5) 4 * x * x * x else 1 - std.math.pow(f32, -2 * x + 2, 3) / 2;
     }
+
+    pub fn easeOutCubic(x: f32) f32 {
+        return 1 - std.math.pow(1 - x, 3);
+    }
 };

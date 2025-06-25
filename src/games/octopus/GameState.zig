@@ -415,7 +415,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.canvas.fillCircle(camera, a_pos, 0.15, color);
             self.canvas.fillCircle(camera, b_pos, 0.15, color);
 
-            if (@abs(@mod(dist_to_tip, 3) - 2.35) < SPACING / 2.0) {
+            if (@abs(@mod(dist_to_tip, 3) - 2.25) < SPACING / 2.0) {
                 try all_spots.append(a_pos);
             }
         }
@@ -573,26 +573,18 @@ fn tentaclePosAt(tentacle: []const EdgePos, dist_to_base: f32, octopus_pos: UVec
     if (tof32(tentacle.len) == dist_to_base) {
         return kommon.last(tentacle).?.nextPos().tof32().add(.half);
     } else if (dist_to_base <= 1) {
+        const t = dist_to_base;
+
         const edge = tentacle[0];
+        // const start = octopus_pos.tof32().add(.one).add(.fromPolar(0.5, 0));
+        const control = edge.pos.tof32().add(edge.dir.tof32().scale(0.5)).add(.half);
         const end = edge.nextPos().tof32().add(.half);
-        const start = octopus_pos.tof32().add(.one);
-        const middle_1 = Vec2.lerp(
-            edge.pos.tof32().add(.half),
-            .lerp(start, end, 0.4),
-            0.5,
-        );
-        const middle_2 = Vec2.lerp(
-            edge.pos.tof32().add(.half),
-            .lerp(start, end, 0.8),
-            0.5,
-        );
-        // TODO: improve
-        return if (dist_to_base < 1.0 / 3.0)
-            .lerp(start, middle_1, dist_to_base * 3.0)
-        else if (dist_to_base < 2.0 / 3.0)
-            .lerp(middle_1, middle_2, (dist_to_base - 1.0 / 3.0) * 3.0)
-        else
-            .lerp(middle_2, end, (dist_to_base - 2.0 / 3.0) * 3.0);
+        const start = octopus_pos.tof32().add(.half).towardsPure(edge.pos.tof32(), 0.4).add(.half);
+
+        const p1 = Vec2.lerp(start, control, t);
+        const p2 = Vec2.lerp(control, end, t);
+
+        return .lerp(p1, p2, t);
     } else {
         const edge = tentacle[@intFromFloat(@floor(dist_to_base))];
         const fract = @mod(dist_to_base, 1.0);
