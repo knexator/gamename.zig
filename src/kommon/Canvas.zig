@@ -874,6 +874,30 @@ pub fn drawTextLine(
     );
 }
 
+pub fn drawTextLines(
+    self: *Canvas,
+    font_index: usize,
+    camera: Rect,
+    text_align: TextRenderer.Align,
+    pos: Rect.Measure,
+    lines: []const []const u8,
+    em: f32,
+    line_spacing: f32,
+    color: FColor,
+) !void {
+    try self.text_renderers[font_index].drawLines(
+        self.gl,
+        camera,
+        text_align,
+        pos,
+        lines,
+        em,
+        line_spacing,
+        color,
+        self.frame_arena.allocator(),
+    );
+}
+
 // TODO: small text looks worse on the web version!
 pub const TextRenderer = struct {
     atlas_texture: Gl.Texture,
@@ -1011,23 +1035,18 @@ pub const TextRenderer = struct {
 
     fn quadsForLine(
         self: TextRenderer,
-        pos: Rect.Measure,
         text: []const u8,
         em: f32,
         color: FColor,
         target: std.mem.Allocator,
-    ) !?struct {quads: []const Quad, bounds: Rect} {
+    ) ![]Quad {
         var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
         var cursor: Vec2 = .zero;
         for (text) |char| {
             cursor, const quad = self.addLetter(cursor, char, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
         }
-        if (quads.items.len == 0) return null;
-        const bounds = Rect.boundingOOP(Quad, quads.items, "pos");
-        const delta = bounds.deltaToAchieve(pos);
-        for (quads.items) |*q| q.pos.top_left.addInPlace(delta);
-        return .{ .quads = try quads.toOwnedSlice(), .bounds = bounds.move(delta) };
+        return quads.toOwnedSlice();
     }
 
     // TODO: kerning
@@ -1042,9 +1061,46 @@ pub const TextRenderer = struct {
         color: FColor,
         scratch: std.mem.Allocator,
     ) !void {
-        const info = (try self.quadsForLine(pos, text, em, color, scratch)) orelse return;
-        defer scratch.free(info.quads);
-        for (info.quads) |q| self.drawQuad(gl, camera, q);
+        const quads = try self.quadsForLine(text, em, color, scratch);
+        defer scratch.free(quads);
+        if (quads.len == 0) return;
+        const bounds = Rect.boundingOOP(Quad, quads, "pos");
+        const delta = bounds.deltaToAchieve(pos);
+        for (quads) |q| self.drawQuad(gl, camera.move(delta.neg()), q);
+    }
+
+    pub const Align = enum { left, right, center };
+
+    // TODO: kerning
+    // TODO: single draw call, maybe
+    pub fn drawLines(
+        self: TextRenderer,
+        gl: Gl,
+        camera: Rect,
+        text_align: Align,
+        pos: Rect.Measure,
+        lines: []const []const u8,
+        em: f32,
+        line_spacing: f32,
+        color: FColor,
+        scratch: std.mem.Allocator,
+    ) !void {
+        var all_quads: std.ArrayList(Quad) = .init(scratch);
+        for (lines, 0..) |text_line, k| {
+            const quads = try self.quadsForLine(text_line, em, color, scratch);
+            if (quads.len == 0) continue;
+            const width = Rect.boundingOOP(Quad, quads, "pos").size.x;
+            const x_off = switch (text_align) {
+                .left => 0,
+                .center => -width / 2.0,
+                .right => -width,
+            };
+            for (quads) |*q| q.pos.top_left.addInPlace(.new(x_off, math.tof32(k) * em * line_spacing));
+            try all_quads.appendSlice(quads);
+        }
+
+        const delta = Rect.boundingOOP(Quad, all_quads.items, "pos").deltaToAchieve(pos);
+        for (all_quads.items) |q| self.drawQuad(gl, camera.move(delta.neg()), q);
     }
 
     // TODO: kerning

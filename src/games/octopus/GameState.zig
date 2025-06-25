@@ -407,17 +407,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             .ends_here_with_len => "ends here.",
                         },
                     };
-                    // TODO: canvas.drawlines
-                    inline for (lines, &.{ -1.2, 0, 1 }) |l, k| {
-                        try self.canvas.drawTextLine(
-                            0,
-                            camera,
-                            .{ .center = extra_panel_rect.get(.center).addY(k * 0.6) },
-                            l,
-                            0.6,
-                            if (clue.isSatisfied(pos, tentacles)) .black else .red,
-                        );
-                    }
+                    try self.canvas.drawTextLines(
+                        0,
+                        camera,
+                        .center,
+                        .{ .center = extra_panel_rect.get(.center) },
+                        lines,
+                        0.6,
+                        1.0,
+                        if (clue.isSatisfied(pos, tentacles)) .black else .red,
+                    );
                 },
             }
         }
