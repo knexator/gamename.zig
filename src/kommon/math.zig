@@ -858,6 +858,18 @@ pub const Rect = struct {
             .size = original.size,
         };
     }
+    
+    pub fn boundingOOP(comptime T: type, objs: []const T, comptime prop: []const u8) Rect {
+        assert(objs.len > 0); 
+        var bounds = @field(objs[0], prop);
+        for (objs[1..]) |q| bounds = Rect.bounding(&.{ bounds, @field(q, prop) });
+        return bounds;
+    }
+
+    pub fn deltaToAchieve(current: Rect, target: Measure) Vec2 {
+        assert(std.meta.activeTag(target) != .size);
+        return current.with(target, .size).top_left.sub(current.top_left);
+    }
 
     pub fn bounding(rects: []const Rect) Rect {
         assert(rects.len > 0);

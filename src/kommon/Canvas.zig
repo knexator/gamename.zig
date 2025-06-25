@@ -1009,6 +1009,27 @@ pub const TextRenderer = struct {
         // gl.DeleteTextures(1, @ptrCast(&self.texture));
     }
 
+    fn quadsForLine(
+        self: TextRenderer,
+        pos: Rect.Measure,
+        text: []const u8,
+        em: f32,
+        color: FColor,
+        target: std.mem.Allocator,
+    ) !?struct {quads: []const Quad, bounds: Rect} {
+        var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
+        var cursor: Vec2 = .zero;
+        for (text) |char| {
+            cursor, const quad = self.addLetter(cursor, char, em, color);
+            if (quad) |q| quads.appendAssumeCapacity(q);
+        }
+        if (quads.items.len == 0) return null;
+        const bounds = Rect.boundingOOP(Quad, quads.items, "pos");
+        const delta = bounds.deltaToAchieve(pos);
+        for (quads.items) |*q| q.pos.top_left.addInPlace(delta);
+        return .{ .quads = try quads.toOwnedSlice(), .bounds = bounds.move(delta) };
+    }
+
     // TODO: kerning
     // TODO: single draw call, maybe
     pub fn drawLine(
@@ -1021,18 +1042,9 @@ pub const TextRenderer = struct {
         color: FColor,
         scratch: std.mem.Allocator,
     ) !void {
-        var quads: std.ArrayList(Quad) = try .initCapacity(scratch, text.len);
-        defer quads.deinit();
-        var cursor: Vec2 = .zero;
-        for (text) |char| {
-            cursor, const quad = self.addLetter(cursor, char, em, color);
-            if (quad) |q| quads.appendAssumeCapacity(q);
-        }
-        if (quads.items.len == 0) return;
-        var bounds = quads.items[0].pos;
-        for (quads.items[1..]) |q| bounds = Rect.bounding(&.{ bounds, q.pos });
-        const delta = bounds.with(pos, .size).top_left.sub(bounds.top_left);
-        for (quads.items) |q| self.drawQuad(gl, camera.move(delta.neg()), q);
+        const info = (try self.quadsForLine(pos, text, em, color, scratch)) orelse return;
+        defer scratch.free(info.quads);
+        for (info.quads) |q| self.drawQuad(gl, camera, q);
     }
 
     // TODO: kerning
