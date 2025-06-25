@@ -255,14 +255,18 @@ pub const Vec2 = extern struct {
         }
     }
 
-    pub fn towards(v: *Self, goal: Self, max_delta: f32) void {
-        const delta = goal.sub(v.*);
+    pub fn towardsPure(v: Self, goal: Self, max_delta: f32) Self {
+        const delta = goal.sub(v);
         const delta_mag = delta.mag();
         if (delta_mag <= max_delta) {
-            v.* = goal;
+            return goal;
         } else {
-            v.addInPlace(delta.scale(max_delta / delta_mag));
+            return v.add(delta.scale(max_delta / delta_mag));
         }
+    }
+
+    pub fn towards(v: *Self, goal: Self, max_delta: f32) void {
+        v.* = towardsPure(v.*, goal, max_delta);
     }
 
     pub fn toInt(v: Self, S: type) ZVec2(S) {
@@ -868,9 +872,9 @@ pub const Rect = struct {
             .size = original.size,
         };
     }
-    
+
     pub fn boundingOOP(comptime T: type, objs: []const T, comptime prop: []const u8) Rect {
-        assert(objs.len > 0); 
+        assert(objs.len > 0);
         var bounds = @field(objs[0], prop);
         for (objs[1..]) |q| bounds = Rect.bounding(&.{ bounds, @field(q, prop) });
         return bounds;

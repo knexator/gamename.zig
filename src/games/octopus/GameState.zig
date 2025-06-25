@@ -88,11 +88,12 @@ const LevelState = struct {
     }
 };
 
-const grid_color_1: FColor = .fromHex("#72FFD2");
-const grid_color_2: FColor = .fromHex("#32FFD9");
-const octopus_color: FColor = .fromHex("#D819FF");
-const octopus_color_2: FColor = .fromHex("#C31EFF");
-const octopus_color_body: FColor = .fromHex("#AE23FF");
+const bg_color: FColor = .fromHex("#6FD3CA");
+const grid_color_1: FColor = .fromHex("#C8FCBA");
+const grid_color_2: FColor = .fromHex("#DEFFB5");
+const octopus_color_2: FColor = .fromHex("#AF23EF");
+const octopus_color: FColor = .fromHex("#7E27AD");
+const octopus_color_body: FColor = .fromHex("#EA53ED");
 const spot_color: FColor = .fromHex("#D866FF");
 const starting_edges_local: [8]EdgePos = .{
     .{ .pos = .zero, .dir = .ne2 },
@@ -209,7 +210,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const camera = board_rect.withAspectRatio(platform.aspect_ratio, .grow, .top_center);
     const mouse = platform.getMouse(camera);
-    platform.gl.clear(.fromHex("#43B0D8"));
+    platform.gl.clear(bg_color);
 
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
         self.level_state.undo();
@@ -476,8 +477,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     };
 
-    // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
+    // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
     self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
+    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(0.3), 0.15, .white);
+    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(-0.3), 0.15, .white);
+    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(0.3).towardsPure(mouse.cur.position, 0.10), 0.05, .black);
+    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(-0.3).towardsPure(mouse.cur.position, 0.10), 0.05, .black);
 
     // for (tentacles, 0..) |tentacle, k| {
     //     const len = try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{tentacle.items.len});
