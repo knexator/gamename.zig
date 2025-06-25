@@ -341,6 +341,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     for (&self.visual_tentacles_distance, tentacles) |*visual_tentacle_distance, real_tentacle| {
+        while (@abs(visual_tentacle_distance.* - tof32(real_tentacle.len)) > 6) {
+            math.towards(visual_tentacle_distance, tof32(real_tentacle.len), 6);
+        }
         math.towards(visual_tentacle_distance, tof32(real_tentacle.len), platform.delta_seconds * 16.0);
         // math.lerp_towards(visual_tentacle_distance, tof32(real_tentacle.len), 0.6, platform.delta_seconds);
     }
