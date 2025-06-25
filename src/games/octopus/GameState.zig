@@ -88,6 +88,8 @@ const LevelState = struct {
     }
 };
 
+const grid_color_1: FColor = .fromHex("#72FFD2");
+const grid_color_2: FColor = .fromHex("#32FFD9");
 const octopus_color: FColor = .fromHex("#D819FF");
 const octopus_color_2: FColor = .fromHex("#C31EFF");
 const octopus_color_body: FColor = .fromHex("#AE23FF");
@@ -109,6 +111,12 @@ smooth: LazyState,
 
 focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
 level_state: LevelState,
+visual_tentacles_distance: [8]f32 = @splat(1.0),
+// visual_tentacles: [8]std.ArrayList(TentacleVisualPoint),
+// visual_tentacles: [8]std.ArrayList(Vec2),
+const VISUAL_POINTS_PER_SEGMENT = 4;
+
+const TentacleVisualPoint = struct { pos: Vec2, dist_to_base: f32 };
 
 const DeltaMove = struct { where: EdgePos, added: bool };
 
@@ -152,6 +160,29 @@ pub fn init(
     try dst.level_state.init(level_infos[0], dst.mem.level.allocator());
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
+    // dst.visual_tentacles = undefined;
+    // for (&dst.visual_tentacles, starting_edges_local) |*t, s| {
+    //     t.* = try .initCapacity(dst.mem.level.allocator(), 20 * VISUAL_POINTS_PER_SEGMENT);
+    //     const edge = s.translate(dst.level_state.octopus_pos);
+    //     const end = edge.nextPos().tof32();
+    //     const start = dst.level_state.octopus_pos.tof32().add(.half);
+    //     const middle_1 = Vec2.lerp(
+    //         edge.pos.tof32(),
+    //         .lerp(start, end, 0.4),
+    //         0.5,
+    //     );
+    //     const middle_2 = Vec2.lerp(
+    //         edge.pos.tof32(),
+    //         .lerp(start, end, 0.8),
+    //         0.5,
+    //     );
+    //     try t.*.appendSlice(&.{
+    //         .{ .pos = end.add(.half), .dist_to_base = 1.0 },
+    //         .{ .pos = middle_2.add(.half), .dist_to_base = 2.0 / 3.0 },
+    //         .{ .pos = middle_1.add(.half), .dist_to_base = 1.0 / 3.0 },
+    //         .{ .pos = start.add(.half), .dist_to_base = 0.0 },
+    //     });
+    // }
 }
 
 // TODO: take gl parameter
@@ -213,7 +244,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .fromFormat("active {d}", .{key}),
             if (is_active) 1.0 else 0.0,
         );
-        self.canvas.fillRect(camera, rect, if (pos.isEven()) .fromHex("#72FFD2") else .fromHex("#32FFD9"));
+        self.canvas.fillRect(camera, rect, if (pos.isEven()) grid_color_1 else grid_color_2);
         self.canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
     }
 
@@ -308,10 +339,105 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    for (tentacles) |tentacle| {
+    for (&self.visual_tentacles_distance, tentacles) |*visual_tentacle_distance, real_tentacle| {
+        math.towards(visual_tentacle_distance, tof32(real_tentacle.len), platform.delta_seconds * 16.0);
+        // math.lerp_towards(visual_tentacle_distance, tof32(real_tentacle.len), 0.6, platform.delta_seconds);
+    }
+
+    // for (&self.visual_tentacles, tentacles) |*visual_tentacle, real_tentacle| {
+    //     const missing_dist = tof32(real_tentacle.len) - visual_tentacle.items[0].dist_to_base;
+    //     if (missing_dist > 0) {
+    //         const delta_dist = @min(missing_dist, platform.delta_seconds);
+    //         for (visual_tentacle.items) |*p| {
+    //             p.dist_to_base += delta_dist;
+    //             p.pos = tentaclePosAt(real_tentacle, p.dist_to_base);
+    //         }
+    //     }
+    //     // for (visual_tentacle.items[1..], 0..) |*v, k| {
+    //     // }
+    // }
+
+    // for (&self.visual_tentacles, tentacles) |*visual_tentacle, real_tentacle| {
+    //     while (visual_tentacle.items.len < VISUAL_POINTS_PER_SEGMENT * real_tentacle.len) {
+    //         try visual_tentacle.append(octopus_pos.tof32().add(.one));
+    //     }
+    //     for (visual_tentacle.items, 0..) |*v, k| {
+    //         const dist_to_tip = tof32(k) / VISUAL_POINTS_PER_SEGMENT;
+    //         const dist_to_base = tof32(real_tentacle.len) - dist_to_tip;
+    //         const target_pos: Vec2 = if (dist_to_base <= 0)
+    //             octopus_pos.tof32()
+    //         else if (dist_to_base <= 1) blk: {
+    //             const edge = real_tentacle[0];
+    //             const end = edge.nextPos().tof32();
+    //             const start = octopus_pos.tof32().add(.half);
+    //             const middle_1 = Vec2.lerp(
+    //                 edge.pos.tof32(),
+    //                 .lerp(start, end, 0.4),
+    //                 0.5,
+    //             );
+    //             const middle_2 = Vec2.lerp(
+    //                 edge.pos.tof32(),
+    //                 .lerp(start, end, 0.8),
+    //                 0.5,
+    //             );
+    //             if (real_tentacle.ptr == tentacles[0].ptr) {
+    //                 // std.log.debug("start: {any}\nend: {any}\ndist: {d}", .{ start, end, dist_to_base });
+    //             }
+    //             // TODO: improve
+    //             break :blk if (dist_to_base < 1.0 / 3.0)
+    //                 .lerp(start, middle_1, dist_to_base / 3.0)
+    //             else if (dist_to_base < 2.0 / 3.0)
+    //                 .lerp(middle_1, middle_2, (dist_to_base - 1.0 / 3.0) / 3.0)
+    //             else
+    //                 end;
+    //             // TODO: investigate
+    //             // .lerp(middle_2, end, (dist_to_base - 2.0 / 3.0) / 3.0);
+    //         } else blk: {
+    //             const edge = real_tentacle[@intFromFloat(@floor(dist_to_base - 0.001))];
+    //             break :blk edge.pos.tof32().add(edge.dir.tof32().scale(dist_to_base - @floor(dist_to_base - 0.001)));
+    //         };
+    //         Vec2.towards(v, target_pos.add(.half), 8.0 * platform.delta_seconds);
+    //     }
+    // }
+
+    var all_spots: std.ArrayList(Vec2) = .init(self.mem.scratch.allocator());
+    for (self.visual_tentacles_distance, tentacles) |visual_tentacle_distance, real_tentacle| {
+        var a = @min(tof32(real_tentacle.len), visual_tentacle_distance);
+        const SPACING = 0.1;
+        while (a >= SPACING) : (a -= SPACING) {
+            const dist_to_tip = visual_tentacle_distance - a;
+            if (a > tof32(real_tentacle.len)) continue;
+            const a_pos = tentaclePosAt(real_tentacle, a, octopus_pos);
+            const b_pos = tentaclePosAt(real_tentacle, a - SPACING, octopus_pos);
+            const color: FColor = (if (@mod(@as(isize, @intFromFloat(@floor(dist_to_tip))), 2) == 0) octopus_color_2 else octopus_color);
+            self.canvas.line(camera, &.{ a_pos, b_pos }, 0.3, color);
+            self.canvas.fillCircle(camera, a_pos, 0.15, color);
+            self.canvas.fillCircle(camera, b_pos, 0.15, color);
+
+            if (@abs(@mod(dist_to_tip, 3) - 2.35) < SPACING / 2.0) {
+                try all_spots.append(a_pos);
+            }
+        }
+        // p.pos = tentaclePosAt(real_tentacle, p.dist_to_base);
+    }
+    for (all_spots.items) |p| self.canvas.fillCircle(camera, p, 0.15, spot_color);
+
+    // for (self.visual_tentacles) |visual_tentacle| {
+    //     for (visual_tentacle.items[0 .. visual_tentacle.items.len - 1], visual_tentacle.items[1..], 0..) |a, b, k| {
+    //         // const color: FColor = octopus_color;
+    //         const color: FColor = (if (@mod(@as(isize, @intFromFloat(@floor(tof32(k) / VISUAL_POINTS_PER_SEGMENT - 0.001))), 2) == 0) octopus_color_2 else octopus_color);
+    //         // const color: FColor = (if (@mod(k, 2) == 0) octopus_color_2 else octopus_color);
+    //         self.canvas.line(camera, &.{ a.pos, b.pos }, 0.3, color);
+    //         // self.canvas.line(camera, &.{ a, b }, 0.3, color);
+    //         self.canvas.fillCircle(camera, a.pos, 0.15, color);
+    //         self.canvas.fillCircle(camera, b.pos, 0.15, color);
+    //     }
+    // }
+
+    if (false) for (tentacles) |tentacle| {
         for (tentacle, 0..) |edge, k| {
             const dist_to_tip = tentacle.len - k;
-            const color: FColor = if (@mod(dist_to_tip, 2) == 0) octopus_color_2 else octopus_color;
+            const color: FColor = (if (@mod(dist_to_tip, 2) == 0) octopus_color_2 else octopus_color).withAlpha(0.1);
             var spot_pos = edge.middle();
             if (k == 0) {
                 const end = edge.nextPos().tof32();
@@ -348,7 +474,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 else => unreachable,
             }
         }
-    }
+    };
 
     // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color);
     self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
@@ -435,6 +561,38 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     return false;
+}
+
+fn tentaclePosAt(tentacle: []const EdgePos, dist_to_base: f32, octopus_pos: UVec2) Vec2 {
+    assert(0 <= dist_to_base and dist_to_base <= tof32(tentacle.len));
+    if (tof32(tentacle.len) == dist_to_base) {
+        return kommon.last(tentacle).?.nextPos().tof32().add(.half);
+    } else if (dist_to_base <= 1) {
+        const edge = tentacle[0];
+        const end = edge.nextPos().tof32().add(.half);
+        const start = octopus_pos.tof32().add(.one);
+        const middle_1 = Vec2.lerp(
+            edge.pos.tof32().add(.half),
+            .lerp(start, end, 0.4),
+            0.5,
+        );
+        const middle_2 = Vec2.lerp(
+            edge.pos.tof32().add(.half),
+            .lerp(start, end, 0.8),
+            0.5,
+        );
+        // TODO: improve
+        return if (dist_to_base < 1.0 / 3.0)
+            .lerp(start, middle_1, dist_to_base * 3.0)
+        else if (dist_to_base < 2.0 / 3.0)
+            .lerp(middle_1, middle_2, (dist_to_base - 1.0 / 3.0) * 3.0)
+        else
+            .lerp(middle_2, end, (dist_to_base - 2.0 / 3.0) * 3.0);
+    } else {
+        const edge = tentacle[@intFromFloat(@floor(dist_to_base))];
+        const fract = @mod(dist_to_base, 1.0);
+        return edge.pos.tof32().add(edge.dir.tof32().scale(fract)).add(.half);
+    }
 }
 
 fn activeEdgesAround(edges: kommon.Grid2DEdges(bool), pos: UVec2) std.BoundedArray(EdgePos, 4) {

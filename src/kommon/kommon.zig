@@ -42,7 +42,7 @@ pub fn last(arr: anytype) ?std.meta.Elem(@TypeOf(arr)) {
     @compileError("Expected pointer, slice, array or vector type, found '" ++ @typeName(@TypeOf(arr)) ++ "'");
 }
 
-pub fn lastExplicit(T: type, arr: []T) ?T {
+pub fn lastExplicit(T: type, arr: []const T) ?T {
     if (arr.len == 0) return null;
     return arr[arr.len - 1];
 }
