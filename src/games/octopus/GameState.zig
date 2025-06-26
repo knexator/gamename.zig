@@ -88,6 +88,7 @@ const LevelState = struct {
     }
 };
 
+const clue_solved_color: FColor = .fromHex("#3F00A5");
 const bg_color: FColor = .fromHex("#6FD3CA");
 const grid_color_1: FColor = .fromHex("#C8FCBA");
 const grid_color_2: FColor = .fromHex("#DEFFB5");
@@ -481,7 +482,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
     // self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
     // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
-    self.canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), 0.2, octopus_color_body);
+    self.canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.15), 0.2, octopus_color_body);
     for ([2]Vec2{ .new(-0.3, 0.4), .new(0.35, 0.4) }) |p| {
         const eye_center = octopus_pos.add(.one).tof32().add(p);
         const r1 = 0.22;
@@ -505,20 +506,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     it.reset();
     while (it.next()) |pos| {
         if (self.level_state.clues_tiles.at2(pos)) |clue| {
+            const color: FColor = if (clue.isSatisfied(pos, tentacles)) clue_solved_color else .black;
             switch (clue) {
-                .starts_here_with_len, .ends_here_with_len => |c| try self.canvas.drawTextLine(
-                    0,
-                    camera,
-                    .{ .center = pos.tof32().add(.half) },
-                    switch (c) {
-                        .exact => |v| "0123456789ABCD"[v .. v + 1],
-                        .odd => ".",
-                        .even => ":",
-                        .idk => "?",
+                .starts_here_with_len, .ends_here_with_len => |c| switch (c) {
+                    .even => @panic("TODO"),
+                    .odd => for (0..3) |k| {
+                        self.canvas.fillCircle(camera, pos.tof32().add(.half).add(.fromPolar(0.3, 1.0 / 12.0 + tof32(k) / 3.0)), 0.1, color);
                     },
-                    1,
-                    if (clue.isSatisfied(pos, tentacles)) .black else .red,
-                ),
+                    else => try self.canvas.drawTextLine(
+                        0,
+                        camera,
+                        .{ .center = pos.tof32().add(.half) },
+                        switch (c) {
+                            .exact => |v| "0123456789ABCD"[v .. v + 1],
+                            .odd => ".",
+                            .even => ":",
+                            .idk => "?",
+                        },
+                        1.0,
+                        color,
+                    ),
+                },
             }
         }
     }
@@ -552,7 +560,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         lines,
                         0.6,
                         1.0,
-                        if (clue.isSatisfied(pos, tentacles)) .black else .red,
+                        if (clue.isSatisfied(pos, tentacles)) clue_solved_color else .fromHex("#700029"),
                     );
                 },
             }
