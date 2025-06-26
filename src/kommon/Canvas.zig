@@ -601,6 +601,20 @@ pub fn Drawable(
 //     );
 // }
 
+pub fn fillRectWithRoundCorners(
+    self: Canvas,
+    camera: Rect,
+    rect: Rect,
+    circle_radius: f32,
+    color: FColor,
+) void {
+    self.fillRect(camera, rect.plusMargin2(.new(0, -circle_radius)), color);
+    self.fillRect(camera, rect.plusMargin2(.new(-circle_radius, 0)), color);
+    inline for (&.{ .top_left, .top_right, .bottom_left, .bottom_right }) |e| {
+        self.fillCircle(camera, rect.plusMargin(-circle_radius).get(e), circle_radius, color);
+    }
+}
+
 pub fn fillRect(
     self: Canvas,
     camera: Rect,

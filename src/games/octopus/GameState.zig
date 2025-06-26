@@ -93,7 +93,7 @@ const grid_color_1: FColor = .fromHex("#C8FCBA");
 const grid_color_2: FColor = .fromHex("#DEFFB5");
 const octopus_color_2: FColor = .fromHex("#AF23EF");
 const octopus_color: FColor = .fromHex("#7E27AD");
-const octopus_color_body: FColor = .fromHex("#EA53ED");
+const octopus_color_body: FColor = .fromHex("#D564FD");
 const spot_color: FColor = .fromHex("#D866FF");
 const starting_edges_local: [8]EdgePos = .{
     .{ .pos = .zero, .dir = .ne2 },
@@ -341,9 +341,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     for (&self.visual_tentacles_distance, tentacles) |*visual_tentacle_distance, real_tentacle| {
-        while (@abs(visual_tentacle_distance.* - tof32(real_tentacle.len)) > 6) {
-            math.towards(visual_tentacle_distance, tof32(real_tentacle.len), 6);
-        }
+        math.towards(visual_tentacle_distance, tof32(real_tentacle.len), @abs(visual_tentacle_distance.* - tof32(real_tentacle.len)) - 2);
         math.towards(visual_tentacle_distance, tof32(real_tentacle.len), platform.delta_seconds * 16.0);
         // math.lerp_towards(visual_tentacle_distance, tof32(real_tentacle.len), 0.6, platform.delta_seconds);
     }
@@ -481,11 +479,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     };
 
     // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
-    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
-    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(0.3), 0.15, .white);
-    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(-0.3), 0.15, .white);
-    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(0.3).towardsPure(mouse.cur.position, 0.10), 0.05, .black);
-    self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32().addY(0.45).addX(-0.3).towardsPure(mouse.cur.position, 0.10), 0.05, .black);
+    // self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
+    // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
+    self.canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), 0.2, octopus_color_body);
+    for ([2]Vec2{ .new(-0.3, 0.4), .new(0.35, 0.4) }) |p| {
+        const eye_center = octopus_pos.add(.one).tof32().add(p);
+        const r1 = 0.22;
+        const r2 = 0.15;
+        self.canvas.fillCircle(camera, eye_center, r1, .white);
+        self.canvas.fillCircle(camera, eye_center.towardsPure(mouse.cur.position, r1 - r2), r2, .black);
+    }
 
     // for (tentacles, 0..) |tentacle, k| {
     //     const len = try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{tentacle.items.len});
