@@ -30,6 +30,23 @@ const LevelInfo = struct {
 const level_infos: []const LevelInfo = &.{
     .{
         .clues = &.{
+            .{ .pos = .new(3, 2), .clue = .{ .starts_here_with_len = .{ .exact = 4 } } },
+            .{ .pos = .new(4, 2), .clue = .{ .starts_here_with_len = .{ .exact = 5 } } },
+            .{ .pos = .new(5, 3), .clue = .{ .starts_here_with_len = .{ .exact = 6 } } },
+            .{ .pos = .new(5, 4), .clue = .{ .starts_here_with_len = .{ .exact = 7 } } },
+            .{ .pos = .new(4, 5), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
+            .{ .pos = .new(3, 5), .clue = .{ .starts_here_with_len = .{ .exact = 9 } } },
+            .{ .pos = .new(2, 4), .clue = .{ .starts_here_with_len = .{ .exact = 10 } } },
+            .{ .pos = .new(2, 3), .clue = .{ .starts_here_with_len = .{ .exact = 11 } } },
+            .{ .pos = .new(7, 4), .clue = .{ .ends_here_with_len = .{ .exact = 6 } } },
+            .{ .pos = .new(6, 7), .clue = .{ .ends_here_with_len = .{ .exact = 7 } } },
+            .{ .pos = .new(1, 2), .clue = .{ .ends_here_with_len = .{ .exact = 10 } } },
+            .{ .pos = .new(6, 1), .clue = .{ .ends_here_with_len = .{ .exact = 11 } } },
+        },
+        .blocks = &.{},
+    },
+    .{
+        .clues = &.{
             .{ .pos = .new(2, 3), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
             .{ .pos = .new(3, 5), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
             .{ .pos = .new(1, 6), .clue = .{ .ends_here_with_len = .{ .exact = 8 } } },
