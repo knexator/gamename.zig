@@ -1047,6 +1047,12 @@ pub const TextRenderer = struct {
         // gl.DeleteTextures(1, @ptrCast(&self.texture));
     }
 
+    fn kerningOf(self: TextRenderer, a: u8, b: u8) ?f32 {
+        for (self.font_info.value.kerning) |entry| {
+            if (entry.unicode1 == a and entry.unicode2 == b) return entry.advance;
+        } else return null;
+    }
+
     fn quadsForLine(
         self: TextRenderer,
         text: []const u8,
@@ -1056,14 +1062,17 @@ pub const TextRenderer = struct {
     ) ![]Quad {
         var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
         var cursor: Vec2 = .zero;
-        for (text) |char| {
+        for (text, 0..) |char, k| {
+            if (k != 0) {
+                cursor.x += self.kerningOf(text[k - 1], char) orelse 0;
+            }
             cursor, const quad = self.addLetter(cursor, char, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
         }
         return quads.toOwnedSlice();
     }
 
-    // TODO: kerning
+    // TODO: validate kerning
     // TODO: single draw call, maybe
     pub fn drawLine(
         self: TextRenderer,

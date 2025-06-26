@@ -535,9 +535,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         camera,
                         .{ .center = pos.tof32().add(.half) },
                         switch (c) {
-                            .exact => |v| "0123456789ABCD"[v .. v + 1],
-                            .odd => ".",
-                            .even => ":",
+                            .exact => |v| try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{v}),
+                            .odd, .even => unreachable,
                             .idk => "?",
                         },
                         1.0,
