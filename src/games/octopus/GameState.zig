@@ -1,6 +1,8 @@
 pub const GameState = @This();
 const PlatformGives = @import("../../game.zig").PlatformGives;
 
+// TODO: mark edge cross
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -30,6 +32,23 @@ const LevelInfo = struct {
 };
 
 const level_infos: []const LevelInfo = &.{
+    .{
+        .clues = &.{},
+        .blocks = &.{
+            .new(1, 0),
+            .new(5, 0),
+            .new(4, 1),
+            .new(7, 1),
+            .new(0, 2),
+            .new(7, 3),
+            .new(0, 4),
+            .new(6, 5),
+            .new(0, 6),
+            .new(2, 7),
+            .new(5, 7),
+            .new(7, 7),
+        },
+    },
     .{
         .clues = &.{
             .{ .pos = .new(3, 2), .clue = .{ .starts_here_with_len = .{ .exact = 4 } } },
@@ -61,10 +80,6 @@ const level_infos: []const LevelInfo = &.{
         },
         .blocks = &.{},
     },
-    .{
-        .clues = &.{},
-        .blocks = &.{},
-    },
 };
 
 const LevelState = struct {
@@ -76,12 +91,14 @@ const LevelState = struct {
     move_history: std.ArrayList(DeltaMove),
     time_of_last_move: f32 = -std.math.inf(f32),
 
-    fn init(dst: *LevelState, info: LevelInfo, alloc: std.mem.Allocator) !void {
+    fn init(dst: *LevelState, info: LevelInfo, old_edges: ?kommon.Grid2DEdges(bool), mem: *Mem) !void {
+        const alloc = mem.level.allocator();
+        if (old_edges != null) assert(old_edges.?.size.equals(info.board_size));
         const board_size = info.board_size;
         dst.* = .{
             .board_size = info.board_size,
             .octopus_pos = info.octopus_pos,
-            .edges = try .initFill(alloc, board_size, false),
+            .edges = old_edges orelse try .initFill(mem.forever.allocator(), board_size, false),
             .clues_tiles = try .initFill(alloc, board_size, null),
             .blocked = try .initFill(alloc, board_size, false),
             .move_history = try .initCapacity(alloc, 1),
@@ -91,6 +108,9 @@ const LevelState = struct {
         }
         for ([4]UVec2{ .zero, .e1, .e2, .one }) |d| {
             dst.blocked.set(info.octopus_pos.add(d), true);
+        }
+        for (info.blocks) |p| {
+            dst.blocked.set(p, true);
         }
         for (info.clues) |c| {
             dst.clues_tiles.set(c.pos, c.clue);
@@ -108,6 +128,16 @@ const LevelState = struct {
             self.edges.set(delta.where, !delta.added);
             self.time_of_last_move = -std.math.inf(f32);
         }
+    }
+
+    fn allTilesVisited(self: LevelState, scratch: std.mem.Allocator) !bool {
+        const info = try infoFromEdges(self.edges, self.blocked, self.board_size, self.octopus_pos, scratch);
+        var it = self.blocked.iterator();
+        while (it.next()) |p| {
+            if (self.blocked.at2(p)) continue;
+            if (isBody(self.octopus_pos, p)) continue;
+            if (info.tentacle_at.at2(p) == null) return false;
+        } else return true;
     }
 };
 
@@ -140,8 +170,10 @@ state: union(enum) {
     playing,
 } = .{ .menu = .{} },
 
+old_edges: [level_infos.len]?kommon.Grid2DEdges(bool) = @splat(null),
 focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
 level_state: LevelState,
+level_index: usize,
 visual_tentacles_distance: [8]f32 = @splat(1.0),
 // visual_tentacles: [8]std.ArrayList(TentacleVisualPoint),
 // visual_tentacles: [8]std.ArrayList(Vec2),
@@ -198,7 +230,8 @@ const LoadingState = struct {
     loading: bool,
 
     pub fn init(target_index: usize, game: *GameState) !LoadingState {
-        try game.level_state.init(level_infos[target_index], game.mem.level.allocator());
+        try game.level_state.init(level_infos[target_index], game.old_edges[target_index], &game.mem);
+        game.level_index = target_index;
         return .{ .t = 0, .loading = true };
     }
 
@@ -224,6 +257,7 @@ const LoadingState = struct {
         } else {
             math.towards(&self.t, 0, 2.0 * platform.delta_seconds);
             if (self.t <= 0) {
+                game.old_edges[game.level_index] = game.level_state.edges;
                 game.state = .{ .menu = .{} };
             }
         }
@@ -277,7 +311,7 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.mem = .init(gpa);
-    try dst.level_state.init(level_infos[1], dst.mem.level.allocator());
+    try dst.level_state.init(level_infos[1], null, &dst.mem);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
@@ -663,12 +697,12 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    const extra_panel_rect: Rect = .from(.{
+        .{ .top_center = board_rect.get(.bottom_center) },
+        .{ .size = camera.get(.size).addY(-board_rect.size.x) },
+    });
     if (self.level_state.clues_tiles.tileAt(mouse.cur.position, board_rect)) |pos| {
         if (self.level_state.clues_tiles.at2(pos)) |clue| {
-            const extra_panel_rect: Rect = .from(.{
-                .{ .top_center = board_rect.get(.bottom_center) },
-                .{ .size = camera.get(.size).addY(-board_rect.size.x) },
-            });
             switch (clue) {
                 .starts_here_with_len, .ends_here_with_len => |c| {
                     // const text = std.fmt.allocPrint(self.mem.frame.allocator(), "with odd length", args: anytype)
@@ -703,6 +737,37 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             ptr.* = !ptr.*;
         }
     }
+
+    if (self.level_index == 0) {
+        try self.canvas.drawTextLine(
+            0,
+            camera,
+            .{ .center = extra_panel_rect.get(.center) },
+            "Visit every tile.",
+            0.6,
+            if (try self.level_state.allTilesVisited(self.mem.scratch.allocator())) clue_solved_color else .fromHex("#700029"),
+        );
+
+        if (try self.level_state.allTilesVisited(self.mem.scratch.allocator())) {
+            try self.canvas.drawTextLine(
+                0,
+                camera,
+                .{ .center = extra_panel_rect.get(.center).addY(1.0) },
+                "Esc for more levels",
+                0.6,
+                .black,
+            );
+        }
+    }
+
+    // if (solved) {
+    //     const button: Rect = extra_panel_rect.with(.{ .size = .new(1.75, 1) }, .bottom_center).plusMargin(-0.15);
+    //     self.canvas.fillRect(camera, button, .white);
+    //     try self.canvas.drawTextLine(0, camera, .{ .center = button.get(.center) }, "Back", 0.5, .black);
+    //     if (button.contains(mouse.cur.position) and mouse.wasPressed(.left)) {
+    //         self.state = .{ .loading = .toMenu() };
+    //     }
+    // }
 
     if (false) {
         var edge_it = self.edges.iterator();

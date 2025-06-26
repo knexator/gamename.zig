@@ -859,6 +859,7 @@ pub const Rect = struct {
                 else => @panic("TODO"),
                 .center => .fromCenterAndSize(original.get(.center), size),
                 .top_center => .from(.{ .{ .top_center = original.get(.top_center) }, .{ .size = size } }),
+                .bottom_center => .from(.{ .{ .bottom_center = original.get(.bottom_center) }, .{ .size = size } }),
             },
         };
     }
