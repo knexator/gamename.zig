@@ -20,6 +20,8 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
+const EDITING = false;
+
 const LevelInfo = struct {
     board_size: UVec2 = .both(8),
     octopus_pos: UVec2 = .new(3, 3),
@@ -57,6 +59,10 @@ const level_infos: []const LevelInfo = &.{
             .{ .pos = .new(6, 6), .clue = .{ .ends_here_with_len = .odd } },
             .{ .pos = .new(7, 6), .clue = .{ .ends_here_with_len = .idk } },
         },
+        .blocks = &.{},
+    },
+    .{
+        .clues = &.{},
         .blocks = &.{},
     },
 };
@@ -128,12 +134,107 @@ canvas: Canvas,
 mem: Mem,
 smooth: LazyState,
 
+state: union(enum) {
+    menu: MenuState,
+    loading: LoadingState,
+    playing,
+} = .{ .menu = .{} },
+
 focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
 level_state: LevelState,
 visual_tentacles_distance: [8]f32 = @splat(1.0),
 // visual_tentacles: [8]std.ArrayList(TentacleVisualPoint),
 // visual_tentacles: [8]std.ArrayList(Vec2),
 const VISUAL_POINTS_PER_SEGMENT = 4;
+
+const MenuState = struct {
+    const level_positions: []const Vec2 = &.{ .new(1, 1), .new(2, 1), .new(3, 1) };
+
+    pub fn update(game: *GameState, platform: PlatformGives, loading_t: ?f32) !bool {
+        const camera = (Rect{ .top_left = .new(0, (loading_t orelse 0) * -5), .size = .both(4) }).withAspectRatio(platform.aspect_ratio, .grow, .top_center);
+        game.canvas.fillRect(camera, .{ .top_left = .zero, .size = camera.size }, bg_color);
+        const mouse = platform.getMouse(camera);
+        for (level_positions, 0..) |level_pos, level_index| {
+            const level_radius = 0.3;
+            const hovered = (mouse.cur.position.sub(level_pos).magSq() < level_radius * level_radius) and loading_t == null;
+
+            game.canvas.fillCircle(camera, level_pos, level_radius, try game.smooth.fcolor(
+                .fromFormat("bg {d}", .{level_index}),
+                if (hovered) .white else .black,
+            ));
+            try game.canvas.drawTextLine(
+                0,
+                camera,
+                .{ .center = level_pos },
+                try std.fmt.allocPrint(game.mem.frame.allocator(), "{d}", .{level_index}),
+                level_radius * 1.5,
+                try game.smooth.fcolor(
+                    .fromFormat("text {d}", .{level_index}),
+                    if (hovered) .black else .white,
+                ),
+            );
+
+            if (hovered and mouse.wasPressed(.left)) {
+                game.state = .{ .loading = try LoadingState.init(level_index, game) };
+            }
+        }
+        // _ = game;
+        // const camera = Rect.from
+        //     .withAspectRatio(platform.aspect_ratio, .grow, .bottom_center);
+        // const mouse = platform.getMouse(camera);
+        // for ([_]KeyboardButton{ .Digit1, .Digit2 }, 0..) |key, k| {
+        //     if (platform.keyboard.wasPressed(key)) {
+        //         game.state = .{ .loading = try LoadingState.init(k, game) };
+        //     }
+        // }
+
+        return false;
+    }
+};
+
+const LoadingState = struct {
+    t: f32,
+    // false if going back to menu
+    loading: bool,
+
+    pub fn init(target_index: usize, game: *GameState) !LoadingState {
+        try game.level_state.init(level_infos[target_index], game.mem.level.allocator());
+        return .{ .t = 0, .loading = true };
+    }
+
+    pub fn toMenu() LoadingState {
+        return .{ .t = 1, .loading = false };
+    }
+
+    pub fn update(self: *LoadingState, game: *GameState, platform: PlatformGives) !bool {
+        // platform.gl.clear(bg_color);
+        _ = try updateGame(game, platform);
+        const board_size = game.level_state.board_size;
+        const board_rect: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
+        const camera = board_rect.withAspectRatio(3.0 / 4.0, .grow, .top_center).withAspectRatio(platform.aspect_ratio, .grow, .top_center);
+        const t = math.easings.easeInOutCubic(self.t);
+        game.canvas.fillRect(camera, camera.move(.new(0, tof32(board_size.y) * t)), bg_color);
+        _ = try MenuState.update(game, platform, t);
+
+        if (self.loading) {
+            math.towards(&self.t, 1, 2.0 * platform.delta_seconds);
+            if (self.t >= 1) {
+                game.state = .playing;
+            }
+        } else {
+            math.towards(&self.t, 0, 2.0 * platform.delta_seconds);
+            if (self.t <= 0) {
+                game.state = .{ .menu = .{} };
+            }
+        }
+        return false;
+    }
+};
+
+// TODO: move focus/level_state/visual_tentacles_distance here
+// const PlayingState = struct {
+//     pub fn draw(game: *GameState, platform: PlatformGives) !void {}
+// };
 
 const TentacleVisualPoint = struct { pos: Vec2, dist_to_base: f32 };
 
@@ -176,7 +277,7 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.mem = .init(gpa);
-    try dst.level_state.init(level_infos[0], dst.mem.level.allocator());
+    try dst.level_state.init(level_infos[1], dst.mem.level.allocator());
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
@@ -221,14 +322,25 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
+    return switch (self.state) {
+        .menu => MenuState.update(self, platform, null),
+        .loading => |*l| l.update(self, platform),
+        .playing => updateGame(self, platform),
+    };
+}
 
+fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     const board_size = self.level_state.board_size;
 
     const board_rect: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
 
-    const camera = board_rect.withAspectRatio(platform.aspect_ratio, .grow, .top_center);
+    const camera = board_rect.withAspectRatio(3.0 / 4.0, .grow, .top_center).withAspectRatio(platform.aspect_ratio, .grow, .top_center);
     const mouse = platform.getMouse(camera);
     platform.gl.clear(bg_color);
+
+    defer if (platform.keyboard.wasPressed(.Escape)) {
+        self.state = .{ .loading = .toMenu() };
+    };
 
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
         self.level_state.undo();
@@ -265,6 +377,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         );
         self.canvas.fillRect(camera, rect, if (pos.isEven()) grid_color_1 else grid_color_2);
         self.canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
+
+        if (blocked.at2(pos) and !isBody(octopus_pos, pos)) {
+            self.canvas.fillRectWithRoundCorners(camera, rect.plusMargin(-0.1), 0.1, .gray(0.5));
+        }
     }
 
     switch (self.focus) {
@@ -581,6 +697,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 },
             }
         }
+
+        if (EDITING and mouse.wasPressed(.right)) {
+            const ptr = self.level_state.blocked.getPtr(pos);
+            ptr.* = !ptr.*;
+        }
     }
 
     if (false) {
@@ -596,6 +717,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     return false;
+}
+
+fn isBody(octopus_pos: UVec2, pos: UVec2) bool {
+    for (&[4]UVec2{ .zero, .e1, .e2, .one }) |p| {
+        if (octopus_pos.add(p).equals(pos)) return true;
+    } else return false;
 }
 
 fn tentaclePosAt(tentacle: []const EdgePos, dist_to_base: f32, octopus_pos: UVec2) Vec2 {
