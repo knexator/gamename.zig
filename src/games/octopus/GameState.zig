@@ -523,17 +523,21 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     //     self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
     // }
 
+    var all_lost_tentacles: std.ArrayList(Canvas.Segment) = .init(self.mem.scratch.allocator());
     for (info.all_tentacles[8..]) |tentacle| {
         for (tentacle) |edge| {
             const color = octopus_color;
-            self.canvas.line(camera, &.{
-                edge.pos.tof32().add(.half),
-                edge.pos.addSigned(edge.dir).tof32().add(.half),
-            }, 0.3, color);
-            self.canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
-            self.canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
+            try all_lost_tentacles.append(.{
+                .a = edge.pos.tof32().add(.half),
+                .b = edge.pos.addSigned(edge.dir).tof32().add(.half),
+                .color = color,
+            });
+            // TODO
+            // self.canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
+            // self.canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
         }
     }
+    self.canvas.instancedSegments(camera, all_lost_tentacles.items, 0.3);
 
     for (&self.visual_tentacles_distance, tentacles) |*visual_tentacle_distance, real_tentacle| {
         math.towards(visual_tentacle_distance, tof32(real_tentacle.len), @abs(visual_tentacle_distance.* - tof32(real_tentacle.len)) - 2);
@@ -597,6 +601,8 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     //     }
     // }
 
+    // self.canvas.fillInstancedCircles(camera: Rect, points: []const Vec2)
+    var all_segments: std.ArrayList(Canvas.Segment) = .init(self.mem.scratch.allocator());
     var all_spots: std.ArrayList(Vec2) = .init(self.mem.scratch.allocator());
     for (self.visual_tentacles_distance, tentacles) |visual_tentacle_distance, real_tentacle| {
         var a = @min(tof32(real_tentacle.len), visual_tentacle_distance);
@@ -606,11 +612,14 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             if (a > tof32(real_tentacle.len)) continue;
             const a_pos = tentaclePosAt(real_tentacle, a, octopus_pos);
             const b_pos = tentaclePosAt(real_tentacle, a - SPACING, octopus_pos);
-            const color: FColor = (if (@mod(@as(isize, @intFromFloat(@floor(dist_to_tip))), 2) == 0) octopus_color_2 else octopus_color);
-            if (false) {
-                self.canvas.line(camera, &.{ a_pos, b_pos }, 0.3, color);
-                self.canvas.fillCircle(camera, a_pos, 0.15, color);
-                self.canvas.fillCircle(camera, b_pos, 0.15, color);
+            const is_even = @mod(@as(isize, @intFromFloat(@floor(dist_to_tip))), 2) == 0;
+            const next_is_even = @mod(@as(isize, @intFromFloat(@floor(dist_to_tip + SPACING))), 2) == 0;
+            const color: FColor = if (is_even) octopus_color_2 else octopus_color;
+            try all_segments.append(.{ .a = a_pos, .b = b_pos, .color = color });
+            // self.canvas.instancedSegments(camera, &.{.{ .a = a_pos, .b = b_pos, .color = color }}, 0.3);
+            // TODO: round edges
+            if (false and is_even != next_is_even) {
+                self.canvas.fillCircle(camera, b_pos, 0.15, if (next_is_even) octopus_color_2 else octopus_color);
             }
 
             if (@abs(@mod(dist_to_tip, 3) - 2.25) < SPACING / 2.0) {
@@ -619,6 +628,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         }
         // p.pos = tentaclePosAt(real_tentacle, p.dist_to_base);
     }
+    self.canvas.instancedSegments(camera, all_segments.items, 0.3);
     for (all_spots.items) |p| self.canvas.fillCircle(camera, p, 0.15, spot_color);
 
     // for (self.visual_tentacles) |visual_tentacle| {

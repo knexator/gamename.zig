@@ -9,6 +9,7 @@ gl: Gl,
 fill_instanced_shapes_renderable: Gl.InstancedRenderable,
 fill_instanced_circles_renderable: Gl.InstancedRenderable,
 instanced_rounded_lines_renderable: Gl.InstancedRenderable,
+instanced_colored_separated_rounded_lines_renderable: Gl.InstancedRenderable,
 fill_shape_renderable: Gl.Renderable,
 // TODO: instancing
 sprite_renderable: Gl.Renderable,
@@ -254,6 +255,46 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
                 .{ .name = "u_camera", .kind = .Rect },
                 .{ .name = "u_width", .kind = .f32 },
                 .{ .name = "u_color", .kind = .FColor },
+            },
+        ),
+        .instanced_colored_separated_rounded_lines_renderable = try gl.buildInstancedRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\uniform float u_width;
+            \\in vec2 a_vertex_position;
+            \\in float a_vertex_is_b_side;
+            \\in vec2 a_line_a;
+            \\in vec2 a_line_b;
+            \\in vec4 a_line_color;
+            \\out vec4 v_line_color;
+            \\void main() {
+            \\  vec2 basis_x = normalize(a_line_b - a_line_a);
+            \\  vec2 basis_y = vec2(-basis_x.y, basis_x.x);
+            \\  vec2 world_position = mix(a_line_a, a_line_b, a_vertex_is_b_side) + u_width * (a_vertex_position.x * basis_x + a_vertex_position.y * basis_y);
+            \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\  v_line_color = a_line_color;
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec4 v_line_color;
+            \\void main() {
+            \\  out_color = v_line_color;
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_vertex_position", .kind = .Vec2 },
+                .{ .name = "a_vertex_is_b_side", .kind = .f32 },
+            } },
+            .{ .attribs = &.{
+                .{ .name = "a_line_a", .kind = .Vec2 },
+                .{ .name = "a_line_b", .kind = .Vec2 },
+                .{ .name = "a_line_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+                .{ .name = "u_width", .kind = .f32 },
             },
         ),
         .DEFAULT_SHAPES = try .init(gpa),
@@ -850,6 +891,73 @@ pub fn line(
             .{ .name = "u_camera", .value = .{ .Rect = camera } },
             .{ .name = "u_width", .value = .{ .f32 = world_width } },
             .{ .name = "u_color", .value = .{ .FColor = color } },
+        },
+        null,
+    );
+}
+
+pub const Segment = extern struct { a: Vec2, b: Vec2, color: FColor };
+pub fn instancedSegments(
+    self: Canvas,
+    camera: Rect,
+    segments: []const Segment,
+    world_width: f32,
+) void {
+    const VertexData = extern struct {
+        a_vertex_position: Vec2,
+        a_vertex_is_b_side: f32,
+    };
+    // TODO
+    const rounded_line_data: []const VertexData = &.{
+        // basic rect
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 1 },
+
+        // rounded cap for a
+        .{ .a_vertex_position = .new(0, 0), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = Vec2.new(-0.5, -0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(-0.5, 0), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = Vec2.new(-0.5, 0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 0 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 0 },
+
+        // rounded cap for b
+        .{ .a_vertex_position = .new(0, 0), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0, -0.5), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = Vec2.new(0.5, -0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0.5, 0), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = Vec2.new(0.5, 0.5).scale(1.0 / @sqrt(2.0)), .a_vertex_is_b_side = 1 },
+        .{ .a_vertex_position = .new(0, 0.5), .a_vertex_is_b_side = 1 },
+    };
+    self.gl.useInstancedRenderable(
+        self.instanced_colored_separated_rounded_lines_renderable,
+        rounded_line_data.ptr,
+        rounded_line_data.len * @sizeOf(VertexData),
+        &.{
+            // basic rect
+            .{ 0, 1, 2 },
+            .{ 3, 2, 1 },
+
+            // rounded cap for a
+            .{ 4, 5, 6 },
+            .{ 4, 6, 7 },
+            .{ 4, 7, 8 },
+            .{ 4, 8, 9 },
+
+            // rounded cap for b
+            .{ 10, 11, 12 },
+            .{ 10, 12, 13 },
+            .{ 10, 13, 14 },
+            .{ 10, 14, 15 },
+        },
+        segments.ptr,
+        segments.len * @sizeOf(Segment),
+        segments.len,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            .{ .name = "u_width", .value = .{ .f32 = world_width } },
         },
         null,
     );

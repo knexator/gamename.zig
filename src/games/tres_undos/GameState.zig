@@ -64,6 +64,8 @@ mem: struct {
         };
     }
 
+    // pub fn initPreheated(dst: *@This(), gpa: std.mem.Allocator, size: usize) !void {}
+
     pub fn deinit(self: *@This()) void {
         self.frame.deinit();
         self.scratch.deinit();
