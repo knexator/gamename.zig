@@ -607,9 +607,11 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             const a_pos = tentaclePosAt(real_tentacle, a, octopus_pos);
             const b_pos = tentaclePosAt(real_tentacle, a - SPACING, octopus_pos);
             const color: FColor = (if (@mod(@as(isize, @intFromFloat(@floor(dist_to_tip))), 2) == 0) octopus_color_2 else octopus_color);
-            self.canvas.line(camera, &.{ a_pos, b_pos }, 0.3, color);
-            self.canvas.fillCircle(camera, a_pos, 0.15, color);
-            self.canvas.fillCircle(camera, b_pos, 0.15, color);
+            if (false) {
+                self.canvas.line(camera, &.{ a_pos, b_pos }, 0.3, color);
+                self.canvas.fillCircle(camera, a_pos, 0.15, color);
+                self.canvas.fillCircle(camera, b_pos, 0.15, color);
+            }
 
             if (@abs(@mod(dist_to_tip, 3) - 2.25) < SPACING / 2.0) {
                 try all_spots.append(a_pos);
