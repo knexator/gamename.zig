@@ -259,6 +259,8 @@ document.addEventListener("pointermove", (ev) => {
 });
 
 document.addEventListener("pointerup", (ev) => {
+  const rect = canvas.getBoundingClientRect();
+  wasm_exports.pointermove(ev.clientX - rect.left, ev.clientY - rect.top);
   wasm_exports.pointerup(ev.button);
 });
 
@@ -267,6 +269,8 @@ document.addEventListener("wheel", (ev) => {
 });
 
 document.addEventListener("pointerdown", (ev) => {
+  const rect = canvas.getBoundingClientRect();
+  wasm_exports.pointermove(ev.clientX - rect.left, ev.clientY - rect.top);
   wasm_exports.pointerdown(ev.button);
 
   if (!loops_started && loops.every(x => x.loaded)) {

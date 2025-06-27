@@ -22,7 +22,7 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-const EDITING = true;
+const EDITING = false;
 
 const LevelInfo = struct {
     board_size: UVec2 = .both(8),
@@ -808,6 +808,10 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     //         self.state = .{ .loading = .toMenu() };
     //     }
     // }
+
+    if (mouse.cur.position.y < 0 and mouse.wasPressed(.left)) {
+        self.state = .{ .loading = .toMenu() };
+    }
 
     if (false) {
         var edge_it = self.edges.iterator();
