@@ -22,7 +22,7 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-const EDITING = false;
+const EDITING = true;
 
 const LevelInfo = struct {
     board_size: UVec2 = .both(8),
@@ -49,20 +49,32 @@ const level_infos: []const LevelInfo = &.{
             .new(7, 7),
         },
     },
+    // .{
+    //     .clues = &.{
+    //         .{ .pos = .new(3, 2), .clue = .{ .starts_here_with_len = .{ .exact = 4 } } },
+    //         .{ .pos = .new(4, 2), .clue = .{ .starts_here_with_len = .{ .exact = 5 } } },
+    //         .{ .pos = .new(5, 3), .clue = .{ .starts_here_with_len = .{ .exact = 6 } } },
+    //         .{ .pos = .new(5, 4), .clue = .{ .starts_here_with_len = .{ .exact = 7 } } },
+    //         .{ .pos = .new(4, 5), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
+    //         .{ .pos = .new(3, 5), .clue = .{ .starts_here_with_len = .{ .exact = 9 } } },
+    //         .{ .pos = .new(2, 4), .clue = .{ .starts_here_with_len = .{ .exact = 10 } } },
+    //         .{ .pos = .new(2, 3), .clue = .{ .starts_here_with_len = .{ .exact = 11 } } },
+    //         .{ .pos = .new(7, 4), .clue = .{ .ends_here_with_len = .{ .exact = 6 } } },
+    //         .{ .pos = .new(6, 7), .clue = .{ .ends_here_with_len = .{ .exact = 7 } } },
+    //         .{ .pos = .new(1, 2), .clue = .{ .ends_here_with_len = .{ .exact = 10 } } },
+    //         .{ .pos = .new(6, 1), .clue = .{ .ends_here_with_len = .{ .exact = 11 } } },
+    //     },
+    //     .blocks = &.{},
+    // },
     .{
         .clues = &.{
-            .{ .pos = .new(3, 2), .clue = .{ .starts_here_with_len = .{ .exact = 4 } } },
-            .{ .pos = .new(4, 2), .clue = .{ .starts_here_with_len = .{ .exact = 5 } } },
-            .{ .pos = .new(5, 3), .clue = .{ .starts_here_with_len = .{ .exact = 6 } } },
-            .{ .pos = .new(5, 4), .clue = .{ .starts_here_with_len = .{ .exact = 7 } } },
-            .{ .pos = .new(4, 5), .clue = .{ .starts_here_with_len = .{ .exact = 8 } } },
+            .{ .pos = .new(2, 3), .clue = .{ .starts_here_with_len = .{ .exact = 15 } } },
+            .{ .pos = .new(5, 3), .clue = .{ .starts_here_with_len = .{ .exact = 15 } } },
+            .{ .pos = .new(1, 1), .clue = .{ .ends_here_with_len = .{ .exact = 15 } } },
+            .{ .pos = .new(6, 1), .clue = .{ .ends_here_with_len = .{ .exact = 15 } } },
+            .{ .pos = .new(5, 4), .clue = .{ .starts_here_with_len = .{ .exact = 9 } } },
             .{ .pos = .new(3, 5), .clue = .{ .starts_here_with_len = .{ .exact = 9 } } },
-            .{ .pos = .new(2, 4), .clue = .{ .starts_here_with_len = .{ .exact = 10 } } },
-            .{ .pos = .new(2, 3), .clue = .{ .starts_here_with_len = .{ .exact = 11 } } },
-            .{ .pos = .new(7, 4), .clue = .{ .ends_here_with_len = .{ .exact = 6 } } },
-            .{ .pos = .new(6, 7), .clue = .{ .ends_here_with_len = .{ .exact = 7 } } },
-            .{ .pos = .new(1, 2), .clue = .{ .ends_here_with_len = .{ .exact = 10 } } },
-            .{ .pos = .new(6, 1), .clue = .{ .ends_here_with_len = .{ .exact = 11 } } },
+            .{ .pos = .new(1, 6), .clue = .{ .ends_here_with_len = .{ .exact = 9 } } },
         },
         .blocks = &.{},
     },
@@ -137,6 +149,20 @@ const LevelState = struct {
             if (self.blocked.at2(p)) continue;
             if (isBody(self.octopus_pos, p)) continue;
             if (info.tentacle_at.at2(p) == null) return false;
+        } else return true;
+    }
+
+    fn solved(self: LevelState, scratch: std.mem.Allocator) !bool {
+        const info = try infoFromEdges(self.edges, self.blocked, self.board_size, self.octopus_pos, scratch);
+        if (info.all_tentacles.len != 8) return false;
+        var it = self.blocked.iterator();
+        while (it.next()) |p| {
+            if (self.blocked.at2(p)) continue;
+            if (isBody(self.octopus_pos, p)) continue;
+            if (info.tentacle_at.at2(p) == null) return false;
+            if (self.clues_tiles.at2(p)) |clue| {
+                if (!clue.isSatisfied(p, info.all_tentacles)) return false;
+            }
         } else return true;
     }
 };
@@ -356,6 +382,7 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
+    _ = self.mem.scratch.reset(.retain_capacity);
     return switch (self.state) {
         .menu => MenuState.update(self, platform, null),
         .loading => |*l| l.update(self, platform),
@@ -650,6 +677,19 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     // self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
     // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
     self.canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.15), 0.2, octopus_color_body);
+    if (try self.level_state.solved(self.mem.scratch.allocator())) {
+        self.canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one), .add, &.{
+            .new(-0.2, 0.6),
+            .new(-0.15, 0.65),
+            .new(-0.1, 0.68),
+            .new(-0.05, 0.69),
+            .new(0, 0.695),
+            .new(0.05, 0.69),
+            .new(0.1, 0.68),
+            .new(0.15, 0.65),
+            .new(0.2, 0.6),
+        }), 0.05, octopus_color);
+    }
     for ([2]Vec2{ .new(-0.3, 0.4), .new(0.35, 0.4) }) |p| {
         const eye_center = octopus_pos.add(.one).tof32().add(p);
         const r1 = 0.22;
@@ -748,7 +788,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             if (try self.level_state.allTilesVisited(self.mem.scratch.allocator())) clue_solved_color else .fromHex("#700029"),
         );
 
-        if (try self.level_state.allTilesVisited(self.mem.scratch.allocator())) {
+        if (try self.level_state.allTilesVisited(self.mem.scratch.allocator()) and info.all_tentacles.len == 8) {
             try self.canvas.drawTextLine(
                 0,
                 camera,
