@@ -793,78 +793,41 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     it.reset();
     while (it.next()) |pos| {
         if (self.level_state.clues_tiles.at2(pos)) |clue| {
-            const color: FColor = if (clue.isSatisfied(pos, tentacles)) clue_solved_color else .black;
+            const text_color: FColor = .black;
+            // const text_color: FColor = if (clue.isSatisfied(pos, tentacles)) clue_solved_color else .black;
+            const circ_color: FColor = if (clue.isSatisfied(pos, tentacles)) .fromHex("#56E200") else .fromHex("#FFAAE4");
             switch (clue) {
-                .ends_here_with_len => |c| {
-                    const relative_center: Vec2 = .zero;
-                    // const relative_center: Vec2 = .new(0, -0.15);
-                    const global_center = pos.tof32().add(.half).add(relative_center);
-                    const scale: f32 = 0.9;
-                    // const scale: f32 = 0.7;
-                    // self.canvas.line(camera, &.{
-                    //     global_center.addX(0.3),
-                    //     global_center.addY(0.8),
-                    //     global_center.addX(-0.3),
-                    // }, 0.02, .black);
-                    // self.canvas.fillShape(camera, .{ .pos = global_center, .turns = 0.07 }, .{ .local_points = &.{
-                    //     .new(0.35, 0),
-                    //     .new(0, 0.85),
-                    //     .new(-0.35, 0),
-                    // }, .triangles = &.{.{ 0, 1, 2 }} }, .fromHex("#BB8859"));
-                    // self.canvas.fillCircle(
-                    //     camera,
-                    //     global_center,
-                    //     0.35,
-                    //     .fromHex("#FFAAE4"),
-                    // );
+                .starts_here_with_len, .ends_here_with_len => |c| {
+                    const is_start = std.meta.activeTag(clue) == .starts_here_with_len;
+                    const global_center: Vec2 = if (is_start)
+                        tentaclePosAt(tentacles[tentacle_at.at2(pos).?.id], 0.5, octopus_pos)
+                    else
+                        pos.tof32().add(.half);
+                    const scale: f32 = if (is_start) 0.6 else 0.9;
                     self.canvas.fillCircle(
                         camera,
                         global_center,
-                        0.45,
-                        .fromHex("#FFAAE4"),
+                        scale / 2.0,
+                        circ_color,
                     );
                     switch (c) {
                         .even => @panic("TODO"),
                         .odd => for (0..3) |k| {
-                            self.canvas.fillCircle(camera, pos.tof32().add(.half).add(relative_center).add(.fromPolar(0.25 * scale, 1.0 / 12.0 + tof32(k) / 3.0)), 0.1, color);
+                            self.canvas.fillCircle(camera, global_center.add(.fromPolar(0.25 * scale, 1.0 / 12.0 + tof32(k) / 3.0)), 0.1, text_color);
                         },
                         else => try self.canvas.drawTextLine(
                             0,
                             camera,
-                            .{ .center = pos.tof32().add(.half).add(relative_center) },
+                            .{ .center = global_center },
                             switch (c) {
                                 .exact => |v| try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{v}),
                                 .odd, .even => unreachable,
                                 .idk => "?",
                             },
                             1.0 * scale,
-                            color,
+                            text_color,
                         ),
                     }
-                    // self.canvas.fillCircle(
-                    //     camera,
-                    //     global_center.add(.fromPolar(0.37, -0.08)),
-                    //     0.15,
-                    //     octopus_color_2,
-                    // );
-                },
-                .starts_here_with_len => |c| switch (c) {
-                    .even => @panic("TODO"),
-                    .odd => for (0..3) |k| {
-                        self.canvas.fillCircle(camera, pos.tof32().add(.half).add(.fromPolar(0.3, 1.0 / 12.0 + tof32(k) / 3.0)), 0.1, color);
-                    },
-                    else => try self.canvas.drawTextLine(
-                        0,
-                        camera,
-                        .{ .center = pos.tof32().add(.half) },
-                        switch (c) {
-                            .exact => |v| try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{v}),
-                            .odd, .even => unreachable,
-                            .idk => "?",
-                        },
-                        1.0,
-                        color,
-                    ),
                 },
             }
         }
