@@ -103,14 +103,13 @@ const LevelState = struct {
     move_history: std.ArrayList(DeltaMove),
     time_of_last_move: f32 = -std.math.inf(f32),
 
-    fn init(dst: *LevelState, info: LevelInfo, old_edges: ?kommon.Grid2DEdges(bool), mem: *Mem) !void {
-        const alloc = mem.level.allocator();
-        if (old_edges != null) assert(old_edges.?.size.equals(info.board_size));
+    fn init(dst: *LevelState, info: LevelInfo, mem: *Mem) !void {
+        const alloc = mem.forever.allocator();
         const board_size = info.board_size;
         dst.* = .{
             .board_size = info.board_size,
             .octopus_pos = info.octopus_pos,
-            .edges = old_edges orelse try .initFill(mem.forever.allocator(), board_size, false),
+            .edges = try .initFill(mem.forever.allocator(), board_size, false),
             .clues_tiles = try .initFill(alloc, board_size, null),
             .blocked = try .initFill(alloc, board_size, false),
             .move_history = try .initCapacity(alloc, 1),
@@ -196,7 +195,8 @@ state: union(enum) {
     playing,
 } = .{ .menu = .{} },
 
-old_edges: [level_infos.len]?kommon.Grid2DEdges(bool) = @splat(null),
+old_states: [level_infos.len]LevelState,
+// old_edges: [level_infos.len]?kommon.Grid2DEdges(bool) = @splat(null),
 focus: union(enum) {
     none,
     tentacle_tip: usize,
@@ -226,6 +226,10 @@ const MenuState = struct {
         for (level_positions, 0..) |level_pos, level_index| {
             const level_radius = 0.3;
             const hovered = (mouse.cur.position.sub(level_pos).magSq() < level_radius * level_radius) and loading_t == null;
+
+            if (try game.old_states[level_index].solved(game.mem.scratch.allocator())) {
+                game.canvas.strokeCircle(128, camera, level_pos, level_radius + 0.05, 0.03, .black);
+            }
 
             game.canvas.fillCircle(camera, level_pos, level_radius, try game.smooth.fcolor(
                 .fromFormat("bg {d}", .{level_index}),
@@ -267,7 +271,7 @@ const LoadingState = struct {
     loading: bool,
 
     pub fn init(target_index: usize, game: *GameState) !LoadingState {
-        try game.level_state.init(level_infos[target_index], game.old_edges[target_index], &game.mem);
+        game.level_state = game.old_states[target_index];
         game.level_index = target_index;
         return .{ .t = 0, .loading = true };
     }
@@ -294,7 +298,6 @@ const LoadingState = struct {
         } else {
             math.towards(&self.t, 0, 2.0 * platform.delta_seconds);
             if (self.t <= 0) {
-                game.old_edges[game.level_index] = game.level_state.edges;
                 game.state = .{ .menu = .{} };
             }
         }
@@ -348,7 +351,9 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.mem = .init(gpa);
-    try dst.level_state.init(level_infos[1], null, &dst.mem);
+    for (level_infos, &dst.old_states) |info, *state| {
+        try state.init(info, &dst.mem);
+    }
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
