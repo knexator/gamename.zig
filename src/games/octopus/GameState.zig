@@ -261,6 +261,21 @@ const MenuState = struct {
         //         game.state = .{ .loading = try LoadingState.init(k, game) };
         //     }
         // }
+        const all_solved = blk: for (game.old_states) |s| {
+            if (!try s.solved(game.mem.scratch.allocator())) break :blk false;
+        } else true;
+        if (true or all_solved) {
+            try game.canvas.drawTextLines(
+                0,
+                camera,
+                .center,
+                .{ .center = camera.getCenter().addY(1).addY((loading_t orelse 0) * 5) },
+                &.{ "Thanks for", "playing!" },
+                0.5,
+                1,
+                .black,
+            );
+        }
 
         return false;
     }
