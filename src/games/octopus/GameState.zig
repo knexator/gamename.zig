@@ -745,25 +745,32 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     // self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
     // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
     self.canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.15), 0.2, octopus_color_body);
-    if (try self.level_state.solved(self.mem.scratch.allocator())) {
-        self.canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one), .add, &.{
-            .new(-0.2, 0.6),
-            .new(-0.15, 0.65),
-            .new(-0.1, 0.68),
-            .new(-0.05, 0.69),
-            .new(0, 0.695),
-            .new(0.05, 0.69),
-            .new(0.1, 0.68),
-            .new(0.15, 0.65),
-            .new(0.2, 0.6),
-        }), 0.05, octopus_color);
-    }
+    const solved = try self.level_state.solved(self.mem.scratch.allocator());
+    // self.canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one), .add, &.{
+    //     .new(-0.2, 0.6),
+    //     .new(-0.15, 0.65),
+    //     .new(-0.1, 0.68),
+    //     .new(-0.05, 0.69),
+    //     .new(0, 0.695),
+    //     .new(0.05, 0.69),
+    //     .new(0.1, 0.68),
+    //     .new(0.15, 0.65),
+    //     .new(0.2, 0.6),
+    // }), 0.05, octopus_color);
     for ([2]Vec2{ .new(-0.3, 0.4), .new(0.35, 0.4) }) |p| {
-        const eye_center = octopus_pos.add(.one).tof32().add(p);
-        const r1 = 0.22;
-        const r2 = 0.15;
-        self.canvas.fillCircle(camera, eye_center, r1, .white);
-        self.canvas.fillCircle(camera, eye_center.towardsPure(mouse.cur.position, r1 - r2), r2, .black);
+        if (solved) {
+            self.canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one).add(p), .add, &funk.map(struct {
+                fn anon(t: f32) Vec2 {
+                    return .fromPolar(0.2, t);
+                }
+            }.anon, &funk.linspace(-0.5, 0, 10, true))), 0.075, octopus_color);
+        } else {
+            const eye_center = octopus_pos.add(.one).tof32().add(p);
+            const r1 = 0.22;
+            const r2 = 0.15;
+            self.canvas.fillCircle(camera, eye_center, r1, .white);
+            self.canvas.fillCircle(camera, eye_center.towardsPure(mouse.cur.position, r1 - r2), r2, .black);
+        }
     }
 
     // for (tentacles, 0..) |tentacle, k| {
