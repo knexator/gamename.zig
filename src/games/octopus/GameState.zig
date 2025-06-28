@@ -195,6 +195,7 @@ state: union(enum) {
     playing,
 } = .{ .menu = .{} },
 
+admire_solved_level_remaining_time: [level_infos.len]?f32,
 old_states: [level_infos.len]LevelState,
 // old_edges: [level_infos.len]?kommon.Grid2DEdges(bool) = @splat(null),
 focus: union(enum) {
@@ -354,6 +355,7 @@ pub fn init(
     for (level_infos, &dst.old_states) |info, *state| {
         try state.init(info, &dst.mem);
     }
+    dst.admire_solved_level_remaining_time = @splat(0.5);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
@@ -917,6 +919,16 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                     edge.pos.tof32().add(.half),
                     edge.pos.addSigned(edge.dir).tof32().add(.half),
                 }, 0.2, .black);
+            }
+        }
+    }
+
+    if (solved) {
+        if (self.admire_solved_level_remaining_time[self.level_index]) |*f| {
+            math.towards(f, 0, platform.delta_seconds);
+            if (f.* <= 0) {
+                self.admire_solved_level_remaining_time[self.level_index] = null;
+                self.state = .{ .loading = .toMenu() };
             }
         }
     }
