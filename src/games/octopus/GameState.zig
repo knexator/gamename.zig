@@ -197,7 +197,18 @@ state: union(enum) {
 } = .{ .menu = .{} },
 
 old_edges: [level_infos.len]?kommon.Grid2DEdges(bool) = @splat(null),
-focus: union(enum) { none, tentacle_tip: usize, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
+focus: union(enum) {
+    none,
+    tentacle_tip: usize,
+    lines: struct { tile: UVec2, which: enum { idk, draw, erase } },
+
+    pub fn isDragging(self: @This(), id: usize) bool {
+        return switch (self) {
+            else => false,
+            .tentacle_tip => |k| k == id,
+        };
+    }
+} = .none,
 level_state: LevelState,
 level_index: usize,
 visual_tentacles_distance: [8]f32 = @splat(1.0),
@@ -571,9 +582,11 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     }
     self.canvas.instancedSegments(camera, all_lost_tentacles.items, 0.3);
 
-    for (&self.visual_tentacles_distance, tentacles) |*visual_tentacle_distance, real_tentacle| {
+    for (&self.visual_tentacles_distance, tentacles, 0..) |*visual_tentacle_distance, real_tentacle, k| {
         math.towards(visual_tentacle_distance, tof32(real_tentacle.len), @abs(visual_tentacle_distance.* - tof32(real_tentacle.len)) - 2);
-        math.towards(visual_tentacle_distance, tof32(real_tentacle.len), platform.delta_seconds * 16.0);
+        if (!self.focus.isDragging(k)) {
+            math.towards(visual_tentacle_distance, tof32(real_tentacle.len), platform.delta_seconds * 16.0);
+        }
         // math.lerp_towards(visual_tentacle_distance, tof32(real_tentacle.len), 0.6, platform.delta_seconds);
     }
 
@@ -636,9 +649,20 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     // self.canvas.fillInstancedCircles(camera: Rect, points: []const Vec2)
     var all_segments: std.ArrayList(Canvas.Segment) = .init(self.mem.scratch.allocator());
     var all_spots: std.ArrayList(Vec2) = .init(self.mem.scratch.allocator());
-    for (self.visual_tentacles_distance, tentacles) |visual_tentacle_distance, real_tentacle| {
-        var a = @min(tof32(real_tentacle.len), visual_tentacle_distance);
+    for (tentacles, 0..) |real_tentacle, tentacle_index| {
         const SPACING = 0.1;
+        var a = @min(tof32(real_tentacle.len), self.visual_tentacles_distance[tentacle_index]);
+        if (self.focus.isDragging(tentacle_index)) {
+            while (mouse.cur.position.sub(tentaclePosAt(real_tentacle, a, octopus_pos)).mag() < 0.5) : (a -= 0.01) {}
+            // self.visual_tentacles_distance[tentacle_index] = a + 0.5;
+            math.towards(&self.visual_tentacles_distance[tentacle_index], a + 0.5, platform.delta_seconds * 16.0);
+            try all_segments.append(.{ .a = mouse.cur.position, .b = tentaclePosAt(
+                real_tentacle,
+                a,
+                octopus_pos,
+            ), .color = octopus_color_2 });
+        }
+        const visual_tentacle_distance = self.visual_tentacles_distance[tentacle_index];
         while (a >= SPACING) : (a -= SPACING) {
             const dist_to_tip = visual_tentacle_distance - a;
             if (a > tof32(real_tentacle.len)) continue;

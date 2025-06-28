@@ -1539,3 +1539,26 @@ pub const easings = struct {
         return 1 - std.math.pow(1 - x, 3);
     }
 };
+
+// pub fn segmentCircleIntersection(segment_a: Vec2, segment_b: Vec2, circle_center: Vec2, circle_radius: f32) ?Vec2 {
+pub fn lineCircleIntersection(line_pos: Vec2, line_dir: Vec2, circle_center: Vec2, circle_radius: f32) ?f32 {
+    // TODO: revise
+    const a = line_dir.x * line_dir.x + line_dir.y * line_dir.y;
+    const b = 2 * (line_dir.x * (line_pos.x - circle_center.x) + line_dir.y * (line_pos.y - circle_center.y));
+    const c = (line_pos.x - circle_center.x) * (line_pos.x - circle_center.x) +
+        (line_pos.y - circle_center.y) * (line_pos.y - circle_center.y) -
+        circle_radius * circle_radius;
+
+    const discriminant = b * b - 4 * a * c;
+
+    if (discriminant < 0) {
+        return null; // no intersection
+    }
+
+    const sqrt_discriminant = std.math.sqrt(discriminant);
+    const t1 = (-b + sqrt_discriminant) / (2 * a);
+    const t2 = (-b - sqrt_discriminant) / (2 * a);
+
+    // Return the closest intersection point
+    return @min(t1, t2);
+}
