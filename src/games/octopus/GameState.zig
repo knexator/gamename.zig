@@ -141,6 +141,12 @@ const LevelState = struct {
         }
     }
 
+    fn reset(self: *LevelState) void {
+        self.move_history.clearRetainingCapacity();
+        self.edges.fill(false);
+        self.time_of_last_move = -std.math.inf(f32);
+    }
+
     fn allTilesVisited(self: LevelState, scratch: std.mem.Allocator) !bool {
         const info = try infoFromEdges(self.edges, self.blocked, self.board_size, self.octopus_pos, scratch);
         var it = self.blocked.iterator();
@@ -264,7 +270,7 @@ const MenuState = struct {
         const all_solved = blk: for (game.old_states) |s| {
             if (!try s.solved(game.mem.scratch.allocator())) break :blk false;
         } else true;
-        if (true or all_solved) {
+        if (all_solved) {
             try game.canvas.drawTextLines(
                 0,
                 camera,
@@ -435,6 +441,10 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     defer if (platform.keyboard.wasPressed(.Escape)) {
         self.state = .{ .loading = .toMenu() };
     };
+
+    if (platform.keyboard.wasPressed(.KeyR)) {
+        self.level_state.reset();
+    }
 
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
         self.level_state.undo();

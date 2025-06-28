@@ -313,11 +313,15 @@ pub fn Grid2DEdges(T: type) type {
             };
         }
 
-        pub fn initFill(allocator: std.mem.Allocator, size: UVec2, fill: T) !Self {
+        pub fn initFill(allocator: std.mem.Allocator, size: UVec2, value: T) !Self {
             const result: Self = try .initUndefined(allocator, size);
-            @memset(result.data_hor, fill);
-            @memset(result.data_ver, fill);
+            result.fill(value);
             return result;
+        }
+
+        pub fn fill(self: Self, value: T) void {
+            @memset(self.data_hor, value);
+            @memset(self.data_ver, value);
         }
 
         pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
