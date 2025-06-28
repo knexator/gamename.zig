@@ -197,7 +197,7 @@ state: union(enum) {
 } = .{ .menu = .{} },
 
 old_edges: [level_infos.len]?kommon.Grid2DEdges(bool) = @splat(null),
-focus: union(enum) { none, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
+focus: union(enum) { none, tentacle_tip: usize, lines: struct { tile: UVec2, which: enum { idk, draw, erase } } } = .none,
 level_state: LevelState,
 level_index: usize,
 visual_tentacles_distance: [8]f32 = @splat(1.0),
@@ -426,6 +426,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         const is_active = switch (self.focus) {
             .none => false,
             .lines => |l| l.tile.equals(pos),
+            .tentacle_tip => |k| kommon.last(tentacles[k]).?.nextPos().equals(pos),
         };
         const is_hot = mouse_over and (self.focus == .none or is_active);
         const hot_t = try self.smooth.float(
@@ -449,10 +450,41 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             if (mouse.wasPressed(.left)) {
                 if (board.tileAt(mouse.cur.position, board_rect)) |tile| {
                     if (!blocked.at2(tile)) {
-                        self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
+                        for (0..8) |k| {
+                            if (kommon.last(tentacles[k]).?.nextPos().equals(tile)) {
+                                self.focus = .{ .tentacle_tip = k };
+                                break;
+                            }
+                        }
+                        // } else self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
                     }
                 }
             }
+        },
+        .tentacle_tip => |k| {
+            if (mouse.wasReleased(.left)) {
+                self.focus = .none;
+            } else if (board.tileAt(mouse.cur.position, board_rect)) |new_tile| {
+                const old_tile = kommon.last(tentacles[k]).?.nextPos();
+                if (!new_tile.equals(old_tile)) {
+                    if (!blocked.at2(new_tile)) {
+                        if (EdgePos.between(old_tile, new_tile)) |edge_pos| {
+                            if (tentacle_at.at2(new_tile)) |other_tentacle| {
+                                if (other_tentacle.id == k) {
+                                    var range = kommon.itertools.reverseRange(usize, other_tentacle.dist, tentacles[k].len - 1);
+                                    while (range.next()) |index| {
+                                        edges.set(tentacles[k][index], false);
+                                        try self.level_state.move_history.append(.{ .where = tentacles[k][index], .added = false });
+                                    }
+                                }
+                            } else {
+                                edges.set(edge_pos, true);
+                                try self.level_state.move_history.append(.{ .where = edge_pos, .added = true });
+                            }
+                        } else self.focus = .none;
+                    } else self.focus = .none;
+                }
+            } else self.focus = .none;
         },
         .lines => |*l| {
             if (mouse.wasReleased(.left)) {
