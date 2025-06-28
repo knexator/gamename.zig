@@ -194,6 +194,12 @@ pub fn ZVec2(T: type) type {
             return new(-v.y, v.x);
         }
 
+        pub fn perpTo(v: Self, o: Self) bool {
+            assert(!v.equals(.zero));
+            assert(!o.equals(.zero));
+            return v.dot(o) == 0;
+        }
+
         pub fn rotate(v: Self, k: isize) Self {
             var res = v;
             for (0..@abs(k)) |_| {

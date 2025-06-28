@@ -207,6 +207,7 @@ old_states: [level_infos.len]LevelState,
 focus: union(enum) {
     none,
     tentacle_tip: usize,
+    tentacle_middle: TentacleTile,
     lines: struct { tile: UVec2, which: enum { idk, draw, erase } },
 
     pub fn isDragging(self: @This(), id: usize) bool {
@@ -469,6 +470,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         const is_active = switch (self.focus) {
             .none => false,
             .lines => |l| l.tile.equals(pos),
+            .tentacle_middle => |t| tentacles[t.id][t.dist].nextPos().equals(pos),
             .tentacle_tip => |k| kommon.last(tentacles[k]).?.nextPos().equals(pos),
         };
         const is_hot = mouse_over and (self.focus == .none or is_active);
@@ -493,16 +495,80 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             if (mouse.wasPressed(.left)) {
                 if (board.tileAt(mouse.cur.position, board_rect)) |tile| {
                     if (!blocked.at2(tile)) {
-                        for (0..8) |k| {
-                            if (kommon.last(tentacles[k]).?.nextPos().equals(tile)) {
-                                self.focus = .{ .tentacle_tip = k };
-                                break;
+                        if (tentacle_at.at2(tile)) |t| {
+                            if (t.dist == tentacles[t.id].len) {
+                                self.focus = .{ .tentacle_tip = t.id };
+                            } else {
+                                self.focus = .{ .tentacle_middle = t };
                             }
                         }
+                        // for (0..8) |k| {
+                        //     if (kommon.last(tentacles[k]).?.nextPos().equals(tile)) {
+                        //         self.focus = .{ .tentacle_tip = k };
+                        //         break;
+                        //     }
+                        // }
                         // } else self.focus = .{ .lines = .{ .tile = tile, .which = .idk } };
                     }
                 }
             }
+        },
+        .tentacle_middle => |t| {
+            if (mouse.wasReleased(.left)) {
+                self.focus = .none;
+            } else if (board.tileAt(mouse.cur.position, board_rect)) |new_tile| {
+                const old_tile = tentacles[t.id][t.dist - 1].nextPos();
+                if (!new_tile.equals(old_tile)) {
+                    if (!blocked.at2(new_tile)) {
+                        if (EdgePos.between(old_tile, new_tile)) |edge_pos| {
+                            if (!edges.at(edge_pos)) {
+                                if (tentacle_at.at2(new_tile) == null) {
+                                    var local_edges = activeEdgesAround(edges.*, old_tile);
+                                    assert(local_edges.len <= 2);
+                                    for (local_edges.constSlice()) |e| {
+                                        if (e.dir.dot(edge_pos.dir) == 0) {
+                                            const parallel_edge = e.translateNew(edge_pos.dir);
+                                            if (tentacle_at.at2(parallel_edge.nextPos()) == null) {
+                                                edges.set(e, false);
+                                                edges.set(edge_pos, true);
+                                                edges.set(parallel_edge, true);
+                                                edges.set(edge_pos.translateNew(e.dir), true);
+                                                // TODO: recalc focus
+                                                self.focus = .none;
+                                                break;
+                                            }
+                                        }
+                                    } else self.focus = .none;
+                                } else self.focus = .none;
+                            } else {
+                                assert(tentacle_at.at2(new_tile).?.id == t.id);
+                                const other_edge: EdgePos = blk: for (activeEdgesAround(edges.*, old_tile).constSlice()) |e| {
+                                    if (!e.sameAs(edge_pos)) break :blk e;
+                                } else unreachable;
+                                if (other_edge.dir.perpTo(edge_pos.dir)) {
+                                    const parallel_edge = edge_pos.translateNew(other_edge.dir);
+                                    if (tentacle_at.at2(parallel_edge.nextPos())) |t2| {
+                                        if (t2.id == t.id) {
+                                            const bad: TentacleTile = .{ .id = 9, .dist = undefined };
+                                            if ((tentacle_at.at2(parallel_edge.pos) orelse bad).id == t.id) {
+                                                edges.set(other_edge.translateNew(edge_pos.dir), true);
+                                                edges.set(edge_pos, false);
+                                                edges.set(parallel_edge, false);
+                                                edges.set(other_edge, false);
+                                                // TODO: recalc focus
+                                                self.focus = .none;
+                                            } else self.focus = .none;
+                                        } else self.focus = .none;
+                                    } else {
+                                        // TODO: corner bend
+                                    }
+                                } else self.focus = .none;
+                            }
+                        } else self.focus = .none;
+                    } else self.focus = .none;
+                }
+            } else self.focus = .none;
+            // tentacles[t.id][t.dist].nextPos().equals(pos);
         },
         .tentacle_tip => |k| {
             if (mouse.wasReleased(.left)) {

@@ -280,6 +280,18 @@ pub const EdgePos = struct {
         return .{ .pos = self.pos.add(p), .dir = self.dir };
     }
 
+    pub fn translateNew(self: EdgePos, d: IVec2) EdgePos {
+        assert(self.validDir());
+        return .{ .pos = self.pos.addSigned(d), .dir = self.dir };
+    }
+
+    pub fn sameAs(self: EdgePos, other: EdgePos) bool {
+        assert(self.validDir());
+        assert(other.validDir());
+        return (self.pos.equals(other.pos) and self.dir.equals(other.dir)) or
+            (self.pos.equals(other.nextPos()) and self.dir.equals(other.dir.neg()));
+    }
+
     pub fn between(a: UVec2, b: UVec2) ?EdgePos {
         const r: EdgePos = .{ .pos = a, .dir = b.subToSigned(a) };
         if (!r.validDir()) return null;
