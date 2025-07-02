@@ -996,7 +996,7 @@ pub const TextBatch = struct {
         self: *TextBatch,
         comptime fmt: []const u8,
         fmt_args: anytype,
-        pos: Rect.Measure,
+        pos: TextRenderer.TextPosition,
         em: f32,
         color: FColor,
     ) !void {
@@ -1008,16 +1008,17 @@ pub const TextBatch = struct {
     pub fn addText(
         self: *TextBatch,
         text: []const u8,
-        pos: Rect.Measure,
+        pos: TextRenderer.TextPosition,
         em: f32,
         color: FColor,
     ) !void {
         assert(std.mem.indexOf(u8, text, "\n") == null);
-        const quads = try self.text_renderer.quadsForLine(text, em, color, self.canvas.frame_arena.allocator());
+        const info = try self.text_renderer.quadsForLineV2(text, em, color, self.canvas.frame_arena.allocator());
+        const quads = info.quads;
         defer self.canvas.frame_arena.allocator().free(quads);
         if (quads.len == 0) return;
-        const bounds = Rect.boundingOOP(TextRenderer.Quad, quads, "pos");
-        const delta = bounds.deltaToAchieve(pos);
+        // const delta = bounds.deltaToAchieve(pos);
+        const delta = self.text_renderer.deltaToAchieve(pos, info.total_advance, em);
         try self.quads.ensureUnusedCapacity(quads.len);
         for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
     }
@@ -1085,6 +1086,12 @@ pub const TextRenderer = struct {
     atlas_texture: Gl.Texture,
     renderable: Gl.Renderable,
     font_info: std.json.Parsed(FontJsonInfo),
+
+    pub const TextPosition = struct {
+        hor: enum { left, center, right },
+        ver: enum { baseline, ascender, descender, median },
+        pos: Vec2,
+    };
 
     const RectSides = struct {
         left: f32,
@@ -1221,13 +1228,32 @@ pub const TextRenderer = struct {
         } else return null;
     }
 
-    pub fn quadsForLine(
+    /// how to move quads that were placed with the cursor at .zero
+    pub fn deltaToAchieve(
+        self: TextRenderer,
+        pos: TextRenderer.TextPosition,
+        total_advance: f32,
+        em: f32,
+    ) Vec2 {
+        return pos.pos.sub(.new(switch (pos.hor) {
+            .left => 0,
+            .right => total_advance,
+            .center => total_advance / 2.0,
+        }, switch (pos.ver) {
+            .baseline => 0,
+            .ascender => self.font_info.value.metrics.ascender,
+            .descender => self.font_info.value.metrics.descender,
+            .median => em,
+        }));
+    }
+
+    pub fn quadsForLineV2(
         self: TextRenderer,
         text: []const u8,
         em: f32,
         color: FColor,
         target: std.mem.Allocator,
-    ) ![]Quad {
+    ) !struct { quads: []Quad, total_advance: f32 } {
         var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
         var cursor: Vec2 = .zero;
         for (text, 0..) |char, k| {
@@ -1237,7 +1263,18 @@ pub const TextRenderer = struct {
             cursor, const quad = self.addLetter(cursor, char, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
         }
-        return quads.toOwnedSlice();
+        assert(cursor.y == 0);
+        return .{ .quads = try quads.toOwnedSlice(), .total_advance = cursor.x };
+    }
+
+    pub fn quadsForLine(
+        self: TextRenderer,
+        text: []const u8,
+        em: f32,
+        color: FColor,
+        target: std.mem.Allocator,
+    ) ![]Quad {
+        return (try self.quadsForLineV2(text, em, color, target)).quads;
     }
 
     // TODO: validate kerning

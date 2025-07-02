@@ -25,7 +25,11 @@ pub const Hexditor = struct {
             try fg_text.addFmt(
                 "{x}",
                 .{k},
-                .{ .center = bg_rects.getLast().pos.getCenter() },
+                .{
+                    .hor = .center,
+                    .ver = .median,
+                    .pos = bg_rects.getLast().pos.getCenter(),
+                },
                 cell_size * 0.75,
                 COLORS.text,
             );
@@ -43,7 +47,13 @@ pub const Hexditor = struct {
                 try fg_text.addFmt(
                     "{x:02}",
                     .{kommon.safeAt(u8, self.values.items, 16 * line_index + k) orelse 0},
-                    .{ .center = bg_rects.getLast().pos.getCenter() },
+                    .{
+                        .hor = .center,
+                        //  TODO NOW
+                        .ver = .median,
+                        // .ver = .baseline,
+                        .pos = bg_rects.getLast().pos.getCenter(),
+                    },
                     cell_size * 0.75,
                     COLORS.text,
                 );
