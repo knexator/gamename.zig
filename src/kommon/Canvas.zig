@@ -963,6 +963,16 @@ pub fn instancedSegments(
     );
 }
 
+pub const FilledRect = extern struct { pos: Rect, color: FColor };
+pub fn fillRects(
+    self: Canvas,
+    camera: Rect,
+    rects: []const FilledRect,
+) void {
+    // TODO: instanced
+    for (rects) |r| self.fillRect(camera, r.pos, r.color);
+}
+
 /// Performs triangulation; consider caching the result.
 pub fn tmpShape(
     self: *Canvas,
@@ -974,6 +984,56 @@ pub fn tmpShape(
 pub fn startFrame(self: *Canvas, gl: Gl) void {
     self.gl = gl;
     _ = self.frame_arena.reset(.retain_capacity);
+}
+
+// TODO: baselines, etc
+pub const TextBatch = struct {
+    quads: std.ArrayList(TextRenderer.Quad),
+    canvas: *Canvas,
+    text_renderer: *TextRenderer,
+
+    pub fn addFmt(
+        self: *TextBatch,
+        comptime fmt: []const u8,
+        fmt_args: anytype,
+        pos: Rect.Measure,
+        em: f32,
+        color: FColor,
+    ) !void {
+        const text = try std.fmt.allocPrint(self.canvas.frame_arena.allocator(), fmt, fmt_args);
+        defer self.canvas.frame_arena.allocator().free(text);
+        try self.addText(text, pos, em, color);
+    }
+
+    pub fn addText(
+        self: *TextBatch,
+        text: []const u8,
+        pos: Rect.Measure,
+        em: f32,
+        color: FColor,
+    ) !void {
+        assert(std.mem.indexOf(u8, text, "\n") == null);
+        const quads = try self.text_renderer.quadsForLine(text, em, color, self.canvas.frame_arena.allocator());
+        defer self.canvas.frame_arena.allocator().free(quads);
+        if (quads.len == 0) return;
+        const bounds = Rect.boundingOOP(TextRenderer.Quad, quads, "pos");
+        const delta = bounds.deltaToAchieve(pos);
+        try self.quads.ensureUnusedCapacity(quads.len);
+        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
+    }
+
+    pub fn draw(self: *TextBatch, camera: Rect) void {
+        for (self.quads.items) |q| self.text_renderer.drawQuad(self.canvas.gl, camera, q);
+        self.quads.clearAndFree();
+    }
+};
+
+pub fn textBatch(self: *Canvas, font_index: usize) TextBatch {
+    return .{
+        .canvas = self,
+        .quads = .init(self.frame_arena.allocator()),
+        .text_renderer = &self.text_renderers[font_index],
+    };
 }
 
 pub fn drawTextLine(
@@ -1161,7 +1221,7 @@ pub const TextRenderer = struct {
         } else return null;
     }
 
-    fn quadsForLine(
+    pub fn quadsForLine(
         self: TextRenderer,
         text: []const u8,
         em: f32,
@@ -1246,6 +1306,7 @@ pub const TextRenderer = struct {
         em: f32,
         color: FColor,
     ) void {
+        std.log.debug("calling a deprecated function", .{});
         // self.drawText(gl, camera, .{.bottom_left = bottom_left}, text, em, color)
         var cursor: Vec2 = bottom_left;
         for (text) |char| {
@@ -1260,10 +1321,16 @@ pub const TextRenderer = struct {
         }
     }
 
-    const Quad = struct {
+    pub const Quad = struct {
         pos: Rect,
         tex: Rect,
         color: FColor,
+
+        pub fn translate(self: Quad, delta: Vec2) Quad {
+            var res = self;
+            res.pos.top_left.addInPlace(delta);
+            return res;
+        }
     };
 
     pub fn drawQuad(self: TextRenderer, gl: Gl, camera: Rect, quad: Quad) void {

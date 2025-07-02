@@ -734,7 +734,7 @@ pub const URect = struct {
     }
 };
 
-pub const Rect = struct {
+pub const Rect = extern struct {
     top_left: Vec2,
     size: Vec2,
 
@@ -809,7 +809,7 @@ pub const Rect = struct {
             else => std.debug.panic("TODO: measure[0] {s}", .{@tagName(measures[0])}),
             .center => |center| {
                 switch (measures[1]) {
-                    else => @panic("TODO"),
+                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
                     .size => |size| {
                         return .{ .size = size, .top_left = center.sub(size.scale(0.5)) };
                     },
@@ -817,7 +817,8 @@ pub const Rect = struct {
             },
             .top_left => |top_left| {
                 switch (measures[1]) {
-                    else => @panic("TODO"),
+                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
+                    .size => |size| return .{ .top_left = top_left, .size = size },
                     .bottom_right => |bottom_right| {
                         return .{ .size = bottom_right.sub(top_left), .top_left = top_left };
                     },
@@ -825,7 +826,7 @@ pub const Rect = struct {
             },
             .top_center => |top_center| {
                 switch (measures[1]) {
-                    else => @panic("TODO"),
+                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
                     .size => |size| {
                         return .{ .size = size, .top_left = top_center.sub(size.mul(.new(0.5, 0))) };
                     },
@@ -833,7 +834,7 @@ pub const Rect = struct {
             },
             .bottom_center => |bottom_center| {
                 switch (measures[1]) {
-                    else => @panic("TODO"),
+                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
                     .size => |size| {
                         return .{ .size = size, .top_left = bottom_center.sub(size.mul(.new(0.5, 1))) };
                     },
@@ -841,7 +842,7 @@ pub const Rect = struct {
             },
             .bottom_left => |bottom_left| {
                 switch (measures[1]) {
-                    else => @panic("TODO"),
+                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
                     .size => |size| {
                         return .{ .size = size, .top_left = bottom_left.sub(size.mul(.new(0, 1))) };
                     },
@@ -854,16 +855,17 @@ pub const Rect = struct {
         return switch (change) {
             else => std.debug.panic("TODO: change {s}", .{@tagName(change)}),
             .center => |center| switch (keep) {
-                else => @panic("TODO"),
+                else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
                 .size => .from(.{ .{ .center = center }, .{ .size = original.get(.size) } }),
             },
             .bottom_left => |bottom_left| switch (keep) {
-                else => @panic("TODO"),
+                else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
                 .size => .from(.{ .{ .bottom_left = bottom_left }, .{ .size = original.get(.size) } }),
             },
             .size => |size| switch (keep) {
-                else => @panic("TODO"),
+                else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
                 .center => .fromCenterAndSize(original.get(.center), size),
+                .top_left => .from(.{ .{ .top_left = original.get(.top_left) }, .{ .size = size } }),
                 .top_center => .from(.{ .{ .top_center = original.get(.top_center) }, .{ .size = size } }),
                 .bottom_center => .from(.{ .{ .bottom_center = original.get(.bottom_center) }, .{ .size = size } }),
             },
