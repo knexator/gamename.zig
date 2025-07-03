@@ -96,6 +96,10 @@ pub fn CustomKeyboardState(CustomKeyboardButton: type) type {
                 inline else => |x| @field(self.keys, @tagName(x)),
             };
         }
+
+        pub fn isShiftDown(self: @This()) bool {
+            return self.isDown(.ShiftLeft) or self.isDown(.ShiftRight);
+        }
     };
 }
 

@@ -1,5 +1,53 @@
-pub const Hexditor = struct {
+const InputState = struct {
+    command: ?enum { inc } = null,
+
+    pub fn update(self: *InputState, platform: PlatformGives) ?Hexditor.Instruction {
+        if (self.command) |cmd| switch (cmd) {
+            .inc => {
+                for ([_]KeyboardButton{ .KeyJ, .KeyK, .KeyL, .Semicolon }, 0..) |key, k| {
+                    if (platform.keyboard.wasPressed(key)) {
+                        self.command = null;
+                        return .{ .inc = .{
+                            .byte = @intCast(k),
+                            .indirection = if (platform.keyboard.cur.isShiftDown()) 1 else 0,
+                        } };
+                    }
+                }
+            },
+        } else {
+            if (platform.keyboard.wasPressed(.KeyQ)) {
+                self.command = .inc;
+            }
+        }
+        return null;
+    }
+};
+
+const Hexditor = struct {
     values: [0x100]u8 = @splat(0),
+
+    input_state: InputState = .{},
+
+    pub const Instruction = union(enum) {
+        inc: Operand,
+
+        pub const Operand = struct {
+            byte: u8,
+            indirection: u8,
+        };
+    };
+
+    pub fn process(self: *Hexditor, instruction: Instruction) void {
+        switch (instruction) {
+            .inc => |dst| {
+                var dst_byte = dst.byte;
+                for (0..dst.indirection) |_| {
+                    dst_byte = self.values[dst_byte];
+                }
+                self.values[dst_byte] += 1;
+            },
+        }
+    }
 
     pub fn draw(self: Hexditor, canvas: *Canvas, camera: Rect) !void {
         const COLORS = struct {
@@ -111,6 +159,11 @@ pub fn afterHotReload(self: *GameState) !void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
+
+    if (self.core.input_state.update(platform)) |instruction| {
+        self.core.process(instruction);
+    }
+
     try self.core.draw(&self.canvas, (Rect{
         .top_left = .zero,
         .size = .new(16, 17),
