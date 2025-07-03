@@ -9,7 +9,7 @@ pub const Hexditor = struct {
         const COLORS = struct {
             text: FColor = .white,
             bg_panel: FColor = .fromHex("#222222"),
-            bg_checker: [2]FColor = .{ .fromHex("#222211"), .fromHex("#112222") },
+            bg_checker: [2]FColor = .{ .fromHex("#332211"), .fromHex("#112233") },
         }{};
 
         const cell_size = camera.size.x / 16.0;
@@ -49,9 +49,7 @@ pub const Hexditor = struct {
                     .{kommon.safeAt(u8, self.values.items, 16 * line_index + k) orelse 0},
                     .{
                         .hor = .center,
-                        //  TODO NOW
                         .ver = .median,
-                        // .ver = .baseline,
                         .pos = bg_rects.getLast().pos.getCenter(),
                     },
                     cell_size * 0.75,

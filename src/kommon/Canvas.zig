@@ -1241,9 +1241,9 @@ pub const TextRenderer = struct {
             .center => total_advance / 2.0,
         }, switch (pos.ver) {
             .baseline => 0,
-            .ascender => self.font_info.value.metrics.ascender,
-            .descender => self.font_info.value.metrics.descender,
-            .median => em,
+            .ascender => self.font_info.value.metrics.ascender * em,
+            .descender => self.font_info.value.metrics.descender * em,
+            .median => -0.36 * em,
         }));
     }
 
