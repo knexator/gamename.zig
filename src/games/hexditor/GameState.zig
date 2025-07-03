@@ -1,9 +1,5 @@
 pub const Hexditor = struct {
-    values: std.ArrayList(u8),
-
-    pub fn init(alloc: std.mem.Allocator) Hexditor {
-        return .{ .values = .init(alloc) };
-    }
+    values: [0x100]u8 = @splat(0),
 
     pub fn draw(self: Hexditor, canvas: *Canvas, camera: Rect) !void {
         const COLORS = struct {
@@ -12,14 +8,13 @@ pub const Hexditor = struct {
             bg_checker: [2]FColor = .{ .fromHex("#332211"), .fromHex("#112233") },
         }{};
 
-        const cell_size = camera.size.x / 16.0;
         var bg_rects: std.ArrayList(Canvas.FilledRect) = .init(canvas.frame_arena.allocator());
         var fg_text = canvas.textBatch(0);
 
         for (0..16) |k| {
             try bg_rects.append(.{ .pos = .{
-                .top_left = .new(cell_size * tof32(k), 0),
-                .size = .both(cell_size),
+                .top_left = .new(tof32(k), 0),
+                .size = .one,
             }, .color = COLORS.bg_panel });
             // }, .color = COLORS.bg_checker[@mod(k, 2)] });
             try fg_text.addFmt(
@@ -30,29 +25,26 @@ pub const Hexditor = struct {
                     .ver = .median,
                     .pos = bg_rects.getLast().pos.getCenter(),
                 },
-                cell_size * 0.75,
+                0.75,
                 COLORS.text,
             );
         }
 
-        // var rest_of_bytes = self.values.items;
-        // var row_top_y = cell_size;
-        var line_index: usize = 0;
-        while (tof32(line_index + 2) * cell_size < camera.size.y) : (line_index += 1) {
+        for (0..16) |line_index| {
             for (0..16) |k| {
                 try bg_rects.append(.{ .pos = .{
-                    .top_left = .new(cell_size * tof32(k), tof32(line_index + 1) * cell_size),
-                    .size = .both(cell_size),
+                    .top_left = .new(tof32(k), tof32(line_index + 1)),
+                    .size = .one,
                 }, .color = COLORS.bg_checker[@mod(k + line_index, 2)] });
                 try fg_text.addFmt(
                     "{x:02}",
-                    .{kommon.safeAt(u8, self.values.items, 16 * line_index + k) orelse 0},
+                    .{self.values[16 * line_index + k]},
                     .{
                         .hor = .center,
                         .ver = .median,
                         .pos = bg_rects.getLast().pos.getCenter(),
                     },
-                    cell_size * 0.75,
+                    0.75,
                     COLORS.text,
                 );
             }
@@ -71,7 +63,7 @@ pub const stuff = .{
     .metadata = .{
         .name = "hexditor",
         .author = "knexator",
-        .desired_aspect_ratio = 4.0 / 3.0,
+        .desired_aspect_ratio = 16.0 / 17.0,
     },
 
     .sounds = .{},
@@ -98,7 +90,7 @@ pub fn init(
 ) !void {
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
-    dst.core = .init(dst.mem.forever.allocator());
+    dst.core = .{};
 }
 
 // TODO: take gl parameter
@@ -119,10 +111,13 @@ pub fn afterHotReload(self: *GameState) !void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
-    try self.core.draw(&self.canvas, Rect.unit.withAspectRatio(
+    try self.core.draw(&self.canvas, (Rect{
+        .top_left = .zero,
+        .size = .new(16, 17),
+    }).withAspectRatio(
         platform.aspect_ratio,
         .grow,
-        .top_left,
+        .top_center,
     ));
     return false;
 }
