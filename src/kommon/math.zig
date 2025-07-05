@@ -85,6 +85,14 @@ pub fn tof32(value: anytype) f32 {
 pub const UVec2 = ZVec2(usize);
 pub const IVec2 = ZVec2(isize);
 
+pub inline fn signed(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .int => |i| i.signedness == .signed,
+        .float, .comptime_int, .comptime_float => true,
+        else => @compileError("bad"),
+    };
+}
+
 pub fn ZVec2(T: type) type {
     return extern struct {
         pub const Scalar = T;
@@ -98,8 +106,8 @@ pub fn ZVec2(T: type) type {
         pub const one = new(1, 1);
         pub const e1 = new(1, 0);
         pub const e2 = new(0, 1);
-        pub const ne1 = new(-1, 0);
-        pub const ne2 = new(0, -1);
+        pub const ne1 = if (signed(T)) new(-1, 0) else undefined;
+        pub const ne2 = if (signed(T)) new(0, -1) else undefined;
 
         pub const cardinal_directions = [4]IVec2{
             .new(1, 0),
@@ -182,7 +190,7 @@ pub fn ZVec2(T: type) type {
         }
 
         pub fn neg(v: Self) Self {
-            if (!(@typeInfo(T).int.signedness == .signed)) @panic("operation not supported on this type");
+            if (!signed(T)) unreachable;
             return new(-v.x, -v.y);
         }
 
@@ -191,6 +199,7 @@ pub fn ZVec2(T: type) type {
         }
 
         pub fn rotateOnce(v: Self) Self {
+            if (!signed(T)) unreachable;
             return new(-v.y, v.x);
         }
 
@@ -1544,7 +1553,7 @@ pub const easings = struct {
     }
 
     pub fn easeOutCubic(x: f32) f32 {
-        return 1 - std.math.pow(1 - x, 3);
+        return 1 - std.math.pow(f32, 1 - x, 3);
     }
 };
 
