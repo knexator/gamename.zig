@@ -1,11 +1,18 @@
+const COLORS = struct {
+    text: FColor = .black,
+    bg_element: FColor = .gray(0.9),
+    bg_board: FColor = .white,
+    bg_sidepanel: FColor = .gray(0.8),
+}{};
+
 const InputState = struct {
     hovering: ?usize,
     grabbing: ?usize,
 };
 
 const BoardState = struct {
-    // const PlacedElement = struct { pos: Vec2, id: usize };
     placed: std.ArrayList(struct { pos: Vec2, id: usize }),
+    discovered: [AlchemyData.names.len]bool = @splat(false),
 
     pub fn init(gpa: std.mem.Allocator) BoardState {
         return .{
@@ -17,8 +24,9 @@ const BoardState = struct {
         for (0..4) |k| {
             try self.placed.append(.{
                 .id = k + 1,
-                .pos = .both(tof32(k)),
+                .pos = Vec2.new(tof32(k + 1), tof32(k)).add(.half),
             });
+            self.discovered[k + 1] = true;
         }
     }
 
@@ -40,6 +48,7 @@ const BoardState = struct {
             self.placed.items[active].id,
             self.placed.items[pasive].id,
         )) |new_id| {
+            self.discovered[new_id] = true;
             self.placed.items[pasive].id = new_id;
             self.placed.items[pasive].pos = .lerp(
                 self.placed.items[pasive].pos,
@@ -51,18 +60,31 @@ const BoardState = struct {
     }
 
     pub fn draw(self: BoardState, canvas: *Canvas, camera: Rect) !void {
-        const COLORS = struct {
-            text: FColor = .white,
-            bg_panel: FColor = .fromHex("#222222"),
-        }{};
-
         var bg_rects: std.ArrayList(Canvas.FilledRect) = .init(canvas.frame_arena.allocator());
         var fg_text = canvas.textBatch(0);
+
+        try bg_rects.append(.{ .pos = .{ .top_left = .zero, .size = .new(1, camera.size.y) }, .color = COLORS.bg_sidepanel });
+        // TODO: improve
+        var y: f32 = 0;
+        for (self.discovered, 0..) |discovered, k| {
+            if (!discovered) continue;
+            try bg_rects.append(.{
+                .pos = elementRect(.new(0, y)),
+                .color = COLORS.bg_element,
+            });
+            try fg_text.addText(
+                AlchemyData.names[k],
+                elementLabel(.new(0, y)),
+                0.25,
+                COLORS.text,
+            );
+            y += 1;
+        }
 
         for (self.placed.items) |element| {
             try bg_rects.append(.{
                 .pos = elementRect(element.pos),
-                .color = COLORS.bg_panel,
+                .color = COLORS.bg_element,
             });
             try fg_text.addText(
                 AlchemyData.names[element.id],
@@ -157,10 +179,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }).withAspectRatio(
         platform.aspect_ratio,
         .grow,
-        .top_center,
+        .top_left,
     );
     const mouse = platform.getMouse(camera);
 
+    self.input_state.hovering = null;
     for (self.board.placed.items, 0..) |e, k| {
         if (k == self.input_state.grabbing) continue;
         if (BoardState.elementRect(e.pos).contains(mouse.cur.position)) {
@@ -182,7 +205,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.input_state.grabbing = null;
     }
 
-    platform.gl.clear(.black);
+    platform.gl.clear(COLORS.bg_board);
     try self.board.draw(&self.canvas, camera);
 
     return false;
