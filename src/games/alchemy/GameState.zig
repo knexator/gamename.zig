@@ -5,10 +5,8 @@ const COLORS = struct {
     bg_sidepanel: FColor = .gray(0.8),
 }{};
 
-pub const UI = struct {};
-
 const InputState = struct {
-    hovering: ?usize,
+    hovering: ?union(enum) { element: usize, sidepanel: usize },
     grabbing: ?usize,
 };
 
@@ -51,13 +49,7 @@ const BoardState = struct {
     }
 
     pub fn addInitialElements(self: *BoardState) !void {
-        for (0..4) |k| {
-            try self.placed.append(.{
-                .id = k + 1,
-                .pos = Vec2.new(tof32(k + 1), tof32(k)).add(.half),
-            });
-            self.discovered[k + 1] = true;
-        }
+        for (AlchemyData.initial) |k| self.discovered[k] = true;
     }
 
     pub fn combine(self: *BoardState, active: usize, pasive: usize) !void {
@@ -82,6 +74,7 @@ const AlchemyData = struct {
     const names: []const []const u8 = @import("names.zon");
     const images_base64: []const []const u8 = @import("images.zon");
     const recipes: []const []const [2]usize = @import("base.zon");
+    const initial: []const usize = &.{ 1, 2, 3, 4 };
 
     pub fn combinationOf(active_id: usize, pasive_id: usize) ?usize {
         for (recipes, 0..) |r, k| {
@@ -118,10 +111,9 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 canvas: Canvas,
 mem: Mem,
 
-ui: UI,
-
 board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
+sidepanel_offset: f32 = 0,
 
 pub fn init(
     dst: *GameState,
@@ -133,7 +125,6 @@ pub fn init(
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.board = .init(gpa);
     try dst.board.addInitialElements();
-    dst.ui = .{};
 }
 
 // TODO: take gl parameter
@@ -192,28 +183,65 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     // ui.draw(self.canvas, camera);
 
-    for (self.board.placed.items) |element| {
-        try element.draw(&bg_rects, &fg_text);
+    self.input_state.hovering = null;
+
+    {
+        var y = -self.sidepanel_offset;
+        for (self.board.discovered, 0..) |discovered, k| {
+            if (!discovered) continue;
+            const rect: Rect = .{ .top_left = .new(0, y), .size = .one };
+            if (self.input_state.grabbing == null and rect.contains(mouse.cur.position)) {
+                self.input_state.hovering = .{ .sidepanel = k };
+            }
+            try bg_rects.append(.{
+                .pos = rect,
+                .color = COLORS.bg_element,
+            });
+            try fg_text.addText(
+                AlchemyData.names[k],
+                .{
+                    .hor = .center,
+                    .ver = .median,
+                    .pos = rect.getCenter(),
+                },
+                0.25,
+                COLORS.text,
+            );
+            y += 1;
+        }
     }
 
-    self.input_state.hovering = null;
-    for (self.board.placed.items, 0..) |e, k| {
+    for (self.board.placed.items, 0..) |element, k| {
+        try element.draw(&bg_rects, &fg_text);
         if (k == self.input_state.grabbing) continue;
-        if (e.rect().contains(mouse.cur.position)) {
-            self.input_state.hovering = k;
+        if (element.rect().contains(mouse.cur.position)) {
+            self.input_state.hovering = .{ .element = k };
         }
+    }
+    if (mouse.cur.position.x <= 1) {
+        self.sidepanel_offset -= mouse.cur.scrolled.toNumber();
     }
     if (mouse.wasPressed(.left)) {
         assert(self.input_state.grabbing == null);
-        self.input_state.grabbing = self.input_state.hovering;
+        self.input_state.grabbing = if (self.input_state.hovering) |h| switch (h) {
+            .element => |k| k,
+            .sidepanel => |element_id| blk: {
+                try self.board.placed.append(.{ .id = element_id, .pos = mouse.cur.position });
+                break :blk self.board.placed.items.len - 1;
+            },
+        } else null;
         self.input_state.hovering = null;
     }
     if (self.input_state.grabbing) |grabbing_index| {
         self.board.placed.items[grabbing_index].pos.addInPlace(mouse.cur.position.sub(mouse.prev.position));
     }
     if (mouse.wasReleased(.left)) {
-        if (self.input_state.grabbing != null and self.input_state.hovering != null) {
-            try self.board.combine(self.input_state.grabbing.?, self.input_state.hovering.?);
+        if (self.input_state.grabbing) |grabbing| {
+            if (self.input_state.hovering != null) {
+                try self.board.combine(grabbing, self.input_state.hovering.?.element);
+            } else if (self.board.placed.items[grabbing].pos.x <= 1) {
+                _ = self.board.placed.swapRemove(grabbing);
+            }
         }
         self.input_state.grabbing = null;
     }
