@@ -74,7 +74,51 @@ const AlchemyData = struct {
     const names: []const []const u8 = @import("names.zon");
     const images_base64: []const []const u8 = @import("images.zon");
     const recipes: []const []const [2]usize = @import("base.zon");
-    const initial: []const usize = &.{ 80, 24, 13, 1 };
+    const Asdf = struct { mixes: usize, a: usize, b: usize };
+    const required_mixes: [names.len]Asdf = blk: {
+        @setEvalBranchQuota(names.len * 100);
+        var result: [names.len]Asdf = @splat(.{ .mixes = std.math.maxInt(u20), .a = 0, .b = 0 });
+        for (.{ 1, 2, 3, 4 }) |initial_element| result[initial_element].mixes = 0;
+        var any_changes = true;
+        while (any_changes) {
+            any_changes = false;
+            for (recipes, 0..) |r, k| {
+                for (r) |pair| {
+                    const new_value = 1 + result[pair[0]].mixes + result[pair[1]].mixes;
+                    if (new_value < result[k].mixes) {
+                        result[k] = .{ .mixes = new_value, .a = pair[0], .b = pair[1] };
+                        any_changes = true;
+                    }
+                }
+            }
+        }
+        break :blk result;
+    };
+    // const initial: []const usize = &.{ 80, 24, 13, 1 };
+    const initial_names: []const []const u8 = &.{
+        "iced tea",
+        "confetti",
+        "smoke signal",
+        "egg timer",
+        "sprinkles",
+        "marshmallows",
+        "alarm clock",
+        "sound",
+        "sundial",
+    };
+    const initial: [initial_names.len]usize = blk: {
+        @setEvalBranchQuota(names.len * initial_names.len * 10);
+        var result: [initial_names.len]usize = undefined;
+        for (initial_names, &result) |name, *dst| {
+            for (names, 0..) |n, k| {
+                if (std.mem.eql(u8, name, n)) {
+                    dst.* = k;
+                    break;
+                }
+            } else @compileError(name);
+        }
+        break :blk result;
+    };
 
     pub fn combinationOf(active_id: usize, pasive_id: usize) ?usize {
         for (recipes[pasive_id]) |pair| {
@@ -132,6 +176,9 @@ pub fn init(
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.board = .init(gpa);
     try dst.board.addInitialElements();
+    for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
+        std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
+    }
 }
 
 // TODO: take gl parameter
@@ -211,7 +258,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     .ver = .median,
                     .pos = rect.getCenter(),
                 },
-                0.25,
+                1.9 / tof32(AlchemyData.names[k].len),
                 COLORS.text,
             );
             y += 1;
