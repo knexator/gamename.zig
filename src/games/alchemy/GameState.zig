@@ -74,9 +74,16 @@ const AlchemyData = struct {
     const names: []const []const u8 = @import("names.zon");
     const images_base64: []const []const u8 = @import("images.zon");
     const recipes: []const []const [2]usize = @import("base.zon");
-    const initial: []const usize = &.{ 1, 2, 3, 4 };
+    const initial: []const usize = &.{ 80, 24, 13, 1 };
 
     pub fn combinationOf(active_id: usize, pasive_id: usize) ?usize {
+        for (recipes[pasive_id]) |pair| {
+            if (pair[0] == active_id) return pair[1];
+            if (pair[1] == active_id) return pair[0];
+        } else return null;
+    }
+
+    pub fn additionOf(active_id: usize, pasive_id: usize) ?usize {
         for (recipes, 0..) |r, k| {
             for (r) |pair| {
                 if (pair[0] == active_id and pair[1] == pasive_id) return k;
