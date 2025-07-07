@@ -1,22 +1,33 @@
 const InputState = struct {
-    command: ?enum { inc } = null,
+    command: ?Hexditor.Instruction.Kind = null,
+    operands: Hexditor.Instruction.Operands = .{ .len = 0 },
 
     pub fn update(self: *InputState, platform: PlatformGives) ?Hexditor.Instruction {
-        if (self.command) |cmd| switch (cmd) {
-            .inc => {
-                for ([_]KeyboardButton{ .KeyJ, .KeyK, .KeyL, .Semicolon }, 0..) |key, k| {
-                    if (platform.keyboard.wasPressed(key)) {
+        if (self.command) |cmd| {
+            for ([_]KeyboardButton{ .KeyJ, .KeyK, .KeyL, .Semicolon }, 0..) |key, k| {
+                if (platform.keyboard.wasPressed(key)) {
+                    self.operands.append(.{
+                        .byte = @intCast(k),
+                        // TODO: support further indirection?
+                        .indirection = if (platform.keyboard.cur.isShiftDown()) 1 else 0,
+                    }) catch unreachable;
+
+                    if (self.operands.len >= cmd.nOperands()) {
+                        const result: Hexditor.Instruction = .{
+                            .kind = cmd,
+                            .operands = self.operands,
+                        };
                         self.command = null;
-                        return .{ .inc = .{
-                            .byte = @intCast(k),
-                            .indirection = if (platform.keyboard.cur.isShiftDown()) 1 else 0,
-                        } };
+                        self.operands.clear();
+                        return result;
                     }
                 }
-            },
+            }
         } else {
             if (platform.keyboard.wasPressed(.KeyQ)) {
                 self.command = .inc;
+            } else if (platform.keyboard.wasPressed(.KeyA)) {
+                self.command = .add;
             }
         }
         return null;
@@ -28,23 +39,55 @@ const Hexditor = struct {
 
     input_state: InputState = .{},
 
-    pub const Instruction = union(enum) {
-        inc: Operand,
+    fn at(self: *Hexditor, operand: Instruction.Operand) *u8 {
+        var result = operand.byte;
+        for (0..operand.indirection) |_| {
+            result = self.values[result];
+        }
+        return &self.values[result];
+    }
+
+    pub const Instruction = struct {
+        kind: Kind,
+        operands: Operands,
+
+        pub const Kind = enum {
+            inc,
+            add,
+
+            pub fn nOperands(self: @This()) usize {
+                return switch (self) {
+                    .inc => 1,
+                    .add => 2,
+                };
+            }
+        };
 
         pub const Operand = struct {
             byte: u8,
             indirection: u8,
         };
+
+        pub const Operands = std.BoundedArray(Operand, 4);
+
+        comptime {
+            for (@typeInfo(Kind).@"enum".fields) |field| {
+                const kind = @field(Kind, field.name);
+                assert(kind.nOperands() <= @as(Operands, undefined).capacity());
+            }
+        }
     };
 
     pub fn process(self: *Hexditor, instruction: Instruction) void {
-        switch (instruction) {
-            .inc => |dst| {
-                var dst_byte = dst.byte;
-                for (0..dst.indirection) |_| {
-                    dst_byte = self.values[dst_byte];
-                }
-                self.values[dst_byte] += 1;
+        assert(instruction.operands.len == instruction.kind.nOperands());
+        switch (instruction.kind) {
+            .inc => {
+                self.at(instruction.operands.get(0)).* +%= 1;
+            },
+            .add => {
+                const a = self.at(instruction.operands.get(0));
+                const b = self.at(instruction.operands.get(1));
+                a.* +%= b.*;
             },
         }
     }
