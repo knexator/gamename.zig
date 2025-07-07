@@ -28,6 +28,8 @@ const InputState = struct {
                 self.command = .inc;
             } else if (platform.keyboard.wasPressed(.KeyA)) {
                 self.command = .add;
+            } else if (platform.keyboard.wasPressed(.KeyW)) {
+                self.command = .neg;
             }
         }
         return null;
@@ -54,11 +56,13 @@ const Hexditor = struct {
         pub const Kind = enum {
             inc,
             add,
+            neg,
 
             pub fn nOperands(self: @This()) usize {
                 return switch (self) {
                     .inc => 1,
                     .add => 2,
+                    .neg => 1,
                 };
             }
         };
@@ -88,6 +92,10 @@ const Hexditor = struct {
                 const a = self.at(instruction.operands.get(0));
                 const b = self.at(instruction.operands.get(1));
                 a.* +%= b.*;
+            },
+            .neg => {
+                const v = self.at(instruction.operands.get(0));
+                v.* = @as(u8, @bitCast(-@as(i8, @bitCast(v.*))));
             },
         }
     }
