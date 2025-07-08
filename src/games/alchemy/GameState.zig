@@ -5,6 +5,8 @@ const COLORS = struct {
     bg_sidepanel: FColor = .gray(0.8),
 }{};
 
+pub const Combo = struct { new_prod: usize, old_prod: usize, old_res: usize };
+
 const InputState = struct {
     hovering: ?union(enum) { element: usize, sidepanel: usize },
     grabbing: ?usize,
@@ -39,11 +41,13 @@ const BoardState = struct {
         for (AlchemyData.initial) |k| self.discovered[k] = true;
     }
 
-    pub fn combine(self: *BoardState, active: usize, pasive: usize) !void {
+    pub fn combine(self: *BoardState, active: usize, pasive: usize) !?Combo {
         assert(active != pasive);
+        const old_prod = self.placed.items[active].id;
+        const old_res = self.placed.items[pasive].id;
         if (AlchemyData.combinationOf(
-            self.placed.items[active].id,
-            self.placed.items[pasive].id,
+            old_prod,
+            old_res,
         )) |new_id| {
             self.discovered[new_id] = true;
             self.placed.items[pasive].id = new_id;
@@ -53,7 +57,8 @@ const BoardState = struct {
                 0.5,
             );
             _ = self.placed.swapRemove(active);
-        }
+            return .{ .new_prod = new_id, .old_prod = old_prod, .old_res = old_res };
+        } else return null;
     }
 };
 
@@ -158,6 +163,8 @@ board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
 sidepanel_offset: f32 = 0,
 
+reveal_anim: ?struct { t: f32, combo: Combo } = null,
+
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -192,6 +199,21 @@ pub fn beforeHotReload(self: *GameState) !void {
 
 pub fn afterHotReload(self: *GameState) !void {
     _ = self;
+}
+
+pub fn curProd(self: *GameState) ?usize {
+    if (self.reveal_anim) |a| return a.combo.old_prod;
+    if (self.input_state.grabbing) |g| return self.board.placed.items[g].id;
+    return null;
+}
+
+pub fn curRes(self: *GameState) ?usize {
+    if (self.reveal_anim) |a| return a.combo.old_res;
+    if (self.input_state.grabbing == null) return null;
+    if (self.input_state.hovering) |h| {
+        if (std.meta.activeTag(h) == .element) return self.board.placed.items[h.element].id;
+    }
+    return null;
 }
 
 /// returns true if should quit
@@ -289,46 +311,64 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const place_2 = Rect.unit.move(.new(4, 0));
     const place_3 = Rect.unit.move(.new(6, 0));
 
-    if (self.input_state.grabbing) |grabbing_index| {
-        const element = self.board.placed.items[grabbing_index];
+    if (self.curProd()) |id| {
         try icons.append(.{
             .rect = place_2,
-            .id = element.id,
+            .id = id,
         });
         try fg_text.addText(
-            AlchemyData.names[element.id],
+            AlchemyData.names[id],
             .{
                 .hor = .center,
                 .ver = .median,
                 .pos = place_2.get(.bottom_center).addY(0.1),
             },
-            2.5 / tof32(AlchemyData.names[element.id].len),
+            2.5 / tof32(AlchemyData.names[id].len),
             COLORS.text,
         );
     } else {
         try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_2.get(.center) }, 1, COLORS.text);
     }
-    try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_1.get(.center) }, 1, COLORS.text);
     try fg_text.addText("+", .{ .hor = .center, .ver = .median, .pos = .lerp(place_1.get(.center), place_2.get(.center), 0.5) }, 1, COLORS.text);
     try fg_text.addText("=", .{ .hor = .center, .ver = .median, .pos = .lerp(place_2.get(.center), place_3.get(.center), 0.5) }, 1, COLORS.text);
-    if (self.input_state.grabbing != null and self.input_state.hovering != null and std.meta.activeTag(self.input_state.hovering.?) == .element) {
-        const element = self.board.placed.items[self.input_state.hovering.?.element];
+    if (self.curRes()) |id| {
         try icons.append(.{
             .rect = place_3,
-            .id = element.id,
+            .id = id,
         });
         try fg_text.addText(
-            AlchemyData.names[element.id],
+            AlchemyData.names[id],
             .{
                 .hor = .center,
                 .ver = .median,
                 .pos = place_3.get(.bottom_center).addY(0.1),
             },
-            2.5 / tof32(AlchemyData.names[element.id].len),
+            2.5 / tof32(AlchemyData.names[id].len),
             COLORS.text,
         );
     } else {
         try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_3.get(.center) }, 1, COLORS.text);
+    }
+
+    if (self.reveal_anim) |*anim| {
+        try icons.append(.{
+            .rect = place_1,
+            .id = anim.combo.new_prod,
+        });
+        try fg_text.addText(
+            AlchemyData.names[anim.combo.new_prod],
+            .{
+                .hor = .center,
+                .ver = .median,
+                .pos = place_1.get(.bottom_center).addY(0.1),
+            },
+            2.5 / tof32(AlchemyData.names[anim.combo.new_prod].len),
+            COLORS.text,
+        );
+        math.towards(&anim.t, 1.0, platform.delta_seconds / 0.4);
+        if (anim.t >= 1.0) self.reveal_anim = null;
+    } else {
+        try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_1.get(.center) }, 1, COLORS.text);
     }
 
     if (mouse.cur.position.x <= 1) {
@@ -351,7 +391,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (mouse.wasReleased(.left)) {
         if (self.input_state.grabbing) |grabbing| {
             if (self.input_state.hovering != null) {
-                try self.board.combine(grabbing, self.input_state.hovering.?.element);
+                const combo = try self.board.combine(grabbing, self.input_state.hovering.?.element);
+                if (combo) |c| {
+                    self.reveal_anim = .{ .t = 0, .combo = c };
+                }
             } else if (self.board.placed.items[grabbing].pos.x <= 1) {
                 _ = self.board.placed.swapRemove(grabbing);
             }
@@ -367,6 +410,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }}, self.textures[icon.id]);
     }
     fg_text.draw(camera);
+
+    if (self.reveal_anim) |anim| {
+        canvas.strokeCircle(128, camera, place_1.get(.center), std.math.lerp(
+            5,
+            0.5,
+            anim.t,
+        ), 0.1, .black);
+    }
 
     return false;
 }
