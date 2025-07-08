@@ -284,6 +284,53 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.input_state.hovering = .{ .element = k };
         }
     }
+
+    const place_1 = Rect.unit.move(.new(2, 0));
+    const place_2 = Rect.unit.move(.new(4, 0));
+    const place_3 = Rect.unit.move(.new(6, 0));
+
+    if (self.input_state.grabbing) |grabbing_index| {
+        const element = self.board.placed.items[grabbing_index];
+        try icons.append(.{
+            .rect = place_2,
+            .id = element.id,
+        });
+        try fg_text.addText(
+            AlchemyData.names[element.id],
+            .{
+                .hor = .center,
+                .ver = .median,
+                .pos = place_2.get(.bottom_center).addY(0.1),
+            },
+            2.5 / tof32(AlchemyData.names[element.id].len),
+            COLORS.text,
+        );
+    } else {
+        try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_2.get(.center) }, 1, COLORS.text);
+    }
+    try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_1.get(.center) }, 1, COLORS.text);
+    try fg_text.addText("+", .{ .hor = .center, .ver = .median, .pos = .lerp(place_1.get(.center), place_2.get(.center), 0.5) }, 1, COLORS.text);
+    try fg_text.addText("=", .{ .hor = .center, .ver = .median, .pos = .lerp(place_2.get(.center), place_3.get(.center), 0.5) }, 1, COLORS.text);
+    if (self.input_state.grabbing != null and self.input_state.hovering != null and std.meta.activeTag(self.input_state.hovering.?) == .element) {
+        const element = self.board.placed.items[self.input_state.hovering.?.element];
+        try icons.append(.{
+            .rect = place_3,
+            .id = element.id,
+        });
+        try fg_text.addText(
+            AlchemyData.names[element.id],
+            .{
+                .hor = .center,
+                .ver = .median,
+                .pos = place_3.get(.bottom_center).addY(0.1),
+            },
+            2.5 / tof32(AlchemyData.names[element.id].len),
+            COLORS.text,
+        );
+    } else {
+        try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_3.get(.center) }, 1, COLORS.text);
+    }
+
     if (mouse.cur.position.x <= 1) {
         self.sidepanel_offset -= mouse.cur.scrolled.toNumber();
     }
