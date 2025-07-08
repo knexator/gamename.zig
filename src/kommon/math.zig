@@ -285,6 +285,18 @@ pub const Vec2 = extern struct {
         v.* = towardsPure(v.*, goal, max_delta);
     }
 
+    pub fn awayFrom(v: Self, goal: Self, min_dist: f32) Self {
+        const delta = v.sub(goal);
+        const delta_mag = delta.mag();
+        if (delta_mag >= min_dist) {
+            return v;
+        } else if (delta_mag == 0) {
+            return goal.addX(min_dist);
+        } else {
+            return goal.add(delta.scale(min_dist / delta_mag));
+        }
+    }
+
     pub fn toInt(v: Self, S: type) ZVec2(S) {
         return .new(@intFromFloat(v.x), @intFromFloat(v.y));
     }

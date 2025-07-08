@@ -2,26 +2,35 @@ const COLORS = struct {
     text: FColor = .black,
     bg_element: FColor = .gray(0.9),
     bg_board: FColor = .white,
-    bg_sidepanel: FColor = .gray(0.8),
 }{};
 
 pub const Combo = struct { new_prod: usize, old_prod: usize, old_res: usize };
 
+const places: [3]Rect = .{
+    Rect.unit.move(.new(2, 2)),
+    Rect.unit.move(.new(4, 2)),
+    Rect.unit.move(.new(6, 2)),
+};
+
 const InputState = struct {
-    hovering: ?union(enum) { element: usize, sidepanel: usize },
+    hovering: ?union(enum) { element: usize, machine: usize },
     grabbing: ?usize,
 };
 
 const BoardState = struct {
+    // current design: never remove items lol
     placed: std.ArrayList(struct {
         pos: Vec2,
         id: usize,
+        deleted: bool = false,
 
         pub fn rect(self: @This()) Rect {
+            assert(!self.deleted);
             return .{ .top_left = self.pos, .size = .one };
         }
 
         pub fn label(self: @This()) Canvas.TextRenderer.TextPosition {
+            assert(!self.deleted);
             return .{
                 .hor = .center,
                 .ver = .median,
@@ -29,7 +38,6 @@ const BoardState = struct {
             };
         }
     }),
-    discovered: [AlchemyData.names.len]bool = @splat(false),
 
     pub fn init(gpa: std.mem.Allocator) BoardState {
         return .{
@@ -38,27 +46,53 @@ const BoardState = struct {
     }
 
     pub fn addInitialElements(self: *BoardState) !void {
-        for (AlchemyData.initial) |k| self.discovered[k] = true;
+        for (AlchemyData.initial, 0..) |k, p| {
+            try self.placed.append(.{ .id = k, .pos = .new(tof32(p) * 1.2 + 0.5, 4) });
+        }
     }
 
-    pub fn combine(self: *BoardState, active: usize, pasive: usize) !?Combo {
-        assert(active != pasive);
-        const old_prod = self.placed.items[active].id;
-        const old_res = self.placed.items[pasive].id;
+    pub fn machineCombo(self: *BoardState, ingredient: ?usize, result: ?usize) !?usize {
+        if (ingredient == null or result == null) return null;
+        assert(ingredient.? != result.?);
         if (AlchemyData.combinationOf(
-            old_prod,
-            old_res,
+            self.placed.items[ingredient.?].id,
+            self.placed.items[result.?].id,
         )) |new_id| {
-            self.discovered[new_id] = true;
-            self.placed.items[pasive].id = new_id;
-            self.placed.items[pasive].pos = .lerp(
-                self.placed.items[pasive].pos,
-                self.placed.items[active].pos,
-                0.5,
-            );
-            _ = self.placed.swapRemove(active);
-            return .{ .new_prod = new_id, .old_prod = old_prod, .old_res = old_res };
+            try self.placed.append(.{ .id = new_id, .pos = places[0].top_left });
+            return self.placed.items.len - 1;
         } else return null;
+    }
+
+    pub fn deleteElements(self: *BoardState, indices: []const ?usize) void {
+        for (indices) |id| {
+            if (id != null) {
+                self.placed.items[id.?].deleted = true;
+            }
+        }
+
+        // if (indices.len == 0) return;
+        // if (indices.len == 1) {
+        //     if (indices[0]) |i| _ = self.placed.swapRemove(i);
+        //     return;
+        // }
+        // // hardcoded for now
+        // assert(indices.len == 2);
+        // if (indices[0] == null) {
+        //     self.deleteElements(&.{indices[1]});
+        // } else if (indices[1] == null) {
+        //     self.deleteElements(&.{indices[0]});
+        // } else {
+        //     const in0 = indices[0].?;
+        //     const in1 = indices[1].?;
+        //     assert(in0 != in1);
+        //     if (in0 < in1) {
+        //         _ = self.placed.swapRemove(in1);
+        //         _ = self.placed.swapRemove(in0);
+        //     } else {
+        //         _ = self.placed.swapRemove(in0);
+        //         _ = self.placed.swapRemove(in1);
+        //     }
+        // }
     }
 };
 
@@ -94,6 +128,7 @@ const AlchemyData = struct {
         // "sound",
         // "sundial",
 
+        // goal: ocean
         "sprinkles",
         "confetti",
         "marshmallows",
@@ -161,9 +196,8 @@ textures: [AlchemyData.images_base64.len]Gl.Texture = undefined,
 
 board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
-sidepanel_offset: f32 = 0,
 
-reveal_anim: ?struct { t: f32, combo: Combo } = null,
+machine_state: [3]?usize = @splat(null),
 
 pub fn init(
     dst: *GameState,
@@ -201,21 +235,6 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
-pub fn curProd(self: *GameState) ?usize {
-    if (self.reveal_anim) |a| return a.combo.old_prod;
-    if (self.input_state.grabbing) |g| return self.board.placed.items[g].id;
-    return null;
-}
-
-pub fn curRes(self: *GameState) ?usize {
-    if (self.reveal_anim) |a| return a.combo.old_res;
-    if (self.input_state.grabbing == null) return null;
-    if (self.input_state.hovering) |h| {
-        if (std.meta.activeTag(h) == .element) return self.board.placed.items[h.element].id;
-    }
-    return null;
-}
-
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
@@ -236,57 +255,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var icons: std.ArrayList(struct { id: usize, rect: Rect, alpha: f32 = 1.0 }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
 
-    // var side_panel = ui.scrollablePanel(.{ .top_left = .zero, .size = .new(1, camera.size.y) });
-    // for (self.discovered, 0..) |discovered, k| {
-    //     if (!discovered) continue;
-    //     var asdf = side_panel.add(.one, struct {
-    //         id: usize,
-    //         const flags = .{
-    //             .hovereable,
-    //             .clickable,
-    //         };
-    //     }, .{ .id = k });
-    //     if (asdf.clicked) {
-    //         ui.setGrabbed(self.board.addElementAt(asdf.pos, k));
-    //     }
-    // }
-
-    // for (self.board.placed.items, 0..) |element, k| {
-    //     var asdf = ui.addAlchemyElement(BoardState.elementRect(e));
-    //     ui.add(e.pos)
-    // }
-
-    // ui.draw(self.canvas, camera);
-
-    self.input_state.hovering = null;
-
-    {
-        var y = -self.sidepanel_offset;
-        for (self.board.discovered, 0..) |discovered, k| {
-            if (!discovered) continue;
-            const rect: Rect = .{ .top_left = .new(0, y), .size = .one };
-            if (self.input_state.grabbing == null and rect.contains(mouse.cur.position)) {
-                self.input_state.hovering = .{ .sidepanel = k };
-            }
-            try icons.append(.{
-                .rect = rect,
-                .id = k,
-            });
-            try fg_text.addText(
-                AlchemyData.names[k],
-                .{
-                    .hor = .center,
-                    .ver = .median,
-                    .pos = rect.getCenter(),
-                },
-                1.9 / tof32(AlchemyData.names[k].len),
-                COLORS.text,
+    for (self.board.placed.items, 0..) |*element, k| {
+        if (element.deleted) continue;
+        if (self.machine_state[0] != k and self.input_state.grabbing == null) {
+            element.pos = element.pos.towardsPure(
+                element.pos.add(.half).awayFrom(places[0].get(.center), 1.0).sub(.half),
+                10 * platform.delta_seconds,
             );
-            y += 1;
         }
     }
 
+    self.input_state.hovering = null;
     for (self.board.placed.items, 0..) |element, k| {
+        if (element.deleted) continue;
         try icons.append(.{
             .rect = element.rect(),
             .id = element.id,
@@ -302,89 +283,62 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             COLORS.text,
         );
         if (k == self.input_state.grabbing) continue;
-        if (element.rect().contains(mouse.cur.position)) {
+        if (self.input_state.grabbing == null and element.rect().contains(mouse.cur.position)) {
             self.input_state.hovering = .{ .element = k };
         }
     }
 
-    const place_1 = Rect.unit.move(.new(2, 0));
-    const place_2 = Rect.unit.move(.new(4, 0));
-    const place_3 = Rect.unit.move(.new(6, 0));
-
-    if (self.curProd()) |id| {
-        try icons.append(.{
-            .rect = place_2,
-            .id = id,
-        });
-        try fg_text.addText(
-            AlchemyData.names[id],
-            .{
-                .hor = .center,
-                .ver = .median,
-                .pos = place_2.get(.bottom_center).addY(0.1),
-            },
-            2.5 / tof32(AlchemyData.names[id].len),
-            COLORS.text,
-        );
-    } else {
-        try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_2.get(.center) }, 1, COLORS.text);
-    }
-    try fg_text.addText("+", .{ .hor = .center, .ver = .median, .pos = .lerp(place_1.get(.center), place_2.get(.center), 0.5) }, 1, COLORS.text);
-    try fg_text.addText("=", .{ .hor = .center, .ver = .median, .pos = .lerp(place_2.get(.center), place_3.get(.center), 0.5) }, 1, COLORS.text);
-    if (self.curRes()) |id| {
-        try icons.append(.{
-            .rect = place_3,
-            .id = id,
-        });
-        try fg_text.addText(
-            AlchemyData.names[id],
-            .{
-                .hor = .center,
-                .ver = .median,
-                .pos = place_3.get(.bottom_center).addY(0.1),
-            },
-            2.5 / tof32(AlchemyData.names[id].len),
-            COLORS.text,
-        );
-    } else {
-        try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_3.get(.center) }, 1, COLORS.text);
-    }
-
-    if (self.reveal_anim) |*anim| {
-        try icons.append(.{
-            .rect = place_1,
-            .id = anim.combo.new_prod,
-            .alpha = anim.t,
-        });
-        try fg_text.addText(
-            AlchemyData.names[anim.combo.new_prod],
-            .{
-                .hor = .center,
-                .ver = .median,
-                .pos = place_1.get(.bottom_center).addY(0.1),
-            },
-            2.5 / tof32(AlchemyData.names[anim.combo.new_prod].len),
-            COLORS.text,
-        );
-        math.towards(&anim.t, 1.0, platform.delta_seconds / 0.4);
-        if (anim.t >= 1.0) {
-            try self.board.placed.append(.{ .id = anim.combo.new_prod, .pos = place_1.top_left });
-            self.reveal_anim = null;
+    inline for (places, self.machine_state, 0..) |place, contents, k| {
+        var hovered = false;
+        if (place.contains(mouse.cur.position)) {
+            if (self.input_state.grabbing == null) {
+                if (contents != null) {
+                    self.input_state.hovering = .{ .machine = k };
+                    hovered = true;
+                }
+            } else {
+                if (k > 0 and contents == null) {
+                    self.input_state.hovering = .{ .machine = k };
+                    hovered = true;
+                }
+            }
         }
-    } else {
-        try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_1.get(.center) }, 1, COLORS.text);
-    }
 
-    if (mouse.cur.position.x <= 1) {
-        self.sidepanel_offset -= mouse.cur.scrolled.toNumber();
+        if (contents == null) {
+            try fg_text.addText("?", .{
+                .hor = .center,
+                .ver = .median,
+                .pos = place.get(.center),
+            }, 1, COLORS.text.withAlpha(if (hovered or k == 0) 0.2 else 1));
+        }
     }
+    try fg_text.addText("+", .{ .hor = .center, .ver = .median, .pos = .lerp(
+        places[0].get(.center),
+        places[1].get(.center),
+        0.5,
+    ) }, 1, COLORS.text);
+    try fg_text.addText("=", .{ .hor = .center, .ver = .median, .pos = .lerp(
+        places[1].get(.center),
+        places[2].get(.center),
+        0.5,
+    ) }, 1, COLORS.text);
+
     if (mouse.wasPressed(.left)) {
         assert(self.input_state.grabbing == null);
         self.input_state.grabbing = if (self.input_state.hovering) |h| switch (h) {
             .element => |k| k,
-            .sidepanel => |element_id| blk: {
-                try self.board.placed.append(.{ .id = element_id, .pos = mouse.cur.position });
-                break :blk self.board.placed.items.len - 1;
+            .machine => |k| blk: {
+                const index = self.machine_state[k];
+                if (k == 0) {
+                    self.board.deleteElements(&.{ self.machine_state[1], self.machine_state[2] });
+                    self.machine_state[1] = null;
+                    self.machine_state[2] = null;
+                } else {
+                    self.board.deleteElements(&.{self.machine_state[0]});
+                    self.machine_state[0] = null;
+                }
+                self.machine_state[k] = null;
+                break :blk index;
             },
         } else null;
         self.input_state.hovering = null;
@@ -394,34 +348,34 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     if (mouse.wasReleased(.left)) {
         if (self.input_state.grabbing) |grabbing| {
-            if (self.input_state.hovering != null) {
-                const combo = try self.board.combine(grabbing, self.input_state.hovering.?.element);
-                if (combo) |c| {
-                    self.reveal_anim = .{ .t = 0, .combo = c };
-                }
-            } else if (self.board.placed.items[grabbing].pos.x <= 1) {
-                _ = self.board.placed.swapRemove(grabbing);
-            }
+            if (self.input_state.hovering) |h| switch (h) {
+                .element => unreachable,
+                .machine => |k| {
+                    assert(k != 0);
+                    self.machine_state[k] = grabbing;
+                    self.board.placed.items[grabbing].pos = places[k].top_left;
+                    self.input_state.grabbing = null;
+                    self.machine_state[0] = try self.board.machineCombo(
+                        self.machine_state[1],
+                        self.machine_state[2],
+                    );
+                },
+            };
         }
         self.input_state.grabbing = null;
     }
 
     platform.gl.clear(COLORS.bg_board);
+    if (self.machine_state[0] != null) {
+        canvas.strokeCircle(128, camera, places[0].get(.center).addY(0.2), 0.7, 0.02, .black);
+    }
+    fg_text.draw(camera);
     for (icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
             .tint = FColor.white.withAlpha(icon.alpha),
         }}, self.textures[icon.id]);
-    }
-    fg_text.draw(camera);
-
-    if (self.reveal_anim) |anim| {
-        canvas.strokeCircle(128, camera, place_1.get(.center), std.math.lerp(
-            5,
-            0.5,
-            anim.t,
-        ), 0.02, .black);
     }
 
     return false;
