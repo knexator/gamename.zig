@@ -436,7 +436,6 @@ pub const Vec2 = extern struct {
                 .shrink => original.mul(.new(target_ratio / actual_ratio, 1)),
             };
         } else return original;
-        return .zero;
     }
 
     test "withAspectRatio" {

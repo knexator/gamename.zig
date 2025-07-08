@@ -9,6 +9,14 @@ clear: *const fn (color: FColor) void,
 //     id: enum(c_uint) { null = 0, _ },
 // };
 
+loadTextureDataFromBase64: *const fn (
+    base64: []const u8,
+) *const anyopaque,
+
+isTextureDataLoaded: *const fn (
+    data: *const anyopaque,
+) bool,
+
 // TODO: wrap, optional mips, filter
 buildTexture2D: *const fn (
     data: *const anyopaque,

@@ -99,7 +99,12 @@ const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
 var preloaded_images: std.EnumArray(PreloadedImages, zstbi.Image) = .initUndefined();
 var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
 
+var other_images: std.SegmentedList(zstbi.Image, 16) = .{};
+
 var gl_procs: gl.ProcTable = undefined;
+
+// TODO: remove this
+var global_gpa_BAD: std.mem.Allocator = undefined;
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
@@ -114,6 +119,7 @@ pub fn main() !void {
         // TODO: uncomment
         // assert(debug_allocator.deinit() == .ok);
     };
+    global_gpa_BAD = gpa;
 
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
 
@@ -221,10 +227,29 @@ pub fn main() !void {
             .buildTexture2D = buildTexture2D,
             .buildInstancedRenderable = buildInstancedRenderable,
             .useInstancedRenderable = useInstancedRenderable,
+            .isTextureDataLoaded = isTextureDataLoaded,
+            .loadTextureDataFromBase64 = loadTextureDataFromBase64,
         };
 
         pub fn clear(color: FColor) void {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
+        }
+
+        pub fn isTextureDataLoaded(data: *const anyopaque) bool {
+            _ = data;
+            return true;
+        }
+
+        pub fn loadTextureDataFromBase64(base64: []const u8) *const anyopaque {
+            var decoder = std.base64.standard.Decoder;
+            const size = decoder.calcSizeForSlice(base64) catch |err| switch (err) {
+                else => @panic("TODO"),
+            };
+            const data = global_gpa_BAD.alloc(u8, size) catch @panic("TODO");
+            decoder.decode(data, base64) catch @panic("TODO");
+            const image = zstbi.Image.loadFromMemory(data, 4) catch @panic("TODO");
+            other_images.append(global_gpa_BAD, image) catch @panic("TODO");
+            return other_images.at(other_images.len - 1);
         }
 
         pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) game.Gl.Texture {

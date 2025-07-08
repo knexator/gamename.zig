@@ -45,8 +45,8 @@ pub const PlatformGives = struct {
 };
 
 // TODO: choose at comptime
-pub const GameState = @import("games/alchemy/GameState.zig");
-// pub const GameState = @import("games/hexditor/GameState.zig");
+// pub const GameState = @import("games/alchemy/GameState.zig");
+pub const GameState = @import("games/hexditor/GameState.zig");
 // pub const GameState = @import("games/octopus/GameState.zig");
 // pub const GameState = @import("games/tres_undos/GameState.zig");
 // pub const GameState = @import("games/akari/GameState.zig");

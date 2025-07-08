@@ -26,19 +26,6 @@ const BoardState = struct {
                 .pos = self.pos.add(.half),
             };
         }
-
-        pub fn draw(self: @This(), bg_rects: *std.ArrayList(Canvas.FilledRect), fg_text: *Canvas.TextBatch) !void {
-            try bg_rects.append(.{
-                .pos = self.rect(),
-                .color = COLORS.bg_element,
-            });
-            try fg_text.addText(
-                AlchemyData.names[self.id],
-                self.label(),
-                0.75,
-                COLORS.text,
-            );
-        }
     }),
     discovered: [AlchemyData.names.len]bool = @splat(false),
 
@@ -162,6 +149,8 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 canvas: Canvas,
 mem: Mem,
 
+textures: [AlchemyData.images_base64.len]Gl.Texture = undefined,
+
 board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
 sidepanel_offset: f32 = 0,
@@ -176,8 +165,15 @@ pub fn init(
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.board = .init(gpa);
     try dst.board.addInitialElements();
-    for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
-        std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
+    // for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
+    //     std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
+    // }
+
+    for (&dst.textures, 0..) |*texture, k| {
+        if (std.mem.eql(u8, "NULL", AlchemyData.images_base64[k])) continue;
+        const data = gl.loadTextureDataFromBase64(AlchemyData.images_base64[k]);
+        assert(gl.isTextureDataLoaded(data));
+        texture.* = gl.buildTexture2D(data, false);
     }
 }
 
@@ -213,6 +209,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const canvas = &self.canvas;
 
     var bg_rects: std.ArrayList(Canvas.FilledRect) = .init(canvas.frame_arena.allocator());
+    var icons: std.ArrayList(struct { id: usize, rect: Rect }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
 
     // var side_panel = ui.scrollablePanel(.{ .top_left = .zero, .size = .new(1, camera.size.y) });
@@ -251,6 +248,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .pos = rect,
                 .color = COLORS.bg_element,
             });
+            try icons.append(.{
+                .rect = rect,
+                .id = k,
+            });
             try fg_text.addText(
                 AlchemyData.names[k],
                 .{
@@ -266,7 +267,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     for (self.board.placed.items, 0..) |element, k| {
-        try element.draw(&bg_rects, &fg_text);
+        try bg_rects.append(.{
+            .pos = element.rect(),
+            .color = COLORS.bg_element,
+        });
+        try icons.append(.{
+            .rect = element.rect(),
+            .id = element.id,
+        });
+        try fg_text.addText(
+            AlchemyData.names[element.id],
+            element.label(),
+            0.75,
+            COLORS.text,
+        );
         if (k == self.input_state.grabbing) continue;
         if (element.rect().contains(mouse.cur.position)) {
             self.input_state.hovering = .{ .element = k };
@@ -302,6 +316,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     platform.gl.clear(COLORS.bg_board);
     canvas.fillRects(camera, bg_rects.items);
+    for (icons.items) |icon| {
+        canvas.drawSpriteBatch(camera, &.{.{
+            .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
+            .texcoord = .unit,
+        }}, self.textures[icon.id]);
+    }
     fg_text.draw(camera);
 
     return false;
