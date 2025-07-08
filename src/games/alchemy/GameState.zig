@@ -83,15 +83,18 @@ const AlchemyData = struct {
     };
     // const initial: []const usize = &.{ 80, 24, 13, 1 };
     const initial_names: []const []const u8 = &.{
-        "iced tea",
-        "confetti",
-        "smoke signal",
-        "egg timer",
+        // "iced tea",
+        // "egg timer",
+        // "alarm clock",
+        // "sound",
+        // "sundial",
+
         "sprinkles",
+        "confetti",
         "marshmallows",
-        "alarm clock",
-        "sound",
-        "sundial",
+        "smoke signal",
+        "bandage",
+        "shark",
     };
     const initial: [initial_names.len]usize = blk: {
         @setEvalBranchQuota(names.len * initial_names.len * 10);
@@ -208,7 +211,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const canvas = &self.canvas;
 
-    var bg_rects: std.ArrayList(Canvas.FilledRect) = .init(canvas.frame_arena.allocator());
     var icons: std.ArrayList(struct { id: usize, rect: Rect }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
 
@@ -244,10 +246,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (self.input_state.grabbing == null and rect.contains(mouse.cur.position)) {
                 self.input_state.hovering = .{ .sidepanel = k };
             }
-            try bg_rects.append(.{
-                .pos = rect,
-                .color = COLORS.bg_element,
-            });
             try icons.append(.{
                 .rect = rect,
                 .id = k,
@@ -267,18 +265,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     for (self.board.placed.items, 0..) |element, k| {
-        try bg_rects.append(.{
-            .pos = element.rect(),
-            .color = COLORS.bg_element,
-        });
         try icons.append(.{
             .rect = element.rect(),
             .id = element.id,
         });
         try fg_text.addText(
             AlchemyData.names[element.id],
-            element.label(),
-            0.75,
+            .{
+                .hor = .center,
+                .ver = .median,
+                .pos = element.rect().get(.bottom_center).addY(0.1),
+            },
+            2.5 / tof32(AlchemyData.names[element.id].len),
             COLORS.text,
         );
         if (k == self.input_state.grabbing) continue;
@@ -315,7 +313,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     platform.gl.clear(COLORS.bg_board);
-    canvas.fillRects(camera, bg_rects.items);
     for (icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
