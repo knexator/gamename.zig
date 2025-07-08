@@ -233,7 +233,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const canvas = &self.canvas;
 
-    var icons: std.ArrayList(struct { id: usize, rect: Rect }) = .init(canvas.frame_arena.allocator());
+    var icons: std.ArrayList(struct { id: usize, rect: Rect, alpha: f32 = 1.0 }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
 
     // var side_panel = ui.scrollablePanel(.{ .top_left = .zero, .size = .new(1, camera.size.y) });
@@ -354,6 +354,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         try icons.append(.{
             .rect = place_1,
             .id = anim.combo.new_prod,
+            .alpha = anim.t,
         });
         try fg_text.addText(
             AlchemyData.names[anim.combo.new_prod],
@@ -366,7 +367,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             COLORS.text,
         );
         math.towards(&anim.t, 1.0, platform.delta_seconds / 0.4);
-        if (anim.t >= 1.0) self.reveal_anim = null;
+        if (anim.t >= 1.0) {
+            try self.board.placed.append(.{ .id = anim.combo.new_prod, .pos = place_1.top_left });
+            self.reveal_anim = null;
+        }
     } else {
         try fg_text.addText("?", .{ .hor = .center, .ver = .median, .pos = place_1.get(.center) }, 1, COLORS.text);
     }
@@ -407,6 +411,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
+            .tint = FColor.white.withAlpha(icon.alpha),
         }}, self.textures[icon.id]);
     }
     fg_text.draw(camera);
@@ -416,7 +421,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             5,
             0.5,
             anim.t,
-        ), 0.1, .black);
+        ), 0.02, .black);
     }
 
     return false;
