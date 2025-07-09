@@ -236,6 +236,24 @@ const levels: []const LevelInfo = &.{
             .sea,
         },
     },
+    .{
+        .goal = .sea,
+        .recipes = &.{
+            .{ .sugar, .confetti, .sprinkles },
+            .{ .campfire, .sugar, .marshmallows },
+            .{ .fabric, .campfire, .@"smoke signal" },
+            .{ .blood, .fabric, .bandage },
+            .{ .sea, .blood, .shark },
+        },
+        .initial = &.{
+            .sprinkles,
+            .confetti,
+            .marshmallows,
+            .@"smoke signal",
+            .bandage,
+            .shark,
+        },
+    },
 };
 
 const Element = enum(usize) {
@@ -250,6 +268,17 @@ const Element = enum(usize) {
     manatee = 335,
     sea = 9,
     fire = 2,
+
+    sprinkles = 589,
+    confetti = 451,
+    marshmallows = 409,
+    @"smoke signal" = 591,
+    bandage = 506,
+    shark = 227,
+    blood = 112,
+    sugar = 263,
+    campfire = 63,
+    fabric = 433,
 
     pub fn name(self: Element) []const u8 {
         return switch (self) {
@@ -511,11 +540,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     for (self.level_states[self.menu_state.level].placed.items, 0..) |*element, k| {
         if (element.deleted) continue;
-        if (self.level_states[self.menu_state.level].machines[0] != k and self.input_state.grabbing == null) {
+        if (self.level_states[self.menu_state.level].machines[0] != k and self.input_state.grabbing != k) {
             element.pos = element.pos.towardsPure(
                 element.pos.add(.half).awayFrom(places[0].get(.center), 1.0).sub(.half),
                 10 * platform.delta_seconds,
             );
+        }
+        if (!game_camera.plusMargin(-0.5).contains(element.pos.add(.half))) {
+            element.pos = element.pos.add(.half).towardsPure(game_camera.get(.center), 10 * platform.delta_seconds).sub(.half);
+        }
+        if (self.input_state.grabbing != k and element.pos.y < 1) {
+            element.pos.y = 1;
         }
     }
 
