@@ -13,9 +13,9 @@ loadTextureDataFromBase64: *const fn (
     base64: []const u8,
 ) *const anyopaque,
 
-isTextureDataLoaded: *const fn (
-    data: *const anyopaque,
-) bool,
+// isTextureDataLoaded: *const fn (
+//     data: *const anyopaque,
+// ) bool,
 
 // TODO: wrap, optional mips, filter
 buildTexture2D: *const fn (

@@ -25,6 +25,10 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     last_inode: std.fs.File.INode = 0,
     state: game.GameState,
 
+    fn preload(dst: *Self, sdl_gl: game.Gl) !void {
+        try dst.state.preload(sdl_gl);
+    }
+
     fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: game.Gl, loaded_images: std.EnumArray(game.Images, *const anyopaque)) !void {
         try dst.state.init(gpa, sdl_gl, loaded_images);
     }
@@ -227,17 +231,11 @@ pub fn main() !void {
             .buildTexture2D = buildTexture2D,
             .buildInstancedRenderable = buildInstancedRenderable,
             .useInstancedRenderable = useInstancedRenderable,
-            .isTextureDataLoaded = isTextureDataLoaded,
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
         };
 
         pub fn clear(color: FColor) void {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
-        }
-
-        pub fn isTextureDataLoaded(data: *const anyopaque) bool {
-            _ = data;
-            return true;
         }
 
         pub fn loadTextureDataFromBase64(base64: []const u8) *const anyopaque {
@@ -620,6 +618,8 @@ pub fn main() !void {
         .loop_volumes = &loop_volumes,
         .gl = sdl_gl.vtable,
     };
+
+    try my_game.preload(sdl_platform.gl);
 
     try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
     // TODO: gl on deinit

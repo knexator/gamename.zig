@@ -55,6 +55,21 @@ export function imageFromUrl(url) {
   })
 }
 
+export function imageFromBase64(data) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous'; // to avoid CORS if used with Canvas
+    img.src = "data:image/png;base64," + data;
+    img.onload = () => {
+      resolve(img);
+    }
+    img.onerror = e => {
+      reject(e);
+    }
+  })
+}
+
+
 const sounds = [];
 const loops = [];
 var loops_started = false;
@@ -101,7 +116,7 @@ const text_decoder = new TextDecoder();
 const text_encoder = new TextEncoder();
 
 const wasm_memory = new WebAssembly.Memory({
-  initial: 10,
+  initial: 60,
 });
 
 function wasmMem() {
@@ -155,6 +170,10 @@ async function getWasm() {
       },
       imageWidth: (image_id) => images[image_id].width,
       imageHeight: (image_id) => images[image_id].height,
+      preloadImageFromBase64Data: (base64_ptr, base64_len) => {
+        image_promises.push(imageFromBase64(getString(base64_ptr, base64_len)));
+        return image_promises.length - 1;
+      },
 
       // sound
       loadSound: (url_ptr, url_len) => {

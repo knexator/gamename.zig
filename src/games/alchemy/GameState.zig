@@ -200,12 +200,23 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 canvas: Canvas,
 mem: Mem,
 
+textures_data: [AlchemyData.images_base64.len]?*const anyopaque = @splat(null),
 textures: [AlchemyData.images_base64.len]Gl.Texture = undefined,
 
 board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
 
 machine_state: [3]?usize = @splat(null),
+
+pub fn preload(
+    dst: *GameState,
+    gl: Gl,
+) !void {
+    for (&dst.textures_data, 0..) |*data, k| {
+        if (std.mem.eql(u8, "NULL", AlchemyData.images_base64[k])) continue;
+        data.* = gl.loadTextureDataFromBase64(AlchemyData.images_base64[k]);
+    }
+}
 
 pub fn init(
     dst: *GameState,
@@ -221,11 +232,9 @@ pub fn init(
         std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
     }
 
-    for (&dst.textures, 0..) |*texture, k| {
-        if (std.mem.eql(u8, "NULL", AlchemyData.images_base64[k])) continue;
-        const data = gl.loadTextureDataFromBase64(AlchemyData.images_base64[k]);
-        assert(gl.isTextureDataLoaded(data));
-        texture.* = gl.buildTexture2D(data, false);
+    for (&dst.textures, dst.textures_data) |*texture, data| {
+        if (data == null) continue;
+        texture.* = gl.buildTexture2D(data.?, false);
     }
 }
 

@@ -12,6 +12,7 @@ const js = struct {
 
     pub const images = struct {
         extern fn preloadImage(url_ptr: [*]const u8, url_len: usize) usize;
+        extern fn preloadImageFromBase64Data(base64_ptr: [*]const u8, base64_len: usize) usize;
         extern fn imageWidth(image_id: usize) usize;
         extern fn imageHeight(image_id: usize) usize;
     };
@@ -343,6 +344,9 @@ const js_better = struct {
         pub fn preloadImage(url: []const u8) usize {
             return js.images.preloadImage(url.ptr, url.len);
         }
+        pub fn preloadImageFromBase64Data(data: []const u8) usize {
+            return js.images.preloadImageFromBase64Data(data.ptr, data.len);
+        }
         pub fn resolution(image_id: usize) UVec2 {
             return .new(
                 js.images.imageWidth(image_id),
@@ -370,9 +374,12 @@ comptime {
 
 // TODO: hot reloading is not working :(
 
-var my_game: if (@import("build_options").hot_reloadable) *game.GameState else game.GameState = undefined;
+var my_game: game.GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
+
+// TODO: remove this
+var global_gpa_BAD: std.mem.Allocator = gpa;
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
@@ -411,6 +418,8 @@ const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
 var preloaded_image_ids: std.EnumArray(PreloadedImages, usize) = .initUndefined();
 var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
 
+var other_images: std.SegmentedList(usize, 16) = .{};
+
 const web_gl = struct {
     pub const vtable: game.Gl = .{
         .clear = clear,
@@ -419,11 +428,17 @@ const web_gl = struct {
         .buildTexture2D = buildTexture2D,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
+        .loadTextureDataFromBase64 = loadTextureDataFromBase64,
     };
 
     pub fn clear(color: FColor) void {
         js.webgl2.clearColor(color.r, color.g, color.b, color.a);
         js.webgl2.clear();
+    }
+
+    pub fn loadTextureDataFromBase64(base64: []const u8) *const anyopaque {
+        other_images.append(global_gpa_BAD, js_better.images.preloadImageFromBase64Data(base64)) catch @panic("TODO");
+        return other_images.at(other_images.len - 1);
     }
 
     pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) game.Gl.Texture {
@@ -756,6 +771,8 @@ export fn preload() void {
         preloaded_image_ids.set(image, js_better.images.preloadImage(path));
         images_pointers.set(image, preloaded_image_ids.getPtrConst(image));
     }
+
+    my_game.preload(web_gl.vtable) catch @panic("TODO");
 }
 
 export fn getDesiredAspectRatio() f32 {
@@ -770,12 +787,7 @@ export fn init() void {
     js.webgl2.enable(.BLEND);
     js.webgl2.blendFunc(.SRC_ALPHA, .ONE_MINUS_SRC_ALPHA);
 
-    if (@import("build_options").hot_reloadable) {
-        my_game = gpa.create(game.GameState) catch unreachable;
-        my_game.init(gpa, web_platform.gl, images_pointers) catch unreachable;
-    } else {
-        my_game.init(gpa, web_platform.gl, images_pointers) catch unreachable;
-    }
+    my_game.init(gpa, web_platform.gl, images_pointers) catch unreachable;
 }
 
 export fn update(delta_seconds: f32) void {
