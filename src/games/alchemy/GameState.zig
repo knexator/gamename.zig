@@ -47,7 +47,7 @@ const BoardState = struct {
 
     pub fn addInitialElements(self: *BoardState) !void {
         for (AlchemyData.initial, 0..) |k, p| {
-            try self.placed.append(.{ .id = k, .pos = .new(tof32(p) * 1.2 + 0.5, 4) });
+            try self.placed.append(.{ .id = k, .pos = .new(tof32(p) * 1.3 + 0.2, 4) });
         }
     }
 
@@ -128,13 +128,21 @@ const AlchemyData = struct {
         // "sound",
         // "sundial",
 
-        // goal: ocean
-        "sprinkles",
-        "confetti",
-        "marshmallows",
-        "smoke signal",
-        "bandage",
-        "shark",
+        // // goal: ocean
+        // "sprinkles",
+        // "confetti",
+        // "marshmallows",
+        // "smoke signal",
+        // "bandage",
+        // "shark",
+
+        // goal: fire
+        "phoenix",
+        "pegasus",
+        "centaur",
+        "minotaur",
+        "manatee",
+        "sea",
     };
     const initial: [initial_names.len]usize = blk: {
         @setEvalBranchQuota(names.len * initial_names.len * 10);
@@ -209,9 +217,9 @@ pub fn init(
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.board = .init(gpa);
     try dst.board.addInitialElements();
-    // for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
-    //     std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
-    // }
+    for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
+        std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
+    }
 
     for (&dst.textures, 0..) |*texture, k| {
         if (std.mem.eql(u8, "NULL", AlchemyData.images_base64[k])) continue;
@@ -240,13 +248,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
 
-    const camera = (Rect{
-        .top_left = .zero,
-        .size = .both(7),
-    }).withAspectRatio(
+    const camera = (Rect.from(.{
+        .{ .top_center = .new(4, 0) },
+        .{ .size = .both(7) },
+    })).withAspectRatio(
         platform.aspect_ratio,
         .grow,
-        .top_left,
+        .top_center,
     );
     const mouse = platform.getMouse(camera);
 
