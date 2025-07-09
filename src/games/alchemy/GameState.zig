@@ -207,10 +207,7 @@ smooth: @import("../akari/GameState.zig").LazyState,
 textures_data: [AlchemyData.images_base64.len]?*const anyopaque = @splat(null),
 textures: [AlchemyData.images_base64.len]Gl.Texture = undefined,
 
-board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
-
-machine_state: [3]?usize = @splat(null),
 
 menu_state: struct {
     game_focus: f32 = 0,
@@ -218,15 +215,138 @@ menu_state: struct {
     level: usize = 0,
 } = .{},
 
-level_states: [levels.len]LevelState = @splat(.{}),
+level_states: [levels.len]LevelState = undefined,
 
 const levels: []const LevelInfo = &.{
-    .{ .icon = 2 },
-    .{ .icon = 4 },
+    .{
+        .goal = .fire,
+        .recipes = &.{
+            .{ .cow, .sea, .manatee },
+            .{ .human, .cow, .minotaur },
+            .{ .horse, .human, .centaur },
+            .{ .bird, .horse, .pegasus },
+            .{ .fire, .bird, .phoenix },
+        },
+        .initial = &.{
+            .phoenix,
+            .pegasus,
+            .centaur,
+            .minotaur,
+            .manatee,
+            .sea,
+        },
+    },
 };
 
-const LevelInfo = struct { icon: usize };
-const LevelState = struct { solved: bool = false };
+const Element = enum(usize) {
+    bird = 46,
+    cow = 76,
+    phoenix = 47,
+    human = 48,
+    horse = 198,
+    pegasus = 226,
+    centaur = 283,
+    minotaur = 472,
+    manatee = 335,
+    sea = 9,
+    fire = 2,
+
+    pub fn name(self: Element) []const u8 {
+        return switch (self) {
+            inline else => |x| @tagName(x),
+        };
+    }
+};
+const LevelInfo = struct {
+    goal: Element,
+    recipes: []const [3]Element,
+    initial: []const Element,
+
+    pub fn combinationOf(self: LevelInfo, ingredient: Element, result: Element) ?Element {
+        for (self.recipes) |recipe| {
+            if (recipe[2] != result) continue;
+            if (recipe[0] == ingredient) return recipe[1];
+            if (recipe[1] == ingredient) return recipe[0];
+        } else return null;
+    }
+};
+const LevelState = struct {
+    info: LevelInfo,
+    solved: bool = false,
+    machines: [3]?usize = @splat(null),
+    placed: std.ArrayList(struct {
+        pos: Vec2,
+        id: Element,
+        deleted: bool = false,
+
+        pub fn rect(self: @This()) Rect {
+            assert(!self.deleted);
+            return .{ .top_left = self.pos, .size = .one };
+        }
+
+        pub fn label(self: @This()) Canvas.TextRenderer.TextPosition {
+            assert(!self.deleted);
+            return .{
+                .hor = .center,
+                .ver = .median,
+                .pos = self.pos.add(.half),
+            };
+        }
+    }),
+
+    pub fn fromInfo(dst: *LevelState, info: LevelInfo, gpa: std.mem.Allocator) !void {
+        dst.placed = .init(gpa);
+        dst.info = info;
+        for (info.initial, 0..) |id, k| {
+            try dst.placed.append(.{ .id = id, .pos = .new(tof32(k) * 1.3 + 0.2, 4 + tof32(std.math.sign(@mod(k, 2)))) });
+        }
+    }
+
+    fn machineCombo(self: *LevelState, ingredient: ?usize, result: ?usize) !?usize {
+        if (ingredient == null or result == null) return null;
+        assert(ingredient.? != result.?);
+        if (self.info.combinationOf(
+            self.placed.items[ingredient.?].id,
+            self.placed.items[result.?].id,
+        )) |new_id| {
+            try self.placed.append(.{ .id = new_id, .pos = places[0].top_left });
+            return self.placed.items.len - 1;
+        } else return null;
+    }
+
+    pub fn placeInMachine(self: *LevelState, machine_index: usize, element_index: usize) !void {
+        assert(machine_index != 0);
+        self.machines[machine_index] = element_index;
+        self.placed.items[element_index].pos = places[machine_index].top_left;
+        self.machines[0] = try self.machineCombo(
+            self.machines[1],
+            self.machines[2],
+        );
+    }
+
+    pub fn pickFromMachine(self: *LevelState, machine_index: usize) ?usize {
+        const index = self.machines[machine_index];
+        if (machine_index == 0) {
+            self.deleteElements(&.{ self.machines[1], self.machines[2] });
+            self.machines[1] = null;
+            self.machines[2] = null;
+        } else {
+            self.deleteElements(&.{self.machines[0]});
+            self.machines[0] = null;
+        }
+        self.machines[machine_index] = null;
+        return index;
+    }
+
+    // TODO: revise
+    fn deleteElements(self: *LevelState, indices: []const ?usize) void {
+        for (indices) |id| {
+            if (id != null) {
+                self.placed.items[id.?].deleted = true;
+            }
+        }
+    }
+};
 
 pub fn preload(
     dst: *GameState,
@@ -247,8 +367,11 @@ pub fn init(
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(dst.mem.forever.allocator());
-    dst.board = .init(gpa);
-    try dst.board.addInitialElements();
+
+    for (&dst.level_states, levels) |*level, info| {
+        try level.fromInfo(info, dst.mem.forever.allocator());
+    }
+
     // for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
     //     std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
     // }
@@ -273,9 +396,9 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
-pub fn grabbingId(self: GameState) ?usize {
+pub fn grabbingId(self: GameState) ?Element {
     if (self.input_state.grabbing) |g| {
-        return self.board.placed.items[g].id;
+        return self.level_states[self.menu_state.level].placed.items[g].id;
     } else return null;
 }
 
@@ -310,8 +433,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const canvas = &self.canvas;
     platform.gl.clear(COLORS.bg_board);
 
-    var icons: std.ArrayList(struct { id: usize, rect: Rect }) = .init(canvas.frame_arena.allocator());
-    var level_icons: std.ArrayList(struct { id: usize, rect: Rect, solved: f32 = 0.0 }) = .init(canvas.frame_arena.allocator());
+    var icons: std.ArrayList(struct { id: Element, rect: Rect }) = .init(canvas.frame_arena.allocator());
+    var level_icons: std.ArrayList(struct { id: Element, rect: Rect, solved: f32 = 0.0 }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
     var title_text = &fg_text;
 
@@ -347,18 +470,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         const hovering = rect.plusMargin(0.1).contains(mouse.cur.position);
         const hovering_to_enter_level = hovering and self.menu_state.game_focus_target == 0;
-        const hovering_to_solve_level = hovering and self.grabbingId() == info.icon;
+        const hovering_to_solve_level = hovering and self.grabbingId() == info.goal;
         const hovering_to_exit_level = hovering and self.input_state.grabbing == null and self.menu_state.game_focus_target == 1;
 
         try level_icons.append(.{
             .rect = rect,
-            .id = info.icon,
+            .id = info.goal,
             .solved = if (hovering_to_solve_level or self.level_states[k].solved) 1.0 else 0.0,
         });
 
         canvas.borderRect(camera, rect.plusMargin(0.1), try self.smooth.float(
             .fromFormat("menu {d}", .{k}),
-            if (hovering_to_enter_level or hovering_to_exit_level) 0.1 else 0.01,
+            if (hovering_to_enter_level or hovering_to_exit_level or self.grabbingId() == info.goal) 0.1 else 0.01,
         ), .inner, .black);
 
         if (hovering_to_enter_level and mouse.wasPressed(.left)) {
@@ -370,7 +493,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         if (hovering_to_solve_level and mouse.wasReleased(.left)) {
-            self.board.placed.items[self.input_state.grabbing.?].deleted = true;
+            self.level_states[self.menu_state.level].placed.items[self.input_state.grabbing.?].deleted = true;
             self.input_state.grabbing = null;
             self.menu_state.game_focus_target = 0;
             self.level_states[k].solved = true;
@@ -386,9 +509,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.menu_state.game_focus_target = 0;
     }
 
-    for (self.board.placed.items, 0..) |*element, k| {
+    for (self.level_states[self.menu_state.level].placed.items, 0..) |*element, k| {
         if (element.deleted) continue;
-        if (self.machine_state[0] != k and self.input_state.grabbing == null) {
+        if (self.level_states[self.menu_state.level].machines[0] != k and self.input_state.grabbing == null) {
             element.pos = element.pos.towardsPure(
                 element.pos.add(.half).awayFrom(places[0].get(.center), 1.0).sub(.half),
                 10 * platform.delta_seconds,
@@ -397,20 +520,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     self.input_state.hovering = null;
-    for (self.board.placed.items, 0..) |element, k| {
+    for (self.level_states[self.menu_state.level].placed.items, 0..) |element, k| {
         if (element.deleted) continue;
         try icons.append(.{
             .rect = element.rect(),
             .id = element.id,
         });
         try fg_text.addText(
-            AlchemyData.names[element.id],
+            element.id.name(),
             .{
                 .hor = .center,
                 .ver = .median,
                 .pos = element.rect().get(.bottom_center).addY(0.1),
             },
-            2.5 / tof32(AlchemyData.names[element.id].len),
+            2.5 / tof32(element.id.name().len),
             COLORS.text,
         );
         if (k == self.input_state.grabbing) continue;
@@ -419,7 +542,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    inline for (places, self.machine_state, 0..) |place, contents, k| {
+    inline for (places, self.level_states[self.menu_state.level].machines, 0..) |place, contents, k| {
         var hovered = false;
         if (place.contains(mouse.cur.position)) {
             if (self.input_state.grabbing == null) {
@@ -458,46 +581,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         assert(self.input_state.grabbing == null);
         self.input_state.grabbing = if (self.input_state.hovering) |h| switch (h) {
             .element => |k| k,
-            .machine => |k| blk: {
-                const index = self.machine_state[k];
-                if (k == 0) {
-                    self.board.deleteElements(&.{ self.machine_state[1], self.machine_state[2] });
-                    self.machine_state[1] = null;
-                    self.machine_state[2] = null;
-                } else {
-                    self.board.deleteElements(&.{self.machine_state[0]});
-                    self.machine_state[0] = null;
-                }
-                self.machine_state[k] = null;
-                break :blk index;
-            },
+            .machine => |k| self.level_states[self.menu_state.level].pickFromMachine(k),
         } else null;
         self.input_state.hovering = null;
     }
     if (self.input_state.grabbing) |grabbing_index| {
-        self.board.placed.items[grabbing_index].pos.addInPlace(mouse.cur.position.sub(mouse.prev.position));
+        self.level_states[self.menu_state.level].placed.items[grabbing_index].pos.addInPlace(mouse.cur.position.sub(mouse.prev.position));
     }
     if (mouse.wasReleased(.left)) {
         if (self.input_state.grabbing) |grabbing| {
             if (self.input_state.hovering) |h| switch (h) {
                 .element => unreachable,
-                .machine => |k| {
-                    assert(k != 0);
-                    self.machine_state[k] = grabbing;
-                    self.board.placed.items[grabbing].pos = places[k].top_left;
-                    self.input_state.grabbing = null;
-                    self.machine_state[0] = try self.board.machineCombo(
-                        self.machine_state[1],
-                        self.machine_state[2],
-                    );
-                },
+                .machine => |k| try self.level_states[self.menu_state.level].placeInMachine(k, grabbing),
             };
+            self.input_state.grabbing = null;
         }
-        self.input_state.grabbing = null;
     }
 
-    if (self.machine_state[0] != null) {
-        canvas.strokeCircle(128, camera, places[0].get(.center).addY(0.2), 0.7, 0.02, .black);
+    if (self.level_states[self.menu_state.level].machines[0] != null) {
+        canvas.strokeRect(camera, places[0], 0.02, .black);
     }
     fg_text.draw(camera);
     for (level_icons.items) |icon| {
@@ -505,13 +607,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
             .tint = .lerp(.black, .white, icon.solved),
-        }}, self.textures[icon.id]);
+        }}, self.textures[@intFromEnum(icon.id)]);
     }
     for (icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
-        }}, self.textures[icon.id]);
+        }}, self.textures[@intFromEnum(icon.id)]);
     }
 
     return false;
