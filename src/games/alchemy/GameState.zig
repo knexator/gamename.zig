@@ -13,7 +13,10 @@ const places: [3]Rect = .{
 };
 
 const InputState = struct {
-    hovering: ?union(enum) { element: usize, machine: usize },
+    hovering: ?union(enum) {
+        element: usize,
+        machine: usize,
+    },
     grabbing: ?usize,
 };
 
@@ -199,6 +202,7 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 canvas: Canvas,
 mem: Mem,
+smooth: @import("../akari/GameState.zig").LazyState,
 
 textures_data: [AlchemyData.images_base64.len]?*const anyopaque = @splat(null),
 textures: [AlchemyData.images_base64.len]Gl.Texture = undefined,
@@ -207,6 +211,22 @@ board: BoardState,
 input_state: InputState = .{ .grabbing = null, .hovering = null },
 
 machine_state: [3]?usize = @splat(null),
+
+menu_state: struct {
+    game_focus: f32 = 0,
+    game_focus_target: f32 = 0,
+    level: usize = 0,
+} = .{},
+
+level_states: [levels.len]LevelState = @splat(.{}),
+
+const levels: []const LevelInfo = &.{
+    .{ .icon = 2 },
+    .{ .icon = 4 },
+};
+
+const LevelInfo = struct { icon: usize };
+const LevelState = struct { solved: bool = false };
 
 pub fn preload(
     dst: *GameState,
@@ -226,11 +246,12 @@ pub fn init(
 ) !void {
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.smooth = .init(dst.mem.forever.allocator());
     dst.board = .init(gpa);
     try dst.board.addInitialElements();
-    for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
-        std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
-    }
+    // for (AlchemyData.names, AlchemyData.required_mixes) |name, k| {
+    //     std.log.debug("{d} for {s}, via {s} + {s}", .{ k.mixes, name, AlchemyData.names[k.a], AlchemyData.names[k.b] });
+    // }
 
     for (&dst.textures, dst.textures_data) |*texture, data| {
         if (data == null) continue;
@@ -252,12 +273,19 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
+pub fn grabbingId(self: GameState) ?usize {
+    if (self.input_state.grabbing) |g| {
+        return self.board.placed.items[g].id;
+    } else return null;
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
+    self.smooth.last_delta_seconds = platform.delta_seconds;
 
-    const camera = (Rect.from(.{
+    const game_camera = (Rect.from(.{
         .{ .top_center = .new(4, 0) },
         .{ .size = .both(7) },
     })).withAspectRatio(
@@ -265,12 +293,98 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .grow,
         .top_center,
     );
+    const menu_camera = (Rect.from(.{
+        .{ .bottom_center = .new(4, 0) },
+        .{ .size = .both(7) },
+    })).withAspectRatio(
+        platform.aspect_ratio,
+        .grow,
+        .bottom_center,
+    );
+
+    const game_focus = math.easings.easeInOutCubic(self.menu_state.game_focus);
+    const camera: Rect = .lerp(menu_camera, game_camera, game_focus);
+
     const mouse = platform.getMouse(camera);
 
     const canvas = &self.canvas;
+    platform.gl.clear(COLORS.bg_board);
 
-    var icons: std.ArrayList(struct { id: usize, rect: Rect, alpha: f32 = 1.0 }) = .init(canvas.frame_arena.allocator());
+    var icons: std.ArrayList(struct { id: usize, rect: Rect }) = .init(canvas.frame_arena.allocator());
+    var level_icons: std.ArrayList(struct { id: usize, rect: Rect, solved: f32 = 0.0 }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
+    var title_text = &fg_text;
+
+    if (self.menu_state.game_focus < 1) {
+        try title_text.addText("Reverse", .{
+            .hor = .center,
+            .ver = .baseline,
+            .pos = .new(math.lerp(
+                -15,
+                4,
+                math.easings.easeOutCubic(math.clamp01(platform.global_seconds - 0.4)),
+            ), -5),
+        }, 2, .black);
+        try title_text.addText("Alchemy", .{
+            .hor = .center,
+            .ver = .baseline,
+            .pos = .new(math.lerp(
+                15,
+                4,
+                math.easings.easeOutCubic(math.clamp01(platform.global_seconds - 0.8)),
+            ), -3),
+        }, 2, .black);
+    }
+
+    for (levels, 0..) |info, k| {
+        const rect: Rect = .{ .top_left = .new(
+            tof32(k) * 1.5,
+            if (k == self.menu_state.level)
+                math.lerp(-1.7, 0.1, game_focus)
+            else
+                -1.7,
+        ), .size = .one };
+
+        const hovering = rect.plusMargin(0.1).contains(mouse.cur.position);
+        const hovering_to_enter_level = hovering and self.menu_state.game_focus_target == 0;
+        const hovering_to_solve_level = hovering and self.grabbingId() == info.icon;
+        const hovering_to_exit_level = hovering and self.input_state.grabbing == null and self.menu_state.game_focus_target == 1;
+
+        try level_icons.append(.{
+            .rect = rect,
+            .id = info.icon,
+            .solved = if (hovering_to_solve_level or self.level_states[k].solved) 1.0 else 0.0,
+        });
+
+        canvas.borderRect(camera, rect.plusMargin(0.1), try self.smooth.float(
+            .fromFormat("menu {d}", .{k}),
+            if (hovering_to_enter_level or hovering_to_exit_level) 0.1 else 0.01,
+        ), .inner, .black);
+
+        if (hovering_to_enter_level and mouse.wasPressed(.left)) {
+            self.menu_state.level = k;
+            self.menu_state.game_focus_target = 1.0;
+        }
+        if (hovering_to_exit_level and mouse.wasPressed(.left)) {
+            self.menu_state.game_focus_target = 0.0;
+        }
+
+        if (hovering_to_solve_level and mouse.wasReleased(.left)) {
+            self.board.placed.items[self.input_state.grabbing.?].deleted = true;
+            self.input_state.grabbing = null;
+            self.menu_state.game_focus_target = 0;
+            self.level_states[k].solved = true;
+        }
+    }
+
+    math.towards(&self.menu_state.game_focus, self.menu_state.game_focus_target, platform.delta_seconds / 0.4);
+
+    if (platform.keyboard.cur.isDown(.Digit1)) {
+        self.menu_state.game_focus_target = 1;
+    }
+    if (platform.keyboard.cur.isDown(.Escape)) {
+        self.menu_state.game_focus_target = 0;
+    }
 
     for (self.board.placed.items, 0..) |*element, k| {
         if (element.deleted) continue;
@@ -382,16 +496,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.input_state.grabbing = null;
     }
 
-    platform.gl.clear(COLORS.bg_board);
     if (self.machine_state[0] != null) {
         canvas.strokeCircle(128, camera, places[0].get(.center).addY(0.2), 0.7, 0.02, .black);
     }
     fg_text.draw(camera);
+    for (level_icons.items) |icon| {
+        canvas.drawSpriteBatch(camera, &.{.{
+            .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
+            .texcoord = .unit,
+            .tint = .lerp(.black, .white, icon.solved),
+        }}, self.textures[icon.id]);
+    }
     for (icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
-            .tint = FColor.white.withAlpha(icon.alpha),
         }}, self.textures[icon.id]);
     }
 
