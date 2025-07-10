@@ -429,11 +429,17 @@ const web_gl = struct {
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
+        .loadTextureDataFromFilename = loadTextureDataFromFilename,
     };
 
     pub fn clear(color: FColor) void {
         js.webgl2.clearColor(color.r, color.g, color.b, color.a);
         js.webgl2.clear();
+    }
+
+    pub fn loadTextureDataFromFilename(path: [:0]const u8) *const anyopaque {
+        other_images.append(global_gpa_BAD, js_better.images.preloadImage(path)) catch @panic("TODO");
+        return other_images.at(other_images.len - 1);
     }
 
     pub fn loadTextureDataFromBase64(base64: []const u8) *const anyopaque {

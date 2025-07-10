@@ -13,6 +13,10 @@ loadTextureDataFromBase64: *const fn (
     base64: []const u8,
 ) *const anyopaque,
 
+loadTextureDataFromFilename: *const fn (
+    path: [:0]const u8,
+) *const anyopaque,
+
 // isTextureDataLoaded: *const fn (
 //     data: *const anyopaque,
 // ) bool,

@@ -232,6 +232,7 @@ pub fn main() !void {
             .buildInstancedRenderable = buildInstancedRenderable,
             .useInstancedRenderable = useInstancedRenderable,
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
+            .loadTextureDataFromFilename = loadTextureDataFromFilename,
         };
 
         pub fn clear(color: FColor) void {
@@ -246,6 +247,12 @@ pub fn main() !void {
             const data = global_gpa_BAD.alloc(u8, size) catch @panic("TODO");
             decoder.decode(data, base64) catch @panic("TODO");
             const image = zstbi.Image.loadFromMemory(data, 4) catch @panic("TODO");
+            other_images.append(global_gpa_BAD, image) catch @panic("TODO");
+            return other_images.at(other_images.len - 1);
+        }
+
+        pub fn loadTextureDataFromFilename(path: [:0]const u8) *const anyopaque {
+            const image = zstbi.Image.loadFromFile(path, 0) catch @panic(path);
             other_images.append(global_gpa_BAD, image) catch @panic("TODO");
             return other_images.at(other_images.len - 1);
         }
