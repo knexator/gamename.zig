@@ -66,39 +66,6 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-const NewImageElements = enum {
-    earth,
-    plant,
-    egg,
-    rain,
-    ice,
-    hail,
-    eggplant,
-
-    bird,
-    cow,
-    phoenix,
-    human,
-    horse,
-    pegasus,
-    centaur,
-    minotaur,
-    manatee,
-    sea,
-    fire,
-
-    sprinkles,
-    confetti,
-    marshmallows,
-    @"smoke signal",
-    bandage,
-    shark,
-    blood,
-    sugar,
-    campfire,
-    fabric,
-};
-
 canvas: Canvas,
 mem: Mem,
 smooth: @import("../akari/GameState.zig").LazyState,
@@ -106,8 +73,8 @@ smooth: @import("../akari/GameState.zig").LazyState,
 textures_data: [1]?*const anyopaque = @splat(null),
 textures: [1]Gl.Texture = undefined,
 
-textures_new_data: kommon.meta.StructFromEnum(NewImageElements, *const anyopaque, false),
-textures_new: kommon.meta.StructFromEnum(NewImageElements, Gl.Texture, false),
+textures_new_data: kommon.meta.StructFromEnum(Element, *const anyopaque, false),
+textures_new: kommon.meta.StructFromEnum(Element, Gl.Texture, false),
 
 input_state: InputState = .{ .grabbing = null, .hovering = null },
 
@@ -351,7 +318,7 @@ pub fn preload(
         data.* = gl.loadTextureDataFromBase64(AlchemyData.images_base64[k]);
     }
 
-    inline for (@typeInfo(NewImageElements).@"enum".fields) |f| {
+    inline for (@typeInfo(Element).@"enum".fields) |f| {
         @field(dst.textures_new_data, f.name) = gl.loadTextureDataFromFilename("images/alchemy/" ++ comptime urlSafe(f.name) ++ ".png");
     }
 }
@@ -398,7 +365,7 @@ pub fn init(
         texture.* = gl.buildTexture2D(data.?, false);
     }
 
-    inline for (@typeInfo(NewImageElements).@"enum".fields) |f| {
+    inline for (@typeInfo(Element).@"enum".fields) |f| {
         @field(dst.textures_new, f.name) = gl.buildTexture2D(@field(dst.textures_new_data, f.name), false);
     }
 }
