@@ -55,7 +55,10 @@ pub const stuff = .{
         .desired_aspect_ratio = 4.0 / 3.0,
     },
 
-    .sounds = .{},
+    .sounds = .{
+        .enter = "sounds/alchemy/enter.wav",
+        .win = "sounds/alchemy/win.wav",
+    },
 
     .loops = .{},
 
@@ -475,9 +478,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (hovering_to_enter_level and mouse.wasPressed(.left)) {
             self.menu_state.level = k;
             self.menu_state.game_focus_target = 1.0;
+            platform.sound_queue.insert(.enter);
         }
         if (hovering_to_exit_level and mouse.wasPressed(.left)) {
             self.menu_state.game_focus_target = 0.0;
+            platform.sound_queue.insert(.enter);
         }
 
         if (hovering_to_solve_level and mouse.wasReleased(.left)) {
@@ -485,6 +490,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.input_state.grabbing = null;
             self.menu_state.game_focus_target = 0;
             self.level_states[k].solved = true;
+            platform.sound_queue.insert(.win);
         }
     }
 
