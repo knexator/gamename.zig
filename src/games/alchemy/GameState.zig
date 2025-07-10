@@ -254,6 +254,26 @@ const levels: []const LevelInfo = &.{
             .shark,
         },
     },
+    .{
+        .goal = .air,
+        .recipes = &.{
+            .{ .air, .port, .airport },
+            .{ .pass, .port, .passport },
+            .{ .pass, .word, .password },
+            .{ .cross, .word, .crossword },
+            .{ .cross, .bow, .crossbow },
+            .{ .bow, .tie, .bowtie },
+        },
+        .initial = &.{
+            .tie,
+            .bowtie,
+            .crossbow,
+            .crossword,
+            .password,
+            .passport,
+            .airport,
+        },
+    },
 };
 
 const Element = enum(usize) {
@@ -279,6 +299,26 @@ const Element = enum(usize) {
     sugar = 263,
     campfire = 63,
     fabric = 433,
+
+    air = 4,
+    port = 1000,
+    airport,
+    pass,
+    word,
+    crossword,
+    passport,
+    password,
+    cross,
+    crossbow,
+    bow,
+    tie,
+    bowtie,
+
+    pub fn textureIndex(self: Element) ?usize {
+        if (@intFromEnum(self) >= 1000) {
+            return null;
+        } else return @intFromEnum(self);
+    }
 
     pub fn name(self: Element) []const u8 {
         return switch (self) {
@@ -642,13 +682,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
             .tint = .lerp(.black, .white, icon.solved),
-        }}, self.textures[@intFromEnum(icon.id)]);
+        }}, self.textures[icon.id.textureIndex() orelse 1]);
     }
     for (icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
-        }}, self.textures[@intFromEnum(icon.id)]);
+        }}, self.textures[icon.id.textureIndex() orelse 1]);
     }
 
     return false;
