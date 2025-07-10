@@ -20,162 +20,8 @@ const InputState = struct {
     grabbing: ?usize,
 };
 
-const BoardState = struct {
-    // current design: never remove items lol
-    placed: std.ArrayList(struct {
-        pos: Vec2,
-        id: usize,
-        deleted: bool = false,
-
-        pub fn rect(self: @This()) Rect {
-            assert(!self.deleted);
-            return .{ .top_left = self.pos, .size = .one };
-        }
-
-        pub fn label(self: @This()) Canvas.TextRenderer.TextPosition {
-            assert(!self.deleted);
-            return .{
-                .hor = .center,
-                .ver = .median,
-                .pos = self.pos.add(.half),
-            };
-        }
-    }),
-
-    pub fn init(gpa: std.mem.Allocator) BoardState {
-        return .{
-            .placed = .init(gpa),
-        };
-    }
-
-    pub fn addInitialElements(self: *BoardState) !void {
-        for (AlchemyData.initial, 0..) |k, p| {
-            try self.placed.append(.{ .id = k, .pos = .new(tof32(p) * 1.3 + 0.2, 4) });
-        }
-    }
-
-    pub fn machineCombo(self: *BoardState, ingredient: ?usize, result: ?usize) !?usize {
-        if (ingredient == null or result == null) return null;
-        assert(ingredient.? != result.?);
-        if (AlchemyData.combinationOf(
-            self.placed.items[ingredient.?].id,
-            self.placed.items[result.?].id,
-        )) |new_id| {
-            try self.placed.append(.{ .id = new_id, .pos = places[0].top_left });
-            return self.placed.items.len - 1;
-        } else return null;
-    }
-
-    pub fn deleteElements(self: *BoardState, indices: []const ?usize) void {
-        for (indices) |id| {
-            if (id != null) {
-                self.placed.items[id.?].deleted = true;
-            }
-        }
-
-        // if (indices.len == 0) return;
-        // if (indices.len == 1) {
-        //     if (indices[0]) |i| _ = self.placed.swapRemove(i);
-        //     return;
-        // }
-        // // hardcoded for now
-        // assert(indices.len == 2);
-        // if (indices[0] == null) {
-        //     self.deleteElements(&.{indices[1]});
-        // } else if (indices[1] == null) {
-        //     self.deleteElements(&.{indices[0]});
-        // } else {
-        //     const in0 = indices[0].?;
-        //     const in1 = indices[1].?;
-        //     assert(in0 != in1);
-        //     if (in0 < in1) {
-        //         _ = self.placed.swapRemove(in1);
-        //         _ = self.placed.swapRemove(in0);
-        //     } else {
-        //         _ = self.placed.swapRemove(in0);
-        //         _ = self.placed.swapRemove(in1);
-        //     }
-        // }
-    }
-};
-
 const AlchemyData = struct {
-    const names: []const []const u8 = @import("names.zon");
     const images_base64: []const []const u8 = @import("images.zon");
-    const recipes: []const []const [2]usize = @import("base.zon");
-    const Asdf = struct { mixes: usize, a: usize, b: usize };
-    const required_mixes: [names.len]Asdf = blk: {
-        @setEvalBranchQuota(names.len * 100);
-        var result: [names.len]Asdf = @splat(.{ .mixes = std.math.maxInt(u20), .a = 0, .b = 0 });
-        for (.{ 1, 2, 3, 4 }) |initial_element| result[initial_element].mixes = 0;
-        var any_changes = true;
-        while (any_changes) {
-            any_changes = false;
-            for (recipes, 0..) |r, k| {
-                for (r) |pair| {
-                    const new_value = 1 + result[pair[0]].mixes + result[pair[1]].mixes;
-                    if (new_value < result[k].mixes) {
-                        result[k] = .{ .mixes = new_value, .a = pair[0], .b = pair[1] };
-                        any_changes = true;
-                    }
-                }
-            }
-        }
-        break :blk result;
-    };
-    // const initial: []const usize = &.{ 80, 24, 13, 1 };
-    const initial_names: []const []const u8 = &.{
-        // "iced tea",
-        // "egg timer",
-        // "alarm clock",
-        // "sound",
-        // "sundial",
-
-        // // goal: ocean
-        // "sprinkles",
-        // "confetti",
-        // "marshmallows",
-        // "smoke signal",
-        // "bandage",
-        // "shark",
-
-        // goal: fire
-        "phoenix",
-        "pegasus",
-        "centaur",
-        "minotaur",
-        "manatee",
-        "sea",
-    };
-    const initial: [initial_names.len]usize = blk: {
-        @setEvalBranchQuota(names.len * initial_names.len * 10);
-        var result: [initial_names.len]usize = undefined;
-        for (initial_names, &result) |name, *dst| {
-            for (names, 0..) |n, k| {
-                if (std.mem.eql(u8, name, n)) {
-                    dst.* = k;
-                    break;
-                }
-            } else @compileError(name);
-        }
-        break :blk result;
-    };
-
-    pub fn combinationOf(active_id: usize, pasive_id: usize) ?usize {
-        for (recipes[pasive_id]) |pair| {
-            if (pair[0] == active_id) return pair[1];
-            if (pair[1] == active_id) return pair[0];
-        } else return null;
-    }
-
-    pub fn additionOf(active_id: usize, pasive_id: usize) ?usize {
-        for (recipes, 0..) |r, k| {
-            for (r) |pair| {
-                if (pair[0] == active_id and pair[1] == pasive_id) return k;
-                if (pair[1] == active_id and pair[0] == pasive_id) return k;
-            }
-        } else return null;
-    }
 };
 
 pub const GameState = @This();
@@ -218,6 +64,20 @@ menu_state: struct {
 level_states: [levels.len]LevelState = undefined,
 
 const levels: []const LevelInfo = &.{
+    .{
+        .goal = .earth,
+        .recipes = &.{
+            .{ .earth, .rain, .plant },
+            .{ .egg, .plant, .eggplant },
+            .{ .rain, .ice, .hail },
+        },
+        .initial = &.{
+            .egg,
+            .eggplant,
+            .ice,
+            .hail,
+        },
+    },
     .{
         .goal = .fire,
         .recipes = &.{
@@ -313,6 +173,16 @@ const Element = enum(usize) {
     bow,
     tie,
     bowtie,
+
+    earth = 3,
+    plant = 24,
+    egg = 49,
+    rain = 13,
+    ice = 148,
+    hail = 194,
+
+    seed = 2000,
+    eggplant,
 
     pub fn textureIndex(self: Element) ?usize {
         if (@intFromEnum(self) >= 1000) {
@@ -682,13 +552,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
             .tint = .lerp(.black, .white, icon.solved),
-        }}, self.textures[icon.id.textureIndex() orelse 1]);
+        }}, self.textures[icon.id.textureIndex() orelse 0]);
     }
     for (icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{
             .point = .{ .pos = icon.rect.top_left, .scale = icon.rect.size.x },
             .texcoord = .unit,
-        }}, self.textures[icon.id.textureIndex() orelse 1]);
+        }}, self.textures[icon.id.textureIndex() orelse 0]);
     }
 
     return false;
