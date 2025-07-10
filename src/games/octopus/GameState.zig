@@ -3,6 +3,8 @@ const PlatformGives = @import("../../game.zig").PlatformGives;
 
 // TODO: mark edge cross
 
+const html_bg = "#6FD3CA";
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{

@@ -285,6 +285,16 @@ pub const Vec2 = extern struct {
         v.* = towardsPure(v.*, goal, max_delta);
     }
 
+    pub fn lerpTowardsPure(v: Self, goal: Self, ratio: f32, delta_seconds: f32) Self {
+        // TODO: make this framerate independent
+        _ = delta_seconds;
+        return .lerp(v, goal, ratio);
+    }
+
+    pub fn lerpTowards(v: *Self, goal: Self, ratio: f32, delta_seconds: f32) void {
+        v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+    }
+
     pub fn awayFrom(v: Self, goal: Self, min_dist: f32) Self {
         const delta = v.sub(goal);
         const delta_mag = delta.mag();

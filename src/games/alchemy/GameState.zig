@@ -1,15 +1,33 @@
+const palette: []const FColor = &.{
+    // .fromHex("#0b132b"),
+    // .fromHex("#1c2541"),
+    // .fromHex("#3a506b"),
+    // .fromHex("#5bc0be"),
+    // .fromHex("#6fffe9"),
+
+    .fromHex("#1a659e"),
+    .fromHex("#004e89"),
+    .fromHex("#ff6b35"),
+    .fromHex("#f7c59f"),
+    .fromHex("#efefd0"),
+};
+
 const COLORS = struct {
-    text: FColor = .black,
-    bg_element: FColor = .gray(0.9),
-    bg_board: FColor = .white,
+    text: FColor = palette[4],
+    title: FColor = palette[4],
+    level_border: FColor = palette[4],
+    machine_border: FColor = palette[4],
+    bg_board: FColor = palette[1],
 }{};
+
+const html_bg = COLORS.bg_board;
 
 pub const Combo = struct { new_prod: usize, old_prod: usize, old_res: usize };
 
 const places: [3]Rect = .{
-    Rect.unit.move(.new(2, 2)),
-    Rect.unit.move(.new(4, 2)),
-    Rect.unit.move(.new(6, 2)),
+    Rect.unit.move(.new(1.5, 2)),
+    Rect.unit.move(.new(3.5, 2)),
+    Rect.unit.move(.new(5.5, 2)),
 };
 
 const InputState = struct {
@@ -386,7 +404,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 4,
                 math.easings.easeOutCubic(math.clamp01(platform.global_seconds - 0.4)),
             ), -5),
-        }, 2, .black);
+        }, 2, COLORS.title);
         try title_text.addText("Alchemy", .{
             .hor = .center,
             .ver = .baseline,
@@ -395,20 +413,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 4,
                 math.easings.easeOutCubic(math.clamp01(platform.global_seconds - 0.8)),
             ), -3),
-        }, 2, .black);
+        }, 2, COLORS.title);
     }
 
     for (levels, 0..) |info, k| {
         const rect: Rect = .{ .top_left = .new(
             tof32(k) * 1.5,
             if (k == self.menu_state.level)
-                math.lerp(-1.7, 0.1, game_focus)
+                math.lerp(-1.6, 0.3, game_focus)
             else
-                -1.7,
+                -1.6,
         ), .size = .one };
 
         const hovering = rect.plusMargin(0.1).contains(mouse.cur.position);
-        const hovering_to_enter_level = hovering and self.menu_state.game_focus_target == 0;
+        const hovering_to_enter_level = hovering and self.menu_state.game_focus_target == 0 and !self.level_states[k].solved;
         const hovering_to_solve_level = hovering and self.grabbingId() == info.goal;
         const hovering_to_exit_level = hovering and self.input_state.grabbing == null and self.menu_state.game_focus_target == 1;
 
@@ -421,7 +439,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         canvas.borderRect(camera, rect.plusMargin(0.1), try self.smooth.float(
             .fromFormat("menu {d}", .{k}),
             if (hovering_to_enter_level or hovering_to_exit_level or self.grabbingId() == info.goal) 0.1 else 0.01,
-        ), .inner, .black);
+        ), .inner, COLORS.level_border);
 
         if (hovering_to_enter_level and mouse.wasPressed(.left)) {
             self.menu_state.level = k;
@@ -508,7 +526,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .hor = .center,
                 .ver = .median,
                 .pos = place.get(.center),
-            }, 1, COLORS.text.withAlpha(if (hovered or k == 0) 0.2 else 1));
+            }, 1, if (k == 0) .black else COLORS.text.withAlpha(if (hovered) 0.2 else 1));
         }
     }
     try fg_text.addText("+", .{ .hor = .center, .ver = .median, .pos = .lerp(
@@ -531,7 +549,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.input_state.hovering = null;
     }
     if (self.input_state.grabbing) |grabbing_index| {
-        self.level_states[self.menu_state.level].placed.items[grabbing_index].pos.addInPlace(mouse.cur.position.sub(mouse.prev.position));
+        self.level_states[self.menu_state.level].placed.items[grabbing_index].pos.lerpTowards(
+            mouse.cur.position.sub(.half),
+            0.6,
+            platform.delta_seconds,
+        );
     }
     if (mouse.wasReleased(.left)) {
         if (self.input_state.grabbing) |grabbing| {
@@ -543,8 +565,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    if (self.menu_state.level == 0) {
+        try fg_text.addText(
+            "Hint: rain + ice = hail",
+            .{
+                .hor = .center,
+                .ver = .median,
+                .pos = game_camera.getCenter().addY(-3),
+            },
+            0.5,
+            COLORS.text,
+        );
+    }
+
     if (self.level_states[self.menu_state.level].machines[0] != null) {
-        canvas.strokeRect(camera, places[0], 0.02, .black);
+        canvas.strokeRect(camera, places[0], 0.02, COLORS.machine_border);
     }
     fg_text.draw(camera);
     for (level_icons.items) |icon| {
