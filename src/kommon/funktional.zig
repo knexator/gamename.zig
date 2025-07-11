@@ -114,6 +114,15 @@ pub fn mapOOP(
     return result;
 }
 
+pub fn allOOP(
+    values: anytype,
+    comptime field_name: std.meta.FieldEnum(std.meta.Elem(@TypeOf(values))),
+) bool {
+    for (values) |value| {
+        if (!@field(value, @tagName(field_name))) return false;
+    } else return true;
+}
+
 pub fn linspace01(n_steps: usize, include_endpoint: bool) [n_steps]f32 {
     return linspace(0, 1, n_steps, include_endpoint);
 }

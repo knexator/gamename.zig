@@ -5,6 +5,12 @@ pub fn inRange(value: anytype, min_inclusive: anytype, max_exclusive: anytype) b
     return min_inclusive <= value and value < max_exclusive;
 }
 
+pub fn projectToRange(value: anytype, min_inclusive: anytype, max_inclusive: anytype) @TypeOf(value, min_inclusive, max_inclusive) {
+    if (value < min_inclusive) return min_inclusive;
+    if (value > max_inclusive) return max_inclusive;
+    return value;
+}
+
 pub fn in01(value: f32) bool {
     return 0 <= value and value <= 1;
 }
@@ -819,6 +825,13 @@ pub const Rect = extern struct {
             inRange(p.y, self.top_left.y, self.top_left.y + self.size.y);
     }
 
+    pub fn projectPos(self: Rect, p: Vec2) Vec2 {
+        return .new(
+            projectToRange(p.x, self.top_left.x, self.top_left.x + self.size.x),
+            projectToRange(p.y, self.top_left.y, self.top_left.y + self.size.y),
+        );
+    }
+
     pub fn plusMargin(self: Rect, v: f32) Rect {
         return self.plusMargin2(.both(v));
     }
@@ -830,8 +843,22 @@ pub const Rect = extern struct {
         };
     }
 
+    pub fn plusMargin3(self: Rect, which: enum { left, right, top, bottom }, amount: f32) Rect {
+        return switch (which) {
+            else => @panic("TODO"),
+            .top => .{
+                .top_left = self.top_left.addY(-amount),
+                .size = self.size.addY(amount),
+            },
+        };
+    }
+
     pub fn fromCenterAndSize(center: Vec2, size: Vec2) Rect {
         return .{ .top_left = center.sub(size.scale(0.5)), .size = size };
+    }
+
+    pub fn from2(measure1: Measure, measure2: Measure) Rect {
+        return .from(.{ measure1, measure2 });
     }
 
     pub fn from(measures: [2]Measure) Rect {

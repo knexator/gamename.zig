@@ -5,8 +5,8 @@ const palette: []const FColor = &.{
     // .fromHex("#5bc0be"),
     // .fromHex("#6fffe9"),
 
-    .fromHex("#1a659e"),
     .fromHex("#004e89"),
+    .fromHex("#1a659e"),
     .fromHex("#ff6b35"),
     .fromHex("#f7c59f"),
     .fromHex("#efefd0"),
@@ -89,6 +89,8 @@ menu_state: struct {
 } = .{},
 
 level_states: [levels.len]LevelState = undefined,
+
+global_seconds_at_focus: ?f32 = null,
 
 const levels: []const LevelInfo = &.{
     .{
@@ -337,6 +339,12 @@ const LevelState = struct {
         return index;
     }
 
+    pub fn inMachine(self: LevelState, k: usize) bool {
+        for (self.machines) |v| {
+            if (v == k) return true;
+        } else return false;
+    }
+
     // TODO: revise
     fn deleteElements(self: *LevelState, indices: []const ?usize) void {
         for (indices) |id| {
@@ -387,6 +395,9 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
+    // dst.* = kommon.meta.initDefaultFields(GameState);
+    dst.global_seconds_at_focus = null;
+
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{
         @embedFile("../../fonts/Arial.json"),
@@ -471,14 +482,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var fg_text = canvas.textBatch(0);
     var title_text = canvas.textBatch(1);
 
+    if (self.global_seconds_at_focus == null and mouse.cur.position.sub(camera.get(.center)).magSq() < 9) {
+        self.global_seconds_at_focus = platform.global_seconds;
+    }
+
     if (self.menu_state.game_focus < 1) {
+        const title_t = platform.global_seconds - (self.global_seconds_at_focus orelse std.math.inf(f32));
         try title_text.addText("Reverse", .{
             .hor = .center,
             .ver = .baseline,
             .pos = .new(math.lerp(
                 -15,
                 4,
-                math.easings.easeOutCubic(math.clamp01(platform.global_seconds - 0.4)),
+                // 4 + 0.1 * math.sin(0.2 * (title_t - 1.0)),
+                math.easings.easeOutCubic(math.clamp01(title_t - 0.0)),
             ), -5),
         }, 2, COLORS.title);
         try title_text.addText("Alchemy", .{
@@ -487,19 +504,33 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .pos = .new(math.lerp(
                 15,
                 4,
-                math.easings.easeOutCubic(math.clamp01(platform.global_seconds - 0.8)),
+                // 4 + 0.1 * math.sin(0.2 * (title_t - 1.4)),
+                math.easings.easeOutCubic(math.clamp01(title_t - 0.4)),
             ), -3),
         }, 2, COLORS.title);
     }
 
+    if (kommon.funktional.allOOP(self.level_states, .solved)) {
+        try title_text.addText("Thanks for playing!", .{
+            .hor = .center,
+            .ver = .median,
+            .pos = camera.get(.center).addY(1.2),
+        }, 0.5, COLORS.text);
+    }
+
     for (levels, 0..) |info, k| {
-        const rect: Rect = .{ .top_left = .new(
-            tof32(k) * 1.5,
-            if (k == self.menu_state.level)
-                math.lerp(-1.6, 0.3, game_focus)
-            else
-                -1.6,
-        ), .size = .one };
+        const rect: Rect = .from2(
+            .{
+                .center = .new(
+                    camera.get(.center).x + (tof32(k) - tof32(levels.len - 1) / 2) * 1.5,
+                    0.5 + if (k == self.menu_state.level)
+                        math.lerp(-1.6, 0.3, game_focus)
+                    else
+                        -1.6,
+                ),
+            },
+            .{ .size = .one },
+        );
 
         const hovering = rect.plusMargin(0.1).contains(mouse.cur.position);
         const hovering_to_enter_level = hovering and self.menu_state.game_focus_target == 0 and !self.level_states[k].solved;
@@ -545,20 +576,33 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.menu_state.game_focus_target = 0;
     }
 
-    for (self.level_states[self.menu_state.level].placed.items, 0..) |*element, k| {
+    const state = &self.level_states[self.menu_state.level];
+    for (state.placed.items, 0..) |*element, k| {
         if (element.deleted) continue;
-        if (self.level_states[self.menu_state.level].machines[0] != k and self.input_state.grabbing != k) {
+        if (state.machines[0] != k and self.input_state.grabbing != k) {
             element.pos = element.pos.towardsPure(
                 element.pos.add(.half).awayFrom(places[0].get(.center), 1.0).sub(.half),
                 10 * platform.delta_seconds,
             );
         }
-        if (!game_camera.plusMargin(-0.5).contains(element.pos.add(.half))) {
-            element.pos = element.pos.add(.half).towardsPure(game_camera.get(.center), 10 * platform.delta_seconds).sub(.half);
+        for (state.placed.items[k + 1 ..], k + 1..) |*other_element, k2| {
+            const delta = element.pos.sub(other_element.pos);
+            if (delta.magSq() < 1.5 * 1.5) {
+                if (!state.inMachine(k)) {
+                    element.pos = element.pos.towardsPure(
+                        element.pos.add(.half).awayFrom(other_element.pos.add(.half), 1.5).sub(.half),
+                        10 * platform.delta_seconds,
+                    );
+                }
+                if (!state.inMachine(k2)) {
+                    other_element.pos = other_element.pos.towardsPure(
+                        other_element.pos.add(.half).awayFrom(element.pos.add(.half), 1.5).sub(.half),
+                        10 * platform.delta_seconds,
+                    );
+                }
+            }
         }
-        if (self.input_state.grabbing != k and element.pos.y < 1) {
-            element.pos.y = 1;
-        }
+        element.pos = game_camera.plusMargin(-0.75).plusMargin3(.top, -1).projectPos(element.pos.add(.half)).sub(.half);
     }
 
     self.input_state.hovering = null;
