@@ -447,6 +447,12 @@ pub const Vec2 = extern struct {
         );
     }
 
+    pub fn atBezier(p0: Self, p1: Self, p2: Self, t: f32) Self {
+        const pA: Self = .lerp(p0, p1, t);
+        const pB: Self = .lerp(p1, p2, t);
+        return .lerp(pA, pB, t);
+    }
+
     pub fn equals(a: Self, b: Self) bool {
         return a.x == b.x and a.y == b.y;
     }

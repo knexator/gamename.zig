@@ -86,6 +86,7 @@ menu_state: struct {
     game_focus: f32 = 0,
     game_focus_target: f32 = 0,
     level: usize = 0,
+    solving: ?struct { t: f32, init_pos: Vec2 } = null,
 } = .{},
 
 level_states: [levels.len]LevelState = undefined,
@@ -301,6 +302,13 @@ const LevelState = struct {
         for (info.initial, 0..) |id, k| {
             try dst.placed.append(.{ .id = id, .pos = .new(tof32(k) * 1.3 + 0.2, 4 + tof32(std.math.sign(@mod(k, 2)))) });
         }
+    }
+
+    pub fn idOf(self: LevelState, index: ?usize) ?Element {
+        if (index) |i| {
+            assert(self.placed.items[i].deleted == false);
+            return self.placed.items[i].id;
+        } else return null;
     }
 
     fn machineCombo(self: *LevelState, ingredient: ?usize, result: ?usize) !?usize {
@@ -534,13 +542,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         const hovering = rect.plusMargin(0.1).contains(mouse.cur.position);
         const hovering_to_enter_level = hovering and self.menu_state.game_focus_target == 0 and !self.level_states[k].solved;
-        const hovering_to_solve_level = hovering and self.grabbingId() == info.goal;
         const hovering_to_exit_level = hovering and self.input_state.grabbing == null and self.menu_state.game_focus_target == 1;
 
         try level_icons.append(.{
             .rect = rect,
             .id = info.goal,
-            .solved = if (hovering_to_solve_level or self.level_states[k].solved) 1.0 else 0.0,
+            .solved = if (self.level_states[k].solved) 1.0 else 0.0,
         });
 
         canvas.borderRect(camera, rect.plusMargin(0.1), try self.smooth.float(
@@ -558,12 +565,30 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             platform.sound_queue.insert(.enter);
         }
 
-        if (hovering_to_solve_level and mouse.wasReleased(.left)) {
-            self.level_states[self.menu_state.level].placed.items[self.input_state.grabbing.?].deleted = true;
-            self.input_state.grabbing = null;
-            self.menu_state.game_focus_target = 0;
-            self.level_states[k].solved = true;
-            platform.sound_queue.insert(.win);
+        if (self.menu_state.solving) |*solving| {
+            if (k == self.menu_state.level) {
+                try icons.append(.{
+                    .id = info.goal,
+                    .rect = .{
+                        .size = .one,
+                        .top_left = .atBezier(
+                            solving.init_pos,
+                            mouse.cur.position,
+                            rect.top_left,
+                            solving.t,
+                        ),
+                    },
+                });
+
+                math.towards(&solving.t, 1, platform.delta_seconds / 0.7);
+
+                if (solving.t >= 1) {
+                    platform.sound_queue.insert(.win);
+                    self.level_states[k].solved = true;
+                    self.menu_state.game_focus_target = 0;
+                    self.menu_state.solving = null;
+                }
+            }
         }
     }
 
@@ -663,13 +688,24 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         0.5,
     ) }, 1, COLORS.text);
 
-    if (mouse.wasPressed(.left)) {
+    if (mouse.wasPressed(.left) and self.menu_state.solving == null) {
         assert(self.input_state.grabbing == null);
         self.input_state.grabbing = if (self.input_state.hovering) |h| switch (h) {
             .element => |k| k,
             .machine => |k| self.level_states[self.menu_state.level].pickFromMachine(k),
         } else null;
         self.input_state.hovering = null;
+
+        if (self.level_states[self.menu_state.level].idOf(self.input_state.grabbing) ==
+            levels[self.menu_state.level].goal)
+        {
+            self.level_states[self.menu_state.level].placed.items[self.input_state.grabbing.?].deleted = true;
+            self.menu_state.solving = .{
+                .t = 0,
+                .init_pos = self.level_states[self.menu_state.level].placed.items[self.input_state.grabbing.?].pos,
+            };
+            self.input_state.grabbing = null;
+        }
     }
     if (self.input_state.grabbing) |grabbing_index| {
         self.level_states[self.menu_state.level].placed.items[grabbing_index].pos.lerpTowards(
