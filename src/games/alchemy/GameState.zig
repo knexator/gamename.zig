@@ -160,6 +160,30 @@ const levels: []const LevelInfo = &.{
             .passport,
         },
     },
+    .{
+        .goal = .life,
+        .recipes = &.{
+            .{ .life, .dough, .@"gingerbread pal" },
+            .{ .dough, .fire, .bread },
+            .{ .bread, .pensioner, .pigeon },
+            .{ .fire, .work, .fireworks },
+            .{ .work, .idea, .game },
+            .{ .@"gingerbread pal", .house, .@"gingerbread house" },
+            .{ .house, .green, .greenhouse },
+            .{ .green, .blue, .turquoise },
+        },
+        .initial = &.{
+            .game,
+            .blue,
+            .@"gingerbread house",
+            .pensioner,
+            .fireworks,
+            .idea,
+            .greenhouse,
+            .pigeon,
+            .turquoise,
+        },
+    },
 };
 
 const Element = enum {
@@ -207,6 +231,23 @@ const Element = enum {
     ice,
     hail,
     eggplant,
+
+    life,
+    dough,
+    @"gingerbread pal",
+    bread,
+    pensioner,
+    pigeon,
+    work,
+    fireworks,
+    idea,
+    game,
+    house,
+    @"gingerbread house",
+    green,
+    turquoise,
+    greenhouse,
+    blue,
 
     pub fn name(self: Element) []const u8 {
         return switch (self) {
@@ -320,6 +361,7 @@ pub fn preload(
 }
 
 pub fn urlSafe(comptime name: []const u8) []const u8 {
+    @setEvalBranchQuota(10_000);
     var res: [name.len]u8 = undefined;
     if (std.mem.replace(u8, name, " ", "_", &res) == 0) {
         return name;
