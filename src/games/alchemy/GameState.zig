@@ -162,32 +162,32 @@ const levels: []const LevelInfo = &.{
     },
 };
 
-const Element = enum(usize) {
-    bird = 46,
-    cow = 76,
-    phoenix = 47,
-    human = 48,
-    horse = 198,
-    pegasus = 226,
-    centaur = 283,
-    minotaur = 472,
-    manatee = 335,
-    sea = 9,
-    fire = 2,
+const Element = enum {
+    bird,
+    cow,
+    phoenix,
+    human,
+    horse,
+    pegasus,
+    centaur,
+    minotaur,
+    manatee,
+    sea,
+    fire,
 
-    sprinkles = 589,
-    confetti = 451,
-    marshmallows = 409,
-    @"smoke signal" = 591,
-    bandage = 506,
-    shark = 227,
-    blood = 112,
-    sugar = 263,
-    campfire = 63,
-    fabric = 433,
+    sprinkles,
+    confetti,
+    marshmallows,
+    @"smoke signal",
+    bandage,
+    shark,
+    blood,
+    sugar,
+    campfire,
+    fabric,
 
-    air = 4,
-    port = 1000,
+    air,
+    port,
     airport,
     pass,
     word,
@@ -200,20 +200,13 @@ const Element = enum(usize) {
     tie,
     bowtie,
 
-    earth = 3,
-    plant = 24,
-    egg = 49,
-    rain = 13,
-    ice = 148,
-    hail = 194,
-
-    eggplant = 2000,
-
-    pub fn textureIndex(self: Element) ?usize {
-        if (@intFromEnum(self) >= 1000) {
-            return null;
-        } else return @intFromEnum(self);
-    }
+    earth,
+    plant,
+    egg,
+    rain,
+    ice,
+    hail,
+    eggplant,
 
     pub fn name(self: Element) []const u8 {
         return switch (self) {
