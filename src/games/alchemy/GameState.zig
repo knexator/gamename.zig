@@ -639,16 +639,39 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .rect = element.rect(),
             .id = element.id,
         });
-        try fg_text.addText(
-            element.id.name(),
-            .{
-                .hor = .center,
-                .ver = .median,
-                .pos = element.rect().get(.bottom_center).addY(0.1),
-            },
-            2.5 / tof32(element.id.name().len),
-            COLORS.text,
-        );
+        if (element.id == .@"gingerbread house" or element.id == .@"gingerbread pal") {
+            try fg_text.addText(
+                "gingerbread",
+                .{
+                    .hor = .center,
+                    .ver = .median,
+                    .pos = element.rect().get(.bottom_center).addY(0.1),
+                },
+                2.5 / tof32("gingerbread".len),
+                COLORS.text,
+            );
+            try fg_text.addText(
+                if (element.id == .@"gingerbread house") "house" else "pal",
+                .{
+                    .hor = .center,
+                    .ver = .median,
+                    .pos = element.rect().get(.bottom_center).addY(0.4),
+                },
+                2.5 / tof32("gingerbread".len),
+                COLORS.text,
+            );
+        } else {
+            try fg_text.addText(
+                element.id.name(),
+                .{
+                    .hor = .center,
+                    .ver = .median,
+                    .pos = element.rect().get(.bottom_center).addY(0.1),
+                },
+                2.5 / tof32(element.id.name().len),
+                COLORS.text,
+            );
+        }
         if (k == self.input_state.grabbing) continue;
         if (self.input_state.grabbing == null and element.rect().contains(mouse.cur.position)) {
             self.input_state.hovering = .{ .element = k };

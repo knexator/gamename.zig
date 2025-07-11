@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
     inline for (&.{ "Arial", "Bokor" }) |font_name| {
         const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
         run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
-        run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top" });
+        run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2" });
         run_msdf.addArg("-font");
         run_msdf.addFileArg(b.path("src/fonts/" ++ font_name ++ ".ttf"));
         run_msdf.addArg("-json");
