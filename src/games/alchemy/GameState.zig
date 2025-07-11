@@ -490,8 +490,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var fg_text = canvas.textBatch(0);
     var title_text = canvas.textBatch(1);
 
-    if (self.global_seconds_at_focus == null and mouse.cur.position.sub(camera.get(.center)).magSq() < 9) {
-        self.global_seconds_at_focus = platform.global_seconds;
+    if (self.global_seconds_at_focus == null) {
+        if (camera.plusMargin(-1).contains(mouse.cur.position) or mouse.cur.isDown(.left)) {
+            self.global_seconds_at_focus = platform.global_seconds;
+        }
     }
 
     if (self.menu_state.game_focus < 1) {
@@ -522,7 +524,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         try title_text.addText("Thanks for playing!", .{
             .hor = .center,
             .ver = .median,
-            .pos = camera.get(.center).addY(1.2),
+            .pos = menu_camera.get(.center).addY(1.2),
         }, 0.5, COLORS.text);
     }
 
