@@ -64,6 +64,7 @@ pub const stuff = .{
 
     .preloaded_images = .{
         .arial_atlas = "fonts/Arial.png",
+        .bokor_atlas = "fonts/Bokor.png",
     },
 };
 
@@ -387,7 +388,13 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.mem = .init(gpa);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.canvas = try .init(gl, gpa, &.{
+        @embedFile("../../fonts/Arial.json"),
+        @embedFile("../../fonts/Bokor.json"),
+    }, &.{
+        loaded_images.get(.arial_atlas),
+        loaded_images.get(.bokor_atlas),
+    });
     dst.smooth = .init(dst.mem.forever.allocator());
 
     for (&dst.level_states, levels) |*level, info| {
@@ -462,7 +469,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var icons: std.ArrayList(struct { id: Element, rect: Rect }) = .init(canvas.frame_arena.allocator());
     var level_icons: std.ArrayList(struct { id: Element, rect: Rect, solved: f32 = 0.0 }) = .init(canvas.frame_arena.allocator());
     var fg_text = canvas.textBatch(0);
-    var title_text = &fg_text;
+    var title_text = canvas.textBatch(1);
 
     if (self.menu_state.game_focus < 1) {
         try title_text.addText("Reverse", .{
@@ -653,6 +660,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (self.level_states[self.menu_state.level].machines[0] != null) {
         canvas.strokeRect(camera, places[0], 0.02, COLORS.machine_border);
     }
+    title_text.draw(camera);
     fg_text.draw(camera);
     for (level_icons.items) |icon| {
         canvas.drawSpriteBatch(camera, &.{.{

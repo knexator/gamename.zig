@@ -26,16 +26,21 @@ pub fn build(b: *std.Build) void {
     // TODO: make msdf an optional dependency
     const msdf = b.dependency("msdf", .{});
 
-    const font_name = "Arial";
-    const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
-    run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
-    run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top" });
-    run_msdf.addArg("-font");
-    run_msdf.addFileArg(b.path("src/fonts/" ++ font_name ++ ".ttf"));
-    run_msdf.addArg("-json");
-    const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
-    run_msdf.addArg("-imageout");
-    const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
+    const wf = b.addUpdateSourceFiles();
+    inline for (&.{ "Arial", "Bokor" }) |font_name| {
+        const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
+        run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
+        run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top" });
+        run_msdf.addArg("-font");
+        run_msdf.addFileArg(b.path("src/fonts/" ++ font_name ++ ".ttf"));
+        run_msdf.addArg("-json");
+        const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
+        run_msdf.addArg("-imageout");
+        const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
+        wf.addCopyFileToSource(font_json, "src/fonts/" ++ font_name ++ ".json");
+        wf.addCopyFileToSource(font_atlas, "src/fonts/" ++ font_name ++ ".png");
+    }
+    fonts_step.dependOn(&wf.step);
     // TODO
     // const asdf = run_msdf.captureStdErr();
     // const expected_stderr =
@@ -45,11 +50,6 @@ pub fn build(b: *std.Build) void {
     // ;
     // std.debug.assert(std.mem.eql(u8, expected_stderr, asdf.))
     // wf.addCopyFileToSource(asdf, "src/fonts/" ++ font_name ++ ".txt");
-
-    const wf = b.addUpdateSourceFiles();
-    wf.addCopyFileToSource(font_json, "src/fonts/" ++ font_name ++ ".json");
-    wf.addCopyFileToSource(font_atlas, "src/fonts/" ++ font_name ++ ".png");
-    fonts_step.dependOn(&wf.step);
 }
 
 const HotReloadableMode = enum {
