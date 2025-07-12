@@ -80,6 +80,9 @@ textures: [1]Gl.Texture = undefined,
 textures_new_data: kommon.meta.StructFromEnum(Element, *const anyopaque, false),
 textures_new: kommon.meta.StructFromEnum(Element, Gl.Texture, false),
 
+texture_text_asdf_data: *const anyopaque,
+texture_text_asdf: Gl.Texture,
+
 input_state: InputState = .{ .grabbing = null, .hovering = null },
 
 menu_state: struct {
@@ -375,6 +378,8 @@ pub fn preload(
     inline for (@typeInfo(Element).@"enum".fields) |f| {
         @field(dst.textures_new_data, f.name) = gl.loadTextureDataFromFilename("images/alchemy/" ++ comptime urlSafe(f.name) ++ ".png");
     }
+
+    dst.texture_text_asdf_data = gl.prerenderText("gingerbread\nhouse", 100);
 }
 
 pub fn urlSafe(comptime name: []const u8) []const u8 {
@@ -432,6 +437,8 @@ pub fn init(
     inline for (@typeInfo(Element).@"enum".fields) |f| {
         @field(dst.textures_new, f.name) = gl.buildTexture2D(@field(dst.textures_new_data, f.name), false);
     }
+
+    dst.texture_text_asdf = gl.buildTexture2D(dst.texture_text_asdf_data, false);
 }
 
 // TODO: take gl parameter
@@ -781,6 +788,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .texcoord = .unit,
         }}, self.textureFor(icon.id));
     }
+
+    canvas.drawSpriteBatch(camera, &.{.{
+        .point = .{ .pos = camera.get(.center), .scale = 0.26 },
+        .texcoord = .unit,
+        .tint = COLORS.text,
+    }}, self.texture_text_asdf);
 
     return false;
 }

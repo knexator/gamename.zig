@@ -17,6 +17,11 @@ loadTextureDataFromFilename: *const fn (
     path: [:0]const u8,
 ) *const anyopaque,
 
+prerenderText: *const fn (
+    text: []const u8,
+    size_px: f32,
+) *const anyopaque,
+
 // isTextureDataLoaded: *const fn (
 //     data: *const anyopaque,
 // ) bool,

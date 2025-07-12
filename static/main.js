@@ -174,6 +174,28 @@ async function getWasm() {
         image_promises.push(imageFromBase64(getString(base64_ptr, base64_len)));
         return image_promises.length - 1;
       },
+      preloadTextImage: (text_ptr, text_len, font_name_ptr, font_name_len, size_px) => {
+        image_promises.push(new Promise((resolve, reject) => {
+          const text = getString(text_ptr, text_len);
+          const text_ctx = document.createElement("canvas").getContext("2d");
+          const font_str = `${size_px}px ${getString(font_name_ptr, font_name_len)}`;
+          text_ctx.font = font_str;
+          text_ctx.textAlign = "center";
+          text_ctx.textBaseline = "middle";
+          const measure = text_ctx.measureText(text);
+          const halfmargin_px = 2;
+          text_ctx.canvas.width = measure.actualBoundingBoxLeft + measure.actualBoundingBoxRight + halfmargin_px * 2;
+          text_ctx.canvas.height = measure.actualBoundingBoxAscent + measure.actualBoundingBoxDescent + halfmargin_px * 2;
+          text_ctx.fillStyle = "white";
+          text_ctx.font = font_str;
+          text_ctx.textAlign = "center";
+          text_ctx.textBaseline = "middle";
+          text_ctx.clearRect(0, 0, text_ctx.canvas.width, text_ctx.canvas.height);
+          text_ctx.fillText(text, measure.actualBoundingBoxLeft + halfmargin_px, measure.actualBoundingBoxAscent + halfmargin_px);
+          resolve(text_ctx.canvas);
+        }));
+        return image_promises.length - 1;
+      },
 
       // sound
       loadSound: (url_ptr, url_len) => {

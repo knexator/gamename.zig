@@ -15,6 +15,7 @@ const js = struct {
         extern fn preloadImageFromBase64Data(base64_ptr: [*]const u8, base64_len: usize) usize;
         extern fn imageWidth(image_id: usize) usize;
         extern fn imageHeight(image_id: usize) usize;
+        extern fn preloadTextImage(text_ptr: [*]const u8, text_len: usize, font_name_ptr: [*]const u8, font_name_len: usize, size_px: f32) usize;
     };
 
     // current direction: closely matching the webgl2 API
@@ -353,6 +354,9 @@ const js_better = struct {
                 js.images.imageHeight(image_id),
             );
         }
+        pub fn preloadTextImage(text: []const u8, font_name: []const u8, size_px: f32) usize {
+            return js.images.preloadTextImage(text.ptr, text.len, font_name.ptr, font_name.len, size_px);
+        }
     };
 
     pub const audio = struct {
@@ -428,8 +432,10 @@ const web_gl = struct {
         .buildTexture2D = buildTexture2D,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
+        // TODO: move these out of GL
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
         .loadTextureDataFromFilename = loadTextureDataFromFilename,
+        .prerenderText = prerenderText,
     };
 
     pub fn clear(color: FColor) void {
@@ -444,6 +450,12 @@ const web_gl = struct {
 
     pub fn loadTextureDataFromBase64(base64: []const u8) *const anyopaque {
         other_images.append(global_gpa_BAD, js_better.images.preloadImageFromBase64Data(base64)) catch @panic("TODO");
+        return other_images.at(other_images.len - 1);
+    }
+
+    // TODO: font name
+    pub fn prerenderText(text: []const u8, size_px: f32) *const anyopaque {
+        other_images.append(global_gpa_BAD, js_better.images.preloadTextImage(text, "Arial", size_px)) catch @panic("TODO");
         return other_images.at(other_images.len - 1);
     }
 
