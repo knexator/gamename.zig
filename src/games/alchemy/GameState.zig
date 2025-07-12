@@ -613,6 +613,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             );
         }
         for (state.placed.items[k + 1 ..], k + 1..) |*other_element, k2| {
+            if (other_element.deleted) continue;
             const delta = element.pos.sub(other_element.pos);
             if (delta.magSq() < 1.5 * 1.5) {
                 if (!state.inMachine(k)) {
