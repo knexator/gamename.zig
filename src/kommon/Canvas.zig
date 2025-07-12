@@ -421,6 +421,8 @@ pub const SpriteSheet = struct {
 pub const Sprite = struct {
     point: Point,
     pivot: Rect.MeasureKind = .top_left,
+    // which axis should have length 1 in a non-square texture?
+    unit_scale_is: enum { hor, ver } = .ver,
     texcoord: Rect,
     tint: FColor = .white,
 };
@@ -466,8 +468,10 @@ pub fn drawSpriteBatch(
     for (sprites, 0..) |sprite, i| {
         for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
             if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+            if (sprite.unit_scale_is != .ver) @panic("TODO");
+            const ratio_scaling: Vec2 = .new(texture.resolution.aspectRatio(), 1.0);
             vertices[i * 4 + k] = .{
-                .a_position = sprite.point.applyToLocalPosition(vertex),
+                .a_position = sprite.point.applyToLocalPosition(vertex.mul(ratio_scaling)),
                 .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
                 .a_color = sprite.tint,
             };
