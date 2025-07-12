@@ -26,10 +26,12 @@ const InputState = struct {
         } else {
             if (platform.keyboard.wasPressed(.KeyQ)) {
                 self.command = .inc;
-            } else if (platform.keyboard.wasPressed(.KeyA)) {
-                self.command = .add;
             } else if (platform.keyboard.wasPressed(.KeyW)) {
                 self.command = .neg;
+            } else if (platform.keyboard.wasPressed(.KeyA)) {
+                self.command = .add;
+            } else if (platform.keyboard.wasPressed(.KeyS)) {
+                self.command = .sub;
             }
         }
         return null;
@@ -55,14 +57,16 @@ const Hexditor = struct {
 
         pub const Kind = enum {
             inc,
-            add,
             neg,
+            add,
+            sub,
 
             pub fn nOperands(self: @This()) usize {
                 return switch (self) {
                     .inc => 1,
-                    .add => 2,
                     .neg => 1,
+                    .add => 2,
+                    .sub => 2,
                 };
             }
         };
@@ -88,14 +92,19 @@ const Hexditor = struct {
             .inc => {
                 self.at(instruction.operands.get(0)).* +%= 1;
             },
+            .neg => {
+                const v = self.at(instruction.operands.get(0));
+                v.* = @as(u8, @bitCast(-@as(i8, @bitCast(v.*))));
+            },
             .add => {
                 const a = self.at(instruction.operands.get(0));
                 const b = self.at(instruction.operands.get(1));
                 a.* +%= b.*;
             },
-            .neg => {
-                const v = self.at(instruction.operands.get(0));
-                v.* = @as(u8, @bitCast(-@as(i8, @bitCast(v.*))));
+            .sub => {
+                const a = self.at(instruction.operands.get(0));
+                const b = self.at(instruction.operands.get(1));
+                a.* -%= b.*;
             },
         }
     }
@@ -180,6 +189,14 @@ canvas: Canvas,
 mem: Mem,
 
 core: Hexditor,
+
+pub fn preload(
+    dst: *GameState,
+    gl: Gl,
+) !void {
+    _ = dst;
+    _ = gl;
+}
 
 pub fn init(
     dst: *GameState,
