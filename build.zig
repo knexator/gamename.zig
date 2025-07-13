@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "akari";
+const active_folder = "octopus";
 
 const std = @import("std");
 
@@ -211,7 +211,7 @@ fn build_for_desktop(
     exe_module.addImport("kommon", kommon_module);
     exe_module.addImport("GameState", game_module_asdf);
 
-    // TODO: less hacky
+    // TODO: less hacky in general
     // TODO: only the actually used assets
     {
         var dir = try std.fs.cwd().openDir("assets", .{ .iterate = true });
@@ -221,6 +221,10 @@ fn build_for_desktop(
         defer walk.deinit();
 
         while (try walk.next()) |entry| {
+            // TODO: remove this particular
+            if (!std.mem.eql(u8, "alchemy", game_folder) and
+                std.mem.indexOf(u8, entry.path, "alchemy") != null) continue;
+
             if (entry.kind == .file) {
                 // const corrected_path = try b.allocator.dupe(u8, entry.path);
                 const corrected_path = b.pathJoin(&.{ "assets", entry.path });

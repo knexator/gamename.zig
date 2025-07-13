@@ -525,13 +525,13 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                     if (!blocked.at2(new_tile)) {
                         if (EdgePos.between(old_tile, new_tile)) |edge_pos| {
                             if (!edges.at(edge_pos)) {
-                                if (tentacle_at.at2(new_tile) == null) {
+                                if (tentacle_at.at2(new_tile) == null and !blocked.at2(new_tile)) {
                                     var local_edges = activeEdgesAround(edges.*, old_tile);
                                     assert(local_edges.len <= 2);
                                     for (local_edges.constSlice()) |e| {
                                         if (e.dir.dot(edge_pos.dir) == 0) {
                                             const parallel_edge = e.translateNew(edge_pos.dir);
-                                            if (tentacle_at.at2(parallel_edge.nextPos()) == null) {
+                                            if (tentacle_at.at2(parallel_edge.nextPos()) == null and !blocked.at2(parallel_edge.nextPos())) {
                                                 edges.set(e, false);
                                                 edges.set(edge_pos, true);
                                                 edges.set(parallel_edge, true);
