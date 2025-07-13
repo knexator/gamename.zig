@@ -1,5 +1,6 @@
 pub const GameState = @This();
-const PlatformGives = @import("../../game.zig").PlatformGives;
+const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 // TODO: mark edge cross
 
@@ -18,7 +19,7 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "fonts/Arial.png",
+        .arial_atlas = "assets/fonts/Arial.png",
     },
 };
 
@@ -380,7 +381,7 @@ pub fn init(
         try state.init(info, &dst.mem);
     }
     dst.admire_solved_level_remaining_time = @splat(0.5);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
     // for (&dst.visual_tentacles, starting_edges_local) |*t, s| {
@@ -1200,7 +1201,7 @@ pub const RenderableInfo = kommon.renderer.RenderableInfo;
 pub const Gl = kommon.Gl;
 pub const Canvas = kommon.Canvas;
 pub const TextRenderer = Canvas.TextRenderer;
-pub const Mem = @import("../tres_undos/GameState.zig").Mem;
-pub const Key = @import("../akari/GameState.zig").Key;
-pub const LazyState = @import("../akari/GameState.zig").LazyState;
+pub const Mem = kommon.Mem;
+pub const Key = kommon.Key;
+pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;

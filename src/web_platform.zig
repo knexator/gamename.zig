@@ -366,15 +366,17 @@ const js_better = struct {
     };
 };
 
-const game = @import("game.zig");
-const PlatformGives = game.PlatformGives;
+const GameState = @import("GameState");
+const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+const stuff = GameState.stuff;
+
 comptime {
-    std.testing.refAllDeclsRecursive(game);
+    std.testing.refAllDeclsRecursive(GameState);
 }
 
 // TODO: hot reloading is not working :(
 
-var my_game: game.GameState = undefined;
+var my_game: GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
 
@@ -405,23 +407,23 @@ var web_platform: PlatformGives = .{
     .gl = web_gl.vtable,
 };
 
-const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
+const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
 var sound_queue: std.EnumSet(Sounds) = .initEmpty();
 
-const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
+const Loops = std.meta.FieldEnum(@TypeOf(stuff.loops));
 var loop_ids: std.EnumArray(Loops, usize) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
 // TODO: allow loading images during the game
-const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
+const PreloadedImages = std.meta.FieldEnum(@TypeOf(stuff.preloaded_images));
 var preloaded_image_ids: std.EnumArray(PreloadedImages, usize) = .initUndefined();
-var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
+var images_pointers: std.EnumArray(GameState.Images, *const anyopaque) = .initUndefined();
 
 var other_images: std.SegmentedList(usize, 16) = .{};
 
 const web_gl = struct {
-    pub const vtable: game.Gl = .{
+    pub const vtable: Gl = .{
         .clear = clear,
         .buildRenderable = buildRenderable,
         .useRenderable = useRenderable,
@@ -447,7 +449,7 @@ const web_gl = struct {
         return other_images.at(other_images.len - 1);
     }
 
-    pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) game.Gl.Texture {
+    pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) Gl.Texture {
         const image_id: *const usize = @alignCast(@ptrCast(data));
 
         // TODO
@@ -480,9 +482,9 @@ const web_gl = struct {
     pub fn buildRenderable(
         vertex_src: [:0]const u8,
         fragment_src: [:0]const u8,
-        attributes: game.Gl.VertexInfo.Collection,
-        uniforms: []const game.Gl.UniformInfo.In,
-    ) !game.Gl.Renderable {
+        attributes: Gl.VertexInfo.Collection,
+        uniforms: []const Gl.UniformInfo.In,
+    ) !Gl.Renderable {
         const program = try js.webgl2.better.buildProgram(
             vertex_src,
             fragment_src,
@@ -516,7 +518,7 @@ const web_gl = struct {
             );
         }
 
-        var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+        var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
         for (uniforms) |uniform| {
             const location = try js.webgl2.better.getUniformLocation(program, uniform.name);
             uniforms_data.append(.{
@@ -536,15 +538,15 @@ const web_gl = struct {
     }
 
     pub fn useRenderable(
-        renderable: game.Gl.Renderable,
+        renderable: Gl.Renderable,
         vertices_ptr: *const anyopaque,
         vertices_len_bytes: usize,
         // vertices: []const anyopaque,
         // TODO: make triangles optional, since they could be precomputed
-        triangles: []const [3]game.Gl.IndexType,
-        uniforms: []const game.Gl.UniformInfo.Runtime,
+        triangles: []const [3]Gl.IndexType,
+        uniforms: []const Gl.UniformInfo.Runtime,
         // TODO: multiple textures
-        texture: ?game.Gl.Texture,
+        texture: ?Gl.Texture,
     ) void {
         {
             js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo)));
@@ -562,7 +564,7 @@ const web_gl = struct {
             js.webgl2.bufferData(
                 .ELEMENT_ARRAY_BUFFER,
                 @ptrCast(triangles.ptr),
-                @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
                 .DYNAMIC_DRAW,
             );
             js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
@@ -593,7 +595,7 @@ const web_gl = struct {
             }
         }
 
-        js.webgl2.drawElements(.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+        js.webgl2.drawElements(.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
             u16 => .UNSIGNED_SHORT,
             else => @compileError("not implemented"),
         }, 0);
@@ -602,10 +604,10 @@ const web_gl = struct {
     pub fn buildInstancedRenderable(
         vertex_src: [:0]const u8,
         fragment_src: [:0]const u8,
-        per_vertex_attributes: game.Gl.VertexInfo.Collection,
-        per_instance_attributes: game.Gl.VertexInfo.Collection,
-        uniforms: []const game.Gl.UniformInfo.In,
-    ) !game.Gl.InstancedRenderable {
+        per_vertex_attributes: Gl.VertexInfo.Collection,
+        per_instance_attributes: Gl.VertexInfo.Collection,
+        uniforms: []const Gl.UniformInfo.In,
+    ) !Gl.InstancedRenderable {
         const program = try js.webgl2.better.buildProgram(
             vertex_src,
             fragment_src,
@@ -660,7 +662,7 @@ const web_gl = struct {
             }
         }
 
-        var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+        var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
         for (uniforms) |uniform| {
             const location = try js.webgl2.better.getUniformLocation(program, uniform.name);
             uniforms_data.append(.{
@@ -681,18 +683,18 @@ const web_gl = struct {
     }
 
     pub fn useInstancedRenderable(
-        renderable: game.Gl.InstancedRenderable,
+        renderable: Gl.InstancedRenderable,
         // TODO: make the vertex data optional, since it could be precomputed
         vertex_data_ptr: *const anyopaque,
         vertex_data_len_bytes: usize,
         // TODO: make triangles optional, since they could be precomputed
-        triangles: []const [3]game.Gl.IndexType,
+        triangles: []const [3]Gl.IndexType,
         instance_data_ptr: *const anyopaque,
         instance_data_len_bytes: usize,
         instance_count: usize,
-        uniforms: []const game.Gl.UniformInfo.Runtime,
+        uniforms: []const Gl.UniformInfo.Runtime,
         // TODO: multiple textures
-        texture: ?game.Gl.Texture,
+        texture: ?Gl.Texture,
     ) void {
         {
             js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo_vertices)));
@@ -710,7 +712,7 @@ const web_gl = struct {
             js.webgl2.bufferData(
                 .ELEMENT_ARRAY_BUFFER,
                 @ptrCast(triangles.ptr),
-                @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
                 .DYNAMIC_DRAW,
             );
             js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
@@ -754,7 +756,7 @@ const web_gl = struct {
             }
         }
 
-        js.webgl2.drawElementsInstanced(.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+        js.webgl2.drawElementsInstanced(.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
             u16 => .UNSIGNED_SHORT,
             else => @compileError("not implemented"),
         }, 0, @intCast(instance_count));
@@ -763,30 +765,32 @@ const web_gl = struct {
 
 export fn preload() void {
     inline for (comptime std.enums.values(Sounds)) |sound| {
-        const path = @field(game.sounds, @tagName(sound));
+        const path = @field(stuff.sounds, @tagName(sound));
         sound_ids.set(sound, js_better.audio.loadSound(path));
     }
 
     inline for (comptime std.enums.values(Loops)) |loop| {
-        const path = @field(game.loops, @tagName(loop));
+        const path = @field(stuff.loops, @tagName(loop));
         loop_ids.set(loop, js_better.audio.loadAndStartLoop(path));
     }
 
     inline for (comptime std.enums.values(PreloadedImages)) |image| {
-        const path = @field(game.preloaded_images, @tagName(image));
+        const path = @field(stuff.preloaded_images, @tagName(image));
         preloaded_image_ids.set(image, js_better.images.preloadImage(path));
         images_pointers.set(image, preloaded_image_ids.getPtrConst(image));
     }
 
-    my_game.preload(web_gl.vtable) catch @panic("TODO");
+    if (@hasDecl(GameState, "preload")) {
+        my_game.preload(web_gl.vtable) catch @panic("TODO");
+    }
 }
 
 export fn getDesiredAspectRatio() f32 {
-    return game.metadata.desired_aspect_ratio;
+    return stuff.metadata.desired_aspect_ratio;
 }
 
 export fn getTitle() [*:0]const u8 {
-    return game.metadata.name;
+    return stuff.metadata.name;
 }
 
 export fn init() void {
@@ -939,6 +943,7 @@ const FColor = math.FColor;
 const Camera = math.Camera;
 const Point = math.Point;
 const Rect = math.Rect;
-const Mouse = game.Mouse;
-const Keyboard = game.Keyboard;
-const KeyboardButton = game.KeyboardButton;
+const Mouse = kommon.input.Mouse;
+const Keyboard = kommon.input.Keyboard;
+const KeyboardButton = kommon.input.KeyboardButton;
+const Gl = kommon.Gl;

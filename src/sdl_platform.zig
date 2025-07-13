@@ -8,28 +8,33 @@ const c = @cImport({
     @cInclude("SDL3/SDL_main.h");
 });
 
-const game = @import("game.zig");
-const PlatformGives = game.PlatformGives;
+const GameState = @import("GameState");
+const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+const stuff = GameState.stuff;
+const Gl = kommon.Gl;
 
 comptime {
-    std.testing.refAllDecls(game);
+    std.testing.refAllDecls(GameState);
     std.testing.refAllDecls(Vec2);
 }
 
 const hot_reloading = @import("build_options").game_dynlib_path != null;
 var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| struct {
     const Self = @This();
+    const CApi = kommon.engine.CApiFor(GameState);
 
-    api: *const game.CApi = &game.game_api,
+    api: *const CApi = &GameState.game_api,
     dyn_lib: ?std.DynLib = null,
     last_inode: std.fs.File.INode = 0,
-    state: game.GameState,
+    state: GameState,
 
-    fn preload(dst: *Self, sdl_gl: game.Gl) !void {
-        try dst.state.preload(sdl_gl);
+    fn preload(dst: *Self, sdl_gl: Gl) !void {
+        if (@hasDecl(GameState, "preload")) {
+            try dst.state.preload(sdl_gl);
+        }
     }
 
-    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: game.Gl, loaded_images: std.EnumArray(game.Images, *const anyopaque)) !void {
+    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: Gl, loaded_images: std.EnumArray(GameState.Images, *const anyopaque)) !void {
         try dst.state.init(gpa, sdl_gl, loaded_images);
     }
 
@@ -66,13 +71,13 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
             break :blk game_dynlib_path ++ ".tmp";
         } else game_dynlib_path;
         self.dyn_lib = try .open(path);
-        self.api = self.dyn_lib.?.lookup(*const game.CApi, "game_api") orelse return error.LookupFail;
+        self.api = self.dyn_lib.?.lookup(*const CApi, "game_api") orelse return error.LookupFail;
         self.api.afterHotReload(&self.state);
         std.log.debug("reloaded game code", .{});
     }
-} else game.GameState = undefined;
+} else GameState = undefined;
 
-var window_size: UVec2 = Vec2.new(game.metadata.desired_aspect_ratio, 1).scale(512).toInt(usize);
+var window_size: UVec2 = Vec2.new(stuff.metadata.desired_aspect_ratio, 1).scale(512).toInt(usize);
 fn getWindowRect() Rect {
     return .{
         .top_left = .zero,
@@ -90,18 +95,18 @@ fn setKeyChanged(key: KeyboardButton) void {
     keyboard.setChanged(key);
 }
 
-const Sounds = std.meta.FieldEnum(@TypeOf(game.sounds));
+const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_data: std.EnumArray(Sounds, Sound) = .initUndefined();
 var sound_queue: std.EnumSet(Sounds) = .initEmpty();
 
-const Loops = std.meta.FieldEnum(@TypeOf(game.loops));
+const Loops = std.meta.FieldEnum(@TypeOf(stuff.loops));
 var loops: std.EnumArray(Loops, Loop) = .initUndefined();
 var loop_volumes: std.EnumArray(Loops, f32) = .initFill(0);
 
 // TODO: allow loading images during the game
-const PreloadedImages = std.meta.FieldEnum(@TypeOf(game.preloaded_images));
+const PreloadedImages = std.meta.FieldEnum(@TypeOf(stuff.preloaded_images));
 var preloaded_images: std.EnumArray(PreloadedImages, zstbi.Image) = .initUndefined();
-var images_pointers: std.EnumArray(game.Images, *const anyopaque) = .initUndefined();
+var images_pointers: std.EnumArray(GameState.Images, *const anyopaque) = .initUndefined();
 
 var other_images: std.SegmentedList(zstbi.Image, 16) = .{};
 
@@ -132,9 +137,9 @@ pub fn main() !void {
     c.SDL_SetMainReady();
 
     try errify(c.SDL_SetAppMetadata(
-        game.metadata.name,
+        stuff.metadata.name,
         "0.0.0",
-        std.fmt.comptimePrint("com.{s}.{s}", .{ game.metadata.author, game.metadata.name }),
+        std.fmt.comptimePrint("com.{s}.{s}", .{ stuff.metadata.author, stuff.metadata.name }),
     ));
 
     try errify(c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_AUDIO));
@@ -156,7 +161,7 @@ pub fn main() !void {
     }
 
     const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
-        game.metadata.name,
+        stuff.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
         c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
@@ -165,8 +170,8 @@ pub fn main() !void {
 
     try errify(c.SDL_SetWindowAspectRatio(
         sdl_window,
-        game.metadata.desired_aspect_ratio,
-        game.metadata.desired_aspect_ratio,
+        stuff.metadata.desired_aspect_ratio,
+        stuff.metadata.desired_aspect_ratio,
     ));
 
     const gl_context = try errify(c.SDL_GL_CreateContext(sdl_window));
@@ -183,7 +188,7 @@ pub fn main() !void {
 
     // TODO: defer unloading
     inline for (comptime std.enums.values(Sounds)) |sound| {
-        const path = @field(game.sounds, @tagName(sound));
+        const path = @field(stuff.sounds, @tagName(sound));
         sound_data.set(sound, try .init(path));
     }
 
@@ -195,7 +200,7 @@ pub fn main() !void {
 
     // TODO: defer unloading
     inline for (comptime std.enums.values(Loops)) |loop| {
-        const path = @field(game.loops, @tagName(loop));
+        const path = @field(stuff.loops, @tagName(loop));
         try loops.getPtr(loop).init(path, audio_device);
     }
 
@@ -218,13 +223,13 @@ pub fn main() !void {
     // defer zstbi.deinit();
     // TODO: defer unloading images
     inline for (comptime std.enums.values(PreloadedImages)) |image| {
-        const path = @field(game.preloaded_images, @tagName(image));
+        const path = @field(stuff.preloaded_images, @tagName(image));
         preloaded_images.set(image, try zstbi.Image.loadFromMemory(@embedFile(path), 0));
         images_pointers.set(image, preloaded_images.getPtrConst(image));
     }
 
     const sdl_gl = struct {
-        pub const vtable: game.Gl = .{
+        pub const vtable: Gl = .{
             .clear = clear,
             .buildRenderable = buildRenderable,
             .useRenderable = useRenderable,
@@ -257,7 +262,7 @@ pub fn main() !void {
             return other_images.at(other_images.len - 1);
         }
 
-        pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) game.Gl.Texture {
+        pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) Gl.Texture {
             const image: *const zstbi.Image = @alignCast(@ptrCast(data));
 
             const has_alpha = switch (image.num_components) {
@@ -296,9 +301,9 @@ pub fn main() !void {
         pub fn buildRenderable(
             vertex_src: [:0]const u8,
             fragment_src: [:0]const u8,
-            attributes: game.Gl.VertexInfo.Collection,
-            uniforms: []const game.Gl.UniformInfo.In,
-        ) !game.Gl.Renderable {
+            attributes: Gl.VertexInfo.Collection,
+            uniforms: []const Gl.UniformInfo.In,
+        ) !Gl.Renderable {
             const program = try (ProgramInfo{
                 .vertex = vertex_src,
                 .fragment = fragment_src,
@@ -341,7 +346,7 @@ pub fn main() !void {
                 );
             }
 
-            var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+            var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
             for (uniforms) |uniform| {
                 const location = gl.GetUniformLocation(program, uniform.name);
                 if (location == -1) return error.UniformLocationError;
@@ -362,15 +367,15 @@ pub fn main() !void {
         }
 
         pub fn useRenderable(
-            renderable: game.Gl.Renderable,
+            renderable: Gl.Renderable,
             vertices_ptr: *const anyopaque,
             vertices_len_bytes: usize,
             // vertices: []const anyopaque,
             // TODO: make triangles optional, since they could be precomputed
-            triangles: []const [3]game.Gl.IndexType,
-            uniforms: []const game.Gl.UniformInfo.Runtime,
+            triangles: []const [3]Gl.IndexType,
+            uniforms: []const Gl.UniformInfo.Runtime,
             // TODO: multiple textures
-            texture: ?game.Gl.Texture,
+            texture: ?Gl.Texture,
         ) void {
             {
                 gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo));
@@ -387,7 +392,7 @@ pub fn main() !void {
                 gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
                 gl.BufferData(
                     gl.ELEMENT_ARRAY_BUFFER,
-                    @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                    @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
                     triangles.ptr,
                     gl.DYNAMIC_DRAW,
                 );
@@ -419,7 +424,7 @@ pub fn main() !void {
                 }
             }
 
-            gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+            gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
                 u16 => gl.UNSIGNED_SHORT,
                 else => @compileError("not implemented"),
             }, 0);
@@ -428,10 +433,10 @@ pub fn main() !void {
         pub fn buildInstancedRenderable(
             vertex_src: [:0]const u8,
             fragment_src: [:0]const u8,
-            per_vertex_attributes: game.Gl.VertexInfo.Collection,
-            per_instance_attributes: game.Gl.VertexInfo.Collection,
-            uniforms: []const game.Gl.UniformInfo.In,
-        ) !game.Gl.InstancedRenderable {
+            per_vertex_attributes: Gl.VertexInfo.Collection,
+            per_instance_attributes: Gl.VertexInfo.Collection,
+            uniforms: []const Gl.UniformInfo.In,
+        ) !Gl.InstancedRenderable {
             const program = try (ProgramInfo{
                 .vertex = vertex_src,
                 .fragment = fragment_src,
@@ -500,7 +505,7 @@ pub fn main() !void {
                 }
             }
 
-            var uniforms_data = std.BoundedArray(game.Gl.UniformInfo, 8).init(0) catch unreachable;
+            var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
             for (uniforms) |uniform| {
                 const location = gl.GetUniformLocation(program, uniform.name);
                 if (location == -1) return error.UniformLocationError;
@@ -522,18 +527,18 @@ pub fn main() !void {
         }
 
         pub fn useInstancedRenderable(
-            renderable: game.Gl.InstancedRenderable,
+            renderable: Gl.InstancedRenderable,
             // TODO: make the vertex data optional, since it could be precomputed
             vertex_data_ptr: *const anyopaque,
             vertex_data_len_bytes: usize,
             // TODO: make triangles optional, since they could be precomputed
-            triangles: []const [3]game.Gl.IndexType,
+            triangles: []const [3]Gl.IndexType,
             instance_data_ptr: *const anyopaque,
             instance_data_len_bytes: usize,
             instance_count: usize,
-            uniforms: []const game.Gl.UniformInfo.Runtime,
+            uniforms: []const Gl.UniformInfo.Runtime,
             // TODO: multiple textures
-            texture: ?game.Gl.Texture,
+            texture: ?Gl.Texture,
         ) void {
             {
                 gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo_vertices));
@@ -550,7 +555,7 @@ pub fn main() !void {
                 gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
                 gl.BufferData(
                     gl.ELEMENT_ARRAY_BUFFER,
-                    @intCast(@sizeOf([3]game.Gl.IndexType) * triangles.len),
+                    @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
                     triangles.ptr,
                     gl.DYNAMIC_DRAW,
                 );
@@ -595,7 +600,7 @@ pub fn main() !void {
                 }
             }
 
-            gl.DrawElementsInstanced(gl.TRIANGLES, @intCast(3 * triangles.len), switch (game.Gl.IndexType) {
+            gl.DrawElementsInstanced(gl.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
                 u16 => gl.UNSIGNED_SHORT,
                 else => @compileError("not implemented"),
             }, null, @intCast(instance_count));
@@ -971,10 +976,10 @@ const Point = math.Point;
 const Rect = math.Rect;
 const errify = kommon.sdl.errify;
 const Timekeeper = kommon.Timekeeper;
-const Mouse = game.Mouse;
-const Keyboard = game.Keyboard;
+const Mouse = kommon.input.Mouse;
+const Keyboard = kommon.input.Keyboard;
+const KeyboardButton = kommon.input.KeyboardButton;
 const zstbi = @import("zstbi");
-const KeyboardButton = game.KeyboardButton;
 
 pub const std_options: std.Options = .{
     // TODO: remove before final release

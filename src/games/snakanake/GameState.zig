@@ -1,5 +1,7 @@
 pub const GameState = @This();
-const PlatformGives = @import("../../game.zig").PlatformGives;
+
+pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 pub const stuff = .{
     .metadata = .{
@@ -10,21 +12,20 @@ pub const stuff = .{
 
     // TODO(eternal): support formats other than .wav
     .sounds = .{
-        .apple = "sounds/apple.wav",
-        .crash = "sounds/crash.wav",
-        .step = "sounds/step1.wav",
+        .apple = "assets/sounds/apple.wav",
+        .crash = "assets/sounds/crash.wav",
+        .step = "assets/sounds/step1.wav",
     },
 
     .loops = .{
-        .alarm = "sounds/alarm.wav",
-        .music = "sounds/music.wav",
+        .alarm = "assets/sounds/alarm.wav",
+        .music = "assets/sounds/music.wav",
     },
 
     .preloaded_images = .{
-        .arial_atlas = "fonts/Arial.png",
+        .arial_atlas = "assets/fonts/Arial.png",
     },
 };
-
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
 const BOARD_SIZE: UVec2 = .new(16, 16);
@@ -82,14 +83,6 @@ debug_fwidth: Gl.Renderable,
 const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
 const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
 
-pub fn preload(
-    dst: *GameState,
-    gl: Gl,
-) !void {
-    _ = dst;
-    _ = gl;
-}
-
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -99,7 +92,7 @@ pub fn init(
     // TODO: get random seed as param?
     dst.* = .{
         .rnd_instance = .init(0),
-        .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
+        .canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         // TODO: store this in kommon for later use
         .debug_fwidth = try gl.buildRenderable(
             \\in vec2 a_position;

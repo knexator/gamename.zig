@@ -1,5 +1,6 @@
 pub const GameState = @This();
-const PlatformGives = @import("../../game.zig").PlatformGives;
+const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 // TODO: type
 pub const stuff = .{
@@ -14,7 +15,7 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "fonts/Arial.png",
+        .arial_atlas = "assets/fonts/Arial.png",
     },
 };
 
@@ -68,7 +69,7 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !GameState {
     return .{
-        .canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
+        .canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .ui = .init(gpa),
         .mem = .init(gpa),
         .board = try .fromAsciiAndMap(gpa, raw_puzzle, struct {

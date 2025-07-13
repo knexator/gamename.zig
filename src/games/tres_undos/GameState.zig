@@ -1,5 +1,6 @@
 pub const GameState = @This();
-const PlatformGives = @import("../../game.zig").PlatformGives;
+const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 // TODO: type
 pub const stuff = .{
@@ -10,23 +11,21 @@ pub const stuff = .{
     },
 
     .sounds = .{
-        .crash = "sounds/crash.wav",
-        .step = "sounds/step1.wav",
+        .crash = "assets/sounds/crash.wav",
+        .step = "assets/sounds/step1.wav",
     },
 
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "fonts/Arial.png",
-        .player = "images/player.png",
-        .tiles = "images/tiles.png",
-        .walls = "images/walls.png",
+        .arial_atlas = "assets/fonts/Arial.png",
+        .player = "assets/images/player.png",
+        .tiles = "assets/images/tiles.png",
+        .walls = "assets/images/walls.png",
     },
 };
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
-
-pub const Mem = @FieldType(GameState, "mem");
 
 const COLORS = struct {
     CRATES: [4]FColor = .{
@@ -42,48 +41,9 @@ const transition_duration = turn_duration * 5;
 const key_retrigger_time = 0.2;
 
 canvas: Canvas,
-mem: struct {
-    /// same lifetime as a frame
-    frame: std.heap.ArenaAllocator,
+mem: Mem,
 
-    /// same lifetime as a function call
-    scratch: std.heap.ArenaAllocator,
-
-    /// same lifetime as a level
-    level: std.heap.ArenaAllocator,
-
-    /// same lifetime as the game
-    forever: std.heap.ArenaAllocator,
-
-    pub fn init(gpa: std.mem.Allocator) @This() {
-        return .{
-            .frame = .init(gpa),
-            .scratch = .init(gpa),
-            .level = .init(gpa),
-            .forever = .init(gpa),
-        };
-    }
-
-    // pub fn initPreheated(dst: *@This(), gpa: std.mem.Allocator, size: usize) !void {}
-
-    pub fn deinit(self: *@This()) void {
-        self.frame.deinit();
-        self.scratch.deinit();
-        self.level.deinit();
-        self.forever.deinit();
-    }
-
-    pub fn get(self: *@This(), comptime lifetime: enum { frame, scratch, level, forever }) std.mem.Allocator {
-        return switch (lifetime) {
-            .frame => self.frame.allocator(),
-            .scratch => self.scratch.allocator(),
-            .level => self.level.allocator(),
-            .forever => self.forever.allocator(),
-        };
-    }
-},
-
-smooth: @import("../akari/GameState.zig").LazyState,
+smooth: kommon.LazyState,
 
 textures: struct {
     tiles: Gl.Texture,
@@ -591,7 +551,7 @@ pub fn init(
     dst.canvas = try .init(
         gl,
         gpa,
-        &.{@embedFile("../../fonts/Arial.json")},
+        &.{@embedFile("assets/fonts/Arial.json")},
         &.{loaded_images.get(.arial_atlas)},
     );
     dst.smooth = .init(dst.mem.forever.allocator());
@@ -843,3 +803,4 @@ pub const RenderableInfo = kommon.renderer.RenderableInfo;
 pub const Gl = kommon.Gl;
 pub const Canvas = kommon.Canvas;
 pub const TextRenderer = Canvas.TextRenderer;
+const Mem = kommon.Mem;

@@ -164,7 +164,8 @@ const Hexditor = struct {
 };
 
 pub const GameState = @This();
-const PlatformGives = @import("../../game.zig").PlatformGives;
+const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 // TODO: type
 pub const stuff = .{
@@ -179,7 +180,7 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "fonts/Arial.png",
+        .arial_atlas = "assets/fonts/Arial.png",
     },
 };
 
@@ -190,14 +191,6 @@ mem: Mem,
 
 core: Hexditor,
 
-pub fn preload(
-    dst: *GameState,
-    gl: Gl,
-) !void {
-    _ = dst;
-    _ = gl;
-}
-
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -205,7 +198,7 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.mem = .init(gpa);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("../../fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.core = .{};
 }
 
@@ -271,7 +264,7 @@ pub const RenderableInfo = kommon.renderer.RenderableInfo;
 pub const Gl = kommon.Gl;
 pub const Canvas = kommon.Canvas;
 pub const TextRenderer = Canvas.TextRenderer;
-pub const Mem = @import("../tres_undos/GameState.zig").Mem;
-pub const Key = @import("../akari/GameState.zig").Key;
-pub const LazyState = @import("../akari/GameState.zig").LazyState;
+pub const Mem = kommon.Mem;
+pub const Key = kommon.Key;
+pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;

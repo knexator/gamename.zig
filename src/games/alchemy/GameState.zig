@@ -45,7 +45,8 @@ const AlchemyData = struct {
 };
 
 pub const GameState = @This();
-const PlatformGives = @import("../../game.zig").PlatformGives;
+pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 // TODO: type
 pub const stuff = .{
@@ -56,15 +57,15 @@ pub const stuff = .{
     },
 
     .sounds = .{
-        .enter = "sounds/alchemy/enter.wav",
-        .win = "sounds/alchemy/win.wav",
+        .enter = "assets/sounds/alchemy/enter.wav",
+        .win = "assets/sounds/alchemy/win.wav",
     },
 
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "fonts/Arial.png",
-        .bokor_atlas = "fonts/Bokor.png",
+        .arial_atlas = "assets/fonts/Arial.png",
+        .bokor_atlas = "assets/fonts/Bokor.png",
     },
 };
 
@@ -72,7 +73,7 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 canvas: Canvas,
 mem: Mem,
-smooth: @import("../akari/GameState.zig").LazyState,
+smooth: kommon.LazyState,
 
 textures_data: [1]?*const anyopaque = @splat(null),
 textures: [1]Gl.Texture = undefined,
@@ -373,7 +374,7 @@ pub fn preload(
     }
 
     inline for (@typeInfo(Element).@"enum".fields) |f| {
-        @field(dst.textures_new_data, f.name) = gl.loadTextureDataFromFilename("images/alchemy/" ++ comptime urlSafe(f.name) ++ ".png");
+        @field(dst.textures_new_data, f.name) = gl.loadTextureDataFromFilename("assets/images/alchemy/" ++ comptime urlSafe(f.name) ++ ".png");
     }
 }
 
@@ -408,8 +409,8 @@ pub fn init(
 
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{
-        @embedFile("../../fonts/Arial.json"),
-        @embedFile("../../fonts/Bokor.json"),
+        @embedFile("assets/fonts/Arial.json"),
+        @embedFile("assets/fonts/Bokor.json"),
     }, &.{
         loaded_images.get(.arial_atlas),
         loaded_images.get(.bokor_atlas),
@@ -813,7 +814,7 @@ pub const RenderableInfo = kommon.renderer.RenderableInfo;
 pub const Gl = kommon.Gl;
 pub const Canvas = kommon.Canvas;
 pub const TextRenderer = Canvas.TextRenderer;
-pub const Mem = @import("../tres_undos/GameState.zig").Mem;
-pub const Key = @import("../akari/GameState.zig").Key;
-pub const LazyState = @import("../akari/GameState.zig").LazyState;
+pub const Mem = kommon.Mem;
+pub const Key = kommon.Key;
+pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;

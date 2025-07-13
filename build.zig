@@ -2,13 +2,11 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
+const active_folder = "akari";
+
 const std = @import("std");
 
-// TODO: doesn't work
-// const game_name = @import("src/game.zig").metadata.name;
-const game_name = "Snakanake";
-
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
     b.reference_trace = 10;
 
@@ -19,7 +17,11 @@ pub fn build(b: *std.Build) void {
         // .optimize = optimize,
     });
 
-    build_game(b);
+    if (b.option(bool, "ghpages", "Build all games, for ghpages") orelse false) {
+        try build_all_games_html(b);
+    } else {
+        try build_game(b, active_folder);
+    }
 
     // TODO(eternal): delete this step by getting a build.zig for msdf
     const fonts_step = b.step("fonts", "Compile the fonts (only available on win64)");
@@ -32,13 +34,13 @@ pub fn build(b: *std.Build) void {
         run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
         run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2" });
         run_msdf.addArg("-font");
-        run_msdf.addFileArg(b.path("src/fonts/" ++ font_name ++ ".ttf"));
+        run_msdf.addFileArg(b.path("assets/fonts/" ++ font_name ++ ".ttf"));
         run_msdf.addArg("-json");
         const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
         run_msdf.addArg("-imageout");
         const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
-        wf.addCopyFileToSource(font_json, "src/fonts/" ++ font_name ++ ".json");
-        wf.addCopyFileToSource(font_atlas, "src/fonts/" ++ font_name ++ ".png");
+        wf.addCopyFileToSource(font_json, "assets/fonts/" ++ font_name ++ ".json");
+        wf.addCopyFileToSource(font_atlas, "assets/fonts/" ++ font_name ++ ".png");
     }
     fonts_step.dependOn(&wf.step);
     // TODO
@@ -59,7 +61,7 @@ const HotReloadableMode = enum {
     only_lib,
 };
 
-fn build_game(b: *std.Build) void {
+fn build_game(b: *std.Build, comptime game_folder: []const u8) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const hot_reloadable: HotReloadableMode = b.option(
@@ -78,7 +80,7 @@ fn build_game(b: *std.Build) void {
     const check_step = b.step("check", "Check if the project compiles");
 
     if (web) {
-        build_for_web(b, .{
+        build_for_web(b, game_folder, .{
             .install = install_step,
             .run = run_step,
             .unit_test = test_step,
@@ -93,7 +95,7 @@ fn build_game(b: *std.Build) void {
             .emit_llvm_ir = emit_llvm_ir,
         });
     } else {
-        build_for_desktop(b, .{
+        try build_for_desktop(b, game_folder, .{
             .install = install_step,
             .run = run_step,
             .unit_test = test_step,
@@ -109,6 +111,7 @@ fn build_game(b: *std.Build) void {
 
 fn build_for_desktop(
     b: *std.Build,
+    comptime game_folder: []const u8,
     steps: struct {
         install: *std.Build.Step,
         run: *std.Build.Step,
@@ -121,7 +124,7 @@ fn build_for_desktop(
         hot_reloadable: HotReloadableMode,
         emit_llvm_ir: bool,
     },
-) void {
+) !void {
     const sdl_lib = b.dependency("sdl", .{
         .target = options.target,
         .optimize = options.optimize,
@@ -133,18 +136,32 @@ fn build_for_desktop(
         .optimize = options.optimize,
     });
 
+    // TODO: remove 'game_module' and use this instead
+    const game_module_asdf = b.createModule(.{
+        .root_source_file = b.path("src/games/" ++ game_folder ++ "/GameState.zig"),
+    });
+    game_module_asdf.addImport("kommon", kommon_module);
+    // TODO: better
+    game_module_asdf.addAnonymousImport("assets/fonts/Bokor.json", .{ .root_source_file = b.path("assets/fonts/Bokor.json") });
+    game_module_asdf.addAnonymousImport("assets/fonts/Arial.json", .{ .root_source_file = b.path("assets/fonts/Arial.json") });
+
     const build_options = b.addOptions();
     if (options.hot_reloadable != .no) {
-        const game_module = b.createModule(.{
-            .root_source_file = b.path("src/game.zig"),
-            .target = options.target,
-            .optimize = options.optimize,
-            .pic = true,
-        });
-        game_module.addImport("kommon", kommon_module);
+        game_module_asdf.pic = true;
+        game_module_asdf.resolved_target = options.target;
+        game_module_asdf.optimize = options.optimize;
+
+        // const game_module = b.createModule(.{
+        //     .root_source_file = b.path("src/game.zig"),
+        //     .target = options.target,
+        //     .optimize = options.optimize,
+        //     .pic = true,
+        // });
+        // game_module.addImport("kommon", kommon_module);
+        // game_module.addImport("GameState", game_module_asdf);
         const game_lib = b.addLibrary(.{
             .name = "game",
-            .root_module = game_module,
+            .root_module = game_module_asdf,
             .linkage = .dynamic,
             // TODO(zig): uncomment this line after solving https://github.com/ziglang/zig/issues/23442
             // .use_llvm = false,
@@ -161,7 +178,7 @@ fn build_for_desktop(
 
         {
             const game_unit_tests = b.addTest(.{
-                .root_module = game_module,
+                .root_module = game_module_asdf,
             });
             const run_game_unit_tests = b.addRunArtifact(game_unit_tests);
             steps.unit_test.dependOn(&run_game_unit_tests.step);
@@ -170,7 +187,7 @@ fn build_for_desktop(
             // TODO(zig): delete game_check after solving https://github.com/ziglang/zig/issues/18877
             const game_check = b.addLibrary(.{
                 .name = "game",
-                .root_module = game_module,
+                .root_module = game_module_asdf,
                 .linkage = .dynamic,
             });
             steps.check.dependOn(&game_check.step);
@@ -192,6 +209,33 @@ fn build_for_desktop(
     exe_module.linkLibrary(sdl_lib);
     exe_module.addImport("zstbi", b.dependency("zstbi", .{}).module("root"));
     exe_module.addImport("kommon", kommon_module);
+    exe_module.addImport("GameState", game_module_asdf);
+
+    // TODO: less hacky
+    // TODO: only the actually used assets
+    {
+        var dir = try std.fs.cwd().openDir("assets", .{ .iterate = true });
+        defer dir.close();
+
+        var walk = try dir.walk(b.allocator);
+        defer walk.deinit();
+
+        while (try walk.next()) |entry| {
+            if (entry.kind == .file) {
+                // const corrected_path = try b.allocator.dupe(u8, entry.path);
+                const corrected_path = b.pathJoin(&.{ "assets", entry.path });
+                defer b.allocator.free(corrected_path);
+                for (corrected_path) |*byte| {
+                    switch (byte.*) {
+                        '\\' => byte.* = '/',
+                        else => {},
+                    }
+                }
+                exe_module.addAnonymousImport(corrected_path, .{ .root_source_file = b.path(corrected_path) });
+            }
+        }
+    }
+
     exe_module.addOptions("build_options", build_options);
 
     // The closest version to WebGL2
@@ -202,7 +246,7 @@ fn build_for_desktop(
     }));
 
     const exe = b.addExecutable(.{
-        .name = game_name,
+        .name = game_folder,
         .root_module = exe_module,
     });
     // Without this, the SDL game will open a console window
@@ -246,6 +290,7 @@ fn build_for_desktop(
 // inspiration from https://github.com/daneelsan/minimal-zig-wasm-canvas/blob/master/build.zig
 fn build_for_web(
     b: *std.Build,
+    comptime game_folder: []const u8,
     steps: struct {
         install: *std.Build.Step,
         run: *std.Build.Step,
@@ -260,12 +305,31 @@ fn build_for_web(
     },
 ) void {
     const web_install_dir = std.Build.InstallDir{ .custom = "web_static" };
+    _build_for_web(b, game_folder, web_install_dir, steps, options);
+}
 
+fn _build_for_web(
+    b: *std.Build,
+    comptime game_folder: []const u8,
+    web_install_dir: std.Build.InstallDir,
+    // TODO
+    steps: anytype,
+    // TODO
+    options: anytype,
+) void {
     const kommon_module = b.addModule("kommon", .{
         .root_source_file = b.path("src/kommon/kommon.zig"),
         .target = options.target,
         .optimize = options.optimize,
     });
+
+    const game_module = b.createModule(.{
+        .root_source_file = b.path("src/games/" ++ game_folder ++ "/GameState.zig"),
+    });
+    game_module.addImport("kommon", kommon_module);
+    // TODO: better
+    game_module.addAnonymousImport("assets/fonts/Bokor.json", .{ .root_source_file = b.path("assets/fonts/Bokor.json") });
+    game_module.addAnonymousImport("assets/fonts/Arial.json", .{ .root_source_file = b.path("assets/fonts/Arial.json") });
 
     const wasm_module = b.createModule(.{
         .root_source_file = b.path("src/web_platform.zig"),
@@ -275,6 +339,7 @@ fn build_for_web(
         // .use_llvm = options.optimize != .Debug,
     });
     wasm_module.addImport("kommon", kommon_module);
+    wasm_module.addImport("GameState", game_module);
 
     const build_options = b.addOptions();
     build_options.addOption(bool, "hot_reloadable", options.hot_reloadable != .no);
@@ -311,33 +376,14 @@ fn build_for_web(
     });
     steps.install.dependOn(&copy_static_files.step);
 
-    // TODO: have a generic assets folder?
+    // TODO: only copy the actually used assets
     {
         const copy_sound_files = b.addInstallDirectory(.{
             .install_dir = web_install_dir,
-            .install_subdir = "sounds",
-            .source_dir = b.path("src/sounds"),
+            .install_subdir = "assets",
+            .source_dir = b.path("assets"),
         });
         steps.install.dependOn(&copy_sound_files.step);
-    }
-
-    // TODO: only copy the .png, to an images folder
-    {
-        const copy_font_files = b.addInstallDirectory(.{
-            .install_dir = web_install_dir,
-            .install_subdir = "fonts",
-            .source_dir = b.path("src/fonts"),
-        });
-        steps.install.dependOn(&copy_font_files.step);
-    }
-
-    {
-        const copy_image_files = b.addInstallDirectory(.{
-            .install_dir = web_install_dir,
-            .install_subdir = "images",
-            .source_dir = b.path("src/images"),
-        });
-        steps.install.dependOn(&copy_image_files.step);
     }
 
     const generate_keycodes = b.addExecutable(.{
@@ -379,5 +425,44 @@ fn build_for_web(
             .root_module = wasm_module,
         });
         steps.check.dependOn(&wasm_check.step);
+    }
+}
+
+fn build_all_games_html(b: *std.Build) !void {
+    const optimize = b.standardOptimizeOption(.{});
+
+    const install_step = b.getInstallStep();
+    const run_step = b.step("run", "Run the app");
+    const test_step = b.step("test", "Run unit tests");
+    const check_step = b.step("check", "Check if the project compiles");
+
+    inline for (.{
+        "akari",
+        "alchemy",
+        "hexditor",
+        "octopus",
+        "snakanake",
+        "tres_undos",
+    }) |game_folder| {
+        _build_for_web(
+            b,
+            game_folder,
+            std.Build.InstallDir{ .custom = "web_static/" ++ game_folder },
+            .{
+                .install = install_step,
+                .run = run_step,
+                .unit_test = test_step,
+                .check = check_step,
+            },
+            .{
+                .target = b.resolveTargetQuery(.{
+                    .cpu_arch = .wasm32,
+                    .os_tag = .freestanding,
+                }),
+                .optimize = optimize,
+                .hot_reloadable = .no,
+                .emit_llvm_ir = false,
+            },
+        );
     }
 }

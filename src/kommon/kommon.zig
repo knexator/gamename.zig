@@ -16,6 +16,21 @@ pub const Noise = @import("fastnoise.zig").Noise(f32);
 pub const Gl = @import("Gl.zig");
 pub const Canvas = @import("Canvas.zig");
 pub const renderer = @import("renderer.zig");
+pub const engine = @import("engine.zig");
+pub const Mem = @import("Mem.zig");
+pub const LazyState = @import("lazystate.zig").LazyState;
+pub const Key = enum(u64) {
+    _,
+
+    pub fn fromString(str: []const u8) Key {
+        return @enumFromInt(std.hash.Wyhash.hash(0, str));
+    }
+
+    pub fn fromFormat(comptime fmt: []const u8, args: anytype) Key {
+        var buf: [0x1000]u8 = undefined;
+        return fromString(std.fmt.bufPrint(&buf, fmt, args) catch std.debug.panic("Key fmt was too long", .{}));
+    }
+};
 
 comptime {
     std.testing.refAllDeclsRecursive(@This());
