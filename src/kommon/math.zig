@@ -917,6 +917,10 @@ pub const Rect = extern struct {
     pub fn with(original: Rect, change: Measure, keep: MeasureKind) Rect {
         return switch (change) {
             else => std.debug.panic("TODO: change {s}", .{@tagName(change)}),
+            .bottom_center => |bottom_center| switch (keep) {
+                else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
+                .size => .from(.{ .{ .bottom_center = bottom_center }, .{ .size = original.get(.size) } }),
+            },
             .center => |center| switch (keep) {
                 else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
                 .size => .from(.{ .{ .center = center }, .{ .size = original.get(.size) } }),

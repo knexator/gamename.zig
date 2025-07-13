@@ -82,6 +82,14 @@ debug_fwidth: Gl.Renderable,
 const BodyPart = struct { pos: IVec2, t: i32, dir: IVec2, time_reversed: bool };
 const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
 
+pub fn preload(
+    dst: *GameState,
+    gl: Gl,
+) !void {
+    _ = dst;
+    _ = gl;
+}
+
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -414,14 +422,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     switch (self.state) {
         .waiting => {
-            canvas.text_renderers[0].drawText(
+            try canvas.text_renderers[0].drawLine(
                 platform.gl,
                 camera,
                 // TODO: set text's bottom center
-                BOARD_SIZE.tof32().mul(.new(0.5, 0.25)).addX(-6.25),
+                .{ .bottom_center = BOARD_SIZE.tof32().mul(.new(0.5, 0.25)) },
                 "WASD or Arrow Keys to move",
                 30.0 / 32.0,
                 .white,
+                platform.gpa,
             );
         },
         else => {},
