@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) !void {
 
     // To use in other projects
     _ = b.addModule("kommon", .{
-        .root_source_file = b.path("src/kommon/kommon.zig"),
+        .root_source_file = b.path("monorepo/kommon/kommon.zig"),
         // .target = target,
         // .optimize = optimize,
     });
@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) !void {
     //     \\
     // ;
     // std.debug.assert(std.mem.eql(u8, expected_stderr, asdf.))
-    // wf.addCopyFileToSource(asdf, "src/fonts/" ++ font_name ++ ".txt");
+    // wf.addCopyFileToSource(asdf, "monorepo/fonts/" ++ font_name ++ ".txt");
 }
 
 const HotReloadableMode = enum {
@@ -131,14 +131,14 @@ fn build_for_desktop(
     }).artifact("SDL3");
 
     const kommon_module = b.addModule("kommon", .{
-        .root_source_file = b.path("src/kommon/kommon.zig"),
+        .root_source_file = b.path("monorepo/kommon/kommon.zig"),
         .target = options.target,
         .optimize = options.optimize,
     });
 
     // TODO: remove 'game_module' and use this instead
     const game_module_asdf = b.createModule(.{
-        .root_source_file = b.path("src/games/" ++ game_folder ++ "/GameState.zig"),
+        .root_source_file = b.path("games/" ++ game_folder ++ "/GameState.zig"),
     });
     game_module_asdf.addImport("kommon", kommon_module);
     // TODO: better
@@ -152,7 +152,7 @@ fn build_for_desktop(
         game_module_asdf.optimize = options.optimize;
 
         // const game_module = b.createModule(.{
-        //     .root_source_file = b.path("src/game.zig"),
+        //     .root_source_file = b.path("monorepo/game.zig"),
         //     .target = options.target,
         //     .optimize = options.optimize,
         //     .pic = true,
@@ -202,7 +202,7 @@ fn build_for_desktop(
     if (options.hot_reloadable == .only_lib) return;
 
     const exe_module = b.createModule(.{
-        .root_source_file = b.path("src/sdl_platform.zig"),
+        .root_source_file = b.path("monorepo/sdl_platform.zig"),
         .target = options.target,
         .optimize = options.optimize,
     });
@@ -318,13 +318,13 @@ fn _build_for_web(
     options: anytype,
 ) void {
     const kommon_module = b.addModule("kommon", .{
-        .root_source_file = b.path("src/kommon/kommon.zig"),
+        .root_source_file = b.path("monorepo/kommon/kommon.zig"),
         .target = options.target,
         .optimize = options.optimize,
     });
 
     const game_module = b.createModule(.{
-        .root_source_file = b.path("src/games/" ++ game_folder ++ "/GameState.zig"),
+        .root_source_file = b.path("games/" ++ game_folder ++ "/GameState.zig"),
     });
     game_module.addImport("kommon", kommon_module);
     // TODO: better
@@ -332,7 +332,7 @@ fn _build_for_web(
     game_module.addAnonymousImport("assets/fonts/Arial.json", .{ .root_source_file = b.path("assets/fonts/Arial.json") });
 
     const wasm_module = b.createModule(.{
-        .root_source_file = b.path("src/web_platform.zig"),
+        .root_source_file = b.path("monorepo/web_platform.zig"),
         .target = options.target,
         .optimize = options.optimize,
         // TODO(zig): uncomment this line when zig's backend works
@@ -388,7 +388,7 @@ fn _build_for_web(
 
     const generate_keycodes = b.addExecutable(.{
         .name = "generate_keycodes",
-        .root_source_file = b.path("src/tools/generate_keycodes_js.zig"),
+        .root_source_file = b.path("monorepo/tools/generate_keycodes_js.zig"),
         .target = b.graph.host,
     });
     generate_keycodes.root_module.addImport("kommon", kommon_module);
@@ -403,7 +403,7 @@ fn _build_for_web(
         // dev server for testing the webgame, with WebSockets + hot reloading
         // TODO(eternal): remove this step if zig gets a fs.watch equivalent
         const run_dev_server_cmd = b.addSystemCommand(&.{"bun"});
-        run_dev_server_cmd.addFileArg(b.path("src/tools/dev_server.js"));
+        run_dev_server_cmd.addFileArg(b.path("monorepo/tools/dev_server.js"));
         run_dev_server_cmd.addArg(b.getInstallPath(web_install_dir, ""));
         run_dev_server_cmd.step.dependOn(steps.install);
         steps.run.dependOn(&run_dev_server_cmd.step);

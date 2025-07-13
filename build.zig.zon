@@ -24,7 +24,10 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "src",
+        "monorepo",
+        "games",
+        "assets",
+        "static",
         // For example...
         //"LICENSE",
         //"README.md",
