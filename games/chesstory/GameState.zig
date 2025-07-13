@@ -1,0 +1,246 @@
+const SceneState = union(enum) {
+    dialog: struct {
+        character: enum { padre, hijo },
+        text: []const u8,
+    },
+    chess: struct {
+        board: ChessBoardState,
+        chaval: ChavalState,
+        options: []const struct {
+            label: []const u8,
+            next: []const SceneState,
+        },
+    },
+};
+
+const ChavalState = struct {
+    skill: f32,
+    frustration: f32,
+};
+
+const ChessBoardState = struct {
+    black_king: UVec2,
+    white_king: UVec2,
+};
+
+pub const GameState = @This();
+pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
+pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
+
+// TODO: type
+pub const stuff = .{
+    .metadata = .{
+        .name = "chesstory",
+        .author = "knexator",
+        .desired_aspect_ratio = 16.0 / 9.0,
+    },
+    .sounds = .{},
+    .loops = .{},
+    .preloaded_images = .{
+        .arial_atlas = "assets/fonts/Arial.png",
+        .chaval = "assets/chesstory/images/chaval.png",
+        .padre = "assets/chesstory/images/padre.png",
+    },
+};
+pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
+
+const COLORS = struct {
+    bg: FColor = .gray(0.5),
+}{};
+
+canvas: Canvas,
+mem: Mem,
+smooth: kommon.LazyState,
+textures: struct {
+    chaval: Gl.Texture,
+    padre: Gl.Texture,
+},
+
+scene_state: []const SceneState = day_1,
+
+const day_1: []const SceneState = &.{
+    .{ .dialog = .{
+        .character = .padre,
+        .text = "hola buenas",
+    } },
+    .{ .dialog = .{
+        .character = .padre,
+        .text = "enseñale ajedrez al chaval",
+    } },
+    .{ .dialog = .{
+        .character = .hijo,
+        .text = "hola soy el chaval",
+    } },
+    .{ .chess = .{
+        .board = .{ .black_king = .zero, .white_king = .new(5, 6) },
+        .chaval = .{ .skill = 0, .frustration = 0 },
+        .options = &.{
+            .{ .label = "go easy", .next = &.{
+                .{ .dialog = .{
+                    .character = .hijo,
+                    .text = "bah este juego es too easy",
+                } },
+                .{ .dialog = .{
+                    .character = .padre,
+                    .text = "pues nada, adios",
+                } },
+            } },
+            .{ .label = "go hard", .next = &.{
+                .{ .dialog = .{
+                    .character = .hijo,
+                    .text = "uff este juego es too hard",
+                } },
+                .{ .dialog = .{
+                    .character = .padre,
+                    .text = "pues nada, adios",
+                } },
+            } },
+        },
+    } },
+};
+
+pub fn init(
+    dst: *GameState,
+    gpa: std.mem.Allocator,
+    gl: Gl,
+    loaded_images: std.EnumArray(Images, *const anyopaque),
+) !void {
+    dst.* = kommon.meta.initDefaultFields(GameState);
+    dst.mem = .init(gpa);
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.smooth = .init(dst.mem.forever.allocator());
+    dst.textures.chaval = gl.buildTexture2D(loaded_images.get(.chaval), false);
+    dst.textures.padre = gl.buildTexture2D(loaded_images.get(.padre), false);
+}
+
+// TODO: take gl parameter
+pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
+    self.canvas.deinit(undefined, gpa);
+    // self.mem.deinit();
+}
+
+pub fn beforeHotReload(self: *GameState) !void {
+    _ = self;
+}
+
+pub fn afterHotReload(self: *GameState) !void {
+    _ = self;
+}
+
+/// returns true if should quit
+pub fn update(self: *GameState, platform: PlatformGives) !bool {
+    _ = self.mem.frame.reset(.retain_capacity);
+    _ = self.mem.scratch.reset(.retain_capacity);
+    self.smooth.last_delta_seconds = platform.delta_seconds;
+
+    const camera = (Rect.from(.{
+        .{ .top_left = .zero },
+        .{ .size = .both(12) },
+    })).withAspectRatio(
+        platform.aspect_ratio,
+        .grow,
+        .top_left,
+    );
+    const mouse = platform.getMouse(camera);
+    const canvas = &self.canvas;
+    var fg_text = canvas.textBatch(0);
+    platform.gl.clear(COLORS.bg);
+
+    const cur_scene = self.scene_state[0];
+    switch (cur_scene) {
+        .dialog => |d| {
+            canvas.drawSpriteBatch(camera, &.{.{
+                .point = .{ .pos = camera.get(.center), .scale = 5 },
+                .pivot = .center,
+                .texcoord = .unit,
+            }}, switch (d.character) {
+                .padre => self.textures.padre,
+                .hijo => self.textures.chaval,
+            });
+            try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
+
+            if (mouse.wasPressed(.left)) {
+                if (self.scene_state.len > 1) {
+                    self.scene_state = self.scene_state[1..];
+                } else return true;
+            }
+        },
+        .chess => |c| {
+            canvas.drawSpriteBatch(camera, &.{.{
+                .point = .{ .pos = camera.worldFromCenterLocal(.new(0.5, 0)), .scale = 5 },
+                .pivot = .center,
+                .texcoord = .unit,
+            }}, self.textures.chaval);
+            const chess_board: kommon.Grid2D(void) = try .initUndefined(undefined, .new(8, 8));
+            const chess_rect: Rect = .from2(
+                .{ .center = camera.worldFromCenterLocal(.new(-0.5, 0)) },
+                .{ .size = .both(8) },
+            );
+            var it = chess_board.iterator();
+            while (it.next()) |p| {
+                const r = chess_board.getTileRect(chess_rect, p);
+                canvas.fillRect(camera, r, if (p.isEven()) .white else .black);
+            }
+            canvas.fillCircle(camera, chess_board.getTileRect(
+                chess_rect,
+                c.board.white_king,
+            ).get(.center), 0.4, .gray(0.9));
+            canvas.fillCircle(camera, chess_board.getTileRect(
+                chess_rect,
+                c.board.black_king,
+            ).get(.center), 0.4, .gray(0.2));
+
+            const options = c.options;
+            assert(options.len == 2);
+            for (options, &[2]f32{ -0.5, 0.5 }) |option, x| {
+                const r: Rect = .fromCenterAndSize(camera.worldFromCenterLocal(.new(x, 0.8)), .new(4, 1));
+                const hovered = r.contains(mouse.cur.position);
+                canvas.fillRect(camera, r, try self.smooth.fcolor(.fromFormat("button {d}", .{x}), if (hovered) .fromHex("#14bf14") else .white));
+                try fg_text.addText(option.label, .{
+                    .hor = .center,
+                    .ver = .median,
+                    .pos = r.get(.center),
+                }, 1, .black);
+                if (hovered and mouse.wasPressed(.left)) {
+                    self.scene_state = option.next;
+                }
+            }
+        },
+    }
+    fg_text.draw(camera);
+
+    return false;
+}
+
+const std = @import("std");
+const assert = std.debug.assert;
+const panic = std.debug.panic;
+
+const kommon = @import("kommon");
+const Triangulator = kommon.Triangulator;
+const math = kommon.math;
+const tof32 = math.tof32;
+const Color = math.UColor;
+const FColor = math.FColor;
+const Camera = math.Camera;
+const Rect = math.Rect;
+const Point = math.Point;
+const Vec2 = math.Vec2;
+const UVec2 = math.UVec2;
+const IVec2 = math.IVec2;
+const funk = kommon.funktional;
+const maybeMirror = math.maybeMirror;
+const Noise = kommon.Noise;
+const last = kommon.last;
+pub const Mouse = kommon.input.Mouse;
+pub const Keyboard = kommon.input.Keyboard;
+pub const KeyboardButton = kommon.input.KeyboardButton;
+pub const PrecomputedShape = kommon.renderer.PrecomputedShape;
+pub const RenderableInfo = kommon.renderer.RenderableInfo;
+pub const Gl = kommon.Gl;
+pub const Canvas = kommon.Canvas;
+pub const TextRenderer = Canvas.TextRenderer;
+pub const Mem = kommon.Mem;
+pub const Key = kommon.Key;
+pub const LazyState = kommon.LazyState;
+pub const EdgePos = kommon.grid2D.EdgePos;
