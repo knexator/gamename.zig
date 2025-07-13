@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "octopus";
+const active_folder = "chesstory";
 
 const std = @import("std");
 
@@ -29,10 +29,12 @@ pub fn build(b: *std.Build) !void {
     const msdf = b.dependency("msdf", .{});
 
     const wf = b.addUpdateSourceFiles();
+    // wf.addCopyFileToSource(msdf.path("msdf-atlas-gen.exe"), "ungit/msdf-atlas-gen.exe");
     inline for (&.{ "Arial", "Bokor" }) |font_name| {
         const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
         run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
-        run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2" });
+        // TODO: -chars [0x20, 0x7e],ñ does not work, open github issue
+        run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2", "-charset", "monorepo/tools/font_chars.txt" });
         run_msdf.addArg("-font");
         run_msdf.addFileArg(b.path("assets/fonts/" ++ font_name ++ ".ttf"));
         run_msdf.addArg("-json");

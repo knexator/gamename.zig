@@ -423,8 +423,6 @@ pub const Sprite = struct {
     pivot: Rect.MeasureKind = .top_left,
     // which axis should have length 1 in a non-square texture?
     unit_scale_is: enum { hor, ver } = .ver,
-    // what aspect ratio should the sprite use: the texcoord's, the texture's, a custom one?
-    ratio_source: union(enum) { custom: f32, texture, texcoord } = .{ .custom = 1.0 },
     texcoord: Rect,
     tint: FColor = .white,
 };
@@ -469,16 +467,16 @@ pub fn drawSpriteBatch(
     const triangles = self.frame_arena.allocator().alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
     for (sprites, 0..) |sprite, i| {
         for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
-            if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+            const ratio: f32 = texture.resolution.tof32().mul(sprite.texcoord.size).aspectRatio();
             if (sprite.unit_scale_is != .ver) @panic("TODO");
-            const ratio: f32 = switch (sprite.ratio_source) {
-                .custom => |r| r,
-                .texture => texture.resolution.aspectRatio(),
-                .texcoord => sprite.texcoord.size.aspectRatio(),
-            };
             const ratio_scaling: Vec2 = .new(ratio, 1.0);
+            const top_left_point: Point = switch (sprite.pivot) {
+                .top_left => sprite.point,
+                .center => sprite.point.applyToLocalPoint(.{ .pos = .both(-0.5) }),
+                else => @panic("TODO: other pivots"),
+            };
             vertices[i * 4 + k] = .{
-                .a_position = sprite.point.applyToLocalPosition(vertex.mul(ratio_scaling)),
+                .a_position = top_left_point.applyToLocalPosition(vertex.mul(ratio_scaling)),
                 .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
                 .a_color = sprite.tint,
             };
@@ -1134,14 +1132,14 @@ pub const TextRenderer = struct {
             underlineThickness: f32,
         },
         glyphs: []struct {
-            unicode: u8,
+            unicode: u21,
             advance: f32,
             planeBounds: ?RectSides = null,
             atlasBounds: ?RectSides = null,
         },
         kerning: []struct {
-            unicode1: u8,
-            unicode2: u8,
+            unicode1: u21,
+            unicode2: u21,
             advance: f32,
         },
     };
@@ -1233,7 +1231,7 @@ pub const TextRenderer = struct {
         // gl.DeleteTextures(1, @ptrCast(&self.texture));
     }
 
-    fn kerningOf(self: TextRenderer, a: u8, b: u8) ?f32 {
+    fn kerningOf(self: TextRenderer, a: u21, b: u21) ?f32 {
         for (self.font_info.value.kerning) |entry| {
             if (entry.unicode1 == a and entry.unicode2 == b) return entry.advance;
         } else return null;
@@ -1267,13 +1265,26 @@ pub const TextRenderer = struct {
     ) !struct { quads: []Quad, total_advance: f32 } {
         var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
         var cursor: Vec2 = .zero;
-        for (text, 0..) |char, k| {
-            if (k != 0) {
-                cursor.x += self.kerningOf(text[k - 1], char) orelse 0;
+
+        var utf8 = (try std.unicode.Utf8View.init(text)).iterator();
+        var prev: ?u21 = null;
+        while (utf8.nextCodepoint()) |codepoint| {
+            if (prev) |p| {
+                cursor.x += self.kerningOf(p, codepoint) orelse 0;
             }
-            cursor, const quad = self.addLetter(cursor, char, em, color);
+            cursor, const quad = self.addLetter(cursor, codepoint, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
+            prev = codepoint;
         }
+
+        // for (text, 0..) |char, k| {
+        //     if (k != 0) {
+        //         cursor.x += self.kerningOf(text[k - 1], char) orelse 0;
+        //     }
+        //     cursor, const quad = self.addLetter(cursor, char, em, color);
+        //     if (quad) |q| quads.appendAssumeCapacity(q);
+        // }
+
         assert(cursor.y == 0);
         return .{ .quads = try quads.toOwnedSlice(), .total_advance = cursor.x };
     }
@@ -1416,7 +1427,7 @@ pub const TextRenderer = struct {
     pub fn addLetter(
         self: TextRenderer,
         bottom_left: Vec2,
-        letter: u8,
+        letter: u21,
         em: f32,
         color: FColor,
     ) std.meta.Tuple(&.{ Vec2, ?Quad }) {
