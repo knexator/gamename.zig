@@ -457,6 +457,10 @@ pub const Vec2 = extern struct {
         return a.x == b.x and a.y == b.y;
     }
 
+    pub fn aspectRatio(v: Self) f32 {
+        return v.x / v.y;
+    }
+
     pub fn withAspectRatio(original: Vec2, target_ratio: f32, mode: GrowOrShrink) Vec2 {
         const actual_ratio = original.x / original.y;
         if (actual_ratio < target_ratio) {

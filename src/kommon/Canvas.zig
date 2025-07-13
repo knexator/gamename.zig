@@ -423,6 +423,8 @@ pub const Sprite = struct {
     pivot: Rect.MeasureKind = .top_left,
     // which axis should have length 1 in a non-square texture?
     unit_scale_is: enum { hor, ver } = .ver,
+    // what aspect ratio should the sprite use: the texcoord's, the texture's, a custom one?
+    ratio_source: union(enum) { custom: f32, texture, texcoord } = .{ .custom = 1.0 },
     texcoord: Rect,
     tint: FColor = .white,
 };
@@ -469,7 +471,12 @@ pub fn drawSpriteBatch(
         for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
             if (sprite.pivot != .top_left) @panic("TODO: other pivots");
             if (sprite.unit_scale_is != .ver) @panic("TODO");
-            const ratio_scaling: Vec2 = .new(texture.resolution.aspectRatio(), 1.0);
+            const ratio: f32 = switch (sprite.ratio_source) {
+                .custom => |r| r,
+                .texture => texture.resolution.aspectRatio(),
+                .texcoord => sprite.texcoord.size.aspectRatio(),
+            };
+            const ratio_scaling: Vec2 = .new(ratio, 1.0);
             vertices[i * 4 + k] = .{
                 .a_position = sprite.point.applyToLocalPosition(vertex.mul(ratio_scaling)),
                 .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
