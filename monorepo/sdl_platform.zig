@@ -117,18 +117,7 @@ var global_gpa_BAD: std.mem.Allocator = undefined;
 
 const assets = @import("assets");
 fn embedAsset(comptime path: []const u8) []const u8 {
-    assert(std.mem.startsWith(u8, path, "assets/"));
-    return embedHelper(assets, path["assets/".len..]);
-}
-
-fn embedHelper(comptime asdf: type, comptime path: []const u8) []const u8 {
-    if (comptime std.mem.indexOfScalar(u8, path, '/')) |i| {
-        const start = comptime path[0..i];
-        const rest = comptime path[i + 1 ..];
-        return embedHelper(@field(asdf, start), rest);
-    } else {
-        return @field(asdf, path);
-    }
+    return assets.get.file(path["assets".len..]);
 }
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;

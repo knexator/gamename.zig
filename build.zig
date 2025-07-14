@@ -214,7 +214,7 @@ fn build_for_desktop(
     exe_module.addImport("kommon", kommon_module);
     exe_module.addImport("GameState", game_module_asdf);
 
-    const assets_module = assetpack.pack(b, b.path("assets"));
+    const assets_module = assetpack.pack(b, b.path("assets"), .{});
     exe_module.addImport("assets", assets_module);
 
     exe_module.addOptions("build_options", build_options);
