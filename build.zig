@@ -5,6 +5,7 @@
 const active_folder = "chesstory";
 
 const std = @import("std");
+const assetpack = @import("assetpack");
 
 pub fn build(b: *std.Build) !void {
     // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
@@ -213,34 +214,8 @@ fn build_for_desktop(
     exe_module.addImport("kommon", kommon_module);
     exe_module.addImport("GameState", game_module_asdf);
 
-    // TODO: less hacky in general
-    // TODO: only the actually used assets
-    {
-        var dir = try std.fs.cwd().openDir("assets", .{ .iterate = true });
-        defer dir.close();
-
-        var walk = try dir.walk(b.allocator);
-        defer walk.deinit();
-
-        while (try walk.next()) |entry| {
-            // TODO: remove this particular
-            if (!std.mem.eql(u8, "alchemy", game_folder) and
-                std.mem.indexOf(u8, entry.path, "alchemy") != null) continue;
-
-            if (entry.kind == .file) {
-                // const corrected_path = try b.allocator.dupe(u8, entry.path);
-                const corrected_path = b.pathJoin(&.{ "assets", entry.path });
-                defer b.allocator.free(corrected_path);
-                for (corrected_path) |*byte| {
-                    switch (byte.*) {
-                        '\\' => byte.* = '/',
-                        else => {},
-                    }
-                }
-                exe_module.addAnonymousImport(corrected_path, .{ .root_source_file = b.path(corrected_path) });
-            }
-        }
-    }
+    const assets_module = assetpack.pack(b, b.path("assets"));
+    exe_module.addImport("assets", assets_module);
 
     exe_module.addOptions("build_options", build_options);
 

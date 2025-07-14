@@ -115,6 +115,22 @@ var gl_procs: gl.ProcTable = undefined;
 // TODO: remove this
 var global_gpa_BAD: std.mem.Allocator = undefined;
 
+const assets = @import("assets");
+fn embedAsset(comptime path: []const u8) []const u8 {
+    assert(std.mem.startsWith(u8, path, "assets/"));
+    return embedHelper(assets, path["assets/".len..]);
+}
+
+fn embedHelper(comptime asdf: type, comptime path: []const u8) []const u8 {
+    if (comptime std.mem.indexOfScalar(u8, path, '/')) |i| {
+        const start = comptime path[0..i];
+        const rest = comptime path[i + 1 ..];
+        return embedHelper(@field(asdf, start), rest);
+    } else {
+        return @field(asdf, path);
+    }
+}
+
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
     const gpa, const is_debug = gpa: {
@@ -224,7 +240,7 @@ pub fn main() !void {
     // TODO: defer unloading images
     inline for (comptime std.enums.values(PreloadedImages)) |image| {
         const path = @field(stuff.preloaded_images, @tagName(image));
-        preloaded_images.set(image, try zstbi.Image.loadFromMemory(@embedFile(path), 0));
+        preloaded_images.set(image, try zstbi.Image.loadFromMemory(embedAsset(path), 0));
         images_pointers.set(image, preloaded_images.getPtrConst(image));
     }
 
@@ -826,7 +842,7 @@ const Sound = struct {
     data: []u8,
 
     pub fn init(comptime path: []const u8) !Sound {
-        const wav = @embedFile(path);
+        const wav = embedAsset(path);
         const stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
         var data_ptr: ?[*]u8 = undefined;
         var data_len: u32 = undefined;
@@ -851,7 +867,7 @@ const Loop = struct {
 
     pub fn init(self: *Loop, comptime path: []const u8, audio_device: c.SDL_AudioDeviceID) !void {
         // TODO: errdefers
-        const wav = @embedFile(path);
+        const wav = embedAsset(path);
         const io_stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
         var data_ptr: ?[*]u8 = undefined;
         var data_len: u32 = undefined;
