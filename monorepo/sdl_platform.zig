@@ -843,7 +843,7 @@ const Sound = struct {
 
     pub fn init(comptime path: []const u8) !Sound {
         const wav = embedAsset(path);
-        const stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
+        const stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav.ptr, wav.len));
         var data_ptr: ?[*]u8 = undefined;
         var data_len: u32 = undefined;
         var sound_spec: c.SDL_AudioSpec = undefined;
@@ -868,7 +868,7 @@ const Loop = struct {
     pub fn init(self: *Loop, comptime path: []const u8, audio_device: c.SDL_AudioDeviceID) !void {
         // TODO: errdefers
         const wav = embedAsset(path);
-        const io_stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav, wav.len));
+        const io_stream: *c.SDL_IOStream = try errify(c.SDL_IOFromConstMem(wav.ptr, wav.len));
         var data_ptr: ?[*]u8 = undefined;
         var data_len: u32 = undefined;
         var audio_spec: c.SDL_AudioSpec = undefined;
