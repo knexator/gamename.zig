@@ -21,8 +21,8 @@
             .hash = "zstbi-0.11.0-dev-L0Ea_-eVBwCl8RYA98PhLDw3Fhw5k7FJOHSMDKWDOvqx",
         },
         .assetpack = .{
-            .url = "git+https://github.com/silversquirl/assetpack#4531d603c10e40ceea0b590d89c64fcd2b12a9a4",
-            .hash = "assetpack-0.1.0-5DA2dy4yAAAIzfKN1FuXCCPhwsNw-3yWeL8KAC7GF2i8",
+            .url = "git+https://github.com/silversquirl/assetpack#8c99ec709331543dbd6d7fae91c1aab16094289f",
+            .hash = "assetpack-0.1.0-5DA2d_8_AAAR6O4AkR8Pgev9DNoPFEU0Btmjl2h8-fFK",
         },
     },
     .paths = .{
