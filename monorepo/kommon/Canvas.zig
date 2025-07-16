@@ -1100,6 +1100,14 @@ pub const TextRenderer = struct {
         hor: enum { left, center, right },
         ver: enum { baseline, ascender, descender, median },
         pos: Vec2,
+
+        pub fn centeredAt(p: Vec2) TextPosition {
+            return .{
+                .hor = .center,
+                .ver = .median,
+                .pos = p,
+            };
+        }
     };
 
     const RectSides = struct {

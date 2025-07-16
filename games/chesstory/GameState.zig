@@ -19,8 +19,71 @@ const ChavalState = struct {
 };
 
 const ChessBoardState = struct {
-    black_king: UVec2,
-    white_king: UVec2,
+    const Piece = struct {
+        pos: UVec2,
+        color: enum { white, black },
+        kind: Kind,
+
+        pub const Kind = enum {
+            pawn,
+            rook,
+            horse,
+            bishop,
+            queen,
+            king,
+        };
+    };
+
+    pieces: std.BoundedArray(Piece, 32),
+
+    pub const initial_white: ChessBoardState = .{ .pieces = .{
+        .len = 32,
+        .buffer = .{
+            .{ .pos = .new(0, 0), .kind = .rook, .color = .black },
+            .{ .pos = .new(7, 0), .kind = .rook, .color = .black },
+            .{ .pos = .new(1, 0), .kind = .horse, .color = .black },
+            .{ .pos = .new(6, 0), .kind = .horse, .color = .black },
+            .{ .pos = .new(2, 0), .kind = .bishop, .color = .black },
+            .{ .pos = .new(5, 0), .kind = .bishop, .color = .black },
+            .{ .pos = .new(3, 0), .kind = .queen, .color = .black },
+            .{ .pos = .new(4, 0), .kind = .king, .color = .black },
+
+            .{ .pos = .new(0, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(1, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(2, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(3, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(4, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(5, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(6, 1), .kind = .pawn, .color = .black },
+            .{ .pos = .new(7, 1), .kind = .pawn, .color = .black },
+
+            .{ .pos = .new(0, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(1, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(2, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(3, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(4, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(5, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(6, 6), .kind = .pawn, .color = .white },
+            .{ .pos = .new(7, 6), .kind = .pawn, .color = .white },
+
+            .{ .pos = .new(0, 7), .kind = .rook, .color = .white },
+            .{ .pos = .new(7, 7), .kind = .rook, .color = .white },
+            .{ .pos = .new(1, 7), .kind = .horse, .color = .white },
+            .{ .pos = .new(6, 7), .kind = .horse, .color = .white },
+            .{ .pos = .new(2, 7), .kind = .bishop, .color = .white },
+            .{ .pos = .new(5, 7), .kind = .bishop, .color = .white },
+            .{ .pos = .new(3, 7), .kind = .queen, .color = .white },
+            .{ .pos = .new(4, 7), .kind = .king, .color = .white },
+        },
+    } };
+
+    pub const initial_black: ChessBoardState = blk: {
+        var result = initial_white;
+        for (result.pieces.slice()) |*piece| {
+            piece.*.pos = .new(7 - piece.pos.x, 7 - piece.pos.y);
+        }
+        break :blk result;
+    };
 };
 
 pub const GameState = @This();
@@ -72,7 +135,7 @@ const day_1: []const SceneState = &.{
         .text = "hola soy el chaval",
     } },
     .{ .chess = .{
-        .board = .{ .black_king = .zero, .white_king = .new(5, 6) },
+        .board = .initial_white,
         .chaval = .{ .skill = 0, .frustration = 0 },
         .options = &.{
             .{ .label = "go easy", .next = &.{
@@ -181,14 +244,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 const r = chess_board.getTileRect(chess_rect, p);
                 canvas.fillRect(camera, r, if (p.isEven()) .white else .black);
             }
-            canvas.fillCircle(camera, chess_board.getTileRect(
-                chess_rect,
-                c.board.white_king,
-            ).get(.center), 0.4, .gray(0.9));
-            canvas.fillCircle(camera, chess_board.getTileRect(
-                chess_rect,
-                c.board.black_king,
-            ).get(.center), 0.4, .gray(0.2));
+            for (c.board.pieces.constSlice()) |piece| {
+                canvas.fillCircle(camera, chess_board.getTileRect(
+                    chess_rect,
+                    piece.pos,
+                ).get(.center), 0.4, .gray(switch (piece.color) {
+                    .white => 0.9,
+                    .black => 0.2,
+                }));
+                try fg_text.addText(@tagName(piece.kind)[0..1], .centeredAt(chess_board.getTileRect(
+                    chess_rect,
+                    piece.pos,
+                ).get(.center)), 1.0, .gray(0.5));
+            }
 
             const options = c.options;
             assert(options.len == 2);
