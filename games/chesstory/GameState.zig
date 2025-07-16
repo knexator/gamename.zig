@@ -1,3 +1,31 @@
+const Main = struct {
+    scene_state: SceneState,
+    last_delta: SceneDelta,
+    next_changes: []const SceneDelta,
+
+    pub fn init(deltas: []const SceneDelta) Main {
+        return .{
+            .scene_state = .applyDelta(null, deltas[0]),
+            .last_delta = deltas[0],
+            .next_changes = deltas[1..],
+        };
+    }
+
+    pub fn advance(self: *Main, option_index: ?usize) void {
+        if (option_index) |index| {
+            assert(std.meta.activeTag(self.last_delta) == .chess_choice);
+            const option = self.last_delta.chess_choice[index];
+            self.scene_state = .applyDelta(self.scene_state, option.next[0]);
+            self.last_delta = option.next[0];
+            self.next_changes = option.next[1..];
+        } else {
+            self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
+            self.last_delta = self.next_changes[0];
+            self.next_changes = self.next_changes[1..];
+        }
+    }
+};
+
 const SceneState = union(enum) {
     const DialogState = struct {
         character: enum { padre, hijo },
@@ -189,8 +217,7 @@ textures: struct {
     padre: Gl.Texture,
 },
 
-scene_state: SceneState = .applyDelta(null, day_1[0]),
-next_changes: []const SceneDelta = day_1[1..],
+main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
     .{ .dialog = .{
@@ -290,7 +317,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var fg_text = canvas.textBatch(0);
     platform.gl.clear(COLORS.bg);
 
-    switch (self.scene_state) {
+    var advance: bool = false;
+    var option_index: ?usize = null;
+
+    switch (self.main.scene_state) {
         .dialog => |d| {
             canvas.drawSpriteBatch(camera, &.{.{
                 .point = .{ .pos = camera.get(.center), .scale = 5 },
@@ -303,10 +333,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
 
             if (mouse.wasPressed(.left)) {
-                if (self.next_changes.len > 0) {
-                    self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
-                    self.next_changes = self.next_changes[1..];
-                } else return true;
+                advance = true;
             }
         },
         .chess => |c| {
@@ -344,7 +371,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             if (c.options) |options| {
                 assert(options.len == 2);
-                for (options, &[2]f32{ -0.5, 0.5 }) |option, x| {
+                for (options, 0.., &[2]f32{ -0.5, 0.5 }) |option, k, x| {
                     const r: Rect = .fromCenterAndSize(camera.worldFromCenterLocal(.new(x, 0.8)), .new(4, 1));
                     const hovered = r.contains(mouse.cur.position);
                     canvas.fillRect(camera, r, try self.smooth.fcolor(.fromFormat("button {d}", .{x}), if (hovered) .fromHex("#14bf14") else .white));
@@ -364,20 +391,24 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         ).get(.center), 0.45, .red);
                     }
                     if (hovered and mouse.wasPressed(.left)) {
-                        self.scene_state = .applyDelta(self.scene_state, option.next[0]);
-                        self.next_changes = option.next[1..];
+                        advance = true;
+                        option_index = k;
                     }
                 }
             } else {
                 if (mouse.wasPressed(.left)) {
-                    if (self.next_changes.len > 0) {
-                        self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
-                        self.next_changes = self.next_changes[1..];
-                    } else return true;
+                    advance = true;
                 }
             }
         },
     }
+
+    if (advance) {
+        if (self.main.next_changes.len > 0 or option_index != null) {
+            self.main.advance(option_index);
+        } else return true;
+    }
+
     fg_text.draw(camera);
 
     return false;
