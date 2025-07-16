@@ -1,16 +1,66 @@
 const SceneState = union(enum) {
-    dialog: struct {
+    const DialogState = struct {
         character: enum { padre, hijo },
         text: []const u8,
-    },
+    };
+
+    const Options = []const struct {
+        label: []const u8,
+        next: []const SceneDelta,
+    };
+
+    dialog: DialogState,
     chess: struct {
         board: ChessBoardState,
         chaval: ChavalState,
-        options: []const struct {
-            label: []const u8,
-            next: []const SceneState,
-        },
+        options: ?Options,
     },
+
+    fn applyDelta(maybe_cur: ?SceneState, delta: SceneDelta) SceneState {
+        if (maybe_cur) |cur| {
+            switch (delta) {
+                .dialog => |d| {
+                    return .{ .dialog = d };
+                },
+                .new_chess_game => |x| {
+                    assert(std.meta.activeTag(cur) == .dialog);
+                    return .{ .chess = .{
+                        .board = x.board,
+                        .chaval = x.chaval,
+                        .options = null,
+                    } };
+                },
+                .chess_move => |move| {
+                    assert(std.meta.activeTag(cur) == .chess);
+                    std.log.warn("TODO NOW", .{});
+                    _ = move;
+                    return cur;
+                },
+                .chess_choice => |options| {
+                    assert(std.meta.activeTag(cur) == .chess);
+                    var res = cur;
+                    res.chess.options = options;
+                    return res;
+                },
+            }
+        } else {
+            assert(std.meta.activeTag(delta) == .dialog);
+            return .{ .dialog = delta.dialog };
+        }
+    }
+};
+
+const SceneDelta = union(enum) {
+    dialog: SceneState.DialogState,
+    new_chess_game: struct {
+        board: ChessBoardState,
+        chaval: ChavalState,
+    },
+    chess_move: struct {
+        from: UVec2,
+        to: UVec2,
+    },
+    chess_choice: SceneState.Options,
 };
 
 const ChavalState = struct {
@@ -119,9 +169,10 @@ textures: struct {
     padre: Gl.Texture,
 },
 
-scene_state: []const SceneState = day_1,
+scene_state: SceneState = .applyDelta(null, day_1[0]),
+next_changes: []const SceneDelta = day_1[1..],
 
-const day_1: []const SceneState = &.{
+const day_1: []const SceneDelta = &.{
     .{ .dialog = .{
         .character = .padre,
         .text = "hola buenas",
@@ -134,31 +185,35 @@ const day_1: []const SceneState = &.{
         .character = .hijo,
         .text = "hola soy el chaval",
     } },
-    .{ .chess = .{
+    .{ .new_chess_game = .{
         .board = .initial_white,
         .chaval = .{ .skill = 0, .frustration = 0 },
-        .options = &.{
-            .{ .label = "go easy", .next = &.{
-                .{ .dialog = .{
-                    .character = .hijo,
-                    .text = "bah este juego es too easy",
-                } },
-                .{ .dialog = .{
-                    .character = .padre,
-                    .text = "pues nada, adios",
-                } },
+    } },
+    .{ .chess_move = .{
+        .from = .new(1, 1),
+        .to = .new(1, 2),
+    } },
+    .{ .chess_choice = &.{
+        .{ .label = "go easy", .next = &.{
+            .{ .dialog = .{
+                .character = .hijo,
+                .text = "bah este juego es too easy",
             } },
-            .{ .label = "go hard", .next = &.{
-                .{ .dialog = .{
-                    .character = .hijo,
-                    .text = "uff este juego es too hard",
-                } },
-                .{ .dialog = .{
-                    .character = .padre,
-                    .text = "pues nada, adios",
-                } },
+            .{ .dialog = .{
+                .character = .padre,
+                .text = "pues nada, adios",
             } },
-        },
+        } },
+        .{ .label = "go hard", .next = &.{
+            .{ .dialog = .{
+                .character = .hijo,
+                .text = "uff este juego es too hard",
+            } },
+            .{ .dialog = .{
+                .character = .padre,
+                .text = "pues nada, adios",
+            } },
+        } },
     } },
 };
 
@@ -209,8 +264,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var fg_text = canvas.textBatch(0);
     platform.gl.clear(COLORS.bg);
 
-    const cur_scene = self.scene_state[0];
-    switch (cur_scene) {
+    switch (self.scene_state) {
         .dialog => |d| {
             canvas.drawSpriteBatch(camera, &.{.{
                 .point = .{ .pos = camera.get(.center), .scale = 5 },
@@ -223,8 +277,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
 
             if (mouse.wasPressed(.left)) {
-                if (self.scene_state.len > 1) {
-                    self.scene_state = self.scene_state[1..];
+                if (self.next_changes.len > 0) {
+                    self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
+                    self.next_changes = self.next_changes[1..];
                 } else return true;
             }
         },
@@ -258,19 +313,28 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 ).get(.center)), 1.0, .gray(0.5));
             }
 
-            const options = c.options;
-            assert(options.len == 2);
-            for (options, &[2]f32{ -0.5, 0.5 }) |option, x| {
-                const r: Rect = .fromCenterAndSize(camera.worldFromCenterLocal(.new(x, 0.8)), .new(4, 1));
-                const hovered = r.contains(mouse.cur.position);
-                canvas.fillRect(camera, r, try self.smooth.fcolor(.fromFormat("button {d}", .{x}), if (hovered) .fromHex("#14bf14") else .white));
-                try fg_text.addText(option.label, .{
-                    .hor = .center,
-                    .ver = .median,
-                    .pos = r.get(.center),
-                }, 1, .black);
-                if (hovered and mouse.wasPressed(.left)) {
-                    self.scene_state = option.next;
+            if (c.options) |options| {
+                assert(options.len == 2);
+                for (options, &[2]f32{ -0.5, 0.5 }) |option, x| {
+                    const r: Rect = .fromCenterAndSize(camera.worldFromCenterLocal(.new(x, 0.8)), .new(4, 1));
+                    const hovered = r.contains(mouse.cur.position);
+                    canvas.fillRect(camera, r, try self.smooth.fcolor(.fromFormat("button {d}", .{x}), if (hovered) .fromHex("#14bf14") else .white));
+                    try fg_text.addText(option.label, .{
+                        .hor = .center,
+                        .ver = .median,
+                        .pos = r.get(.center),
+                    }, 1, .black);
+                    if (hovered and mouse.wasPressed(.left)) {
+                        self.scene_state = .applyDelta(self.scene_state, option.next[0]);
+                        self.next_changes = option.next[1..];
+                    }
+                }
+            } else {
+                if (mouse.wasPressed(.left)) {
+                    if (self.next_changes.len > 0) {
+                        self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
+                        self.next_changes = self.next_changes[1..];
+                    } else return true;
                 }
             }
         },
