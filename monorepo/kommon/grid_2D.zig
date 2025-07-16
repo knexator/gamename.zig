@@ -6,27 +6,51 @@ const UVec2 = kommon.math.UVec2;
 const IVec2 = kommon.math.IVec2;
 const Rect = kommon.math.Rect;
 
-pub fn Grid2D(T: type) type {
+pub fn Grid2D_Deprecated(T: type) type {
+    return Grid2D(T, null);
+}
+
+pub fn Grid2D(T: type, max_size: ?UVec2) type {
     // 0 1 2
     // 3 4 5
     // 6 7 8
     return struct {
         size: UVec2,
-        data: []T,
+        data: if (max_size) |s| [s.x * s.y]T else []T,
 
         const Self = @This();
 
         pub fn initUndefined(allocator: std.mem.Allocator, size: UVec2) !Self {
+            if (max_size != null) @compileError("use the bounded version");
             return .{ .size = size, .data = try allocator.alloc(T, size.x * size.y) };
         }
 
         pub fn initFill(allocator: std.mem.Allocator, size: UVec2, fill: T) !Self {
+            if (max_size != null) @compileError("use the bounded version");
             const result: Self = try .initUndefined(allocator, size);
             @memset(result.data, fill);
             return result;
         }
 
-        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
+        pub fn initUndefinedV2(size: UVec2) Self {
+            if (max_size == null) @compileError("only avaiable for bounded grid2d");
+            const s = max_size.?;
+            assert(size.x <= s.x and size.y <= s.y);
+            return .{
+                .size = size,
+                .data = undefined,
+            };
+        }
+
+        pub fn initFillV2(size: UVec2, fill: T) Self {
+            if (max_size == null) @compileError("only avaiable for bounded grid2d");
+            var result: Self = .initUndefinedV2(size);
+            @memset(&result.data, fill);
+            return result;
+        }
+
+        pub fn deinit(self: Self, allocator: if (max_size != null) void else std.mem.Allocator) void {
+            if (max_size != null) @compileError("use the bounded version");
             allocator.free(self.data);
         }
 
@@ -52,7 +76,7 @@ pub fn Grid2D(T: type) type {
             return &self.data[self.indexOf(pos)];
         }
 
-        pub fn set(self: Self, pos: UVec2, value: T) void {
+        pub fn set(self: if (max_size == null) Self else *Self, pos: UVec2, value: T) void {
             self.data[self.indexOf(pos)] = value;
         }
 

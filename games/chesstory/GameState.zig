@@ -5,6 +5,7 @@ const SceneState = union(enum) {
     };
 
     const Options = []const struct {
+        move: SceneDelta.ChessMove,
         label: []const u8,
         next: []const SceneDelta,
     };
@@ -32,9 +33,10 @@ const SceneState = union(enum) {
                 },
                 .chess_move => |move| {
                     assert(std.meta.activeTag(cur) == .chess);
-                    std.log.warn("TODO NOW", .{});
-                    _ = move;
-                    return cur;
+                    var res = cur;
+                    res.chess.board.tiles.set(move.to, res.chess.board.tiles.at2(move.from));
+                    res.chess.board.tiles.set(move.from, null);
+                    return res;
                 },
                 .chess_choice => |options| {
                     assert(std.meta.activeTag(cur) == .chess);
@@ -56,11 +58,13 @@ const SceneDelta = union(enum) {
         board: ChessBoardState,
         chaval: ChavalState,
     },
-    chess_move: struct {
+    chess_move: ChessMove,
+    chess_choice: SceneState.Options,
+
+    pub const ChessMove = struct {
         from: UVec2,
         to: UVec2,
-    },
-    chess_choice: SceneState.Options,
+    };
 };
 
 const ChavalState = struct {
@@ -70,10 +74,10 @@ const ChavalState = struct {
 
 const ChessBoardState = struct {
     const Piece = struct {
-        pos: UVec2,
-        color: enum { white, black },
+        color: Piece.Color,
         kind: Kind,
 
+        pub const Color = enum { white, black };
         pub const Kind = enum {
             pawn,
             rook,
@@ -84,11 +88,14 @@ const ChessBoardState = struct {
         };
     };
 
-    pieces: std.BoundedArray(Piece, 32),
+    tiles: kommon.grid2D.Grid2D(?Piece, .both(8)),
 
-    pub const initial_white: ChessBoardState = .{ .pieces = .{
-        .len = 32,
-        .buffer = .{
+    pub const initial_white: ChessBoardState = blk: {
+        const raw_pieces: []const struct {
+            color: Piece.Color,
+            kind: Piece.Kind,
+            pos: UVec2,
+        } = &.{
             .{ .pos = .new(0, 0), .kind = .rook, .color = .black },
             .{ .pos = .new(7, 0), .kind = .rook, .color = .black },
             .{ .pos = .new(1, 0), .kind = .horse, .color = .black },
@@ -124,13 +131,26 @@ const ChessBoardState = struct {
             .{ .pos = .new(5, 7), .kind = .bishop, .color = .white },
             .{ .pos = .new(3, 7), .kind = .queen, .color = .white },
             .{ .pos = .new(4, 7), .kind = .king, .color = .white },
-        },
-    } };
+        };
+
+        var res: ChessBoardState = .{ .tiles = .initFillV2(.both(8), null) };
+        for (raw_pieces) |piece| {
+            res.tiles.set(piece.pos, .{
+                .color = piece.color,
+                .kind = piece.kind,
+            });
+        }
+        break :blk res;
+    };
 
     pub const initial_black: ChessBoardState = blk: {
-        var result = initial_white;
-        for (result.pieces.slice()) |*piece| {
-            piece.*.pos = .new(7 - piece.pos.x, 7 - piece.pos.y);
+        var result: ChessBoardState = .{ .tiles = .initFillV2(.both(8), null) };
+        var it = initial_white.tiles.iterator();
+        while (it.next()) |p| {
+            result.tiles.set(p, initial_white.tiles.at2(.new(
+                7 - p.x,
+                7 - p.y,
+            )));
         }
         break :blk result;
     };
@@ -194,7 +214,10 @@ const day_1: []const SceneDelta = &.{
         .to = .new(1, 2),
     } },
     .{ .chess_choice = &.{
-        .{ .label = "go easy", .next = &.{
+        .{ .label = "go easy", .move = .{
+            .from = .new(3, 6),
+            .to = .new(3, 5),
+        }, .next = &.{
             .{ .dialog = .{
                 .character = .hijo,
                 .text = "bah este juego es too easy",
@@ -204,7 +227,10 @@ const day_1: []const SceneDelta = &.{
                 .text = "pues nada, adios",
             } },
         } },
-        .{ .label = "go hard", .next = &.{
+        .{ .label = "go hard", .move = .{
+            .from = .new(1, 6),
+            .to = .new(1, 5),
+        }, .next = &.{
             .{ .dialog = .{
                 .character = .hijo,
                 .text = "uff este juego es too hard",
@@ -289,28 +315,31 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .pivot = .center,
                 .texcoord = .unit,
             }}, self.textures.chaval);
-            const chess_board: kommon.Grid2D(void) = try .initUndefined(undefined, .new(8, 8));
             const chess_rect: Rect = .from2(
                 .{ .center = camera.worldFromCenterLocal(.new(-0.5, 0)) },
                 .{ .size = .both(8) },
             );
-            var it = chess_board.iterator();
+            const board = c.board.tiles;
+            var it = board.iterator();
             while (it.next()) |p| {
-                const r = chess_board.getTileRect(chess_rect, p);
+                const r = board.getTileRect(chess_rect, p);
                 canvas.fillRect(camera, r, if (p.isEven()) .white else .black);
             }
-            for (c.board.pieces.constSlice()) |piece| {
-                canvas.fillCircle(camera, chess_board.getTileRect(
-                    chess_rect,
-                    piece.pos,
-                ).get(.center), 0.4, .gray(switch (piece.color) {
-                    .white => 0.9,
-                    .black => 0.2,
-                }));
-                try fg_text.addText(@tagName(piece.kind)[0..1], .centeredAt(chess_board.getTileRect(
-                    chess_rect,
-                    piece.pos,
-                ).get(.center)), 1.0, .gray(0.5));
+            it.reset();
+            while (it.next()) |p| {
+                if (board.at2(p)) |piece| {
+                    canvas.fillCircle(camera, board.getTileRect(
+                        chess_rect,
+                        p,
+                    ).get(.center), 0.4, .gray(switch (piece.color) {
+                        .white => 0.9,
+                        .black => 0.2,
+                    }));
+                    try fg_text.addText(@tagName(piece.kind)[0..1], .centeredAt(board.getTileRect(
+                        chess_rect,
+                        p,
+                    ).get(.center)), 1.0, .gray(0.5));
+                }
             }
 
             if (c.options) |options| {
@@ -324,6 +353,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         .ver = .median,
                         .pos = r.get(.center),
                     }, 1, .black);
+                    if (hovered) {
+                        canvas.fillCircle(camera, board.getTileRect(
+                            chess_rect,
+                            option.move.from,
+                        ).get(.center), 0.45, .red);
+                        canvas.fillCircle(camera, board.getTileRect(
+                            chess_rect,
+                            option.move.to,
+                        ).get(.center), 0.45, .red);
+                    }
                     if (hovered and mouse.wasPressed(.left)) {
                         self.scene_state = .applyDelta(self.scene_state, option.next[0]);
                         self.next_changes = option.next[1..];
