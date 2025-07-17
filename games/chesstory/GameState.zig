@@ -99,6 +99,30 @@ const SceneDelta = union(enum) {
     pub const ChessMove = struct {
         from: UVec2,
         to: UVec2,
+
+        pub fn move(comptime str: []const u8) ChessMove {
+            assert(str.len == "a1,a1".len);
+            const source_col = switch (str[0]) {
+                'a'...'h' => |x| x - 'a',
+                else => unreachable,
+            };
+            const source_row = switch (str[1]) {
+                '1'...'8' => |x| x - '1',
+                else => unreachable,
+            };
+            const target_col = switch (str[3]) {
+                'a'...'h' => |x| x - 'a',
+                else => unreachable,
+            };
+            const target_row = switch (str[4]) {
+                '1'...'8' => |x| x - '1',
+                else => unreachable,
+            };
+            return .{
+                .from = .new(source_col, 7 - source_row),
+                .to = .new(target_col, 7 - target_row),
+            };
+        }
     };
 
     pub fn turnDuration(self: SceneDelta) f32 {
@@ -106,6 +130,10 @@ const SceneDelta = union(enum) {
             .new_chess_game => 1.0,
             else => 0.25,
         };
+    }
+
+    pub fn move(comptime str: []const u8) SceneDelta {
+        return .{ .chess_move = .move(str) };
     }
 };
 
@@ -250,15 +278,31 @@ const day_1: []const SceneDelta = &.{
         .board = .initial_white,
         .chaval = .{ .skill = 0, .frustration = 0 },
     } },
-    .{ .chess_move = .{
-        .from = .new(1, 1),
-        .to = .new(1, 2),
-    } },
+
+    // https://www.chess.com/analysis/library/53GazfLNi/analysis
+    // 1. d4
+    // a5
+    // 2. e4
+    // Ra6
+    // 3. Qh5
+    // Re6
+    // 4. Bc4
+    // Rxe4+
+    // 5. Ne2
+    // Nf6
+    // 6. Qxf7#
+    .move("e2,e4"),
+    .move("a7,a5"),
+    .move("d2,d4"),
+    .move("a8,a6"),
+    .move("d1,h5"),
+    .move("a6,e6"),
+    .move("f1,c4"),
+    .move("e6,e4"),
+    .move("g1,e2"),
+    .move("g8,f6"),
     .{ .chess_choice = &.{
-        .{ .label = "go easy", .move = .{
-            .from = .new(3, 6),
-            .to = .new(3, 5),
-        }, .next = &.{
+        .{ .label = "go easy", .move = .move("h5,g5"), .next = &.{
             .{ .dialog = .{
                 .character = .hijo,
                 .text = "bah este juego es too easy",
@@ -268,10 +312,7 @@ const day_1: []const SceneDelta = &.{
                 .text = "pues nada, adios",
             } },
         } },
-        .{ .label = "go hard", .move = .{
-            .from = .new(1, 6),
-            .to = .new(1, 5),
-        }, .next = &.{
+        .{ .label = "go hard", .move = .move("h5,f7"), .next = &.{
             .{ .dialog = .{
                 .character = .hijo,
                 .text = "uff este juego es too hard",

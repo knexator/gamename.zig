@@ -196,3 +196,24 @@ pub fn chain(comptime functions: anytype) Fn(
         @compileError("nope");
     }
 }
+
+// from joseph mansfield
+pub fn Closure(
+    comptime f: anytype,
+    comptime Capture: type,
+) type {
+    return struct {
+        const Self = @This();
+        capture: Capture,
+        pub fn call(self: Self, args: anytype) @typeInfo(@TypeOf(f)).Fn.return_type.? {
+            return @call(.auto, f, self.capture ++ args);
+        }
+    };
+}
+
+pub fn closure(
+    comptime f: anytype,
+    capture: anytype,
+) Closure(f, @TypeOf(capture)) {
+    return Closure(f, @TypeOf(capture)){ .capture = capture };
+}
