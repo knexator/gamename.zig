@@ -1619,6 +1619,11 @@ pub const easings = struct {
     }
 };
 
+pub fn smoothstepEased(x: f32, edge0: f32, edge1: f32, comptime easing: std.meta.DeclEnum(easings)) f32 {
+    const easing_fn = @field(easings, @tagName(easing));
+    return easing_fn(clamp01(inverse_lerp(edge0, edge1, x)));
+}
+
 // pub fn segmentCircleIntersection(segment_a: Vec2, segment_b: Vec2, circle_center: Vec2, circle_radius: f32) ?Vec2 {
 pub fn lineCircleIntersection(line_pos: Vec2, line_dir: Vec2, circle_center: Vec2, circle_radius: f32) ?f32 {
     // TODO: revise

@@ -1,23 +1,29 @@
 const Main = struct {
+    prev_scene_state: ?SceneState,
     scene_state: SceneState,
     last_delta: SceneDelta,
     next_changes: []const SceneDelta,
+    anim_t: f32,
 
     pub fn init(deltas: []const SceneDelta) Main {
         return .{
+            .prev_scene_state = null,
             .scene_state = .applyDelta(null, deltas[0]),
             .last_delta = deltas[0],
             .next_changes = deltas[1..],
+            .anim_t = 0,
         };
     }
 
     pub fn advance(self: *Main, option_index: ?usize) void {
+        self.anim_t = 0;
+        self.prev_scene_state = self.scene_state;
         if (option_index) |index| {
             assert(std.meta.activeTag(self.last_delta) == .chess_choice);
             const option = self.last_delta.chess_choice[index];
-            self.scene_state = .applyDelta(self.scene_state, option.next[0]);
-            self.last_delta = option.next[0];
-            self.next_changes = option.next[1..];
+            self.last_delta = .{ .chess_move = option.move };
+            self.scene_state = .applyDelta(self.scene_state, self.last_delta);
+            self.next_changes = option.next;
         } else {
             self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
             self.last_delta = self.next_changes[0];
@@ -62,6 +68,7 @@ const SceneState = union(enum) {
                 .chess_move => |move| {
                     assert(std.meta.activeTag(cur) == .chess);
                     var res = cur;
+                    res.chess.options = null;
                     res.chess.board.tiles.set(move.to, res.chess.board.tiles.at2(move.from));
                     res.chess.board.tiles.set(move.from, null);
                     return res;
@@ -93,6 +100,13 @@ const SceneDelta = union(enum) {
         from: UVec2,
         to: UVec2,
     };
+
+    pub fn turnDuration(self: SceneDelta) f32 {
+        return switch (self) {
+            .new_chess_game => 1.0,
+            else => 0.25,
+        };
+    }
 };
 
 const ChavalState = struct {
@@ -342,10 +356,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .pivot = .center,
                 .texcoord = .unit,
             }}, self.textures.chaval);
-            const chess_rect: Rect = .from2(
+            var chess_rect: Rect = .from2(
                 .{ .center = camera.worldFromCenterLocal(.new(-0.5, 0)) },
                 .{ .size = .both(8) },
             );
+            if (std.meta.activeTag(self.main.last_delta) == .new_chess_game) {
+                chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
+                // chess_rect = chess_rect.move(.new(0, math.remapClamped(camera.size.y, 0, self.main.anim_t)));
+            }
             const board = c.board.tiles;
             var it = board.iterator();
             while (it.next()) |p| {
@@ -355,17 +373,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             it.reset();
             while (it.next()) |p| {
                 if (board.at2(p)) |piece| {
-                    canvas.fillCircle(camera, board.getTileRect(
-                        chess_rect,
-                        p,
-                    ).get(.center), 0.4, .gray(switch (piece.color) {
+                    var piece_center: Vec2 = board.getTileRect(chess_rect, p).get(.center);
+                    if (std.meta.activeTag(self.main.last_delta) == .chess_move and self.main.last_delta.chess_move.to.equals(p)) {
+                        piece_center = .lerp(
+                            board.getTileRect(chess_rect, self.main.last_delta.chess_move.from).get(.center),
+                            board.getTileRect(chess_rect, self.main.last_delta.chess_move.to).get(.center),
+                            self.main.anim_t,
+                        );
+                    }
+                    canvas.fillCircle(camera, piece_center, 0.4, .gray(switch (piece.color) {
                         .white => 0.9,
                         .black => 0.2,
                     }));
-                    try fg_text.addText(@tagName(piece.kind)[0..1], .centeredAt(board.getTileRect(
-                        chess_rect,
-                        p,
-                    ).get(.center)), 1.0, .gray(0.5));
+                    try fg_text.addText(@tagName(piece.kind)[0..1], .centeredAt(piece_center), 1.0, .gray(0.5));
                 }
             }
 
@@ -402,6 +422,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         },
     }
+
+    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration());
+    if (self.main.anim_t == 1) switch (self.main.scene_state) {
+        .dialog => {},
+        .chess => |c| if (c.options == null) {
+            advance = true;
+        },
+    };
 
     if (advance) {
         if (self.main.next_changes.len > 0 or option_index != null) {
