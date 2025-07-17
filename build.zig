@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "chesstory";
+const active_folder = "alchemy";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
