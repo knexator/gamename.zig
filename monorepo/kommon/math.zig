@@ -803,30 +803,72 @@ pub const Rect = extern struct {
         return self.top_left.add(self.size.scale(0.5));
     }
 
-    pub const MeasureKind = enum { top_left, top_center, top_right, bottom_center, bottom_left, bottom_right, center, size };
+    pub const MeasureKind = enum {
+        top_left,
+        top_center,
+        top_right,
+        center_left,
+        center,
+        center_right,
+        bottom_left,
+        bottom_center,
+        bottom_right,
+        size,
+
+        pub const all9: [9]MeasureKind = .{
+            .top_left,
+            .top_center,
+            .top_right,
+            .center_left,
+            .center,
+            .center_right,
+            .bottom_left,
+            .bottom_center,
+            .bottom_right,
+        };
+
+        pub fn asPivot(m: MeasureKind) Vec2 {
+            return switch (m) {
+                .size => @panic("can't convert size to pivot"),
+                .top_left => .new(0, 0),
+                .top_center => .new(0.5, 0),
+                .top_right => .new(1, 0),
+                .center_left => .new(0, 0.5),
+                .center => .new(0.5, 0.5),
+                .center_right => .new(1, 0.5),
+                .bottom_left => .new(0, 1),
+                .bottom_center => .new(0.5, 1),
+                .bottom_right => .new(1, 1),
+            };
+        }
+    };
     // TODO: autogen from enum
     /// They are all Vec2 since otherwise .get wouldn't know what to return
     pub const Measure = union(MeasureKind) {
         top_left: Vec2,
         top_center: Vec2,
         top_right: Vec2,
-        bottom_center: Vec2,
-        bottom_left: Vec2,
-        bottom_right: Vec2,
+        center_left: Vec2,
         center: Vec2,
+        center_right: Vec2,
+        bottom_left: Vec2,
+        bottom_center: Vec2,
+        bottom_right: Vec2,
         size: Vec2,
     };
 
     pub fn get(self: Rect, which: MeasureKind) Vec2 {
         return switch (which) {
             .top_left => self.top_left,
-            .top_center => self.top_left.addX(self.size.x / 2),
+            .top_center => self.top_left.addX(self.size.x / 2.0),
             .top_right => self.top_left.addX(self.size.x),
             .size => self.size,
             .bottom_center => self.top_left.add(self.size.mul(.new(0.5, 1))),
             .bottom_left => self.top_left.addY(self.size.y),
             .bottom_right => self.top_left.add(self.size),
             .center => self.top_left.add(self.size.scale(0.5)),
+            .center_left => self.top_left.addY(self.size.y / 2.0),
+            .center_right => self.top_left.add(self.size.mul(.new(1, 0.5))),
         };
     }
 
@@ -867,8 +909,29 @@ pub const Rect = extern struct {
         return .{ .top_left = center.sub(size.scale(0.5)), .size = size };
     }
 
-    pub fn from2(measure1: Measure, measure2: Measure) Rect {
+    pub fn fromPivotAndSize(pos: Vec2, pivot: Vec2, size: Vec2) Rect {
+        return .{ .top_left = pos.sub(size.mul(pivot)), .size = size };
+    }
+
+    pub fn fromV3(measure1_kind: MeasureKind, measure1_value: Vec2, measure2_kind: MeasureKind, measure2_value: Vec2) Rect {
+        if (measure1_kind == .size or measure2_kind == .size) {
+            if (measure1_kind == .size and measure2_kind == .size) @panic("bad params (2 sizes)");
+            if (measure1_kind == .size) return .fromV3(measure2_kind, measure2_value, measure1_kind, measure1_value);
+            assert(measure1_kind != .size);
+            assert(measure2_kind == .size);
+            return .fromPivotAndSize(measure1_value, measure1_kind.asPivot(), measure2_value);
+        } else {
+            @panic("TODO");
+        }
+    }
+
+    pub fn fromV2(measure1: Measure, measure2: Measure) Rect {
         return .from(.{ measure1, measure2 });
+    }
+
+    // TODO: delete
+    pub fn from2(measure1: Measure, measure2: Measure) Rect {
+        return .fromV2(measure1, measure2);
     }
 
     pub fn from(measures: [2]Measure) Rect {
@@ -918,6 +981,14 @@ pub const Rect = extern struct {
         }
     }
 
+    pub fn with2(original: Rect, change_kind: MeasureKind, change_value: Vec2, keep: MeasureKind) Rect {
+        _ = original;
+        _ = change_kind;
+        _ = change_value;
+        _ = keep;
+        @panic("TODO");
+    }
+
     pub fn with(original: Rect, change: Measure, keep: MeasureKind) Rect {
         return switch (change) {
             else => std.debug.panic("TODO: change {s}", .{@tagName(change)}),
@@ -933,13 +1004,15 @@ pub const Rect = extern struct {
                 else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
                 .size => .from(.{ .{ .bottom_left = bottom_left }, .{ .size = original.get(.size) } }),
             },
-            .size => |size| switch (keep) {
-                else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
-                .center => .fromCenterAndSize(original.get(.center), size),
-                .top_left => .from(.{ .{ .top_left = original.get(.top_left) }, .{ .size = size } }),
-                .top_center => .from(.{ .{ .top_center = original.get(.top_center) }, .{ .size = size } }),
-                .bottom_center => .from(.{ .{ .bottom_center = original.get(.bottom_center) }, .{ .size = size } }),
-            },
+            .size => |size| .fromV3(keep, original.get(keep), .size, size),
+            // switch (keep) {
+            //     else => std.debug.panic("TODO: keep {s}", .{@tagName(keep)}),
+            //     .center => .fromCenterAndSize(original.get(.center), size),
+            //     .top_left => .from(.{ .{ .top_left = original.get(.top_left) }, .{ .size = size } }),
+            //     .top_center => .from(.{ .{ .top_center = original.get(.top_center) }, .{ .size = size } }),
+            //     .bottom_center => .from(.{ .{ .bottom_center = original.get(.bottom_center) }, .{ .size = size } }),
+            //     .top_right => .from(.{ .{ .top_right = original.get(.top_right) }, .{ .size = size } }),
+            // },
         };
     }
 

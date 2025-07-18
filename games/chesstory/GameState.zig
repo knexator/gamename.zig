@@ -475,12 +475,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         },
     }, self.textures.fondo);
 
-    defer if (false) canvas.drawSpriteBatch(.{
-        .top_left = .zero,
-        .size = .new(platform.aspect_ratio, 1),
-    }, &.{
+    defer if (false) canvas.drawTexturedRectBatch(.unit, &.{
         .{
-            .point = .{},
+            .rect = .unit,
             .texcoord = .unit,
             .tint = FColor.white.withAlpha(0.2),
         },
@@ -555,18 +552,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         .new(8, 1.5),
                     );
                     const hovered = r.contains(mouse.cur.position);
-                    // TODO
-                    canvas.fillRect(camera, r, try self.smooth.fcolor(.fromFormat("button {d}", .{x}), if (hovered) .fromHex("#14bf14") else .white));
-                    // canvas.drawSpriteBatch(camera, &.{.{
-                    //     .pivot = .center,
-                    //     .point = .{ .pos = r.getCenter() },
-                    //     .texcoord = .unit,
-                    // }}, self.textures.textbox);
+                    canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.textbox);
                     try fg_text.addText(option.label, .{
                         .hor = .center,
                         .ver = .median,
                         .pos = r.get(.center),
-                    }, 1, .black);
+                    }, 0.9, .black);
                     if (hovered) {
                         board_tiles.getPtr(option.move.from).highlighted = true;
                         board_tiles.getPtr(option.move.to).highlighted = true;

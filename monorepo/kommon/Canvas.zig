@@ -498,6 +498,99 @@ pub fn drawSpriteBatch(
     );
 }
 
+/// assumes the cuts are at 1/3, 2/3
+pub fn sliced3x3(
+    rect: Rect,
+    target_margin: f32,
+) [9]TexturedRect {
+    var res: [9]TexturedRect = undefined;
+    for (&res, Rect.MeasureKind.all9) |*dst, keep| {
+        dst.* = .{
+            .rect = rect.with(
+                // .{ .size = .both(target_margin) },
+                // .{ .size = .new(rect.size.x - 2.0 * target_margin, rect.size.y - 2.0 * target_margin) },
+                .{
+                    .size = .new(
+                        // if (keep.horizontal() =)
+                        if (keep.asPivot().x == 0.5) rect.size.x - 2.0 * target_margin else target_margin,
+                        if (keep.asPivot().y == 0.5) rect.size.y - 2.0 * target_margin else target_margin,
+                    ),
+                },
+                keep,
+            ),
+            .texcoord = Rect.unit.with(
+                .{ .size = .both(1.0 / 3.0) },
+                keep,
+            ),
+        };
+    }
+    if (true) return res;
+
+    return .{
+        .{ .rect = rect.with(
+            .{ .size = .both(target_margin) },
+            .top_left,
+        ), .texcoord = Rect.unit.with(
+            .{ .size = .both(1.0 / 3.0) },
+            .top_left,
+        ) },
+        .{ .rect = rect.with(
+            .{ .size = .new(rect.size.x - 2.0 * target_margin, target_margin) },
+            .top_center,
+        ), .texcoord = Rect.unit.with(
+            .{ .size = .both(1.0 / 3.0) },
+            .top_center,
+        ) },
+        .{ .rect = rect.with(
+            .{ .size = .new(rect.size.x - 2.0 * target_margin, rect.size.y - 2.0 * target_margin) },
+            .center,
+        ), .texcoord = Rect.unit.with(
+            .{ .size = .both(1.0 / 3.0) },
+            .center,
+        ) },
+    };
+}
+
+pub const TexturedRect = struct {
+    rect: Rect,
+    texcoord: Rect,
+    tint: FColor = .white,
+};
+
+// TODO: instancing?
+pub fn drawTexturedRectBatch(
+    self: *Canvas,
+    camera: Rect,
+    sprites: []const TexturedRect,
+    texture: Gl.Texture,
+) void {
+    const VertexData = SpriteVertex;
+    const vertices = self.frame_arena.allocator().alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
+    const triangles = self.frame_arena.allocator().alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
+    for (sprites, 0..) |sprite, i| {
+        for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+            vertices[i * 4 + k] = .{
+                .a_position = sprite.rect.applyToLocalPosition(vertex),
+                .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                .a_color = sprite.tint,
+            };
+        }
+        const k: Gl.IndexType = @intCast(4 * i);
+        triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+        triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+    }
+    self.gl.useRenderable(
+        self.sprite_renderable,
+        vertices.ptr,
+        vertices.len * @sizeOf(VertexData),
+        triangles,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        texture,
+    );
+}
+
 pub const DrawableTriangulation = struct {
     vertices_per_sprite: usize,
     triangles_per_sprite: usize,
