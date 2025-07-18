@@ -72,7 +72,7 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             return self.data[self.indexOfSigned(pos)];
         }
 
-        pub fn getPtr(self: Self, pos: UVec2) *T {
+        pub fn getPtr(self: if (max_size == null) Self else *Self, pos: UVec2) *T {
             return &self.data[self.indexOf(pos)];
         }
 

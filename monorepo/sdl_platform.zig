@@ -636,7 +636,9 @@ pub fn main() !void {
         .gl = sdl_gl.vtable,
     };
 
-    try my_game.preload(sdl_platform.gl);
+    if (@hasField(@TypeOf(my_game), "preload")) {
+        try my_game.preload(sdl_platform.gl);
+    }
 
     try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
     // TODO: gl on deinit

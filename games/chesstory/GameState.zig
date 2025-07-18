@@ -273,6 +273,26 @@ pub const stuff = .{
         .arial_atlas = "assets/fonts/Arial.png",
         .chaval = "assets/chesstory/images/chaval.png",
         .padre = "assets/chesstory/images/padre.png",
+        .reference = "assets/chesstory/images/ref.png",
+
+        // TODO: better
+        .textbox = "assets/chesstory/images/9slicebasico.png",
+        .casilla_blanca = "assets/chesstory/images/casilla_blanca.png",
+        .casilla_negra = "assets/chesstory/images/casilla_negra.png",
+        .delante = "assets/chesstory/images/delante.png",
+        .fondo = "assets/chesstory/images/fondo.png",
+        .pieza_blanca_alfil = "assets/chesstory/images/pieza_blanca_alfil.png",
+        .pieza_blanca_caballo = "assets/chesstory/images/pieza_blanca_caballo.png",
+        .pieza_blanca_peon = "assets/chesstory/images/pieza_blanca_peon.png",
+        .pieza_blanca_reina = "assets/chesstory/images/pieza_blanca_reina.png",
+        .pieza_blanca_rey = "assets/chesstory/images/pieza_blanca_rey.png",
+        .pieza_blanca_torre = "assets/chesstory/images/pieza_blanca_torre.png",
+        .pieza_negra_alfil = "assets/chesstory/images/pieza_negra_alfil.png",
+        .pieza_negra_caballo = "assets/chesstory/images/pieza_negra_caballo.png",
+        .pieza_negra_peon = "assets/chesstory/images/pieza_negra_peon.png",
+        .pieza_negra_reina = "assets/chesstory/images/pieza_negra_reina.png",
+        .pieza_negra_rey = "assets/chesstory/images/pieza_negra_rey.png",
+        .pieza_negra_torre = "assets/chesstory/images/pieza_negra_torre.png",
     },
 };
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
@@ -287,6 +307,56 @@ smooth: kommon.LazyState,
 textures: struct {
     chaval: Gl.Texture,
     padre: Gl.Texture,
+
+    reference: Gl.Texture,
+
+    // TODO: better
+    textbox: Gl.Texture,
+    casilla_blanca: Gl.Texture,
+    casilla_negra: Gl.Texture,
+    delante: Gl.Texture,
+    fondo: Gl.Texture,
+    pieza_blanca_alfil: Gl.Texture,
+    pieza_blanca_caballo: Gl.Texture,
+    pieza_blanca_peon: Gl.Texture,
+    pieza_blanca_reina: Gl.Texture,
+    pieza_blanca_rey: Gl.Texture,
+    pieza_blanca_torre: Gl.Texture,
+    pieza_negra_alfil: Gl.Texture,
+    pieza_negra_caballo: Gl.Texture,
+    pieza_negra_peon: Gl.Texture,
+    pieza_negra_reina: Gl.Texture,
+    pieza_negra_rey: Gl.Texture,
+    pieza_negra_torre: Gl.Texture,
+
+    // TODO: better
+    fn chessPiece(t: @This(), v: ChessBoardState.Piece) Gl.Texture {
+        return switch (v.color) {
+            .black => switch (v.kind) {
+                .bishop => t.pieza_negra_alfil,
+                .king => t.pieza_negra_rey,
+                .horse => t.pieza_negra_caballo,
+                .pawn => t.pieza_negra_peon,
+                .queen => t.pieza_negra_reina,
+                .rook => t.pieza_negra_torre,
+            },
+            .white => switch (v.kind) {
+                .bishop => t.pieza_blanca_alfil,
+                .king => t.pieza_blanca_rey,
+                .horse => t.pieza_blanca_caballo,
+                .pawn => t.pieza_blanca_peon,
+                .queen => t.pieza_blanca_reina,
+                .rook => t.pieza_blanca_torre,
+            },
+        };
+    }
+
+    fn boardTile(t: @This(), color: ChessBoardState.Piece.Color) Gl.Texture {
+        return switch (color) {
+            .black => t.casilla_negra,
+            .white => t.casilla_blanca,
+        };
+    }
 },
 
 main: Main = .init(day_1),
@@ -313,7 +383,7 @@ const day_1: []const SceneDelta = &.{
     .move("g8,f6"),
     .{ .chess_choice = &.{
         .{
-            .label = "go easy",
+            .label = "take it easy",
             .move = .move("h5,g5"),
             .effect = .{ .skill = -1, .frustration = -1 },
             .next = &.{
@@ -322,7 +392,7 @@ const day_1: []const SceneDelta = &.{
             },
         },
         .{
-            .label = "go hard",
+            .label = "make him struggle",
             .move = .move("h5,f7"),
             .effect = .{ .skill = 1, .frustration = 3 },
             .next = &.{
@@ -345,8 +415,13 @@ pub fn init(
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(dst.mem.forever.allocator());
-    dst.textures.chaval = gl.buildTexture2D(loaded_images.get(.chaval), false);
-    dst.textures.padre = gl.buildTexture2D(loaded_images.get(.padre), false);
+
+    inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
+        @field(dst.textures, field.name) = gl.buildTexture2D(
+            loaded_images.get(std.enums.nameCast(Images, field.name)),
+            false,
+        );
+    }
 }
 
 // TODO: take gl parameter
@@ -371,7 +446,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const camera = (Rect.from(.{
         .{ .top_left = .zero },
-        .{ .size = .both(12) },
+        .{ .size = .both(12.5) },
     })).withAspectRatio(
         platform.aspect_ratio,
         .grow,
@@ -380,7 +455,36 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const mouse = platform.getMouse(camera);
     const canvas = &self.canvas;
     var fg_text = canvas.textBatch(0);
+    var pieces: std.ArrayList(struct {
+        center: Vec2,
+        value: GameState.ChessBoardState.Piece,
+    }) = .init(self.mem.frame.allocator());
+    var board_tiles: kommon.grid2D.Grid2D(struct {
+        center: Vec2,
+        color: ChessBoardState.Piece.Color,
+        highlighted: bool,
+    }, .both(8)) = .initUndefinedV2(.both(8));
     platform.gl.clear(COLORS.bg);
+    canvas.drawSpriteBatch(.{
+        .top_left = .zero,
+        .size = .new(platform.aspect_ratio, 1),
+    }, &.{
+        .{
+            .point = .{},
+            .texcoord = .unit,
+        },
+    }, self.textures.fondo);
+
+    defer if (false) canvas.drawSpriteBatch(.{
+        .top_left = .zero,
+        .size = .new(platform.aspect_ratio, 1),
+    }, &.{
+        .{
+            .point = .{},
+            .texcoord = .unit,
+            .tint = FColor.white.withAlpha(0.2),
+        },
+    }, self.textures.reference);
 
     var advance: bool = false;
     var option_index: ?usize = null;
@@ -408,8 +512,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .texcoord = .unit,
             }}, self.textures.chaval);
             var chess_rect: Rect = .from2(
-                .{ .center = camera.worldFromCenterLocal(.new(-0.5, 0)) },
-                .{ .size = .both(8) },
+                .{ .center = .new(6.3, 5.45) },
+                .{ .size = .new(8, 8.4) },
             );
             if (std.meta.activeTag(self.main.last_delta) == .new_chess_game) {
                 chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
@@ -419,7 +523,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             var it = board.iterator();
             while (it.next()) |p| {
                 const r = board.getTileRect(chess_rect, p);
-                canvas.fillRect(camera, r, if (p.isEven()) .white else .black);
+                board_tiles.set(p, .{
+                    .center = r.get(.center),
+                    .color = if (p.isEven()) .white else .black,
+                    .highlighted = false,
+                });
             }
             it.reset();
             while (it.next()) |p| {
@@ -432,34 +540,36 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             self.main.anim_t,
                         );
                     }
-                    canvas.fillCircle(camera, piece_center, 0.4, .gray(switch (piece.color) {
-                        .white => 0.9,
-                        .black => 0.2,
-                    }));
-                    try fg_text.addText(@tagName(piece.kind)[0..1], .centeredAt(piece_center), 1.0, .gray(0.5));
+                    try pieces.append(.{
+                        .center = piece_center,
+                        .value = piece,
+                    });
                 }
             }
 
             if (c.options) |options| {
                 assert(options.len == 2);
-                for (options, 0.., &[2]f32{ -0.5, 0.5 }) |option, k, x| {
-                    const r: Rect = .fromCenterAndSize(camera.worldFromCenterLocal(.new(x, 0.8)), .new(4, 1));
+                for (options, 0.., &[2]f32{ -0.45, 0.45 }) |option, k, x| {
+                    const r: Rect = .fromCenterAndSize(
+                        camera.worldFromCenterLocal(.new(x, 0.725)),
+                        .new(8, 1.5),
+                    );
                     const hovered = r.contains(mouse.cur.position);
+                    // TODO
                     canvas.fillRect(camera, r, try self.smooth.fcolor(.fromFormat("button {d}", .{x}), if (hovered) .fromHex("#14bf14") else .white));
+                    // canvas.drawSpriteBatch(camera, &.{.{
+                    //     .pivot = .center,
+                    //     .point = .{ .pos = r.getCenter() },
+                    //     .texcoord = .unit,
+                    // }}, self.textures.textbox);
                     try fg_text.addText(option.label, .{
                         .hor = .center,
                         .ver = .median,
                         .pos = r.get(.center),
                     }, 1, .black);
                     if (hovered) {
-                        canvas.fillCircle(camera, board.getTileRect(
-                            chess_rect,
-                            option.move.from,
-                        ).get(.center), 0.45, .red);
-                        canvas.fillCircle(camera, board.getTileRect(
-                            chess_rect,
-                            option.move.to,
-                        ).get(.center), 0.45, .red);
+                        board_tiles.getPtr(option.move.from).highlighted = true;
+                        board_tiles.getPtr(option.move.to).highlighted = true;
                     }
                     if (hovered and mouse.wasPressed(.left)) {
                         advance = true;
@@ -482,13 +592,48 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         },
     };
 
+    if (std.meta.activeTag(self.main.scene_state) == .chess) {
+        var it = board_tiles.iterator();
+        while (it.next()) |p| {
+            const tile = board_tiles.at2(p);
+            if (tile.highlighted) {
+                canvas.drawSpriteBatch(camera, &.{
+                    .{
+                        .point = .{ .pos = tile.center, .scale = 1.1 },
+                        .pivot = .center,
+                        .texcoord = .unit,
+                        .tint = .black,
+                    },
+                }, self.textures.boardTile(tile.color));
+            }
+            canvas.drawSpriteBatch(camera, &.{
+                .{
+                    .point = .{ .pos = tile.center },
+                    .pivot = .center,
+                    .texcoord = .unit,
+                },
+            }, self.textures.boardTile(tile.color));
+        }
+        for (pieces.items) |piece| {
+            canvas.drawSpriteBatch(camera, &.{
+                .{
+                    .point = .{ .pos = piece.center.addY(-0.07).addX(-0.02), .scale = 0.85 },
+                    .pivot = .center,
+                    .texcoord = .unit,
+                },
+            }, self.textures.chessPiece(piece.value));
+        }
+    } else {
+        assert(pieces.items.len == 0);
+    }
+
+    fg_text.draw(camera);
+
     if (advance) {
         if (self.main.next_changes.len > 0 or option_index != null) {
             self.main.advance(option_index);
         } else return true;
     }
-
-    fg_text.draw(camera);
 
     return false;
 }
@@ -503,7 +648,6 @@ const math = kommon.math;
 const tof32 = math.tof32;
 const Color = math.UColor;
 const FColor = math.FColor;
-const Camera = math.Camera;
 const Rect = math.Rect;
 const Point = math.Point;
 const Vec2 = math.Vec2;
