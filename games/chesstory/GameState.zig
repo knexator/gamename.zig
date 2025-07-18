@@ -22,7 +22,9 @@ const Main = struct {
             assert(std.meta.activeTag(self.last_delta) == .chess_choice);
             const option = self.last_delta.chess_choice[index];
             self.last_delta = .{ .chess_move = option.move };
-            self.scene_state = .applyDelta(self.scene_state, self.last_delta);
+            var new_scene_state = self.scene_state;
+            new_scene_state.chess.chaval = new_scene_state.chess.chaval.applyDelta(option.effect);
+            self.scene_state = .applyDelta(new_scene_state, self.last_delta);
             self.next_changes = option.next;
         } else {
             self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
@@ -32,15 +34,18 @@ const Main = struct {
     }
 };
 
+const Character = enum { padre, hijo };
+
 const SceneState = union(enum) {
     const DialogState = struct {
-        character: enum { padre, hijo },
+        character: Character,
         text: []const u8,
     };
 
     const Options = []const struct {
         move: SceneDelta.ChessMove,
         label: []const u8,
+        effect: ChavalState.Delta,
         next: []const SceneDelta,
     };
 
@@ -73,6 +78,14 @@ const SceneState = union(enum) {
                     res.chess.board.tiles.set(move.from, null);
                     return res;
                 },
+                .reset_chess_game => |board| {
+                    assert(std.meta.activeTag(cur) == .chess);
+                    return .{ .chess = .{
+                        .board = board,
+                        .chaval = cur.chess.chaval,
+                        .options = null,
+                    } };
+                },
                 .chess_choice => |options| {
                     assert(std.meta.activeTag(cur) == .chess);
                     var res = cur;
@@ -93,6 +106,7 @@ const SceneDelta = union(enum) {
         board: ChessBoardState,
         chaval: ChavalState,
     },
+    reset_chess_game: ChessBoardState,
     chess_move: ChessMove,
     chess_choice: SceneState.Options,
 
@@ -135,11 +149,27 @@ const SceneDelta = union(enum) {
     pub fn move(comptime str: []const u8) SceneDelta {
         return .{ .chess_move = .move(str) };
     }
+
+    pub fn say(character: Character, text: []const u8) SceneDelta {
+        return .{ .dialog = .{ .character = character, .text = text } };
+    }
 };
 
 const ChavalState = struct {
     skill: f32,
     frustration: f32,
+
+    pub const Delta = struct {
+        skill: f32,
+        frustration: f32,
+    };
+
+    fn applyDelta(cur: ChavalState, delta: Delta) ChavalState {
+        var res = cur;
+        res.frustration += delta.frustration;
+        res.skill += delta.skill;
+        return res;
+    }
 };
 
 const ChessBoardState = struct {
@@ -262,35 +292,15 @@ textures: struct {
 main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
-    .{ .dialog = .{
-        .character = .padre,
-        .text = "hola buenas",
-    } },
-    .{ .dialog = .{
-        .character = .padre,
-        .text = "enseñale ajedrez al chaval",
-    } },
-    .{ .dialog = .{
-        .character = .hijo,
-        .text = "hola soy el chaval",
-    } },
+    .say(.padre, "hola buenas"),
+    .say(.padre, "enseñale ajedrez al chaval"),
+    .say(.hijo, "hola soy el chaval"),
     .{ .new_chess_game = .{
         .board = .initial_white,
         .chaval = .{ .skill = 0, .frustration = 0 },
     } },
 
     // https://www.chess.com/analysis/library/53GazfLNi/analysis
-    // 1. d4
-    // a5
-    // 2. e4
-    // Ra6
-    // 3. Qh5
-    // Re6
-    // 4. Bc4
-    // Rxe4+
-    // 5. Ne2
-    // Nf6
-    // 6. Qxf7#
     .move("e2,e4"),
     .move("a7,a5"),
     .move("d2,d4"),
@@ -302,26 +312,26 @@ const day_1: []const SceneDelta = &.{
     .move("g1,e2"),
     .move("g8,f6"),
     .{ .chess_choice = &.{
-        .{ .label = "go easy", .move = .move("h5,g5"), .next = &.{
-            .{ .dialog = .{
-                .character = .hijo,
-                .text = "bah este juego es too easy",
-            } },
-            .{ .dialog = .{
-                .character = .padre,
-                .text = "pues nada, adios",
-            } },
-        } },
-        .{ .label = "go hard", .move = .move("h5,f7"), .next = &.{
-            .{ .dialog = .{
-                .character = .hijo,
-                .text = "uff este juego es too hard",
-            } },
-            .{ .dialog = .{
-                .character = .padre,
-                .text = "pues nada, adios",
-            } },
-        } },
+        .{
+            .label = "go easy",
+            .move = .move("h5,g5"),
+            .effect = .{ .skill = -1, .frustration = -1 },
+            .next = &.{
+                .say(.hijo, "bah este juego es too easy"),
+                .say(.padre, "pues nada, adios"),
+            },
+        },
+        .{
+            .label = "go hard",
+            .move = .move("h5,f7"),
+            .effect = .{ .skill = 1, .frustration = 3 },
+            .next = &.{
+                .{ .reset_chess_game = .initial_white },
+                .move("e2,e4"),
+                .say(.hijo, "uff este juego es too hard"),
+                .say(.padre, "pues nada, adios"),
+            },
+        },
     } },
 };
 
