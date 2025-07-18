@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) !void {
 
     const wf = b.addUpdateSourceFiles();
     // wf.addCopyFileToSource(msdf.path("msdf-atlas-gen.exe"), "ungit/msdf-atlas-gen.exe");
-    inline for (&.{ "Arial", "Bokor" }) |font_name| {
+    inline for (&.{ "Arial", "Bokor", "Consolas" }) |font_name| {
         const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
         run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
         // TODO: -chars [0x20, 0x7e],ñ does not work, open github issue
@@ -145,8 +145,11 @@ fn build_for_desktop(
     });
     game_module_asdf.addImport("kommon", kommon_module);
     // TODO: better
-    game_module_asdf.addAnonymousImport("assets/fonts/Bokor.json", .{ .root_source_file = b.path("assets/fonts/Bokor.json") });
-    game_module_asdf.addAnonymousImport("assets/fonts/Arial.json", .{ .root_source_file = b.path("assets/fonts/Arial.json") });
+    inline for (&.{ "Arial", "Bokor", "Consolas" }) |font_name| {
+        game_module_asdf.addAnonymousImport("assets/fonts/" ++ font_name ++ ".json", .{
+            .root_source_file = b.path("assets/fonts/" ++ font_name ++ ".json"),
+        });
+    }
 
     const build_options = b.addOptions();
     if (options.hot_reloadable != .no) {
@@ -309,8 +312,11 @@ fn _build_for_web(
     });
     game_module.addImport("kommon", kommon_module);
     // TODO: better
-    game_module.addAnonymousImport("assets/fonts/Bokor.json", .{ .root_source_file = b.path("assets/fonts/Bokor.json") });
-    game_module.addAnonymousImport("assets/fonts/Arial.json", .{ .root_source_file = b.path("assets/fonts/Arial.json") });
+    inline for (&.{ "Arial", "Bokor", "Consolas" }) |font_name| {
+        game_module.addAnonymousImport("assets/fonts/" ++ font_name ++ ".json", .{
+            .root_source_file = b.path("assets/fonts/" ++ font_name ++ ".json"),
+        });
+    }
 
     const wasm_module = b.createModule(.{
         .root_source_file = b.path("monorepo/web_platform.zig"),

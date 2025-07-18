@@ -270,7 +270,7 @@ pub const stuff = .{
     .sounds = .{},
     .loops = .{},
     .preloaded_images = .{
-        .arial_atlas = "assets/fonts/Arial.png",
+        .consolas_atlas = "assets/fonts/Consolas.png",
         .chaval = "assets/chesstory/images/chaval.png",
         .padre = "assets/chesstory/images/padre.png",
         .reference = "assets/chesstory/images/ref.png",
@@ -413,7 +413,7 @@ pub fn init(
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
     dst.mem = .init(gpa);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Consolas.json")}, &.{loaded_images.get(.consolas_atlas)});
     dst.smooth = .init(dst.mem.forever.allocator());
 
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
