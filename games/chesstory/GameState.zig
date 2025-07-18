@@ -114,6 +114,12 @@ const SceneDelta = union(enum) {
         from: UVec2,
         to: UVec2,
 
+        // TODO: support multi moves
+        pub fn moves(comptime strs: []const []const u8) ChessMove {
+            comptime assert(strs.len > 0);
+            return .move(strs[0]);
+        }
+
         pub fn move(comptime str: []const u8) ChessMove {
             assert(str.len == "a1,a1".len);
             const source_col = switch (str[0]) {
@@ -148,6 +154,10 @@ const SceneDelta = union(enum) {
 
     pub fn move(comptime str: []const u8) SceneDelta {
         return .{ .chess_move = .move(str) };
+    }
+
+    pub fn moves(comptime strs: []const []const u8) SceneDelta {
+        return .{ .chess_move = .moves(strs) };
     }
 
     pub fn say(character: Character, text: []const u8) SceneDelta {
@@ -369,40 +379,61 @@ const day_1: []const SceneDelta = &.{
         .board = .initial_white,
         .chaval = .{ .skill = 0, .frustration = 0 },
     } },
-
-    // https://www.chess.com/analysis/library/53GazfLNi/analysis
     .move("e2,e4"),
-    .move("a7,a5"),
-    .move("d2,d4"),
-    .move("a8,a6"),
-    .move("d1,h5"),
-    .move("a6,e6"),
-    .move("f1,c4"),
-    .move("e6,e4"),
-    .move("g1,e2"),
     .move("g8,f6"),
-    .{ .chess_choice = &.{
-        .{
-            .label = "take it easy",
-            .move = .move("h5,g5"),
-            .effect = .{ .skill = -1, .frustration = -1 },
-            .next = &.{
-                .say(.hijo, "bah este juego es too easy"),
-                .say(.padre, "pues nada, adios"),
+    .move("e4,e5"),
+    .move("f6,e4"),
+    .move("f1,c4"),
+    // https://www.chess.com/analysis/game/pgn/3LpDa88Dy8/analysis
+    .{
+        .chess_choice = &.{
+            .{
+                .label = "take it easy",
+                .move = .move("d2,d3"),
+                .effect = .{ .skill = 0, .frustration = -1 },
+                .next = &.{
+                    // https://www.chess.com/analysis/game/pgn/4RVF7zhg7g/analysis
+                    .move("e4,c5"),
+                    .move("c1,f4"),
+                    .move("f8,g7"),
+                    .move("g1,f3"),
+                    .moves(&.{ "e8,g8", "h8,f8" }),
+                    .move("d1,d2"),
+                    .move("d7,d5"),
+                    .moves(&.{ "e5,d6", "xd5" }),
+                    .{ .chess_choice = &.{ .{
+                        .label = "test his skills",
+                        .move = .moves(&.{ "e1,g1", "h1,f1" }),
+                        .effect = .{ .skill = 1, .frustration = -1 },
+                        .next = &.{
+                            .move("g7,b2"),
+                            .say(.hijo, "toma jeroma pastillas de goma"),
+                        },
+                    }, .{
+                        .label = "play well",
+                        .move = .move("b1,c3"),
+                        .effect = .{ .skill = 1, .frustration = 0 },
+                        .next = &.{
+                            .say(.hijo, "gg wp"),
+                        },
+                    } } },
+                },
+            },
+            .{
+                .label = "try to get mate",
+                .move = .move("d1,f3"),
+                .effect = .{ .skill = 1, .frustration = 3 },
+                .next = &.{
+                    .move("e4,c5"),
+                    .move("f3,f7"),
+                    // TODO: checkmate
+                    .move("f3,f7"),
+                    .say(.hijo, "uff este juego es too hard"),
+                    .say(.padre, "pues nada, adios"),
+                },
             },
         },
-        .{
-            .label = "make him struggle",
-            .move = .move("h5,f7"),
-            .effect = .{ .skill = 1, .frustration = 3 },
-            .next = &.{
-                .{ .reset_chess_game = .initial_white },
-                .move("e2,e4"),
-                .say(.hijo, "uff este juego es too hard"),
-                .say(.padre, "pues nada, adios"),
-            },
-        },
-    } },
+    },
 };
 
 pub fn init(
