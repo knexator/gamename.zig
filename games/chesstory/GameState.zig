@@ -8,9 +8,9 @@ const Main = struct {
     pub fn init(deltas: []const SceneDelta) Main {
         return .{
             .prev_scene_state = .init,
-            .scene_state = .applyDelta(.init, deltas[0]),
-            .last_delta = deltas[0],
-            .next_changes = deltas[1..],
+            .scene_state = .init,
+            .last_delta = .started_game,
+            .next_changes = deltas,
             .anim_t = 0,
         };
     }
@@ -48,7 +48,7 @@ const Main = struct {
     }
 };
 
-const Character = enum { padre, hijo, teacher };
+const Character = enum { father, kid, teacher };
 
 const SceneState = struct {
     chaval_state: ChavalState,
@@ -56,11 +56,14 @@ const SceneState = struct {
     chess_board: ?ChessBoardState,
     options: ?Options,
 
+    main_menu: bool,
+
     pub const init: SceneState = .{
         .chaval_state = .init,
         .dialog = null,
         .chess_board = null,
         .options = null,
+        .main_menu = true,
     };
 
     const DialogState = struct {
@@ -77,7 +80,9 @@ const SceneState = struct {
 
     fn applyDelta(cur: SceneState, delta: SceneDelta) SceneState {
         var res = cur;
+        res.main_menu = false;
         switch (delta) {
+            .started_game => unreachable,
             .dialog => |d| {
                 res.dialog = d;
                 res.options = null;
@@ -114,6 +119,7 @@ const SceneState = struct {
 };
 
 const SceneDelta = union(enum) {
+    started_game,
     dialog: SceneState.DialogState,
     new_chess_game: ChessBoardState,
     reset_chess_game: ChessBoardState,
@@ -400,9 +406,9 @@ textures: struct {
 main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
-    .say(.padre, "hola buenas"),
-    .say(.padre, "enseñale ajedrez al chaval"),
-    .say(.hijo, "hola soy el chaval"),
+    .say(.father, "hola buenas"),
+    .say(.father, "enseñale ajedrez al chaval"),
+    .say(.kid, "hola soy el chaval"),
     .{ .new_chess_game = .initial_white },
     .move("e2,e4"),
     .move("g8,f6"),
@@ -433,7 +439,7 @@ const day_1: []const SceneDelta = &.{
                         .next = &.{
                             .move("g7,b2"),
                             .exit_chess_game,
-                            .say(.hijo, "toma jeroma pastillas de goma"),
+                            .say(.kid, "toma jeroma pastillas de goma"),
                             .nextDay(day_2),
                         },
                     }, .{
@@ -442,7 +448,7 @@ const day_1: []const SceneDelta = &.{
                         .effect = .{ .skill = 1, .frustration = 0 },
                         .next = &.{
                             .exit_chess_game,
-                            .say(.hijo, "gg wp"),
+                            .say(.kid, "gg wp"),
                             .nextDay(day_2),
                         },
                     } } },
@@ -457,8 +463,8 @@ const day_1: []const SceneDelta = &.{
                     .move("f3,f7"),
                     // TODO: checkmate
                     .exit_chess_game,
-                    .say(.hijo, "uff este juego es too hard"),
-                    .say(.padre, "pues nada, adios"),
+                    .say(.kid, "uff este juego es too hard"),
+                    .say(.father, "pues nada, adios"),
                     .nextDay(day_2),
                 },
             },
@@ -467,7 +473,7 @@ const day_1: []const SceneDelta = &.{
 };
 
 const day_2: []const SceneDelta = &.{
-    .say(.padre, "hola de nuevo"),
+    .say(.father, "hola de nuevo"),
     .{ .new_chess_game = .initial_black },
     // https://www.chess.com/analysis/game/pgn/3AH82B1dJe/analysis
     .move("g1,f3"),
@@ -481,7 +487,7 @@ const day_2: []const SceneDelta = &.{
     .moves(&.{ "e1,g1", "h1,f1" }),
     .move("e7,e5"),
     .say(.teacher, "Pawns are essential for a strong frontline."),
-    .say(.hijo, "Can pawns ever go back?"),
+    .say(.kid, "Can pawns ever go back?"),
     .{
         .choice = &.{
             .{
@@ -490,7 +496,7 @@ const day_2: []const SceneDelta = &.{
                 .effect = .{ .skill = 0, .frustration = 0 },
                 .next = &.{
                     .exit_chess_game,
-                    .say(.padre, "so the kid was distracted today?"),
+                    .say(.father, "so the kid was distracted today?"),
                 },
             },
             .{
@@ -500,7 +506,7 @@ const day_2: []const SceneDelta = &.{
                 .next = &.{
                     .say(.teacher, "Didn't your brother teach you that?"),
                     .exit_chess_game,
-                    .say(.padre, "so the kid was distracted today?"),
+                    .say(.father, "so the kid was distracted today?"),
                 },
             },
         },
@@ -606,6 +612,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const board = chess_board.tiles;
 
         switch (self.main.last_delta) {
+            .started_game => unreachable,
             .exit_chess_game => {
                 chess_rect = chess_rect.move(.new(0, math.lerp(0, camera.size.y, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
                 if (try self.lazy_state.doOnceUntilRest(.fromString("exit chess game"))) {
@@ -668,8 +675,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }}, self.textures.chaval);
     } else if (scene_state.dialog) |d| {
         if (switch (d.character) {
-            .padre => self.textures.padre,
-            .hijo => self.textures.chaval,
+            .father => self.textures.padre,
+            .kid => self.textures.chaval,
             .teacher => null,
         }) |t| {
             canvas.drawSpriteBatch(camera, &.{.{
@@ -689,11 +696,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         assert(options.len == 2);
         assert(scene_state.dialog == null);
         for (options, 0.., &[2]f32{ -0.45, 0.45 }) |option, k, x| {
-            const r: Rect = .fromCenterAndSize(
+            const base_r: Rect = .fromCenterAndSize(
                 camera.worldFromCenterLocal(.new(x, 0.725)),
                 .new(8, 1.5),
             );
-            const hovered = r.contains(mouse.cur.position);
+            const hovered = base_r.contains(mouse.cur.position);
+            const clicked = hovered and mouse.wasPressed(.left);
+
+            const r = base_r.move(.new(0, try self.smooth.float(
+                .fromFormat("option {d}", .{k}),
+                if (clicked) 0.5 else if (hovered) -0.2 else 0,
+            )));
+
             canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.textbox);
             try fg_text.addText(option.label, .{
                 .hor = .center,
@@ -710,151 +724,37 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     platform.sound_queue.insert(.select);
                 }
             }
-            if (hovered and mouse.wasPressed(.left)) {
+            if (clicked) {
                 advance = true;
                 option_index = k;
                 platform.sound_queue.insert(.click);
             }
         }
+    } else {
+        // TODO: should auto be done
+        for (0..2) |k| {
+            _ = try self.smooth.float(.fromFormat("option {d}", .{k}), 0);
+        }
     }
 
-    if (false) switch (self.main.scene_state) {
-        .between_days => {
-            canvas.fillRect(.unit, .unit, FColor.black.withAlpha(
-                1.0 - @abs(self.main.anim_t - 0.5) * 2,
-            ));
-        },
-        .dialog => |d| {
-            if (switch (d.character) {
-                .padre => self.textures.padre,
-                .hijo => self.textures.chaval,
-                .teacher => null,
-            }) |t| {
-                canvas.drawSpriteBatch(camera, &.{.{
-                    .point = .{ .pos = camera.get(.center), .scale = 5 },
-                    .pivot = .center,
-                    .texcoord = .unit,
-                }}, t);
-            }
-            try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
-
-            if (mouse.wasPressed(.left)) {
-                advance = true;
-            }
-        },
-        .chess => |c| {
-            canvas.drawSpriteBatch(camera, &.{.{
-                .point = .{ .pos = camera.worldFromCenterLocal(.new(0.5, 0)), .scale = 5 },
-                .pivot = .center,
-                .texcoord = .unit,
-            }}, self.textures.chaval);
-            var chess_rect: Rect = .from2(
-                .{ .center = .new(6.3, 5.45) },
-                .{ .size = .new(8, 8.4) },
-            );
-
-            // TODO: mate sound
-
-            switch (self.main.last_delta) {
-                .exit_chess_game => {
-                    chess_rect = chess_rect.move(.new(0, math.lerp(0, camera.size.y, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
-                    if (try self.lazy_state.doOnceUntilRest(.fromString("exit chess game"))) {
-                        platform.sound_queue.insert(.startgame);
-                    }
-                },
-                .new_chess_game => {
-                    chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
-                    if (try self.lazy_state.doOnceUntilRest(.fromString("start chess game"))) {
-                        platform.sound_queue.insert(.startgame);
-                    }
-                },
-                .reset_chess_game => {
-                    if (try self.lazy_state.doOnceUntilRest(.fromString("reset chess game"))) {
-                        platform.sound_queue.insert(.startgame);
-                    }
-                },
-                .chess_move => |m| {
-                    if (try self.lazy_state.doOnceUntilRest(.fromFormat("move {any}", .{m}))) {
-                        platform.sound_queue.insert(.putpiece);
-                    }
-                },
-                .chess_choice, .next_day, .dialog => {},
-            }
-
-            const board = c.board.tiles;
-            var it = board.iterator();
-            while (it.next()) |p| {
-                const r = board.getTileRect(chess_rect, p);
-                board_tiles.set(p, .{
-                    .center = r.get(.center),
-                    .color = if (p.isEven()) .white else .black,
-                    .highlighted = false,
-                });
-            }
-            it.reset();
-            while (it.next()) |p| {
-                if (board.at2(p)) |piece| {
-                    var piece_center: Vec2 = board.getTileRect(chess_rect, p).get(.center);
-                    if (std.meta.activeTag(self.main.last_delta) == .chess_move and self.main.last_delta.chess_move.to.equals(p)) {
-                        piece_center = .lerp(
-                            board.getTileRect(chess_rect, self.main.last_delta.chess_move.from).get(.center),
-                            board.getTileRect(chess_rect, self.main.last_delta.chess_move.to).get(.center),
-                            self.main.anim_t,
-                        );
-                    }
-                    try pieces.append(.{
-                        .center = piece_center,
-                        .value = piece,
-                    });
-                }
-            }
-
-            if (c.options) |options| {
-                assert(options.len == 2);
-                assert(c.dialog == null);
-                for (options, 0.., &[2]f32{ -0.45, 0.45 }) |option, k, x| {
-                    const r: Rect = .fromCenterAndSize(
-                        camera.worldFromCenterLocal(.new(x, 0.725)),
-                        .new(8, 1.5),
-                    );
-                    const hovered = r.contains(mouse.cur.position);
-                    canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.textbox);
-                    try fg_text.addText(option.label, .{
-                        .hor = .center,
-                        .ver = .median,
-                        .pos = r.get(.center),
-                    }, 0.9, .black);
-                    if (hovered) {
-                        board_tiles.getPtr(option.move.from).highlighted = true;
-                        board_tiles.getPtr(option.move.to).highlighted = true;
-                        if (try self.lazy_state.doOnceUntilRest(.fromFormat("hovered {d}", .{k}))) {
-                            platform.sound_queue.insert(.select);
-                        }
-                    }
-                    if (hovered and mouse.wasPressed(.left)) {
-                        advance = true;
-                        option_index = k;
-                        platform.sound_queue.insert(.click);
-                    }
-                }
-            } else {
-                if (c.dialog) |d| {
-                    try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
-                }
-
-                if (mouse.wasPressed(.left)) {
-                    advance = true;
-                }
-            }
-        },
-    };
+    if (scene_state.main_menu or self.main.prev_scene_state.main_menu) {
+        try fg_text.addText(
+            "GAME TITLE",
+            .centeredAt(camera.getCenter()),
+            2,
+            FColor.black.withAlpha(if (scene_state.main_menu) 1.0 else 1.0 - self.main.anim_t),
+        );
+    }
 
     math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration());
     if (mouse.wasPressed(.left) and scene_state.options == null) {
         advance = true;
     }
     if (self.main.anim_t == 1) {
-        if (self.main.scene_state.dialog == null and self.main.scene_state.options == null) {
+        if (scene_state.dialog == null and
+            scene_state.options == null and
+            scene_state.main_menu == false)
+        {
             advance = true;
         }
     }
