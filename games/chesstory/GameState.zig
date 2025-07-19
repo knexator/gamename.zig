@@ -117,6 +117,14 @@ const SceneState = struct {
                 res.dialog = null;
                 res.chess_board.?.tiles.set(move.to, res.chess_board.?.tiles.at2(move.from));
                 res.chess_board.?.tiles.set(move.from, null);
+                if (move.extra_from) |f| {
+                    const t = move.extra_to.?;
+                    res.chess_board.?.tiles.set(t, res.chess_board.?.tiles.at2(f));
+                    res.chess_board.?.tiles.set(f, null);
+                }
+                if (move.extra_death) |d| {
+                    res.chess_board.?.tiles.set(d, null);
+                }
             },
             .choice => |options| {
                 res.options = options;
@@ -146,11 +154,30 @@ const SceneDelta = union(enum) {
     pub const ChessMove = struct {
         from: UVec2,
         to: UVec2,
+        extra_death: ?UVec2 = null,
+        extra_from: ?UVec2 = null,
+        extra_to: ?UVec2 = null,
 
-        // TODO: support multi moves
-        pub fn moves(comptime strs: []const []const u8) ChessMove {
-            comptime assert(strs.len > 0);
-            return .move(strs[0]);
+        pub fn moves(comptime strs: [2][]const u8) ChessMove {
+            var move_1: ChessMove = .move(strs[0]);
+            if (strs[1][0] == 'x') {
+                const str = strs[1][1..];
+                assert(str.len == 2);
+                const death_col = switch (str[0]) {
+                    'a'...'h' => |x| x - 'a',
+                    else => unreachable,
+                };
+                const death_row = switch (str[1]) {
+                    '1'...'8' => |x| x - '1',
+                    else => unreachable,
+                };
+                move_1.extra_death = .new(death_col, 7 - death_row);
+            } else {
+                const move_2: ChessMove = .move(strs[1]);
+                move_1.extra_from = move_2.from;
+                move_1.extra_to = move_2.to;
+            }
+            return move_1;
         }
 
         pub fn move(comptime str: []const u8) ChessMove {
@@ -190,7 +217,7 @@ const SceneDelta = union(enum) {
         return .{ .chess_move = .move(str) };
     }
 
-    pub fn moves(comptime strs: []const []const u8) SceneDelta {
+    pub fn moves(comptime strs: [2][]const u8) SceneDelta {
         return .{ .chess_move = .moves(strs) };
     }
 
@@ -414,26 +441,27 @@ textures: struct {
     }
 },
 
-main: Main = .init(day_3),
+main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
     .say(.father, "Well, here we are"),
-    .say(.father, "Brian, this is your new chess teacher"),
-    .say(.kid, "..."),
-    .say(.kid, "Hi"),
-    .say(.teacher, "Hello, Brian. Pleased to meet you."),
-    .say(.teacher, "I've heard good things from your father."),
-    .say(.teacher, "Let's see what you know."),
-    .say(.father, "Not much... He just got started."),
-    .say(.father, "His brother taught him the basics"),
-    .say(.father, "and a couple of tricks."),
-    .say(.father, "Don't be too tough on him."),
+    // .say(.father, "Brian, this is your new chess teacher"),
+    // .say(.kid, "..."),
+    // .say(.kid, "Hi"),
+    // .say(.teacher, "Hello, Brian. Pleased to meet you."),
+    // .say(.teacher, "I've heard good things from your father."),
+    // .say(.teacher, "Let's see what you know."),
+    // .say(.father, "Not much... He just got started."),
+    // .say(.father, "His brother taught him the basics"),
+    // .say(.father, "and a couple of tricks."),
+    // .say(.father, "Don't be too tough on him."),
     .{ .new_chess_game = .initial_white },
     .move("e2,e4"),
     .move("g8,f6"),
     .move("e4,e5"),
     .move("f6,e4"),
     .move("f1,c4"),
+    .move("g7,g6"),
     // https://www.chess.com/analysis/game/pgn/3LpDa88Dy8/analysis
     .{
         .choice = &.{
@@ -467,13 +495,13 @@ const day_1: []const SceneDelta = &.{
                     .move("c1,f4"),
                     .move("f8,g7"),
                     .move("g1,f3"),
-                    .moves(&.{ "e8,g8", "h8,f8" }),
+                    .moves(.{ "e8,g8", "h8,f8" }),
                     .move("d1,d2"),
                     .move("d7,d5"),
-                    .moves(&.{ "e5,d6", "xd5" }),
+                    .moves(.{ "e5,d6", "xd5" }),
                     .{ .choice = &.{ .{
                         .label = "test his skills",
-                        .move = .moves(&.{ "e1,g1", "h1,f1" }),
+                        .move = .moves(.{ "e1,g1", "h1,f1" }),
                         .effect = .{ .skill = 1, .frustration = -1 },
                         .next = &.{
                             .move("g7,b2"),
@@ -518,7 +546,7 @@ const day_2: []const SceneDelta = &.{
     .move("g4,f3"),
     .move("g2,f3"),
     .move("g8,f6"),
-    .moves(&.{ "e1,g1", "h1,f1" }),
+    .moves(.{ "e1,g1", "h1,f1" }),
     .move("e7,e5"),
     .say(.teacher, "Pawns are essential for a strong frontline."),
     .say(.kid, "Must be hard to be a pawn"),
@@ -565,14 +593,14 @@ const day_3: []const SceneDelta = &.{
     .say(.teacher, "Why do you keep playing it?"),
     .say(.kid, "My brother taught it"),
     .move("g1,f3"),
-    .moves(&.{ "h8,f8", "e8,g8" }),
+    .moves(.{ "h8,f8", "e8,g8" }),
     .move("c2,c3"),
     .move("b7,b6"),
     .move("f1,d3"),
     .move("c8,b7"),
     .move("b1,d2"),
     .move("f8,e8"),
-    .moves(&.{ "h1,f1", "e1,g1" }),
+    .moves(.{ "h1,f1", "e1,g1" }),
     .move("d7,d6"),
     .move("d1,c2"),
     .move("c7,c5"),
@@ -829,12 +857,31 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         while (it.next()) |p| {
             if (board.at2(p)) |piece| {
                 var piece_center: Vec2 = board.getTileRect(chess_rect, p).get(.center);
-                if (std.meta.activeTag(self.main.last_delta) == .chess_move and self.main.last_delta.chess_move.to.equals(p)) {
-                    piece_center = .lerp(
-                        board.getTileRect(chess_rect, self.main.last_delta.chess_move.from).get(.center),
-                        board.getTileRect(chess_rect, self.main.last_delta.chess_move.to).get(.center),
-                        self.main.anim_t,
-                    );
+                if (std.meta.activeTag(self.main.last_delta) == .chess_move) {
+                    if (self.main.last_delta.chess_move.to.equals(p)) {
+                        if (self.main.prev_scene_state.chess_board.?.tiles.at2(p)) |eaten_piece| {
+                            if (self.main.anim_t < 0.5) {
+                                try pieces.append(.{
+                                    .center = piece_center,
+                                    .value = eaten_piece,
+                                });
+                            }
+                        }
+                        piece_center = .lerp(
+                            board.getTileRect(chess_rect, self.main.last_delta.chess_move.from).get(.center),
+                            board.getTileRect(chess_rect, self.main.last_delta.chess_move.to).get(.center),
+                            self.main.anim_t,
+                        );
+                    }
+                    if (self.main.last_delta.chess_move.extra_to) |extra_to| {
+                        if (extra_to.equals(p)) {
+                            piece_center = .lerp(
+                                board.getTileRect(chess_rect, self.main.last_delta.chess_move.extra_from.?).get(.center),
+                                board.getTileRect(chess_rect, self.main.last_delta.chess_move.extra_to.?).get(.center),
+                                self.main.anim_t,
+                            );
+                        }
+                    }
                 }
                 if (chess_board.player == .black) {
                     piece_center = piece_center.rotateAround(chess_rect.getCenter(), 0.5);
@@ -845,6 +892,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 });
             }
         }
+        // if (std.meta.activeTag(self.main.last_delta) == .chess_move) {
+        //     // const move = self.main.last_delta.chess_move;
+        //     // if (move.extra_death) |d| {}
+        // }
     }
 
     // face
@@ -936,7 +987,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (option.move) |move| {
                     assert(scene_state.chess_board != null);
                     board_tiles.?.getPtr(move.from).highlighted = true;
-                    board_tiles.?.getPtr(move.to).highlighted = true;
+                    if (move.extra_from) |f| {
+                        board_tiles.?.getPtr(f).highlighted = true;
+                    } else {
+                        board_tiles.?.getPtr(move.to).highlighted = true;
+                    }
                 }
                 if (try self.lazy_state.doOnceUntilRest(.fromFormat("hovered {d}", .{k}))) {
                     platform.sound_queue.insert(.select);
