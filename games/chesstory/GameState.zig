@@ -48,7 +48,18 @@ const Main = struct {
     }
 };
 
-const Character = enum { father, kid, teacher };
+const Character = enum {
+    father,
+    kid,
+    teacher,
+    pub fn name(c: Character) []const u8 {
+        return switch (c) {
+            .father => "Jack",
+            .kid => "Charlie",
+            .teacher => "Frank",
+        };
+    }
+};
 
 const SceneState = struct {
     chaval_state: ChavalState,
@@ -403,7 +414,7 @@ textures: struct {
     }
 },
 
-main: Main = .init(day_1),
+main: Main = .init(day_3),
 
 const day_1: []const SceneDelta = &.{
     .say(.father, "Well, here we are"),
@@ -433,7 +444,7 @@ const day_1: []const SceneDelta = &.{
                 .next = &.{
                     .move("e4,c5"),
                     .move("f3,f7"),
-                    // TODO: checkmate
+                    // TODO: 'check' sound
                     .say(.kid, "What??"),
                     .say(.teacher, "You must be more attentive."),
                     .say(.teacher, "Let's try again..."),
@@ -495,7 +506,8 @@ const day_1: []const SceneDelta = &.{
 };
 
 const day_2: []const SceneDelta = &.{
-    .say(.father, "Hi again, etc"),
+    .say(.teacher, "...so remember, the rooks are important."),
+    .say(.kid, "Makes sense. Let's try again!"),
     .{ .new_chess_game = .initial_black },
     // https://www.chess.com/analysis/game/pgn/3AH82B1dJe/analysis
     .move("g1,f3"),
@@ -509,41 +521,168 @@ const day_2: []const SceneDelta = &.{
     .moves(&.{ "e1,g1", "h1,f1" }),
     .move("e7,e5"),
     .say(.teacher, "Pawns are essential for a strong frontline."),
-    .say(.kid, "Can pawns ever go back?"),
+    .say(.kid, "Must be hard to be a pawn"),
+    .say(.kid, "They can't come back, right?"),
+    .{ .choice = &.{
+        .{
+            .label = "You know they can't",
+            .move = null,
+            .effect = .{ .skill = 0, .frustration = 3 },
+            .next = &.{
+                .say(.teacher, "Didn't your brother teach you that?"),
+                .exit_chess_game,
+                .say(.father, "so the kid was distracted today?"),
+                .nextDay(day_3),
+            },
+        },
+        .{
+            .label = "Well, by getting to the end",
+            .move = null,
+            .effect = .{ .skill = 0, .frustration = -1 },
+            .next = &.{
+                .exit_chess_game,
+                .say(.father, "so the kid was distracted today?"),
+                .nextDay(day_3),
+            },
+        },
+    } },
+};
+
+const day_3: []const SceneDelta = &.{
+    .say(.teacher, "Kid is late today."),
+    .say(.teacher, "asdfasdfasdf"),
+    .say(.kid, "hello"),
+    .{ .new_chess_game = .initial_white },
+    // https://www.chess.com/analysis/game/pgn/4CLXDD4i3Y/analysis
+    .move("d2,d4"),
+    .move("g8,f6"),
+    .move("c1,f4"),
+    .move("g7,g6"),
+    .move("e2,e3"),
+    .move("f8,g7"),
+    .say(.teacher, "That opening, again"),
+    .say(.teacher, "Not common for a novice"),
+    .say(.teacher, "Why do you keep playing it?"),
+    .say(.kid, "My brother taught it"),
+    .move("g1,f3"),
+    .moves(&.{ "h8,f8", "e8,g8" }),
+    .move("c2,c3"),
+    .move("b7,b6"),
+    .move("f1,d3"),
+    .move("c8,b7"),
+    .move("b1,d2"),
+    .move("f8,e8"),
+    .moves(&.{ "h1,f1", "e1,g1" }),
+    .move("d7,d6"),
+    .move("d1,c2"),
+    .move("c7,c5"),
+    .move("f4,g5"),
+    .move("b8,d7"),
+    .move("f1,e1"),
+    .move("c5,d4"),
+    .move("e3,d4"),
+    .move("d8,c7"),
+    .move("d2,e4"),
+    .move("f6,e4"),
+    .move("d3,e4"),
+    .move("b7,e4"),
+    .move("c2,e4"),
+    .move("e7,e5"),
+    .move("d4,e5"),
+    .move("d6,e5"),
     .{
         .choice = &.{
             .{
-                .label = "Only if they get to the end",
-                .move = null,
-                .effect = .{ .skill = 0, .frustration = -1 },
+                .label = "Defend your structure",
+                .move = .move("a1,d1"),
+                .effect = .{ .skill = 1, .frustration = 1 },
                 .next = &.{
+                    .move("d7,c5"),
+                    .move("e4,h4"),
+                    .move("e5,e4"),
+                    .move("f3,d4"),
+                    .move("g7,d4"),
+                    .move("c3,d4"),
+                    .move("c5,d3"),
+                    .move("e1,e4"),
+                    .move("d3,b2"),
+                    .move("g5,f6"),
+                    .move("b2,d1"),
+                    .move("h4,h6"),
+                    .say(.teacher, "Mate in 2"),
+                    .say(.teacher, "When your opponent does something weird,"),
+                    .say(.teacher, "you should pay attention."),
                     .exit_chess_game,
-                    .say(.father, "so the kid was distracted today?"),
+                    .say(.father, "next day is the tournament"),
+                    .nextDay(day_4),
                 },
             },
             .{
-                .label = "You know they don't",
-                .move = null,
-                .effect = .{ .skill = 0, .frustration = 3 },
+                .label = "Attack his structure",
+                .move = .move("g5,e3"),
+                .effect = .{ .skill = 2, .frustration = 2 },
                 .next = &.{
-                    .say(.teacher, "Didn't your brother teach you that?"),
+                    .say(.kid, "x"),
+                    .move("d7,f6"),
+                    .move("e4,h4"),
+                    .move("f6,d5"),
+                    .move("e3,h6"),
+                    .move("g7,h6"),
+                    .move("h4,h6"),
+                    .move("e5,e4"),
+                    .move("f3,g5"),
+                    .move("d5,f6"),
+                    .move("h6,h4"),
+                    .move("a8,d8"),
+                    .move("g5,e4"),
+                    .move("f6,e4"),
+                    .move("e1,e4"),
+                    .move("e8,e4"),
+                    .move("h4,e4"),
+                    .move("d8,d2"),
+                    .move("a1,b1"),
+                    .move("c7,d6"),
+                    .move("h2,h4"),
+                    .move("d2,d1"),
+                    .move("b1,d1"),
+                    .move("d6,d1"),
+                    .move("g1,h2"),
+                    .move("d1,a1"),
+                    .move("e4,e8"),
+                    .move("g8,g7"),
+                    .move("e8,e5"),
+                    .move("g7,g8"),
+                    .say(.teacher, "this will end in a draw"),
+                    .move("e5,b8"),
+                    .move("g8,g7"),
+                    .move("b8,a7"),
+                    .move("a1,b2"),
+                    .move("f2,f3"),
+                    .move("h7,h5"),
+                    .move("a7,b8"),
+                    .move("b2,c3"),
+                    .move("b8,b6"),
+                    .move("c3,e5"),
+                    .move("h2,h3"),
+                    .move("e5,f5"),
+                    .move("h3,h2"),
+                    .move("f5,e5"),
+                    .move("h2,h3"),
+                    .move("e5,f5"),
+                    .move("h3,h2"),
+                    .move("f5,e5"),
+                    .say(.teacher, "I guess it's a draw, due to repetition."),
                     .exit_chess_game,
-                    .say(.father, "so the kid was distracted today?"),
+                    .say(.father, "next day is the tournament"),
+                    .nextDay(day_4),
                 },
             },
         },
     },
 };
 
-const day_3: []const SceneDelta = &.{
-    .say(.father, "Hi again, etc"),
-    .{ .new_chess_game = .initial_white },
-    // https://www.chess.com/analysis/game/pgn/4CLXDD4i3Y/analysis
-    .move("g1,f3"),
-    .say(.teacher, "That opening, again"),
-    .say(.teacher, "Not common for a novice"),
-    .say(.teacher, "Why do you keep playing it?"),
-    .say(.kid, "My brother taught it"),
+const day_4: []const SceneDelta = &.{
+    .say(.teacher, "the end."),
 };
 
 pub fn init(
@@ -599,9 +738,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const mouse = platform.getMouse(camera);
     const canvas = &self.canvas;
     var fg_text = canvas.textBatch(0);
-    const text_color: FColor = .white;
+    const text_color: FColor = .fromHex("#9D999E");
     const text_size: f32 = 0.7;
-    const option_text_color: FColor = .black;
+    const option_text_color: FColor = .fromHex("#3d3d3d");
     var pieces: std.ArrayList(struct {
         center: Vec2,
         value: GameState.ChessBoardState.Piece,
@@ -729,12 +868,37 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (scene_state.dialog != null or scene_state.options != null) {
-        canvas.rectGradient(.unit, Rect.unit.with2(.size, .new(1, 0.2), .bottom_center), .black, FColor.black.withAlpha(0));
+    if (true) {
+        const gradient_opacity = try self.smooth.floatCustomSpeed(
+            .fromString("grad"),
+            if (scene_state.dialog != null or scene_state.options != null or scene_state.fadeout) 0.5 else 0.0,
+            0.1,
+        );
+        const y = 0.15;
+        const w = 0.2;
+        canvas.fillRect(
+            .unit,
+            Rect.unit.with2(.size, .new(1, y), .bottom_center),
+            FColor.black.withAlpha(gradient_opacity),
+        );
+        canvas.rectGradient(
+            .unit,
+            Rect.unit
+                .with2(.size, .new(1, w), .bottom_center)
+                .move(.new(0, -y)),
+            FColor.black.withAlpha(gradient_opacity),
+            FColor.black.withAlpha(0),
+        );
     }
 
     if (scene_state.dialog) |d| {
         assert(scene_state.options == null);
+        try fg_text.addText(
+            d.character.name(),
+            .centeredAt(camera.worldFromLocal(.new(0.15, 0.825))),
+            text_size * 1.0,
+            text_color,
+        );
         try fg_text.addText(
             d.text,
             .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) },
@@ -748,8 +912,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         assert(scene_state.dialog == null);
         for (options, 0.., &[2]f32{ -0.45, 0.45 }) |option, k, x| {
             const base_r: Rect = .fromCenterAndSize(
-                camera.worldFromCenterLocal(.new(x, 0.725)),
-                .new(8, 1.5),
+                camera.worldFromCenterLocal(.new(x, 0.775)),
+                .new(1.0 + tof32(option.label.len) * 0.4, 1.5),
+                // .new(8, 1.5),
             );
             const hovered = base_r.contains(mouse.cur.position);
             const pressed = hovered and mouse.cur.isDown(.left);
@@ -763,7 +928,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.casilla_blanca);
             try fg_text.addText(
                 option.label,
-                .centeredAt(r.getCenter()),
+                .centeredAt(r.getCenter().addY(-0.05)),
                 text_size,
                 option_text_color,
             );
@@ -853,6 +1018,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.smoothstepEased(@abs(self.main.anim_t - 0.5), 0.5, 0.4, .linear)));
     }
 
+    advance = mouse.wasReleased(.left);
     if (advance) {
         if (self.main.next_changes.len > 0 or option_index != null) {
             self.main.advance(option_index);

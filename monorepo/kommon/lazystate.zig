@@ -36,6 +36,16 @@ pub const LazyState = struct {
         return gop.value_ptr.*;
     }
 
+    pub fn floatCustomSpeed(self: *LazyState, key: Key, goal: f32, speed: f32) !f32 {
+        const gop = try self.f32s.getOrPut(key);
+        if (gop.found_existing) {
+            gop.value_ptr.* = std.math.lerp(gop.value_ptr.*, goal, speed);
+        } else {
+            gop.value_ptr.* = goal;
+        }
+        return gop.value_ptr.*;
+    }
+
     pub fn floatLinear(self: *LazyState, key: Key, goal: f32, duration: f32) !f32 {
         const gop = try self.f32s.getOrPut(key);
         if (gop.found_existing) {
