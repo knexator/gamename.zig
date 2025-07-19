@@ -27,9 +27,18 @@ const Main = struct {
             self.scene_state = .applyDelta(new_scene_state, self.last_delta);
             self.next_changes = option.next;
         } else {
-            self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
-            self.last_delta = self.next_changes[0];
-            self.next_changes = self.next_changes[1..];
+            switch (self.next_changes[0]) {
+                .next_day => |next_day| {
+                    self.last_delta = self.next_changes[0];
+                    self.next_changes = next_day;
+                    self.scene_state = .applyDelta(self.scene_state, self.last_delta);
+                },
+                else => {
+                    self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
+                    self.last_delta = self.next_changes[0];
+                    self.next_changes = self.next_changes[1..];
+                },
+            }
         }
     }
 };
@@ -49,6 +58,7 @@ const SceneState = union(enum) {
         next: []const SceneDelta,
     };
 
+    between_days,
     dialog: DialogState,
     chess: struct {
         board: ChessBoardState,
@@ -92,6 +102,7 @@ const SceneState = union(enum) {
                     res.chess.options = options;
                     return res;
                 },
+                .next_day => return .between_days,
             }
         } else {
             assert(std.meta.activeTag(delta) == .dialog);
@@ -109,6 +120,7 @@ const SceneDelta = union(enum) {
     reset_chess_game: ChessBoardState,
     chess_move: ChessMove,
     chess_choice: SceneState.Options,
+    next_day: []const SceneDelta,
 
     pub const ChessMove = struct {
         from: UVec2,
@@ -162,6 +174,10 @@ const SceneDelta = union(enum) {
 
     pub fn say(character: Character, text: []const u8) SceneDelta {
         return .{ .dialog = .{ .character = character, .text = text } };
+    }
+
+    pub fn nextDay(day: []const SceneDelta) SceneDelta {
+        return .{ .next_day = day };
     }
 };
 
@@ -379,7 +395,7 @@ textures: struct {
     }
 },
 
-main: Main = .init(day_1),
+main: Main = .init(day_2),
 
 const day_1: []const SceneDelta = &.{
     .say(.padre, "hola buenas"),
@@ -418,6 +434,7 @@ const day_1: []const SceneDelta = &.{
                         .next = &.{
                             .move("g7,b2"),
                             .say(.hijo, "toma jeroma pastillas de goma"),
+                            .nextDay(day_2),
                         },
                     }, .{
                         .label = "play well",
@@ -425,6 +442,7 @@ const day_1: []const SceneDelta = &.{
                         .effect = .{ .skill = 1, .frustration = 0 },
                         .next = &.{
                             .say(.hijo, "gg wp"),
+                            .nextDay(day_2),
                         },
                     } } },
                 },
@@ -437,13 +455,33 @@ const day_1: []const SceneDelta = &.{
                     .move("e4,c5"),
                     .move("f3,f7"),
                     // TODO: checkmate
-                    .move("f3,f7"),
                     .say(.hijo, "uff este juego es too hard"),
                     .say(.padre, "pues nada, adios"),
+                    .nextDay(day_2),
                 },
             },
         },
     },
+};
+
+const day_2: []const SceneDelta = &.{
+    .say(.padre, "hola de nuevo"),
+    .{ .new_chess_game = .{
+        .board = .initial_black,
+        .chaval = .{ .skill = 0, .frustration = 0 },
+    } },
+    // https://www.chess.com/analysis/game/pgn/3AH82B1dJe/analysis
+    .move("g1,f3"),
+    .move("d7,d5"),
+    .move("g2,g3"),
+    .move("c8,g4"),
+    .move("f1,g2"),
+    .move("g4,f3"),
+    .move("g2,f3"),
+    .move("g8,f6"),
+    .moves(&.{ "e1,g1", "h1,f1" }),
+    .move("e7,e5"),
+    // .say(.teacher, "Pawns are essential for a strong frontline."),
 };
 
 pub fn init(
@@ -530,6 +568,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var option_index: ?usize = null;
 
     switch (self.main.scene_state) {
+        .between_days => {
+            canvas.fillRect(.unit, .unit, FColor.black.withAlpha(
+                1.0 - @abs(self.main.anim_t - 0.5) * 2,
+            ));
+        },
         .dialog => |d| {
             canvas.drawSpriteBatch(camera, &.{.{
                 .point = .{ .pos = camera.get(.center), .scale = 5 },
@@ -641,6 +684,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration());
     if (self.main.anim_t == 1) switch (self.main.scene_state) {
+        .between_days => advance = true,
         .dialog => {},
         .chess => |c| if (c.options == null) {
             advance = true;
