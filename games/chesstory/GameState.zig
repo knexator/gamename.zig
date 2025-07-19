@@ -43,7 +43,7 @@ const Main = struct {
     }
 };
 
-const Character = enum { padre, hijo };
+const Character = enum { padre, hijo, teacher };
 
 const SceneState = union(enum) {
     const DialogState = struct {
@@ -63,6 +63,7 @@ const SceneState = union(enum) {
     chess: struct {
         board: ChessBoardState,
         chaval: ChavalState,
+        dialog: ?DialogState,
         options: ?Options,
     },
 
@@ -70,7 +71,21 @@ const SceneState = union(enum) {
         if (maybe_cur) |cur| {
             switch (delta) {
                 .dialog => |d| {
-                    return .{ .dialog = d };
+                    switch (cur) {
+                        .dialog, .between_days => return .{ .dialog = d },
+                        .chess => {
+                            var res = cur;
+                            res.chess.dialog = d;
+                            return res;
+                        },
+                    }
+                },
+                .exit_chess_game => {
+                    assert(std.meta.activeTag(cur) == .chess);
+                    var res = cur;
+                    res.chess.dialog = null;
+                    res.chess.options = null;
+                    return res;
                 },
                 .new_chess_game => |x| {
                     assert(std.meta.activeTag(cur) == .dialog);
@@ -78,6 +93,7 @@ const SceneState = union(enum) {
                         .board = x.board,
                         .chaval = x.chaval,
                         .options = null,
+                        .dialog = null,
                     } };
                 },
                 .chess_move => |move| {
@@ -94,6 +110,7 @@ const SceneState = union(enum) {
                         .board = board,
                         .chaval = cur.chess.chaval,
                         .options = null,
+                        .dialog = null,
                     } };
                 },
                 .chess_choice => |options| {
@@ -118,6 +135,7 @@ const SceneDelta = union(enum) {
         chaval: ChavalState,
     },
     reset_chess_game: ChessBoardState,
+    exit_chess_game,
     chess_move: ChessMove,
     chess_choice: SceneState.Options,
     next_day: []const SceneDelta,
@@ -395,7 +413,7 @@ textures: struct {
     }
 },
 
-main: Main = .init(day_2),
+main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
     .say(.padre, "hola buenas"),
@@ -433,6 +451,7 @@ const day_1: []const SceneDelta = &.{
                         .effect = .{ .skill = 1, .frustration = -1 },
                         .next = &.{
                             .move("g7,b2"),
+                            .exit_chess_game,
                             .say(.hijo, "toma jeroma pastillas de goma"),
                             .nextDay(day_2),
                         },
@@ -441,6 +460,7 @@ const day_1: []const SceneDelta = &.{
                         .move = .move("b1,c3"),
                         .effect = .{ .skill = 1, .frustration = 0 },
                         .next = &.{
+                            .exit_chess_game,
                             .say(.hijo, "gg wp"),
                             .nextDay(day_2),
                         },
@@ -455,6 +475,7 @@ const day_1: []const SceneDelta = &.{
                     .move("e4,c5"),
                     .move("f3,f7"),
                     // TODO: checkmate
+                    .exit_chess_game,
                     .say(.hijo, "uff este juego es too hard"),
                     .say(.padre, "pues nada, adios"),
                     .nextDay(day_2),
@@ -481,7 +502,7 @@ const day_2: []const SceneDelta = &.{
     .move("g8,f6"),
     .moves(&.{ "e1,g1", "h1,f1" }),
     .move("e7,e5"),
-    // .say(.teacher, "Pawns are essential for a strong frontline."),
+    .say(.teacher, "Pawns are essential for a strong frontline."),
 };
 
 pub fn init(
@@ -574,14 +595,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             ));
         },
         .dialog => |d| {
-            canvas.drawSpriteBatch(camera, &.{.{
-                .point = .{ .pos = camera.get(.center), .scale = 5 },
-                .pivot = .center,
-                .texcoord = .unit,
-            }}, switch (d.character) {
+            if (switch (d.character) {
                 .padre => self.textures.padre,
                 .hijo => self.textures.chaval,
-            });
+                .teacher => null,
+            }) |t| {
+                canvas.drawSpriteBatch(camera, &.{.{
+                    .point = .{ .pos = camera.get(.center), .scale = 5 },
+                    .pivot = .center,
+                    .texcoord = .unit,
+                }}, t);
+            }
             try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
 
             if (mouse.wasPressed(.left)) {
@@ -601,22 +625,30 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             // TODO: mate sound
 
-            // TODO: refactor to switch
-            if (std.meta.activeTag(self.main.last_delta) == .new_chess_game) {
-                chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
-                if (try self.lazy_state.doOnceUntilRest(.fromString("start chess game"))) {
-                    platform.sound_queue.insert(.startgame);
-                }
-            } else if (std.meta.activeTag(self.main.last_delta) == .reset_chess_game) {
-                if (try self.lazy_state.doOnceUntilRest(.fromString("reset chess game"))) {
-                    platform.sound_queue.insert(.startgame);
-                }
-            } else if (std.meta.activeTag(self.main.last_delta) == .chess_move) {
-                if (try self.lazy_state.doOnceUntilRest(.fromFormat("move {any}", .{self.main.last_delta.chess_move}))) {
-                    platform.sound_queue.insert(.putpiece);
-                }
-            } else if (std.meta.activeTag(self.main.last_delta) == .chess_choice) {
-                // nothing
+            switch (self.main.last_delta) {
+                .exit_chess_game => {
+                    chess_rect = chess_rect.move(.new(0, math.lerp(0, camera.size.y, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
+                    if (try self.lazy_state.doOnceUntilRest(.fromString("exit chess game"))) {
+                        platform.sound_queue.insert(.startgame);
+                    }
+                },
+                .new_chess_game => {
+                    chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
+                    if (try self.lazy_state.doOnceUntilRest(.fromString("start chess game"))) {
+                        platform.sound_queue.insert(.startgame);
+                    }
+                },
+                .reset_chess_game => {
+                    if (try self.lazy_state.doOnceUntilRest(.fromString("reset chess game"))) {
+                        platform.sound_queue.insert(.startgame);
+                    }
+                },
+                .chess_move => |m| {
+                    if (try self.lazy_state.doOnceUntilRest(.fromFormat("move {any}", .{m}))) {
+                        platform.sound_queue.insert(.putpiece);
+                    }
+                },
+                .chess_choice, .next_day, .dialog => {},
             }
 
             const board = c.board.tiles;
@@ -649,6 +681,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             if (c.options) |options| {
                 assert(options.len == 2);
+                assert(c.dialog == null);
                 for (options, 0.., &[2]f32{ -0.45, 0.45 }) |option, k, x| {
                     const r: Rect = .fromCenterAndSize(
                         camera.worldFromCenterLocal(.new(x, 0.725)),
@@ -675,6 +708,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     }
                 }
             } else {
+                if (c.dialog) |d| {
+                    try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
+                }
+
                 if (mouse.wasPressed(.left)) {
                     advance = true;
                 }
