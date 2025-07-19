@@ -1,5 +1,5 @@
 const Main = struct {
-    prev_scene_state: ?SceneState,
+    prev_scene_state: SceneState,
     scene_state: SceneState,
     last_delta: SceneDelta,
     next_changes: []const SceneDelta,
@@ -7,8 +7,8 @@ const Main = struct {
 
     pub fn init(deltas: []const SceneDelta) Main {
         return .{
-            .prev_scene_state = null,
-            .scene_state = .applyDelta(null, deltas[0]),
+            .prev_scene_state = .init,
+            .scene_state = .applyDelta(.init, deltas[0]),
             .last_delta = deltas[0],
             .next_changes = deltas[1..],
             .anim_t = 0,
@@ -19,14 +19,19 @@ const Main = struct {
         self.anim_t = 0;
         self.prev_scene_state = self.scene_state;
         if (option_index) |index| {
-            assert(std.meta.activeTag(self.last_delta) == .chess_choice);
-            const option = self.last_delta.chess_choice[index];
-            self.last_delta = .{ .chess_move = option.move };
+            assert(self.scene_state.options != null);
+            const option = self.scene_state.options.?[index];
+            if (option.move) |move| {
+                self.last_delta = .{ .chess_move = move };
+            } else {
+                self.last_delta = .{ .dialog = .{ .character = .teacher, .text = option.label } };
+            }
             var new_scene_state = self.scene_state;
-            new_scene_state.chess.chaval = new_scene_state.chess.chaval.applyDelta(option.effect);
+            new_scene_state.chaval_state = new_scene_state.chaval_state.applyDelta(option.effect);
             self.scene_state = .applyDelta(new_scene_state, self.last_delta);
             self.next_changes = option.next;
         } else {
+            assert(self.scene_state.options == null);
             switch (self.next_changes[0]) {
                 .next_day => |next_day| {
                     self.last_delta = self.next_changes[0];
@@ -45,99 +50,76 @@ const Main = struct {
 
 const Character = enum { padre, hijo, teacher };
 
-const SceneState = union(enum) {
+const SceneState = struct {
+    chaval_state: ChavalState,
+    dialog: ?DialogState,
+    chess_board: ?ChessBoardState,
+    options: ?Options,
+
+    pub const init: SceneState = .{
+        .chaval_state = .init,
+        .dialog = null,
+        .chess_board = null,
+        .options = null,
+    };
+
     const DialogState = struct {
         character: Character,
         text: []const u8,
     };
 
     const Options = []const struct {
-        move: SceneDelta.ChessMove,
+        move: ?SceneDelta.ChessMove,
         label: []const u8,
         effect: ChavalState.Delta,
         next: []const SceneDelta,
     };
 
-    between_days,
-    dialog: DialogState,
-    chess: struct {
-        board: ChessBoardState,
-        chaval: ChavalState,
-        dialog: ?DialogState,
-        options: ?Options,
-    },
-
-    fn applyDelta(maybe_cur: ?SceneState, delta: SceneDelta) SceneState {
-        if (maybe_cur) |cur| {
-            switch (delta) {
-                .dialog => |d| {
-                    switch (cur) {
-                        .dialog, .between_days => return .{ .dialog = d },
-                        .chess => {
-                            var res = cur;
-                            res.chess.dialog = d;
-                            return res;
-                        },
-                    }
-                },
-                .exit_chess_game => {
-                    assert(std.meta.activeTag(cur) == .chess);
-                    var res = cur;
-                    res.chess.dialog = null;
-                    res.chess.options = null;
-                    return res;
-                },
-                .new_chess_game => |x| {
-                    assert(std.meta.activeTag(cur) == .dialog);
-                    return .{ .chess = .{
-                        .board = x.board,
-                        .chaval = x.chaval,
-                        .options = null,
-                        .dialog = null,
-                    } };
-                },
-                .chess_move => |move| {
-                    assert(std.meta.activeTag(cur) == .chess);
-                    var res = cur;
-                    res.chess.options = null;
-                    res.chess.board.tiles.set(move.to, res.chess.board.tiles.at2(move.from));
-                    res.chess.board.tiles.set(move.from, null);
-                    return res;
-                },
-                .reset_chess_game => |board| {
-                    assert(std.meta.activeTag(cur) == .chess);
-                    return .{ .chess = .{
-                        .board = board,
-                        .chaval = cur.chess.chaval,
-                        .options = null,
-                        .dialog = null,
-                    } };
-                },
-                .chess_choice => |options| {
-                    assert(std.meta.activeTag(cur) == .chess);
-                    var res = cur;
-                    res.chess.options = options;
-                    return res;
-                },
-                .next_day => return .between_days,
-            }
-        } else {
-            assert(std.meta.activeTag(delta) == .dialog);
-            return .{ .dialog = delta.dialog };
+    fn applyDelta(cur: SceneState, delta: SceneDelta) SceneState {
+        var res = cur;
+        switch (delta) {
+            .dialog => |d| {
+                res.dialog = d;
+                res.options = null;
+            },
+            .exit_chess_game => {
+                res.chess_board = null;
+                res.options = null;
+                res.dialog = null;
+            },
+            .new_chess_game, .reset_chess_game => |x| {
+                res.chess_board = x;
+                res.options = null;
+                res.dialog = null;
+            },
+            .chess_move => |move| {
+                assert(res.chess_board != null);
+                res.options = null;
+                res.dialog = null;
+                res.chess_board.?.tiles.set(move.to, res.chess_board.?.tiles.at2(move.from));
+                res.chess_board.?.tiles.set(move.from, null);
+            },
+            .choice => |options| {
+                res.options = options;
+                res.dialog = null;
+            },
+            .next_day => {
+                res.options = null;
+                res.dialog = null;
+                res.chess_board = null;
+            },
         }
+        return res;
     }
 };
 
 const SceneDelta = union(enum) {
     dialog: SceneState.DialogState,
-    new_chess_game: struct {
-        board: ChessBoardState,
-        chaval: ChavalState,
-    },
+    new_chess_game: ChessBoardState,
     reset_chess_game: ChessBoardState,
     exit_chess_game,
     chess_move: ChessMove,
-    chess_choice: SceneState.Options,
+    choice: SceneState.Options,
     next_day: []const SceneDelta,
 
     pub const ChessMove = struct {
@@ -214,6 +196,8 @@ const ChavalState = struct {
         res.skill += delta.skill;
         return res;
     }
+
+    pub const init: ChavalState = .{ .skill = 0, .frustration = 0 };
 };
 
 const ChessBoardState = struct {
@@ -419,10 +403,7 @@ const day_1: []const SceneDelta = &.{
     .say(.padre, "hola buenas"),
     .say(.padre, "enseñale ajedrez al chaval"),
     .say(.hijo, "hola soy el chaval"),
-    .{ .new_chess_game = .{
-        .board = .initial_white,
-        .chaval = .{ .skill = 0, .frustration = 0 },
-    } },
+    .{ .new_chess_game = .initial_white },
     .move("e2,e4"),
     .move("g8,f6"),
     .move("e4,e5"),
@@ -430,7 +411,7 @@ const day_1: []const SceneDelta = &.{
     .move("f1,c4"),
     // https://www.chess.com/analysis/game/pgn/3LpDa88Dy8/analysis
     .{
-        .chess_choice = &.{
+        .choice = &.{
             .{
                 .label = "take it easy",
                 .move = .move("d2,d3"),
@@ -445,7 +426,7 @@ const day_1: []const SceneDelta = &.{
                     .move("d1,d2"),
                     .move("d7,d5"),
                     .moves(&.{ "e5,d6", "xd5" }),
-                    .{ .chess_choice = &.{ .{
+                    .{ .choice = &.{ .{
                         .label = "test his skills",
                         .move = .moves(&.{ "e1,g1", "h1,f1" }),
                         .effect = .{ .skill = 1, .frustration = -1 },
@@ -487,10 +468,7 @@ const day_1: []const SceneDelta = &.{
 
 const day_2: []const SceneDelta = &.{
     .say(.padre, "hola de nuevo"),
-    .{ .new_chess_game = .{
-        .board = .initial_black,
-        .chaval = .{ .skill = 0, .frustration = 0 },
-    } },
+    .{ .new_chess_game = .initial_black },
     // https://www.chess.com/analysis/game/pgn/3AH82B1dJe/analysis
     .move("g1,f3"),
     .move("d7,d5"),
@@ -503,6 +481,30 @@ const day_2: []const SceneDelta = &.{
     .moves(&.{ "e1,g1", "h1,f1" }),
     .move("e7,e5"),
     .say(.teacher, "Pawns are essential for a strong frontline."),
+    .say(.hijo, "Can pawns ever go back?"),
+    .{
+        .choice = &.{
+            .{
+                .label = "Only if they get to the end",
+                .move = null,
+                .effect = .{ .skill = 0, .frustration = 0 },
+                .next = &.{
+                    .exit_chess_game,
+                    .say(.padre, "so the kid was distracted today?"),
+                },
+            },
+            .{
+                .label = "You know they don't",
+                .move = null,
+                .effect = .{ .skill = 0, .frustration = 0 },
+                .next = &.{
+                    .say(.teacher, "Didn't your brother teach you that?"),
+                    .exit_chess_game,
+                    .say(.padre, "so the kid was distracted today?"),
+                },
+            },
+        },
+    },
 };
 
 pub fn init(
@@ -561,11 +563,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         center: Vec2,
         value: GameState.ChessBoardState.Piece,
     }) = .init(self.mem.frame.allocator());
-    var board_tiles: kommon.grid2D.Grid2D(struct {
+    var board_tiles: ?kommon.grid2D.Grid2D(struct {
         center: Vec2,
         color: ChessBoardState.Piece.Color,
         highlighted: bool,
-    }, .both(8)) = .initUndefinedV2(.both(8));
+    }, .both(8)) = null;
     platform.gl.clear(COLORS.bg);
     canvas.drawSpriteBatch(.{
         .top_left = .zero,
@@ -588,7 +590,135 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var advance: bool = false;
     var option_index: ?usize = null;
 
-    switch (self.main.scene_state) {
+    const scene_state = self.main.scene_state;
+    assert(scene_state.dialog == null or scene_state.options == null);
+
+    if (scene_state.chess_board) |chess_board| {
+        board_tiles = .initUndefinedV2(.both(8));
+
+        var chess_rect: Rect = .from2(
+            .{ .center = .new(6.3, 5.45) },
+            .{ .size = .new(8, 8.4) },
+        );
+
+        // TODO: mate sound
+
+        const board = chess_board.tiles;
+
+        switch (self.main.last_delta) {
+            .exit_chess_game => {
+                chess_rect = chess_rect.move(.new(0, math.lerp(0, camera.size.y, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
+                if (try self.lazy_state.doOnceUntilRest(.fromString("exit chess game"))) {
+                    platform.sound_queue.insert(.startgame);
+                }
+            },
+            .new_chess_game => {
+                chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
+                if (try self.lazy_state.doOnceUntilRest(.fromString("start chess game"))) {
+                    platform.sound_queue.insert(.startgame);
+                }
+            },
+            .reset_chess_game => {
+                if (try self.lazy_state.doOnceUntilRest(.fromString("reset chess game"))) {
+                    platform.sound_queue.insert(.startgame);
+                }
+            },
+            .chess_move => |m| {
+                if (try self.lazy_state.doOnceUntilRest(.fromFormat("move {any}", .{m}))) {
+                    platform.sound_queue.insert(.putpiece);
+                }
+            },
+            .choice, .next_day, .dialog => {},
+        }
+
+        var it = board.iterator();
+        while (it.next()) |p| {
+            const r = board.getTileRect(chess_rect, p);
+            board_tiles.?.set(p, .{
+                .center = r.get(.center),
+                .color = if (p.isEven()) .white else .black,
+                .highlighted = false,
+            });
+        }
+        it.reset();
+        while (it.next()) |p| {
+            if (board.at2(p)) |piece| {
+                var piece_center: Vec2 = board.getTileRect(chess_rect, p).get(.center);
+                if (std.meta.activeTag(self.main.last_delta) == .chess_move and self.main.last_delta.chess_move.to.equals(p)) {
+                    piece_center = .lerp(
+                        board.getTileRect(chess_rect, self.main.last_delta.chess_move.from).get(.center),
+                        board.getTileRect(chess_rect, self.main.last_delta.chess_move.to).get(.center),
+                        self.main.anim_t,
+                    );
+                }
+                try pieces.append(.{
+                    .center = piece_center,
+                    .value = piece,
+                });
+            }
+        }
+    }
+
+    // face
+    if (scene_state.chess_board != null) {
+        canvas.drawSpriteBatch(camera, &.{.{
+            .point = .{ .pos = camera.worldFromCenterLocal(.new(0.5, 0)), .scale = 5 },
+            .pivot = .center,
+            .texcoord = .unit,
+        }}, self.textures.chaval);
+    } else if (scene_state.dialog) |d| {
+        if (switch (d.character) {
+            .padre => self.textures.padre,
+            .hijo => self.textures.chaval,
+            .teacher => null,
+        }) |t| {
+            canvas.drawSpriteBatch(camera, &.{.{
+                .point = .{ .pos = camera.get(.center), .scale = 5 },
+                .pivot = .center,
+                .texcoord = .unit,
+            }}, t);
+        }
+    }
+
+    if (scene_state.dialog) |d| {
+        assert(scene_state.options == null);
+        try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
+    }
+
+    if (scene_state.options) |options| {
+        assert(options.len == 2);
+        assert(scene_state.dialog == null);
+        for (options, 0.., &[2]f32{ -0.45, 0.45 }) |option, k, x| {
+            const r: Rect = .fromCenterAndSize(
+                camera.worldFromCenterLocal(.new(x, 0.725)),
+                .new(8, 1.5),
+            );
+            const hovered = r.contains(mouse.cur.position);
+            canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.textbox);
+            try fg_text.addText(option.label, .{
+                .hor = .center,
+                .ver = .median,
+                .pos = r.get(.center),
+            }, 0.9, .black);
+            if (hovered) {
+                if (option.move) |move| {
+                    assert(scene_state.chess_board != null);
+                    board_tiles.?.getPtr(move.from).highlighted = true;
+                    board_tiles.?.getPtr(move.to).highlighted = true;
+                }
+                if (try self.lazy_state.doOnceUntilRest(.fromFormat("hovered {d}", .{k}))) {
+                    platform.sound_queue.insert(.select);
+                }
+            }
+            if (hovered and mouse.wasPressed(.left)) {
+                advance = true;
+                option_index = k;
+                platform.sound_queue.insert(.click);
+            }
+        }
+    }
+
+    if (false) switch (self.main.scene_state) {
         .between_days => {
             canvas.fillRect(.unit, .unit, FColor.black.withAlpha(
                 1.0 - @abs(self.main.anim_t - 0.5) * 2,
@@ -717,21 +847,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             }
         },
-    }
-
-    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration());
-    if (self.main.anim_t == 1) switch (self.main.scene_state) {
-        .between_days => advance = true,
-        .dialog => {},
-        .chess => |c| if (c.options == null) {
-            advance = true;
-        },
     };
 
-    if (std.meta.activeTag(self.main.scene_state) == .chess) {
-        var it = board_tiles.iterator();
+    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration());
+    if (mouse.wasPressed(.left) and scene_state.options == null) {
+        advance = true;
+    }
+    if (self.main.anim_t == 1) {
+        if (self.main.scene_state.dialog == null and self.main.scene_state.options == null) {
+            advance = true;
+        }
+    }
+
+    if (board_tiles) |tiles| {
+        var it = tiles.iterator();
         while (it.next()) |p| {
-            const tile = board_tiles.at2(p);
+            const tile = tiles.at2(p);
             if (tile.highlighted) {
                 canvas.drawSpriteBatch(camera, &.{
                     .{
