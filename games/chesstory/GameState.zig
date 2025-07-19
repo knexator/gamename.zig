@@ -352,9 +352,13 @@ pub const stuff = .{
     .loops = .{},
     .preloaded_images = .{
         .consolas_atlas = "assets/fonts/Consolas.png",
-        .chaval = "assets/chesstory/images/chaval.png",
         .padre = "assets/chesstory/images/padre.png",
         .reference = "assets/chesstory/images/ref.png",
+
+        .chaval_neutral_close = "assets/chesstory/images/chaval/neutralclose.png",
+        .chaval_neutral_open = "assets/chesstory/images/chaval/neutralopen.png",
+        .chaval_sad_close = "assets/chesstory/images/chaval/sadclose.png",
+        .chaval_sad_open = "assets/chesstory/images/chaval/sadopen.png",
 
         // TODO: better
         .textbox = "assets/chesstory/images/9slicebasico.png",
@@ -387,8 +391,12 @@ mem: Mem,
 smooth: kommon.LazyState,
 lazy_state: LocalDecisions,
 textures: struct {
-    chaval: Gl.Texture,
     padre: Gl.Texture,
+
+    chaval_neutral_close: Gl.Texture,
+    chaval_neutral_open: Gl.Texture,
+    chaval_sad_close: Gl.Texture,
+    chaval_sad_open: Gl.Texture,
 
     reference: Gl.Texture,
 
@@ -410,6 +418,22 @@ textures: struct {
     pieza_negra_reina: Gl.Texture,
     pieza_negra_rey: Gl.Texture,
     pieza_negra_torre: Gl.Texture,
+
+    next_blink: f32 = 1,
+
+    fn getChaval(t: *@This(), chaval_state: ChavalState, global_seconds: f32) Gl.Texture {
+        const blink_duration = 0.2;
+        const blinking = math.inRange(global_seconds, t.next_blink, t.next_blink + blink_duration);
+        if (global_seconds > t.next_blink + 2 * blink_duration) {
+            t.next_blink = global_seconds + 2;
+        }
+
+        if (chaval_state.frustration > 1.5) {
+            return if (blinking) t.chaval_sad_close else t.chaval_sad_open;
+        } else {
+            return if (blinking) t.chaval_neutral_close else t.chaval_neutral_open;
+        }
+    }
 
     // TODO: better
     fn chessPiece(t: @This(), v: ChessBoardState.Piece) Gl.Texture {
@@ -726,6 +750,7 @@ pub fn init(
     dst.lazy_state = .init(gpa);
 
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
+        if (field.type == f32) continue;
         @field(dst.textures, field.name) = gl.buildTexture2D(
             loaded_images.get(std.enums.nameCast(Images, field.name)),
             false,
@@ -800,7 +825,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var advance: bool = false;
     var option_index: ?usize = null;
 
-    const face_center: Point = .{ .pos = camera.worldFromCenterLocal(.new(0.5, 0)), .scale = 5 };
+    const face_center: Point = .{ .pos = camera.worldFromCenterLocal(.new(0.45, -0.075)), .scale = 9 };
+    // TODO: draw 'delante'
 
     const scene_state = self.main.scene_state;
     assert(scene_state.dialog == null or scene_state.options == null);
@@ -904,11 +930,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .point = face_center,
             .pivot = .center,
             .texcoord = .unit,
-        }}, self.textures.chaval);
+        }}, self.textures.getChaval(self.main.scene_state.chaval_state, platform.global_seconds));
     } else if (scene_state.dialog) |d| {
         if (switch (d.character) {
             .father => self.textures.padre,
-            .kid => self.textures.chaval,
+            .kid => self.textures.getChaval(scene_state.chaval_state, platform.global_seconds),
             .teacher => null,
         }) |t| {
             canvas.drawSpriteBatch(camera, &.{.{
