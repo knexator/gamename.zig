@@ -277,7 +277,16 @@ pub const stuff = .{
         .author = "knexator",
         .desired_aspect_ratio = 16.0 / 9.0,
     },
-    .sounds = .{},
+    .sounds = .{
+        .changeexpression = "assets/chesstory/sound/sfx_changeexpresion.wav",
+        .check = "assets/chesstory/sound/sfx_check.wav",
+        .click = "assets/chesstory/sound/sfx_click.wav",
+        .dialogue = "assets/chesstory/sound/sfx_dialogue.wav",
+        .endgame = "assets/chesstory/sound/sfx_endgame.wav",
+        .putpiece = "assets/chesstory/sound/sfx_putpiece.wav",
+        .select = "assets/chesstory/sound/sfx_select.wav",
+        .startgame = "assets/chesstory/sound/sfx_startgame.wav",
+    },
     .loops = .{},
     .preloaded_images = .{
         .consolas_atlas = "assets/fonts/Consolas.png",
@@ -314,6 +323,7 @@ const COLORS = struct {
 canvas: Canvas,
 mem: Mem,
 smooth: kommon.LazyState,
+lazy_state: LocalDecisions,
 textures: struct {
     chaval: Gl.Texture,
     padre: Gl.Texture,
@@ -446,6 +456,7 @@ pub fn init(
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Consolas.json")}, &.{loaded_images.get(.consolas_atlas)});
     dst.smooth = .init(dst.mem.forever.allocator());
+    dst.lazy_state = .init(gpa);
 
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
         @field(dst.textures, field.name) = gl.buildTexture2D(
@@ -474,6 +485,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
     self.smooth.last_delta_seconds = platform.delta_seconds;
+    self.lazy_state.frameStart();
 
     const camera = (Rect.from(.{
         .{ .top_left = .zero },
@@ -543,10 +555,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .{ .center = .new(6.3, 5.45) },
                 .{ .size = .new(8, 8.4) },
             );
+
+            // TODO: mate sound
+
+            // TODO: refactor to switch
             if (std.meta.activeTag(self.main.last_delta) == .new_chess_game) {
                 chess_rect = chess_rect.move(.new(0, math.lerp(camera.size.y, 0, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
-                // chess_rect = chess_rect.move(.new(0, math.remapClamped(camera.size.y, 0, self.main.anim_t)));
+                if (try self.lazy_state.doOnceUntilRest(.fromString("start chess game"))) {
+                    platform.sound_queue.insert(.startgame);
+                }
+            } else if (std.meta.activeTag(self.main.last_delta) == .reset_chess_game) {
+                if (try self.lazy_state.doOnceUntilRest(.fromString("reset chess game"))) {
+                    platform.sound_queue.insert(.startgame);
+                }
+            } else if (std.meta.activeTag(self.main.last_delta) == .chess_move) {
+                if (try self.lazy_state.doOnceUntilRest(.fromFormat("move {any}", .{self.main.last_delta.chess_move}))) {
+                    platform.sound_queue.insert(.putpiece);
+                }
+            } else if (std.meta.activeTag(self.main.last_delta) == .chess_choice) {
+                // nothing
             }
+
             const board = c.board.tiles;
             var it = board.iterator();
             while (it.next()) |p| {
@@ -592,10 +621,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (hovered) {
                         board_tiles.getPtr(option.move.from).highlighted = true;
                         board_tiles.getPtr(option.move.to).highlighted = true;
+                        if (try self.lazy_state.doOnceUntilRest(.fromFormat("hovered {d}", .{k}))) {
+                            platform.sound_queue.insert(.select);
+                        }
                     }
                     if (hovered and mouse.wasPressed(.left)) {
                         advance = true;
                         option_index = k;
+                        platform.sound_queue.insert(.click);
                     }
                 }
             } else {
@@ -691,3 +724,31 @@ pub const Mem = kommon.Mem;
 pub const Key = kommon.Key;
 pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;
+
+// TODO: rename
+pub const LocalDecisions = struct {
+    keys_seen_last_frame: std.AutoHashMap(Key, void),
+    keys_seen_this_frame: std.AutoHashMap(Key, void),
+
+    // TODO: debug helper
+    // frame_started: if (@import("builtin").mode == .Debug) bool else void,
+
+    pub fn init(gpa: std.mem.Allocator) LocalDecisions {
+        return .{
+            .keys_seen_last_frame = .init(gpa),
+            .keys_seen_this_frame = .init(gpa),
+        };
+    }
+
+    pub fn frameStart(self: *LocalDecisions) void {
+        const old = self.keys_seen_last_frame;
+        self.keys_seen_last_frame = self.keys_seen_this_frame;
+        self.keys_seen_this_frame = old;
+        self.keys_seen_this_frame.clearRetainingCapacity();
+    }
+
+    pub fn doOnceUntilRest(self: *LocalDecisions, key: Key) !bool {
+        try self.keys_seen_this_frame.putNoClobber(key, {});
+        return self.keys_seen_last_frame.get(key) == null;
+    }
+};

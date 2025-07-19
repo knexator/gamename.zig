@@ -824,9 +824,16 @@ pub const ProgramInfo = struct {
 
 const Sound = struct {
     // Taken from apple.wav
+    // const spec: c.SDL_AudioSpec = .{
+    //     .format = c.SDL_AUDIO_U8,
+    //     .channels = 1,
+    //     .freq = 44100,
+    // };
+
+    // Taken from chesstory
     const spec: c.SDL_AudioSpec = .{
-        .format = c.SDL_AUDIO_U8,
-        .channels = 1,
+        .format = c.SDL_AUDIO_S16LE,
+        .channels = 2,
         .freq = 44100,
     };
 
@@ -841,6 +848,9 @@ const Sound = struct {
         try errify(c.SDL_LoadWAV_IO(stream, true, &sound_spec, &data_ptr, &data_len));
         // TODO: what if each sound has a different sound spec?
         // TODO: look into SDL_SetAudioStreamFormat as a possible solution
+        if (!std.meta.eql(sound_spec, spec)) {
+            std.log.debug("{any}", .{sound_spec});
+        }
         assert(std.meta.eql(sound_spec, spec));
         const data = data_ptr.?[0..data_len];
         return .{ .data = data };
