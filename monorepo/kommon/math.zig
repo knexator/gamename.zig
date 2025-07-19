@@ -403,6 +403,12 @@ pub const Vec2 = extern struct {
         try Vec2.expectApproxEqAbs(Vec2.e2, rotate(Vec2.e1, 0.25), 0.001);
     }
 
+    pub fn rotateAround(v: Self, center: Self, turns: f32) Self {
+        const delta = v.sub(center);
+        const rotated_delta = delta.rotate(turns);
+        return center.add(rotated_delta);
+    }
+
     pub fn fromTurns(turns: f32) Self {
         return e1.rotate(turns);
     }

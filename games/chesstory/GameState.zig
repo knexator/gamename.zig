@@ -57,6 +57,7 @@ const SceneState = struct {
     options: ?Options,
 
     main_menu: bool,
+    fadeout: bool,
 
     pub const init: SceneState = .{
         .chaval_state = .init,
@@ -64,6 +65,7 @@ const SceneState = struct {
         .chess_board = null,
         .options = null,
         .main_menu = true,
+        .fadeout = false,
     };
 
     const DialogState = struct {
@@ -81,6 +83,7 @@ const SceneState = struct {
     fn applyDelta(cur: SceneState, delta: SceneDelta) SceneState {
         var res = cur;
         res.main_menu = false;
+        res.fadeout = false;
         switch (delta) {
             .started_game => unreachable,
             .dialog => |d| {
@@ -112,6 +115,7 @@ const SceneState = struct {
                 res.options = null;
                 res.dialog = null;
                 res.chess_board = null;
+                res.fadeout = true;
             },
         }
         return res;
@@ -166,6 +170,7 @@ const SceneDelta = union(enum) {
     pub fn turnDuration(self: SceneDelta) f32 {
         return switch (self) {
             .new_chess_game => 1.0,
+            .next_day => 1.0,
             else => 0.25,
         };
     }
@@ -223,6 +228,7 @@ const ChessBoardState = struct {
     };
 
     tiles: kommon.grid2D.Grid2D(?Piece, .both(8)),
+    player: Piece.Color,
 
     pub const initial_white: ChessBoardState = blk: {
         const raw_pieces: []const struct {
@@ -267,7 +273,7 @@ const ChessBoardState = struct {
             .{ .pos = .new(4, 7), .kind = .king, .color = .white },
         };
 
-        var res: ChessBoardState = .{ .tiles = .initFillV2(.both(8), null) };
+        var res: ChessBoardState = .{ .tiles = .initFillV2(.both(8), null), .player = .white };
         for (raw_pieces) |piece| {
             res.tiles.set(piece.pos, .{
                 .color = piece.color,
@@ -278,15 +284,9 @@ const ChessBoardState = struct {
     };
 
     pub const initial_black: ChessBoardState = blk: {
-        var result: ChessBoardState = .{ .tiles = .initFillV2(.both(8), null) };
-        var it = initial_white.tiles.iterator();
-        while (it.next()) |p| {
-            result.tiles.set(p, initial_white.tiles.at2(.new(
-                7 - p.x,
-                7 - p.y,
-            )));
-        }
-        break :blk result;
+        var res = initial_white;
+        res.player = .black;
+        break :blk res;
     };
 };
 
@@ -406,9 +406,17 @@ textures: struct {
 main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
-    .say(.father, "hola buenas"),
-    .say(.father, "enseñale ajedrez al chaval"),
-    .say(.kid, "hola soy el chaval"),
+    .say(.father, "Well, here we are"),
+    .say(.father, "Brian, this is your new chess teacher"),
+    .say(.kid, "..."),
+    .say(.kid, "Hi"),
+    .say(.teacher, "Hello, Brian. Pleased to meet you."),
+    .say(.teacher, "I've heard good things from your father."),
+    .say(.teacher, "Let's see what you know."),
+    .say(.father, "Not much... He just got started."),
+    .say(.father, "His brother taught him the basics"),
+    .say(.father, "and a couple of tricks."),
+    .say(.father, "Don't be too tough on him."),
     .{ .new_chess_game = .initial_white },
     .move("e2,e4"),
     .move("g8,f6"),
@@ -418,6 +426,26 @@ const day_1: []const SceneDelta = &.{
     // https://www.chess.com/analysis/game/pgn/3LpDa88Dy8/analysis
     .{
         .choice = &.{
+            .{
+                .label = "try to checkmate",
+                .move = .move("d1,f3"),
+                .effect = .{ .skill = 1, .frustration = 3 },
+                .next = &.{
+                    .move("e4,c5"),
+                    .move("f3,f7"),
+                    // TODO: checkmate
+                    .say(.kid, "What??"),
+                    .say(.teacher, "You must be more attentive."),
+                    .say(.teacher, "Let's try again..."),
+                    // TODO: fadeout
+                    .exit_chess_game,
+                    .say(.teacher, "That's all for today."),
+                    .say(.teacher, "Keep studying."),
+                    .say(.father, "Did you have fun?"),
+                    .say(.kid, "I learned a lot, I guess..."),
+                    .nextDay(day_2),
+                },
+            },
             .{
                 .label = "take it easy",
                 .move = .move("d2,d3"),
@@ -438,8 +466,13 @@ const day_1: []const SceneDelta = &.{
                         .effect = .{ .skill = 1, .frustration = -1 },
                         .next = &.{
                             .move("g7,b2"),
+                            .say(.teacher, "Very good."),
+                            .say(.teacher, "Few novices would have seen the opportunity."),
+                            .say(.kid, "Thanks!"),
                             .exit_chess_game,
-                            .say(.kid, "toma jeroma pastillas de goma"),
+                            .say(.teacher, "That's all for today"),
+                            .say(.father, "Did you have fun?"),
+                            .say(.kid, "yep!"),
                             .nextDay(day_2),
                         },
                     }, .{
@@ -447,25 +480,14 @@ const day_1: []const SceneDelta = &.{
                         .move = .move("b1,c3"),
                         .effect = .{ .skill = 1, .frustration = 0 },
                         .next = &.{
+                            .say(.teacher, "etc etc"),
                             .exit_chess_game,
-                            .say(.kid, "gg wp"),
+                            .say(.teacher, "That's all for today"),
+                            .say(.father, "Did you have fun?"),
+                            .say(.kid, "yes"),
                             .nextDay(day_2),
                         },
                     } } },
-                },
-            },
-            .{
-                .label = "try to get mate",
-                .move = .move("d1,f3"),
-                .effect = .{ .skill = 1, .frustration = 3 },
-                .next = &.{
-                    .move("e4,c5"),
-                    .move("f3,f7"),
-                    // TODO: checkmate
-                    .exit_chess_game,
-                    .say(.kid, "uff este juego es too hard"),
-                    .say(.father, "pues nada, adios"),
-                    .nextDay(day_2),
                 },
             },
         },
@@ -473,7 +495,7 @@ const day_1: []const SceneDelta = &.{
 };
 
 const day_2: []const SceneDelta = &.{
-    .say(.father, "hola de nuevo"),
+    .say(.father, "Hi again, etc"),
     .{ .new_chess_game = .initial_black },
     // https://www.chess.com/analysis/game/pgn/3AH82B1dJe/analysis
     .move("g1,f3"),
@@ -493,7 +515,7 @@ const day_2: []const SceneDelta = &.{
             .{
                 .label = "Only if they get to the end",
                 .move = null,
-                .effect = .{ .skill = 0, .frustration = 0 },
+                .effect = .{ .skill = 0, .frustration = -1 },
                 .next = &.{
                     .exit_chess_game,
                     .say(.father, "so the kid was distracted today?"),
@@ -502,7 +524,7 @@ const day_2: []const SceneDelta = &.{
             .{
                 .label = "You know they don't",
                 .move = null,
-                .effect = .{ .skill = 0, .frustration = 0 },
+                .effect = .{ .skill = 0, .frustration = 3 },
                 .next = &.{
                     .say(.teacher, "Didn't your brother teach you that?"),
                     .exit_chess_game,
@@ -596,6 +618,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var advance: bool = false;
     var option_index: ?usize = null;
 
+    const face_center: Point = .{ .pos = camera.worldFromCenterLocal(.new(0.5, 0)), .scale = 5 };
+
     const scene_state = self.main.scene_state;
     assert(scene_state.dialog == null or scene_state.options == null);
 
@@ -658,6 +682,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         self.main.anim_t,
                     );
                 }
+                if (chess_board.player == .black) {
+                    piece_center = piece_center.rotateAround(chess_rect.getCenter(), 0.5);
+                }
                 try pieces.append(.{
                     .center = piece_center,
                     .value = piece,
@@ -667,9 +694,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     // face
-    if (scene_state.chess_board != null) {
+    if (scene_state.chess_board != null or self.main.prev_scene_state.chess_board != null) {
         canvas.drawSpriteBatch(camera, &.{.{
-            .point = .{ .pos = camera.worldFromCenterLocal(.new(0.5, 0)), .scale = 5 },
+            .point = face_center,
             .pivot = .center,
             .texcoord = .unit,
         }}, self.textures.chaval);
@@ -680,7 +707,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .teacher => null,
         }) |t| {
             canvas.drawSpriteBatch(camera, &.{.{
-                .point = .{ .pos = camera.get(.center), .scale = 5 },
+                .point = face_center,
                 .pivot = .center,
                 .texcoord = .unit,
             }}, t);
@@ -705,7 +732,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             const r = base_r.move(.new(0, try self.smooth.float(
                 .fromFormat("option {d}", .{k}),
-                if (clicked) 0.5 else if (hovered) -0.2 else 0,
+                if (clicked) 0.5 else if (hovered) -0.1 else 0,
             )));
 
             canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.textbox);
@@ -795,6 +822,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     fg_text.draw(camera);
+
+    if (scene_state.fadeout) {
+        canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.smoothstepEased(@abs(self.main.anim_t - 0.5), 0.5, 0.4, .linear)));
+    }
 
     if (advance) {
         if (self.main.next_changes.len > 0 or option_index != null) {
