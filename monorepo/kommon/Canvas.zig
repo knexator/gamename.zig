@@ -11,6 +11,7 @@ fill_instanced_circles_renderable: Gl.InstancedRenderable,
 instanced_rounded_lines_renderable: Gl.InstancedRenderable,
 instanced_colored_separated_rounded_lines_renderable: Gl.InstancedRenderable,
 fill_shape_renderable: Gl.Renderable,
+fill_shape_vertex_colors_renderable: Gl.Renderable,
 // TODO: instancing
 sprite_renderable: Gl.Renderable,
 text_renderers: []TextRenderer,
@@ -143,6 +144,40 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
+        .fill_shape_vertex_colors_renderable = try gl.buildRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\uniform vec4 u_point; // as pos, turns, scale
+            \\
+            \\in vec2 a_position;
+            \\in vec4 a_color;
+            \\out vec4 v_color;
+            \\#define TAU 6.283185307179586
+            \\void main() {
+            \\  float c = cos(u_point.z * TAU);
+            \\  float s = sin(u_point.z * TAU);
+            \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+            \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\  v_color = a_color;
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec4 v_color;
+            \\void main() {
+            \\  out_color = v_color;
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_position", .kind = .Vec2 },
+                .{ .name = "a_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+                .{ .name = "u_point", .kind = .Point },
             },
         ),
         .fill_shape_renderable = try gl.buildRenderable(
@@ -346,6 +381,39 @@ pub fn drawDirty(
         asdf.triangles,
         asdf.uniforms,
         asdf.texture,
+    );
+}
+
+pub fn fillShapeWithVertexColors(
+    self: *Canvas,
+    camera: Rect,
+    parent: Point,
+    shape: PrecomputedShape,
+    colors: []const FColor,
+) void {
+    assert(colors.len == shape.local_points.len);
+    const VertexData = extern struct {
+        a_position: Vec2,
+        a_color: FColor,
+    };
+    const actual_points: []VertexData = self.frame_arena.allocator().alloc(
+        VertexData,
+        shape.local_points.len,
+    ) catch @panic("OoM");
+    for (actual_points, shape.local_points, colors) |*dst, p, c| {
+        dst.a_color = c;
+        dst.a_position = p;
+    }
+    self.gl.useRenderable(
+        self.fill_shape_vertex_colors_renderable,
+        actual_points.ptr,
+        actual_points.len * @sizeOf(VertexData),
+        shape.triangles,
+        &.{
+            .{ .name = "u_point", .value = .{ .Point = parent } },
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        null,
     );
 }
 
@@ -1062,6 +1130,29 @@ pub fn instancedSegments(
             .{ .name = "u_width", .value = .{ .f32 = world_width } },
         },
         null,
+    );
+}
+
+pub fn rectGradient(
+    self: *Canvas,
+    camera: Rect,
+    rect: Rect,
+    bottom: FColor,
+    top: FColor,
+) void {
+    self.fillShapeWithVertexColors(
+        camera,
+        .{ .pos = rect.top_left },
+        .{
+            .local_points = &.{
+                .new(0, 0),
+                .new(rect.size.x, 0),
+                .new(0, rect.size.y),
+                .new(rect.size.x, rect.size.y),
+            },
+            .triangles = self.DEFAULT_SHAPES.square.triangles,
+        },
+        &.{ top, top, bottom, bottom },
     );
 }
 

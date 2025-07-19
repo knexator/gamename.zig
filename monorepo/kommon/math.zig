@@ -988,11 +988,9 @@ pub const Rect = extern struct {
     }
 
     pub fn with2(original: Rect, change_kind: MeasureKind, change_value: Vec2, keep: MeasureKind) Rect {
-        _ = original;
-        _ = change_kind;
-        _ = change_value;
-        _ = keep;
-        @panic("TODO");
+        if (change_kind == .size) {
+            return .fromPivotAndSize(original.get(keep), keep.asPivot(), change_value);
+        } else @panic("TODO");
     }
 
     pub fn with(original: Rect, change: Measure, keep: MeasureKind) Rect {

@@ -535,6 +535,17 @@ const day_2: []const SceneDelta = &.{
     },
 };
 
+const day_3: []const SceneDelta = &.{
+    .say(.father, "Hi again, etc"),
+    .{ .new_chess_game = .initial_white },
+    // https://www.chess.com/analysis/game/pgn/4CLXDD4i3Y/analysis
+    .move("g1,f3"),
+    .say(.teacher, "That opening, again"),
+    .say(.teacher, "Not common for a novice"),
+    .say(.teacher, "Why do you keep playing it?"),
+    .say(.kid, "My brother taught it"),
+};
+
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -576,17 +587,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.smooth.last_delta_seconds = platform.delta_seconds;
     self.lazy_state.frameStart();
 
+    // TODO
     const camera = (Rect.from(.{
         .{ .top_left = .zero },
-        .{ .size = .both(12.5) },
+        .{ .size = Vec2.new(16.0 / 9.0, 1).scale(12.5) },
     })).withAspectRatio(
         platform.aspect_ratio,
         .grow,
-        .top_left,
+        .top_center,
     );
     const mouse = platform.getMouse(camera);
     const canvas = &self.canvas;
     var fg_text = canvas.textBatch(0);
+    const text_color: FColor = .white;
+    const text_size: f32 = 0.7;
+    const option_text_color: FColor = .black;
     var pieces: std.ArrayList(struct {
         center: Vec2,
         value: GameState.ChessBoardState.Piece,
@@ -714,9 +729,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    if (scene_state.dialog != null or scene_state.options != null) {
+        canvas.rectGradient(.unit, Rect.unit.with2(.size, .new(1, 0.2), .bottom_center), .black, FColor.black.withAlpha(0));
+    }
+
     if (scene_state.dialog) |d| {
         assert(scene_state.options == null);
-        try fg_text.addText(d.text, .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) }, 1, .black);
+        try fg_text.addText(
+            d.text,
+            .{ .hor = .center, .ver = .baseline, .pos = camera.get(.bottom_center).addY(-1) },
+            text_size,
+            text_color,
+        );
     }
 
     if (scene_state.options) |options| {
@@ -728,19 +752,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .new(8, 1.5),
             );
             const hovered = base_r.contains(mouse.cur.position);
-            const clicked = hovered and mouse.wasPressed(.left);
+            const pressed = hovered and mouse.cur.isDown(.left);
+            const clicked = hovered and mouse.wasReleased(.left);
 
             const r = base_r.move(.new(0, try self.smooth.float(
                 .fromFormat("option {d}", .{k}),
-                if (clicked) 0.5 else if (hovered) -0.1 else 0,
+                if (pressed) 0.1 else if (hovered) -0.1 else 0,
             )));
 
-            canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.textbox);
-            try fg_text.addText(option.label, .{
-                .hor = .center,
-                .ver = .median,
-                .pos = r.get(.center),
-            }, 0.9, .black);
+            canvas.drawTexturedRectBatch(camera, &Canvas.sliced3x3(r, 0.4), self.textures.casilla_blanca);
+            try fg_text.addText(
+                option.label,
+                .centeredAt(r.getCenter()),
+                text_size,
+                option_text_color,
+            );
             if (hovered) {
                 if (option.move) |move| {
                     assert(scene_state.chess_board != null);
