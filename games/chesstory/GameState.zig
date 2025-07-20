@@ -24,7 +24,12 @@ const Main = struct {
             if (option.move) |move| {
                 self.last_delta = .{ .chess_move = move };
             } else {
-                self.last_delta = .{ .dialog = .{ .character = .teacher, .text = option.label } };
+                // HACK
+                if (std.mem.startsWith(u8, option.label, "rest")) {
+                    self.last_delta = .{ .dialog = .{ .character = .teacher, .text = "..." } };
+                } else {
+                    self.last_delta = .{ .dialog = .{ .character = .teacher, .text = option.label } };
+                }
             }
             var new_scene_state = self.scene_state;
             new_scene_state.chaval_state = new_scene_state.chaval_state.applyDelta(option.effect);
@@ -43,6 +48,11 @@ const Main = struct {
                     self.scene_state = .applyDelta(self.scene_state, next_deltas[0]);
                     self.last_delta = next_deltas[0];
                     self.next_changes = next_deltas[1..];
+                },
+                .change_kid_state => |d| {
+                    self.scene_state.chaval_state = self.scene_state.chaval_state.applyDelta(d);
+                    self.next_changes = self.next_changes[1..];
+                    return self.advance(option_index);
                 },
                 else => {
                     self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
@@ -111,6 +121,7 @@ const SceneState = struct {
         res.main_menu = false;
         res.fadeout = false;
         switch (delta) {
+            .change_kid_state => unreachable,
             .branch_dynamic => unreachable,
             .started_game => unreachable,
             .dialog => |d| {
@@ -159,7 +170,7 @@ const SceneState = struct {
                 res.options = options;
                 res.dialog = null;
             },
-            .next_day => {
+            .next_day, .end => {
                 res.options = null;
                 res.dialog = null;
                 res.chess_board = null;
@@ -186,6 +197,8 @@ const SceneDelta = union(enum) {
     choice: SceneState.Options,
     next_day: []const SceneDelta,
     fadeout_and_exit_chess_game,
+    change_kid_state: ChavalState.Delta,
+    end,
 
     dialog_dynamic: struct {
         character: Character,
@@ -273,7 +286,7 @@ const SceneDelta = union(enum) {
         return .{ .dialog_dynamic = .{ .character = character, .callback = callback } };
     }
 
-    pub fn branchDynamic(callback: fn (chaval: ChavalState) []const SceneDelta) SceneDelta {
+    pub fn branchDynamic(callback: *const fn (chaval: ChavalState) []const SceneDelta) SceneDelta {
         return .{ .branch_dynamic = callback };
     }
 
@@ -484,7 +497,7 @@ textures: struct {
             t.next_blink = global_seconds + 2;
         }
 
-        if (chaval_state.frustration > 1.5) {
+        if (chaval_state.frustration > 2.5) {
             return if (blinking) t.chaval_sad_close else t.chaval_sad_open;
         } else {
             return if (blinking) t.chaval_neutral_close else t.chaval_neutral_open;
@@ -525,10 +538,10 @@ main: Main = .init(day_1),
 
 const day_1: []const SceneDelta = &.{
     .say(.father, "Well, here we are"),
-    .say(.father, "Brian, this is your new chess teacher"),
+    .say(.father, "Charlie, this is your new chess teacher"),
     .say(.kid, "..."),
     .say(.kid, "Hi"),
-    .say(.teacher, "Hello, Brian. Pleased to meet you."),
+    .say(.teacher, "Hello, Charlie. Pleased to meet you."),
     .say(.teacher, "I've heard good things from your father."),
     .say(.teacher, "Let's see what you know."),
     .say(.father, "Not much... He just got started."),
@@ -548,10 +561,11 @@ const day_1: []const SceneDelta = &.{
             .{
                 .label = "try to checkmate",
                 .move = .move("d1,f3"),
-                .effect = .{ .skill = 1, .frustration = 3 },
+                .effect = .{ .skill = 0, .frustration = 0 },
                 .next = &.{
                     .move("e4,c5"),
                     .move("f3,f7"),
+                    .{ .change_kid_state = .{ .skill = 2, .frustration = 3 } },
                     // TODO: 'check' sound
                     .say(.kid, "What??"),
                     .say(.teacher, "You must be more attentive."),
@@ -559,8 +573,9 @@ const day_1: []const SceneDelta = &.{
                     .fadeout_and_exit_chess_game,
                     .say(.teacher, "That's all for today."),
                     .say(.teacher, "Keep studying."),
+                    .say(.father, "I'm back! How was the lesson?"),
                     .say(.father, "Did you have fun?"),
-                    .say(.kid, "I learned a lot, I guess..."),
+                    .say(.kid, "I learned something, I guess..."),
                     .nextDay(day_2),
                 },
             },
@@ -589,8 +604,9 @@ const day_1: []const SceneDelta = &.{
                             .say(.kid, "Thanks!"),
                             .exit_chess_game,
                             .say(.teacher, "That's all for today"),
+                            .say(.father, "I'm back! How was the lesson?"),
                             .say(.father, "Did you have fun?"),
-                            .say(.kid, "yep!"),
+                            .say(.kid, "Yep! See you next time."),
                             .nextDay(day_2),
                         },
                     }, .{
@@ -598,11 +614,11 @@ const day_1: []const SceneDelta = &.{
                         .move = .move("b1,c3"),
                         .effect = .{ .skill = 1, .frustration = 0 },
                         .next = &.{
-                            .say(.teacher, "etc etc"),
-                            .exit_chess_game,
+                            .fadeout_and_exit_chess_game,
                             .say(.teacher, "That's all for today"),
+                            .say(.father, "I'm back! How was the lesson?"),
                             .say(.father, "Did you have fun?"),
-                            .say(.kid, "yes"),
+                            .say(.kid, "Yes. Bye!"),
                             .nextDay(day_2),
                         },
                     } } },
@@ -613,6 +629,7 @@ const day_1: []const SceneDelta = &.{
 };
 
 const day_2: []const SceneDelta = &.{
+    .{ .change_kid_state = .{ .skill = 0, .frustration = -1 } },
     .say(.teacher, "...so remember, the rooks are important."),
     .say(.kid, "Makes sense. Let's try again!"),
     .{ .new_chess_game = .initial_black },
@@ -627,8 +644,10 @@ const day_2: []const SceneDelta = &.{
     .move("g8,f6"),
     .moves(.{ "e1,g1", "h1,f1" }),
     .move("e7,e5"),
+    .say(.teacher, "Notice how I now control the center."),
     .say(.teacher, "Pawns are essential for a strong frontline."),
-    .say(.kid, "Must be hard to be a pawn"),
+    .say(.kid, "..."),
+    .say(.kid, "It must be hard to be a pawn"),
     .say(.kid, "They can't come back, right?"),
     .{ .choice = &.{
         .{
@@ -637,18 +656,30 @@ const day_2: []const SceneDelta = &.{
             .effect = .{ .skill = 0, .frustration = 3 },
             .next = &.{
                 .say(.teacher, "Didn't your brother teach you that?"),
-                .exit_chess_game,
-                .say(.father, "so the kid was distracted today?"),
+                .fadeout_and_exit_chess_game,
+                .say(.father, "How's he learning?"),
+                .say(.teacher, "Quite well, but he seemed distracted today."),
+                .say(.teacher, "Didn't quite focus on the chess game."),
+                .say(.father, "Well... I was hoping for chess to distract him."),
+                .say(.father, "Seems like it's the other way around."),
+                .say(.father, "Can't fool this kid. See you next day!"),
                 .nextDay(day_3),
             },
         },
         .{
-            .label = "Well, by getting to the end",
+            .label = "Well, in a way...",
             .move = null,
             .effect = .{ .skill = 0, .frustration = -1 },
             .next = &.{
-                .exit_chess_game,
-                .say(.father, "so the kid was distracted today?"),
+                .say(.teacher, "...by getting to the end of the board."),
+                .say(.teacher, "Even the humblest pawn can return as a queen."),
+                .fadeout_and_exit_chess_game,
+                .say(.father, "How's he learning?"),
+                .say(.teacher, "Quite well, but he seemed distracted today."),
+                .say(.teacher, "Didn't quite focus on the chess game."),
+                .say(.father, "Well... I was hoping for chess to distract him."),
+                .say(.father, "Seems like it's the other way around."),
+                .say(.father, "Can't fool this kid. See you next day!"),
                 .nextDay(day_3),
             },
         },
@@ -656,9 +687,10 @@ const day_2: []const SceneDelta = &.{
 };
 
 const day_3: []const SceneDelta = &.{
-    .say(.teacher, "Kid is late today."),
-    .say(.teacher, "asdfasdfasdf"),
-    .say(.kid, "hello"),
+    .say(.teacher, "The Spring Regional tournament, huh?"),
+    .say(.teacher, "Yes, let's sign you up for that"),
+    .say(.kid, "My father says that I can win it"),
+    .say(.kid, "if I apply myself."),
     .{ .new_chess_game = .initial_white },
     // https://www.chess.com/analysis/game/pgn/4CLXDD4i3Y/analysis
     .move("d2,d4"),
@@ -670,7 +702,7 @@ const day_3: []const SceneDelta = &.{
     .say(.teacher, "That opening, again"),
     .say(.teacher, "Not common for a novice"),
     .say(.teacher, "Why do you keep playing it?"),
-    .say(.kid, "My brother taught it"),
+    .say(.kid, "I learned it from my brother"),
     .move("g1,f3"),
     .moves(.{ "h8,f8", "e8,g8" }),
     .move("c2,c3"),
@@ -716,11 +748,12 @@ const day_3: []const SceneDelta = &.{
                     .move("g5,f6"),
                     .move("b2,d1"),
                     .move("h4,h6"),
-                    .say(.teacher, "Mate in 2"),
+                    .say(.teacher, "I've got mate in 2"),
                     .say(.teacher, "When your opponent does something weird,"),
                     .say(.teacher, "you should pay attention."),
                     .exit_chess_game,
-                    .say(.father, "next day is the tournament"),
+                    .say(.father, "Is he ready for the tournament?"),
+                    .say(.teacher, "As ready as he will be."),
                     .nextDay(day_4),
                 },
             },
@@ -729,7 +762,6 @@ const day_3: []const SceneDelta = &.{
                 .move = .move("g5,e3"),
                 .effect = .{ .skill = 2, .frustration = 2 },
                 .next = &.{
-                    .say(.kid, "x"),
                     .move("d7,f6"),
                     .move("e4,h4"),
                     .move("f6,d5"),
@@ -759,29 +791,55 @@ const day_3: []const SceneDelta = &.{
                     .move("g8,g7"),
                     .move("e8,e5"),
                     .move("g7,g8"),
-                    .say(.teacher, "this will end in a draw"),
-                    .move("e5,b8"),
-                    .move("g8,g7"),
-                    .move("b8,a7"),
-                    .move("a1,b2"),
-                    .move("f2,f3"),
-                    .move("h7,h5"),
-                    .move("a7,b8"),
-                    .move("b2,c3"),
-                    .move("b8,b6"),
-                    .move("c3,e5"),
-                    .move("h2,h3"),
-                    .move("e5,f5"),
-                    .move("h3,h2"),
-                    .move("f5,e5"),
-                    .move("h2,h3"),
-                    .move("e5,f5"),
-                    .move("h3,h2"),
-                    .move("f5,e5"),
-                    .say(.teacher, "I guess it's a draw, due to repetition."),
-                    .exit_chess_game,
-                    .say(.father, "next day is the tournament"),
-                    .nextDay(day_4),
+                    .say(.teacher, "If you play well, we might end in a draw."),
+                    .{
+                        .choice = &.{
+                            .{
+                                .label = "keep playing",
+                                .move = .move("e5,b8"),
+                                .effect = .{ .skill = 2, .frustration = 1 },
+                                .next = &.{
+                                    .move("g8,g7"),
+                                    .move("b8,a7"),
+                                    .move("a1,b2"),
+                                    .move("f2,f3"),
+                                    .move("h7,h5"),
+                                    .move("a7,b8"),
+                                    .move("b2,c3"),
+                                    .move("b8,b6"),
+                                    .move("c3,e5"),
+                                    .move("h2,h3"),
+                                    .move("e5,f5"),
+                                    .move("h3,h2"),
+                                    .move("f5,e5"),
+                                    .move("h2,h3"),
+                                    .move("e5,f5"),
+                                    .move("h3,h2"),
+                                    .move("f5,e5"),
+                                    .say(.teacher, "It's a draw, due to the repetition rule."),
+                                    .say(.teacher, "Not a very exciting ending,"),
+                                    .say(.teacher, "but one must also practice the boring parts"),
+                                    .exit_chess_game,
+                                    .say(.father, "Is he ready for the tournament?"),
+                                    .say(.teacher, "As ready as he will be."),
+                                    .nextDay(day_4),
+                                },
+                            },
+                            .{
+                                .label = "rest for the day",
+                                .move = null,
+                                .effect = .{ .skill = 0, .frustration = -2 },
+                                .next = &.{
+                                    .say(.teacher, "But we can skip it."),
+                                    .say(.teacher, "Go, rest for today."),
+                                    .exit_chess_game,
+                                    .say(.father, "Is he ready for the tournament?"),
+                                    .say(.teacher, "As ready as he will be."),
+                                    .nextDay(day_4),
+                                },
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -790,34 +848,134 @@ const day_3: []const SceneDelta = &.{
 
 const day_4: []const SceneDelta = &.{
     .say(.teacher, "So, how did the tournament go?"),
-    .branchDynamic(struct {
-        pub fn anon(chaval: ChavalState) []const SceneDelta {
-            if (chaval.skill < 0) {
-                return &.{
-                    .say(.kid, "i got last."),
-                };
-            } else if (chaval.skill > 2) {
-                return &.{
-                    .say(.kid, "i won!"),
-                };
-            } else {
-                return &.{
-                    .say(.kid, "not bad i guess"),
-                };
-            }
-        }
-    }.anon),
-    // .sayDynamic(.kid, struct {
-    //     pub fn anon(chaval: ChavalState) []const u8 {
-    //         if (chaval.skill < 0) {
-    //             return "i got last.";
-    //         } else if (chaval.skill > 2) {
-    //             return "i won!";
-    //         } else {
-    //             return "not bad i guess";
-    //         }
-    //     }
-    // }.anon),
+    .branchDynamic(finalDecision),
+};
+
+pub fn finalDecision(chaval: ChavalState) []const SceneDelta {
+    std.log.debug("chaval: {any}", .{chaval});
+    const result: enum { won, middle, lost } = if (chaval.skill <= 2)
+        .lost
+    else if (chaval.skill < 5)
+        .middle
+    else
+        .won;
+    const attitude: enum { happy, mid, angry } = if (chaval.frustration < 2)
+        .happy
+    else if (chaval.frustration < 5)
+        .mid
+    else
+        .angry;
+    std.log.debug("{any}, {any}", .{ result, attitude });
+    return switch (result) {
+        .lost => switch (attitude) {
+            .happy => lost_happy,
+            .mid => lost_mid,
+            .angry => lost_angry,
+        },
+        .middle => switch (attitude) {
+            .happy => middle_happy,
+            .mid => middle_mid,
+            .angry => middle_angry,
+        },
+        .won => switch (attitude) {
+            .happy => won_happy,
+            .mid => won_mid,
+            .angry => won_angry,
+        },
+    };
+}
+
+const lost_happy: []const SceneDelta = &.{
+    .say(.father, "..."),
+    .say(.father, "He lost in the first round."),
+    .{ .change_kid_state = .{ .skill = 0, .frustration = 100 } },
+    .say(.kid, "To something called \"scholar's mate\"?"),
+    .say(.kid, "The other kid was very mean."),
+    .say(.kid, "..."),
+    .say(.kid, "Well, I did have fun playing with you."),
+    .say(.kid, "I will miss you"),
+    .say(.kid, "once I go back to playing with my brother."),
+    .end,
+};
+const lost_mid: []const SceneDelta = &.{
+    .say(.father, "..."),
+    .say(.father, "He lost in the first round."),
+    .{ .change_kid_state = .{ .skill = 0, .frustration = 100 } },
+    .say(.kid, "To something called \"scholar's mate\"?"),
+    .say(.kid, "The other kid was very mean."),
+    .say(.kid, "..."),
+    .say(.kid, "Well, I will keep practicing."),
+    .say(.kid, "To pass the time until my brother is back."),
+    .end,
+};
+const lost_angry: []const SceneDelta = &.{
+    .say(.father, "..."),
+    .say(.father, "He lost in the first round."),
+    .{ .change_kid_state = .{ .skill = 0, .frustration = 100 } },
+    .say(.kid, "To something called \"scholar's mate\"?"),
+    .say(.kid, "The other kid was very mean."),
+    .say(.kid, "..."),
+    .say(.kid, "This game sucks."),
+    .end,
+};
+const middle_happy: []const SceneDelta = &.{
+    .say(.father, "Not bad at all!"),
+    .say(.father, "He got all the way to the semifinals."),
+    .say(.father, "You must have taught him well."),
+    .say(.kid, "It has been fun playing with you."),
+    .say(.kid, "I will miss you"),
+    .say(.kid, "once I go back to playing with my brother."),
+    .end,
+};
+const middle_mid: []const SceneDelta = &.{
+    .say(.father, "Not bad at all!"),
+    .say(.father, "He got all the way to the semifinals."),
+    .say(.father, "You must have taught him well."),
+    .say(.kid, "..."),
+    .say(.kid, "Let's keep playing."),
+    .end,
+};
+const middle_angry: []const SceneDelta = &.{
+    .say(.father, "Not bad at all!"),
+    .say(.father, "He got all the way to the semifinals."),
+    .say(.father, "You must have taught him well."),
+    .say(.kid, "..."),
+    .say(.kid, "I don't think I want to keep playing."),
+    .end,
+};
+const won_happy: []const SceneDelta = &.{
+    .say(.father, "He actually won!"),
+    .say(.father, "I knew he had it in him."),
+    .say(.father, "Well, and of course,"),
+    .say(.father, "thanks to you too."),
+    .say(.kid, "Yeah, thanks!"),
+    .say(.kid, "This was a lot of fun."),
+    .say(.kid, "I couldn't ask for a better ending."),
+    .say(.kid, "Wait until my brother hears about it!"),
+    .end,
+};
+
+const won_mid: []const SceneDelta = &.{
+    .say(.father, "He actually won!"),
+    .say(.father, "I knew he had it in him."),
+    .say(.father, "Well, and of course,"),
+    .say(.father, "thanks to you too."),
+    .say(.kid, "..."),
+    .say(.teacher, "The hard work paid off!"),
+    .say(.kid, "I guess it is nice to win."),
+    .end,
+};
+
+const won_angry: []const SceneDelta = &.{
+    .say(.father, "He actually won!"),
+    .say(.father, "I knew he had it in him."),
+    .say(.father, "Well, and of course,"),
+    .say(.father, "thanks to you too."),
+    .say(.kid, "..."),
+    .say(.kid, "I hate chess."),
+    .say(.kid, "I'm done with it."),
+    .say(.kid, "I'll go play something else."),
+    .end,
 };
 
 pub fn init(
@@ -919,6 +1077,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const board = chess_board.tiles;
 
         switch (self.main.last_delta) {
+            .end => unreachable,
+            .change_kid_state => unreachable,
             .started_game => unreachable,
             .exit_chess_game => {
                 chess_rect = chess_rect.move(.new(0, math.lerp(0, camera.size.y, math.smoothstepEased(self.main.anim_t, 0, 0.7, .linear))));
@@ -968,6 +1128,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (self.main.last_delta.chess_move.to.equals(p)) {
                         if (self.main.prev_scene_state.chess_board.?.tiles.at2(p)) |eaten_piece| {
                             if (self.main.anim_t < 0.5) {
+                                if (chess_board.player == .black) {
+                                    piece_center = piece_center.rotateAround(chess_rect.getCenter(), 0.5);
+                                }
                                 try pieces.append(.{
                                     .center = piece_center,
                                     .value = eaten_piece,
@@ -1143,12 +1306,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .tint = FColor.white.withAlpha(if (scene_state.main_menu) 1.0 else 1.0 - self.main.anim_t),
             },
         }, self.textures.logo);
-        // try fg_text.addText(
-        //     "GAME TITLE",
-        //     .centeredAt(camera.getCenter()),
-        //     2,
-        //     FColor.black.withAlpha(if (scene_state.main_menu) 1.0 else 1.0 - self.main.anim_t),
-        // );
     }
 
     math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration(self.main.prev_scene_state));
@@ -1201,7 +1358,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     fg_text.draw(camera);
 
-    if (scene_state.fadeout) {
+    if (self.main.last_delta == .end) {
+        canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.smoothstepEased(self.main.anim_t, 0.0, 1.0, .linear)));
+        try fg_text.addText(
+            "The end.",
+            .centeredAt(camera.getCenter()),
+            2.5,
+            FColor.white.withAlpha(math.smoothstepEased(self.main.anim_t, 0.0, 1.0, .linear)),
+        );
+        fg_text.draw(camera);
+        advance = false;
+    } else if (scene_state.fadeout) {
         canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.smoothstepEased(@abs(self.main.anim_t - 0.5), 0.5, 0.4, .linear)));
     }
 
