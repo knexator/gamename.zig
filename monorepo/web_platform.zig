@@ -25,6 +25,7 @@ const js = struct {
         extern fn enable(capability: Capability) void;
         extern fn disable(capability: Capability) void;
         extern fn blendFunc(sfactor: BlendFactor, dfactor: BlendFactor) void;
+        extern fn blendFuncSeparate(srcRGB: BlendFactor, dstRGB: BlendFactor, srcAlpha: BlendFactor, dstAlpha: BlendFactor) void;
         extern fn createShader(@"type": ShaderType) Shader;
         extern fn shaderSource(shader: Shader, source_ptr: [*]const u8, source_len: usize) void;
         extern fn compileShader(shader: Shader) void;

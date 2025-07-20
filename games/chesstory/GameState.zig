@@ -58,11 +58,20 @@ const Character = enum {
     father,
     kid,
     teacher,
+
     pub fn name(c: Character) []const u8 {
         return switch (c) {
             .father => "Jack",
             .kid => "Charlie",
             .teacher => "Frank",
+        };
+    }
+
+    pub fn texture(c: Character, chaval_state: ChavalState, textures: *@FieldType(GameState, "textures"), global_seconds: f32) ?Gl.Texture {
+        return switch (c) {
+            .father => textures.padre,
+            .kid => textures.getChaval(chaval_state, global_seconds),
+            .teacher => null,
         };
     }
 };
@@ -120,6 +129,12 @@ const SceneState = struct {
                 res.options = null;
                 res.dialog = null;
             },
+            .fadeout_and_exit_chess_game => {
+                res.chess_board = null;
+                res.options = null;
+                res.dialog = null;
+                res.fadeout = true;
+            },
             .new_chess_game, .reset_chess_game => |x| {
                 res.chess_board = x;
                 res.options = null;
@@ -153,6 +168,12 @@ const SceneState = struct {
         }
         return res;
     }
+
+    fn visibleCharacter(self: SceneState) Character {
+        if (self.chess_board != null) return .kid;
+        if (self.dialog) |d| return d.character;
+        return .teacher;
+    }
 };
 
 const SceneDelta = union(enum) {
@@ -164,6 +185,7 @@ const SceneDelta = union(enum) {
     chess_move: ChessMove,
     choice: SceneState.Options,
     next_day: []const SceneDelta,
+    fadeout_and_exit_chess_game,
 
     dialog_dynamic: struct {
         character: Character,
@@ -228,8 +250,9 @@ const SceneDelta = union(enum) {
     pub fn turnDuration(self: SceneDelta, prev: SceneState) f32 {
         if (prev.main_menu) return 1.0;
         return switch (self) {
+            .fadeout_and_exit_chess_game => 1.5,
             .new_chess_game => 1.0,
-            .next_day => 1.0,
+            .next_day => 1.5,
             else => 0.25,
         };
     }
@@ -532,8 +555,7 @@ const day_1: []const SceneDelta = &.{
                     .say(.kid, "What??"),
                     .say(.teacher, "You must be more attentive."),
                     .say(.teacher, "Let's try again..."),
-                    // TODO: fadeout
-                    .exit_chess_game,
+                    .fadeout_and_exit_chess_game,
                     .say(.teacher, "That's all for today."),
                     .say(.teacher, "Keep studying."),
                     .say(.father, "Did you have fun?"),
@@ -926,6 +948,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     platform.sound_queue.insert(.putpiece);
                 }
             },
+            .fadeout_and_exit_chess_game => {
+                if (try self.lazy_state.doOnceUntilRest(.fromFormat("fade move {d}", .{@floor(platform.global_seconds * 2.0)}))) {
+                    platform.sound_queue.insert(.putpiece);
+                }
+            },
             .choice, .next_day, .dialog, .dialog_dynamic => {},
             .branch_dynamic => unreachable,
         }
@@ -985,22 +1012,31 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     // face
-    if (scene_state.chess_board != null or self.main.prev_scene_state.chess_board != null) {
-        canvas.drawSpriteBatch(camera, &.{.{
-            .point = face_center,
-            .pivot = .center,
-            .texcoord = .unit,
-        }}, self.textures.getChaval(self.main.scene_state.chaval_state, platform.global_seconds));
-    } else if (scene_state.dialog) |d| {
-        if (switch (d.character) {
-            .father => self.textures.padre,
-            .kid => self.textures.getChaval(scene_state.chaval_state, platform.global_seconds),
-            .teacher => null,
-        }) |t| {
+    const cur_character = scene_state.visibleCharacter();
+    const prev_character = self.main.prev_scene_state.visibleCharacter();
+
+    if (cur_character == prev_character) {
+        if (cur_character.texture(scene_state.chaval_state, &self.textures, platform.global_seconds)) |t| {
+            canvas.drawSpriteBatch(camera, &.{.{ .point = face_center, .pivot = .center, .texcoord = .unit }}, t);
+        }
+    } else {
+        if (prev_character.texture(scene_state.chaval_state, &self.textures, platform.global_seconds)) |t| {
             canvas.drawSpriteBatch(camera, &.{.{
                 .point = face_center,
                 .pivot = .center,
                 .texcoord = .unit,
+                .tint = FColor.white.withAlpha(math.smoothstep(self.main.anim_t, 0.4, 0.0)),
+            }}, t);
+        }
+        if (cur_character.texture(scene_state.chaval_state, &self.textures, platform.global_seconds)) |t| {
+            canvas.drawSpriteBatch(camera, &.{.{
+                .point = face_center,
+                .pivot = .center,
+                .texcoord = .unit,
+                .tint = FColor.white.withAlpha(if (prev_character == .teacher)
+                    math.smoothstep(self.main.anim_t, 0.0, 0.4)
+                else
+                    math.smoothstep(self.main.anim_t, 0.5, 0.7)),
             }}, t);
         }
     }
