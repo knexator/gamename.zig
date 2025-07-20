@@ -38,6 +38,12 @@ const Main = struct {
                     self.next_changes = next_day;
                     self.scene_state = .applyDelta(self.scene_state, self.last_delta);
                 },
+                .branch_dynamic => |b| {
+                    const next_deltas = b(self.scene_state.chaval_state);
+                    self.scene_state = .applyDelta(self.scene_state, next_deltas[0]);
+                    self.last_delta = next_deltas[0];
+                    self.next_changes = next_deltas[1..];
+                },
                 else => {
                     self.scene_state = .applyDelta(self.scene_state, self.next_changes[0]);
                     self.last_delta = self.next_changes[0];
@@ -96,6 +102,7 @@ const SceneState = struct {
         res.main_menu = false;
         res.fadeout = false;
         switch (delta) {
+            .branch_dynamic => unreachable,
             .started_game => unreachable,
             .dialog => |d| {
                 res.dialog = d;
@@ -162,6 +169,7 @@ const SceneDelta = union(enum) {
         character: Character,
         callback: *const fn (chaval: ChavalState) []const u8,
     },
+    branch_dynamic: *const fn (chaval: ChavalState) []const SceneDelta,
 
     pub const ChessMove = struct {
         from: UVec2,
@@ -240,6 +248,10 @@ const SceneDelta = union(enum) {
 
     pub fn sayDynamic(character: Character, callback: fn (chaval: ChavalState) []const u8) SceneDelta {
         return .{ .dialog_dynamic = .{ .character = character, .callback = callback } };
+    }
+
+    pub fn branchDynamic(callback: fn (chaval: ChavalState) []const SceneDelta) SceneDelta {
+        return .{ .branch_dynamic = callback };
     }
 
     pub fn nextDay(day: []const SceneDelta) SceneDelta {
@@ -755,17 +767,34 @@ const day_3: []const SceneDelta = &.{
 
 const day_4: []const SceneDelta = &.{
     .say(.teacher, "So, how did the tournament go?"),
-    .sayDynamic(.kid, struct {
-        pub fn anon(chaval: ChavalState) []const u8 {
+    .branchDynamic(struct {
+        pub fn anon(chaval: ChavalState) []const SceneDelta {
             if (chaval.skill < 0) {
-                return "i got last.";
+                return &.{
+                    .say(.kid, "i got last."),
+                };
             } else if (chaval.skill > 2) {
-                return "i won!";
+                return &.{
+                    .say(.kid, "i won!"),
+                };
             } else {
-                return "not bad i guess";
+                return &.{
+                    .say(.kid, "not bad i guess"),
+                };
             }
         }
     }.anon),
+    // .sayDynamic(.kid, struct {
+    //     pub fn anon(chaval: ChavalState) []const u8 {
+    //         if (chaval.skill < 0) {
+    //             return "i got last.";
+    //         } else if (chaval.skill > 2) {
+    //             return "i won!";
+    //         } else {
+    //             return "not bad i guess";
+    //         }
+    //     }
+    // }.anon),
 };
 
 pub fn init(
@@ -898,6 +927,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             },
             .choice, .next_day, .dialog, .dialog_dynamic => {},
+            .branch_dynamic => unreachable,
         }
 
         var it = board.iterator();
