@@ -538,11 +538,7 @@ pub fn drawSpriteBatch(
             const ratio: f32 = texture.resolution.tof32().mul(sprite.texcoord.size).aspectRatio();
             if (sprite.unit_scale_is != .ver) @panic("TODO");
             const ratio_scaling: Vec2 = .new(ratio, 1.0);
-            const top_left_point: Point = switch (sprite.pivot) {
-                .top_left => sprite.point,
-                .center => sprite.point.applyToLocalPoint(.{ .pos = .both(-0.5) }),
-                else => @panic("TODO: other pivots"),
-            };
+            const top_left_point: Point = sprite.point.applyToLocalPoint(.{ .pos = sprite.pivot.asPivot().neg().mul(ratio_scaling) });
             vertices[i * 4 + k] = .{
                 .a_position = top_left_point.applyToLocalPosition(vertex.mul(ratio_scaling)),
                 .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),

@@ -205,7 +205,8 @@ const SceneDelta = union(enum) {
         }
     };
 
-    pub fn turnDuration(self: SceneDelta) f32 {
+    pub fn turnDuration(self: SceneDelta, prev: SceneState) f32 {
+        if (prev.main_menu) return 1.0;
         return switch (self) {
             .new_chess_game => 1.0,
             .next_day => 1.0,
@@ -352,8 +353,10 @@ pub const stuff = .{
     .loops = .{},
     .preloaded_images = .{
         .consolas_atlas = "assets/fonts/Consolas.png",
-        .padre = "assets/chesstory/images/padre.png",
         .reference = "assets/chesstory/images/ref.png",
+
+        .logo = "assets/chesstory/images/logo.png",
+        .padre = "assets/chesstory/images/dad.png",
 
         .chaval_neutral_close = "assets/chesstory/images/chaval/neutralclose.png",
         .chaval_neutral_open = "assets/chesstory/images/chaval/neutralopen.png",
@@ -392,6 +395,7 @@ smooth: kommon.LazyState,
 lazy_state: LocalDecisions,
 textures: struct {
     padre: Gl.Texture,
+    logo: Gl.Texture,
 
     chaval_neutral_close: Gl.Texture,
     chaval_neutral_open: Gl.Texture,
@@ -539,7 +543,7 @@ const day_1: []const SceneDelta = &.{
                             .nextDay(day_2),
                         },
                     }, .{
-                        .label = "play well",
+                        .label = "play normally",
                         .move = .move("b1,c3"),
                         .effect = .{ .skill = 1, .frustration = 0 },
                         .next = &.{
@@ -826,7 +830,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var option_index: ?usize = null;
 
     const face_center: Point = .{ .pos = camera.worldFromCenterLocal(.new(0.45, -0.075)), .scale = 9 };
-    // TODO: draw 'delante'
 
     const scene_state = self.main.scene_state;
     assert(scene_state.dialog == null or scene_state.options == null);
@@ -945,6 +948,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    canvas.drawSpriteBatch(.unit, &.{.{
+        .point = .{},
+        .texcoord = .unit,
+    }}, self.textures.delante);
+
     if (true) {
         const gradient_opacity = try self.smooth.floatCustomSpeed(
             .fromString("grad"),
@@ -1037,15 +1045,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (scene_state.main_menu or self.main.prev_scene_state.main_menu) {
-        try fg_text.addText(
-            "GAME TITLE",
-            .centeredAt(camera.getCenter()),
-            2,
-            FColor.black.withAlpha(if (scene_state.main_menu) 1.0 else 1.0 - self.main.anim_t),
-        );
+        canvas.drawSpriteBatch(camera, &.{
+            .{
+                .point = .{ .pos = camera.getCenter().addY(if (scene_state.main_menu)
+                    0
+                else
+                    -camera.size.y * math.easings.easeInQuad(self.main.anim_t)), .scale = 7 },
+                .pivot = .center,
+                .texcoord = .unit,
+                .tint = FColor.white.withAlpha(if (scene_state.main_menu) 1.0 else 1.0 - self.main.anim_t),
+            },
+        }, self.textures.logo);
+        // try fg_text.addText(
+        //     "GAME TITLE",
+        //     .centeredAt(camera.getCenter()),
+        //     2,
+        //     FColor.black.withAlpha(if (scene_state.main_menu) 1.0 else 1.0 - self.main.anim_t),
+        // );
     }
 
-    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration());
+    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration(self.main.prev_scene_state));
     if (mouse.wasPressed(.left) and scene_state.options == null) {
         advance = true;
     }
@@ -1099,7 +1118,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.smoothstepEased(@abs(self.main.anim_t - 0.5), 0.5, 0.4, .linear)));
     }
 
-    advance = mouse.wasReleased(.left);
     if (advance) {
         if (self.main.next_changes.len > 0 or option_index != null) {
             self.main.advance(option_index);

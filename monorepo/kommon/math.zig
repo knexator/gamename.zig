@@ -1682,6 +1682,7 @@ pub const Random = struct {
     }
 };
 
+// https://easings.net/
 pub const easings = struct {
     pub fn linear(t: f32) f32 {
         return t;
@@ -1693,6 +1694,14 @@ pub const easings = struct {
 
     pub fn easeOutCubic(x: f32) f32 {
         return 1 - std.math.pow(f32, 1 - x, 3);
+    }
+
+    pub fn easeInCubic(x: f32) f32 {
+        return x * x * x;
+    }
+
+    pub fn easeInQuad(x: f32) f32 {
+        return x * x;
     }
 };
 
