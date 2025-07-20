@@ -47,7 +47,9 @@
 
         #loading_screen {
             /* FIXME: customize loading screen */
-            transition: .4s;
+            /* transition: .4s; */
+            background-image: url("loading.png");
+            background-repeat: no-repeat;
             background-color: #b0b0b0;
             font-size: larger;
             text-align: center;
@@ -67,7 +69,7 @@
 
 <body>
     <div id="canvas_container">
-        <!-- <div id="loading_screen">Loading...</div> -->
+        <div id="loading_screen"></div>
         <canvas id="canvas"></canvas>
     </div>
 </body>

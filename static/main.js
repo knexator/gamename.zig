@@ -271,8 +271,6 @@ function every_frame(cur_timestamp_millis) {
   requestAnimationFrame(every_frame);
 }
 
-requestAnimationFrame(every_frame);
-
 document.addEventListener("pointermove", (ev) => {
   const rect = canvas.getBoundingClientRect();
   wasm_exports.pointermove(ev.clientX - rect.left, ev.clientY - rect.top);
@@ -331,3 +329,9 @@ function rgbToHex(r, g, b, a) {
       .join("")
   );
 }
+
+const loading_screen_element = document.querySelector("#loading_screen");
+document.addEventListener("pointerdown", _event => {
+  loading_screen_element.style.opacity = "0";
+  requestAnimationFrame(every_frame);
+}, { once: true });

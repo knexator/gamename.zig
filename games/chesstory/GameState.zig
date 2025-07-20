@@ -401,10 +401,13 @@ pub const stuff = .{
         .select = "assets/chesstory/sound/sfx_select.wav",
         .startgame = "assets/chesstory/sound/sfx_startgame.wav",
     },
-    .loops = .{},
+    .loops = if (@import("builtin").target.ofmt == .wasm) .{
+        .music = "assets/chesstory/sound/music_gameplay.mp3",
+        // TODO: find out why is this needed
+        .alarm = "assets/chesstory/sound/music_gameplay.mp3",
+    } else .{},
     .preloaded_images = .{
         .consolas_atlas = "assets/fonts/Consolas.png",
-        .reference = "assets/chesstory/images/ref.png",
 
         .logo = "assets/chesstory/images/logo.png",
         .padre = "assets/chesstory/images/dad.png",
@@ -452,8 +455,6 @@ textures: struct {
     chaval_neutral_open: Gl.Texture,
     chaval_sad_close: Gl.Texture,
     chaval_sad_open: Gl.Texture,
-
-    reference: Gl.Texture,
 
     // TODO: better
     textbox: Gl.Texture,
@@ -860,6 +861,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.scratch.reset(.retain_capacity);
     self.smooth.last_delta_seconds = platform.delta_seconds;
     self.lazy_state.frameStart();
+    if (@import("builtin").target.ofmt == .wasm) platform.loop_volumes.set(.music, 1);
 
     // TODO
     const camera = (Rect.from(.{
@@ -895,14 +897,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .texcoord = .unit,
         },
     }, self.textures.fondo);
-
-    defer if (false) canvas.drawTexturedRectBatch(.unit, &.{
-        .{
-            .rect = .unit,
-            .texcoord = .unit,
-            .tint = FColor.white.withAlpha(0.2),
-        },
-    }, self.textures.reference);
 
     var advance: bool = false;
     var option_index: ?usize = null;
