@@ -101,6 +101,13 @@ const SceneState = struct {
                 res.dialog = d;
                 res.options = null;
             },
+            .dialog_dynamic => |d| {
+                res.dialog = .{
+                    .character = d.character,
+                    .text = d.callback(cur.chaval_state),
+                };
+                res.options = null;
+            },
             .exit_chess_game => {
                 res.chess_board = null;
                 res.options = null;
@@ -150,6 +157,11 @@ const SceneDelta = union(enum) {
     chess_move: ChessMove,
     choice: SceneState.Options,
     next_day: []const SceneDelta,
+
+    dialog_dynamic: struct {
+        character: Character,
+        callback: *const fn (chaval: ChavalState) []const u8,
+    },
 
     pub const ChessMove = struct {
         from: UVec2,
@@ -224,6 +236,10 @@ const SceneDelta = union(enum) {
 
     pub fn say(character: Character, text: []const u8) SceneDelta {
         return .{ .dialog = .{ .character = character, .text = text } };
+    }
+
+    pub fn sayDynamic(character: Character, callback: fn (chaval: ChavalState) []const u8) SceneDelta {
+        return .{ .dialog_dynamic = .{ .character = character, .callback = callback } };
     }
 
     pub fn nextDay(day: []const SceneDelta) SceneDelta {
@@ -738,7 +754,18 @@ const day_3: []const SceneDelta = &.{
 };
 
 const day_4: []const SceneDelta = &.{
-    .say(.teacher, "the end."),
+    .say(.teacher, "So, how did the tournament go?"),
+    .sayDynamic(.kid, struct {
+        pub fn anon(chaval: ChavalState) []const u8 {
+            if (chaval.skill < 0) {
+                return "i got last.";
+            } else if (chaval.skill > 2) {
+                return "i won!";
+            } else {
+                return "not bad i guess";
+            }
+        }
+    }.anon),
 };
 
 pub fn init(
@@ -870,7 +897,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     platform.sound_queue.insert(.putpiece);
                 }
             },
-            .choice, .next_day, .dialog => {},
+            .choice, .next_day, .dialog, .dialog_dynamic => {},
         }
 
         var it = board.iterator();
