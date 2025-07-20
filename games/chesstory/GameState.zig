@@ -260,12 +260,14 @@ const SceneDelta = union(enum) {
         }
     };
 
-    pub fn turnDuration(self: SceneDelta, prev: SceneState) f32 {
+    pub fn turnDuration(self: SceneDelta, prev: SceneState, is_left_down: bool) f32 {
         if (prev.main_menu) return 1.0;
         return switch (self) {
             .fadeout_and_exit_chess_game => 1.5,
             .new_chess_game => 1.0,
             .next_day => 1.5,
+            .chess_move => if (is_left_down) 0.25 else 0.75,
+            .choice => 0.5,
             else => 0.25,
         };
     }
@@ -1125,9 +1127,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (board.at2(p)) |piece| {
                 var piece_center: Vec2 = board.getTileRect(chess_rect, p).get(.center);
                 if (std.meta.activeTag(self.main.last_delta) == .chess_move) {
+                    const t = math.remapClamped(self.main.anim_t, 0, 0.3, 0, 1);
                     if (self.main.last_delta.chess_move.to.equals(p)) {
                         if (self.main.prev_scene_state.chess_board.?.tiles.at2(p)) |eaten_piece| {
-                            if (self.main.anim_t < 0.5) {
+                            if (t < 0.5) {
                                 if (chess_board.player == .black) {
                                     piece_center = piece_center.rotateAround(chess_rect.getCenter(), 0.5);
                                 }
@@ -1140,7 +1143,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         piece_center = .lerp(
                             board.getTileRect(chess_rect, self.main.last_delta.chess_move.from).get(.center),
                             board.getTileRect(chess_rect, self.main.last_delta.chess_move.to).get(.center),
-                            self.main.anim_t,
+                            t,
                         );
                     }
                     if (self.main.last_delta.chess_move.extra_to) |extra_to| {
@@ -1148,7 +1151,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             piece_center = .lerp(
                                 board.getTileRect(chess_rect, self.main.last_delta.chess_move.extra_from.?).get(.center),
                                 board.getTileRect(chess_rect, self.main.last_delta.chess_move.extra_to.?).get(.center),
-                                self.main.anim_t,
+                                t,
                             );
                         }
                     }
@@ -1308,8 +1311,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }, self.textures.logo);
     }
 
-    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration(self.main.prev_scene_state));
-    if (mouse.wasPressed(.left) and scene_state.options == null) {
+    math.towards(&self.main.anim_t, 1, platform.delta_seconds / self.main.last_delta.turnDuration(
+        self.main.prev_scene_state,
+        mouse.cur.isDown(.left),
+    ));
+    if (mouse.wasPressed(.left) and scene_state.options == null and std.meta.activeTag(self.main.last_delta) != .chess_move) {
         advance = true;
     }
     if (self.main.anim_t == 1) {

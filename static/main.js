@@ -331,6 +331,7 @@ function rgbToHex(r, g, b, a) {
 }
 
 const loading_screen_element = document.querySelector("#loading_screen");
+loading_screen_element.querySelector("p").innerText = "Click to start";
 document.addEventListener("pointerdown", _event => {
   loading_screen_element.style.opacity = "0";
   requestAnimationFrame(every_frame);
