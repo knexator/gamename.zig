@@ -2,7 +2,7 @@ import { keys } from "./keycodes.js";
 
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
-const gl = canvas.getContext("webgl2", { antialias: true });
+const gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
 
 const gl_objects = [null];
 function storeGlObject(obj) {
@@ -205,6 +205,7 @@ async function getWasm() {
       enable: (capability) => gl.enable(capability),
       disable: (capability) => gl.enable(capability),
       blendFunc: (sfactor, dfactor) => gl.blendFunc(sfactor, dfactor),
+      blendFuncSeparate: (srcRGB, dstRGB, srcAlpha, dstAlpha) => gl.blendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha),
       // TODO: clear mask
       clear: () => gl.clear(gl.COLOR_BUFFER_BIT),
       clearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
@@ -270,8 +271,6 @@ function every_frame(cur_timestamp_millis) {
   requestAnimationFrame(every_frame);
 }
 
-requestAnimationFrame(every_frame);
-
 document.addEventListener("pointermove", (ev) => {
   const rect = canvas.getBoundingClientRect();
   wasm_exports.pointermove(ev.clientX - rect.left, ev.clientY - rect.top);
@@ -330,3 +329,5 @@ function rgbToHex(r, g, b, a) {
       .join("")
   );
 }
+
+requestAnimationFrame(every_frame);

@@ -15,7 +15,7 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "assets/fonts/Arial.png",
+        .arial_atlas = "fonts/Arial.png",
     },
 };
 
@@ -75,7 +75,7 @@ pub fn init(
     loaded_images: std.EnumArray(Images, *const anyopaque),
 ) !void {
     dst.* = .{
-        .canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
+        .canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         .mem = .init(gpa),
         .smooth = .init(gpa),
         .board = try .fromAsciiAndMap(gpa, raw_puzzle, struct {

@@ -23,7 +23,7 @@ pub const stuff = .{
     },
 
     .preloaded_images = .{
-        .arial_atlas = "assets/fonts/Arial.png",
+        .arial_atlas = "fonts/Arial.png",
     },
 };
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
@@ -92,7 +92,7 @@ pub fn init(
     // TODO: get random seed as param?
     dst.* = .{
         .rnd_instance = .init(0),
-        .canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
+        .canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         // TODO: store this in kommon for later use
         .debug_fwidth = try gl.buildRenderable(
             \\in vec2 a_position;

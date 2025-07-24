@@ -11,6 +11,7 @@ fill_instanced_circles_renderable: Gl.InstancedRenderable,
 instanced_rounded_lines_renderable: Gl.InstancedRenderable,
 instanced_colored_separated_rounded_lines_renderable: Gl.InstancedRenderable,
 fill_shape_renderable: Gl.Renderable,
+fill_shape_vertex_colors_renderable: Gl.Renderable,
 // TODO: instancing
 sprite_renderable: Gl.Renderable,
 text_renderers: []TextRenderer,
@@ -143,6 +144,40 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
+        .fill_shape_vertex_colors_renderable = try gl.buildRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\uniform vec4 u_point; // as pos, turns, scale
+            \\
+            \\in vec2 a_position;
+            \\in vec4 a_color;
+            \\out vec4 v_color;
+            \\#define TAU 6.283185307179586
+            \\void main() {
+            \\  float c = cos(u_point.z * TAU);
+            \\  float s = sin(u_point.z * TAU);
+            \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+            \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\  v_color = a_color;
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec4 v_color;
+            \\void main() {
+            \\  out_color = v_color;
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_position", .kind = .Vec2 },
+                .{ .name = "a_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+                .{ .name = "u_point", .kind = .Point },
             },
         ),
         .fill_shape_renderable = try gl.buildRenderable(
@@ -349,6 +384,39 @@ pub fn drawDirty(
     );
 }
 
+pub fn fillShapeWithVertexColors(
+    self: *Canvas,
+    camera: Rect,
+    parent: Point,
+    shape: PrecomputedShape,
+    colors: []const FColor,
+) void {
+    assert(colors.len == shape.local_points.len);
+    const VertexData = extern struct {
+        a_position: Vec2,
+        a_color: FColor,
+    };
+    const actual_points: []VertexData = self.frame_arena.allocator().alloc(
+        VertexData,
+        shape.local_points.len,
+    ) catch @panic("OoM");
+    for (actual_points, shape.local_points, colors) |*dst, p, c| {
+        dst.a_color = c;
+        dst.a_position = p;
+    }
+    self.gl.useRenderable(
+        self.fill_shape_vertex_colors_renderable,
+        actual_points.ptr,
+        actual_points.len * @sizeOf(VertexData),
+        shape.triangles,
+        &.{
+            .{ .name = "u_point", .value = .{ .Point = parent } },
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        null,
+    );
+}
+
 // TODO: multiple shapes in one draw call
 pub fn fillShape(
     self: Canvas,
@@ -470,11 +538,7 @@ pub fn drawSpriteBatch(
             const ratio: f32 = texture.resolution.tof32().mul(sprite.texcoord.size).aspectRatio();
             if (sprite.unit_scale_is != .ver) @panic("TODO");
             const ratio_scaling: Vec2 = .new(ratio, 1.0);
-            const top_left_point: Point = switch (sprite.pivot) {
-                .top_left => sprite.point,
-                .center => sprite.point.applyToLocalPoint(.{ .pos = .both(-0.5) }),
-                else => @panic("TODO: other pivots"),
-            };
+            const top_left_point: Point = sprite.point.applyToLocalPoint(.{ .pos = sprite.pivot.asPivot().neg().mul(ratio_scaling) });
             vertices[i * 4 + k] = .{
                 .a_position = top_left_point.applyToLocalPosition(vertex.mul(ratio_scaling)),
                 .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
@@ -490,6 +554,99 @@ pub fn drawSpriteBatch(
         vertices.ptr,
         vertices.len * @sizeOf(VertexData),
         // .local_points = &.{ .zero, .e1, .e2, .one },
+        triangles,
+        &.{
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+        },
+        texture,
+    );
+}
+
+/// assumes the cuts are at 1/3, 2/3
+pub fn sliced3x3(
+    rect: Rect,
+    target_margin: f32,
+) [9]TexturedRect {
+    var res: [9]TexturedRect = undefined;
+    for (&res, Rect.MeasureKind.all9) |*dst, keep| {
+        dst.* = .{
+            .rect = rect.with(
+                // .{ .size = .both(target_margin) },
+                // .{ .size = .new(rect.size.x - 2.0 * target_margin, rect.size.y - 2.0 * target_margin) },
+                .{
+                    .size = .new(
+                        // if (keep.horizontal() =)
+                        if (keep.asPivot().x == 0.5) rect.size.x - 2.0 * target_margin else target_margin,
+                        if (keep.asPivot().y == 0.5) rect.size.y - 2.0 * target_margin else target_margin,
+                    ),
+                },
+                keep,
+            ),
+            .texcoord = Rect.unit.with(
+                .{ .size = .both(1.0 / 3.0) },
+                keep,
+            ),
+        };
+    }
+    if (true) return res;
+
+    return .{
+        .{ .rect = rect.with(
+            .{ .size = .both(target_margin) },
+            .top_left,
+        ), .texcoord = Rect.unit.with(
+            .{ .size = .both(1.0 / 3.0) },
+            .top_left,
+        ) },
+        .{ .rect = rect.with(
+            .{ .size = .new(rect.size.x - 2.0 * target_margin, target_margin) },
+            .top_center,
+        ), .texcoord = Rect.unit.with(
+            .{ .size = .both(1.0 / 3.0) },
+            .top_center,
+        ) },
+        .{ .rect = rect.with(
+            .{ .size = .new(rect.size.x - 2.0 * target_margin, rect.size.y - 2.0 * target_margin) },
+            .center,
+        ), .texcoord = Rect.unit.with(
+            .{ .size = .both(1.0 / 3.0) },
+            .center,
+        ) },
+    };
+}
+
+pub const TexturedRect = struct {
+    rect: Rect,
+    texcoord: Rect,
+    tint: FColor = .white,
+};
+
+// TODO: instancing?
+pub fn drawTexturedRectBatch(
+    self: *Canvas,
+    camera: Rect,
+    sprites: []const TexturedRect,
+    texture: Gl.Texture,
+) void {
+    const VertexData = SpriteVertex;
+    const vertices = self.frame_arena.allocator().alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
+    const triangles = self.frame_arena.allocator().alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
+    for (sprites, 0..) |sprite, i| {
+        for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+            vertices[i * 4 + k] = .{
+                .a_position = sprite.rect.applyToLocalPosition(vertex),
+                .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                .a_color = sprite.tint,
+            };
+        }
+        const k: Gl.IndexType = @intCast(4 * i);
+        triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+        triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+    }
+    self.gl.useRenderable(
+        self.sprite_renderable,
+        vertices.ptr,
+        vertices.len * @sizeOf(VertexData),
         triangles,
         &.{
             .{ .name = "u_camera", .value = .{ .Rect = camera } },
@@ -972,6 +1129,29 @@ pub fn instancedSegments(
     );
 }
 
+pub fn rectGradient(
+    self: *Canvas,
+    camera: Rect,
+    rect: Rect,
+    bottom: FColor,
+    top: FColor,
+) void {
+    self.fillShapeWithVertexColors(
+        camera,
+        .{ .pos = rect.top_left },
+        .{
+            .local_points = &.{
+                .new(0, 0),
+                .new(rect.size.x, 0),
+                .new(0, rect.size.y),
+                .new(rect.size.x, rect.size.y),
+            },
+            .triangles = self.DEFAULT_SHAPES.square.triangles,
+        },
+        &.{ top, top, bottom, bottom },
+    );
+}
+
 pub const FilledRect = extern struct { pos: Rect, color: FColor };
 pub fn fillRects(
     self: Canvas,
@@ -1100,6 +1280,14 @@ pub const TextRenderer = struct {
         hor: enum { left, center, right },
         ver: enum { baseline, ascender, descender, median },
         pos: Vec2,
+
+        pub fn centeredAt(p: Vec2) TextPosition {
+            return .{
+                .hor = .center,
+                .ver = .median,
+                .pos = p,
+            };
+        }
     };
 
     const RectSides = struct {

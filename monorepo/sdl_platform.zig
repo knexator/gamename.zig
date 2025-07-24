@@ -116,8 +116,13 @@ var gl_procs: gl.ProcTable = undefined;
 var global_gpa_BAD: std.mem.Allocator = undefined;
 
 const assets = @import("assets");
+const fonts = @import("fonts");
 fn embedAsset(comptime path: []const u8) []const u8 {
-    return assets.get.file(path["assets".len..]);
+    if (comptime std.mem.startsWith(u8, path, "fonts")) {
+        return fonts.get.file(path["fonts".len..]);
+    } else {
+        return assets.get.file(path["assets".len..]);
+    }
 }
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -636,7 +641,9 @@ pub fn main() !void {
         .gl = sdl_gl.vtable,
     };
 
-    try my_game.preload(sdl_platform.gl);
+    if (@hasField(@TypeOf(my_game), "preload")) {
+        try my_game.preload(sdl_platform.gl);
+    }
 
     try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
     // TODO: gl on deinit
@@ -822,9 +829,16 @@ pub const ProgramInfo = struct {
 
 const Sound = struct {
     // Taken from apple.wav
+    // const spec: c.SDL_AudioSpec = .{
+    //     .format = c.SDL_AUDIO_U8,
+    //     .channels = 1,
+    //     .freq = 44100,
+    // };
+
+    // Taken from chesstory
     const spec: c.SDL_AudioSpec = .{
-        .format = c.SDL_AUDIO_U8,
-        .channels = 1,
+        .format = c.SDL_AUDIO_S16LE,
+        .channels = 2,
         .freq = 44100,
     };
 
@@ -839,6 +853,9 @@ const Sound = struct {
         try errify(c.SDL_LoadWAV_IO(stream, true, &sound_spec, &data_ptr, &data_len));
         // TODO: what if each sound has a different sound spec?
         // TODO: look into SDL_SetAudioStreamFormat as a possible solution
+        if (!std.meta.eql(sound_spec, spec)) {
+            std.log.debug("{any}", .{sound_spec});
+        }
         assert(std.meta.eql(sound_spec, spec));
         const data = data_ptr.?[0..data_len];
         return .{ .data = data };
