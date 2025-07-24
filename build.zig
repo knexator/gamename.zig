@@ -437,6 +437,9 @@ fn build_all_games_html(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     const check_step = b.step("check", "Check if the project compiles");
 
+    var html_index_contents: std.ArrayList(u8) = .init(b.allocator);
+    try html_index_contents.appendSlice("<ul>\n");
+
     inline for (.{
         "akari",
         "alchemy",
@@ -445,6 +448,7 @@ fn build_all_games_html(b: *std.Build) !void {
         "snakanake",
         "tres_undos",
     }) |game_folder| {
+        try html_index_contents.writer().print("<li><a href=\"{s}\">{s}</a></li>\n", .{ game_folder, game_folder });
         try _build_for_web(
             b,
             game_folder,
@@ -466,6 +470,13 @@ fn build_all_games_html(b: *std.Build) !void {
             },
         );
     }
+
+    try html_index_contents.appendSlice("</ul>");
+
+    install_step.dependOn(&b.addInstallFile(b.addWriteFiles().add(
+        "index.html",
+        try html_index_contents.toOwnedSlice(),
+    ), "web_static/index.html").step);
 }
 
 fn existingFolder(b: *std.Build, path: []const u8) !?[]const u8 {
