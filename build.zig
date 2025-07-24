@@ -356,10 +356,16 @@ fn _build_for_web(
         ).step);
     }
 
+    const custom_static_path = b.pathJoin(&.{ "games", game_folder, "static" });
+    var custom_static = true;
+    b.build_root.handle.access(custom_static_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => custom_static = false,
+        else => return err,
+    };
     const copy_static_files = b.addInstallDirectory(.{
         .install_dir = web_install_dir,
         .install_subdir = "",
-        .source_dir = b.path("static"),
+        .source_dir = b.path(if (custom_static) custom_static_path else "static"),
     });
     steps.install.dependOn(&copy_static_files.step);
 
