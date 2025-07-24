@@ -116,8 +116,13 @@ var gl_procs: gl.ProcTable = undefined;
 var global_gpa_BAD: std.mem.Allocator = undefined;
 
 const assets = @import("assets");
+const fonts = @import("fonts");
 fn embedAsset(comptime path: []const u8) []const u8 {
-    return assets.get.file(path["assets".len..]);
+    if (comptime std.mem.startsWith(u8, path, "fonts")) {
+        return fonts.get.file(path["fonts".len..]);
+    } else {
+        return assets.get.file(path["assets".len..]);
+    }
 }
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;

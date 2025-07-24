@@ -44,36 +44,12 @@
         canvas:focus {
             outline: none;
         }
-
-        #loading_screen {
-            /* FIXME: customize loading screen */
-            /* transition: .4s; */
-            background-image: url("loading.png");
-            background-repeat: no-repeat;
-            background-color: #b0b0b0;
-            font-size: 36px;
-            text-align: center;
-            line-height: 20vh;
-            color: #272227;
-            font-family: monospace;
-
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            z-index: 2;
-            opacity: 1;
-            user-select: none;
-            pointer-events: none;
-        }
     </style>
     <script defer type="module" src="main.js"></script>
 </head>
 
 <body>
     <div id="canvas_container">
-        <div id="loading_screen">
-            <p style="margin-top: 79vh;">Loading...</p>
-        </div>
         <canvas id="canvas"></canvas>
     </div>
 </body>

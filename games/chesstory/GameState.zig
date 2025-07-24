@@ -407,49 +407,50 @@ pub const stuff = .{
         .desired_aspect_ratio = 16.0 / 9.0,
     },
     .sounds = .{
-        .changeexpression = "assets/chesstory/sound/sfx_changeexpresion.wav",
-        .check = "assets/chesstory/sound/sfx_check.wav",
-        .click = "assets/chesstory/sound/sfx_click.wav",
-        .dialogue = "assets/chesstory/sound/sfx_dialogue.wav",
-        .endgame = "assets/chesstory/sound/sfx_endgame.wav",
-        .putpiece = "assets/chesstory/sound/sfx_putpiece.wav",
-        .select = "assets/chesstory/sound/sfx_select.wav",
-        .startgame = "assets/chesstory/sound/sfx_startgame.wav",
+        .changeexpression = "assets/sound/sfx_changeexpresion.wav",
+        .check = "assets/sound/sfx_check.wav",
+        .click = "assets/sound/sfx_click.wav",
+        .dialogue = "assets/sound/sfx_dialogue.wav",
+        .endgame = "assets/sound/sfx_endgame.wav",
+        .putpiece = "assets/sound/sfx_putpiece.wav",
+        .select = "assets/sound/sfx_select.wav",
+        .startgame = "assets/sound/sfx_startgame.wav",
     },
     .loops = if (@import("builtin").target.ofmt == .wasm) .{
-        .music = "assets/chesstory/sound/music_gameplay.mp3",
+        .music = "assets/sound/music_gameplay.mp3",
         // TODO: find out why is this needed
-        .alarm = "assets/chesstory/sound/music_gameplay.mp3",
+        .alarm = "assets/sound/music_gameplay.mp3",
     } else .{},
     .preloaded_images = .{
-        .consolas_atlas = "assets/fonts/Consolas.png",
+        // TODO: don't require this here
+        .consolas_atlas = "fonts/Consolas.png",
 
-        .logo = "assets/chesstory/images/logo.png",
-        .padre = "assets/chesstory/images/dad.png",
+        .logo = "assets/images/logo.png",
+        .padre = "assets/images/dad.png",
 
-        .chaval_neutral_close = "assets/chesstory/images/chaval/neutralclose.png",
-        .chaval_neutral_open = "assets/chesstory/images/chaval/neutralopen.png",
-        .chaval_sad_close = "assets/chesstory/images/chaval/sadclose.png",
-        .chaval_sad_open = "assets/chesstory/images/chaval/sadopen.png",
+        .chaval_neutral_close = "assets/images/chaval/neutralclose.png",
+        .chaval_neutral_open = "assets/images/chaval/neutralopen.png",
+        .chaval_sad_close = "assets/images/chaval/sadclose.png",
+        .chaval_sad_open = "assets/images/chaval/sadopen.png",
 
         // TODO: better
-        .textbox = "assets/chesstory/images/9slicebasico.png",
-        .casilla_blanca = "assets/chesstory/images/casilla_blanca.png",
-        .casilla_negra = "assets/chesstory/images/casilla_negra.png",
-        .delante = "assets/chesstory/images/delante.png",
-        .fondo = "assets/chesstory/images/fondo.png",
-        .pieza_blanca_alfil = "assets/chesstory/images/pieza_blanca_alfil.png",
-        .pieza_blanca_caballo = "assets/chesstory/images/pieza_blanca_caballo.png",
-        .pieza_blanca_peon = "assets/chesstory/images/pieza_blanca_peon.png",
-        .pieza_blanca_reina = "assets/chesstory/images/pieza_blanca_reina.png",
-        .pieza_blanca_rey = "assets/chesstory/images/pieza_blanca_rey.png",
-        .pieza_blanca_torre = "assets/chesstory/images/pieza_blanca_torre.png",
-        .pieza_negra_alfil = "assets/chesstory/images/pieza_negra_alfil.png",
-        .pieza_negra_caballo = "assets/chesstory/images/pieza_negra_caballo.png",
-        .pieza_negra_peon = "assets/chesstory/images/pieza_negra_peon.png",
-        .pieza_negra_reina = "assets/chesstory/images/pieza_negra_reina.png",
-        .pieza_negra_rey = "assets/chesstory/images/pieza_negra_rey.png",
-        .pieza_negra_torre = "assets/chesstory/images/pieza_negra_torre.png",
+        .textbox = "assets/images/9slicebasico.png",
+        .casilla_blanca = "assets/images/casilla_blanca.png",
+        .casilla_negra = "assets/images/casilla_negra.png",
+        .delante = "assets/images/delante.png",
+        .fondo = "assets/images/fondo.png",
+        .pieza_blanca_alfil = "assets/images/pieza_blanca_alfil.png",
+        .pieza_blanca_caballo = "assets/images/pieza_blanca_caballo.png",
+        .pieza_blanca_peon = "assets/images/pieza_blanca_peon.png",
+        .pieza_blanca_reina = "assets/images/pieza_blanca_reina.png",
+        .pieza_blanca_rey = "assets/images/pieza_blanca_rey.png",
+        .pieza_blanca_torre = "assets/images/pieza_blanca_torre.png",
+        .pieza_negra_alfil = "assets/images/pieza_negra_alfil.png",
+        .pieza_negra_caballo = "assets/images/pieza_negra_caballo.png",
+        .pieza_negra_peon = "assets/images/pieza_negra_peon.png",
+        .pieza_negra_reina = "assets/images/pieza_negra_reina.png",
+        .pieza_negra_rey = "assets/images/pieza_negra_rey.png",
+        .pieza_negra_torre = "assets/images/pieza_negra_torre.png",
     },
 };
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
@@ -988,7 +989,7 @@ pub fn init(
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
     dst.mem = .init(gpa);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Consolas.json")}, &.{loaded_images.get(.consolas_atlas)});
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("fonts/Consolas.json")}, &.{loaded_images.get(.consolas_atlas)});
     dst.smooth = .init(dst.mem.forever.allocator());
     dst.lazy_state = .init(gpa);
 

@@ -64,8 +64,8 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "assets/fonts/Arial.png",
-        .bokor_atlas = "assets/fonts/Bokor.png",
+        .arial_atlas = "fonts/Arial.png",
+        .bokor_atlas = "fonts/Bokor.png",
     },
 };
 
@@ -409,8 +409,8 @@ pub fn init(
 
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{
-        @embedFile("assets/fonts/Arial.json"),
-        @embedFile("assets/fonts/Bokor.json"),
+        @embedFile("fonts/Arial.json"),
+        @embedFile("fonts/Bokor.json"),
     }, &.{
         loaded_images.get(.arial_atlas),
         loaded_images.get(.bokor_atlas),

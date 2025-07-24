@@ -18,7 +18,7 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "assets/fonts/Arial.png",
+        .arial_atlas = "fonts/Arial.png",
         .player = "assets/images/player.png",
         .tiles = "assets/images/tiles.png",
         .walls = "assets/images/walls.png",
@@ -551,7 +551,7 @@ pub fn init(
     dst.canvas = try .init(
         gl,
         gpa,
-        &.{@embedFile("assets/fonts/Arial.json")},
+        &.{@embedFile("fonts/Arial.json")},
         &.{loaded_images.get(.arial_atlas)},
     );
     dst.smooth = .init(dst.mem.forever.allocator());

@@ -19,7 +19,7 @@ pub const stuff = .{
     .loops = .{},
 
     .preloaded_images = .{
-        .arial_atlas = "assets/fonts/Arial.png",
+        .arial_atlas = "fonts/Arial.png",
     },
 };
 
@@ -381,7 +381,7 @@ pub fn init(
         try state.init(info, &dst.mem);
     }
     dst.admire_solved_level_remaining_time = @splat(0.5);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("assets/fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
+    dst.canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
     // for (&dst.visual_tentacles, starting_edges_local) |*t, s| {

@@ -2,10 +2,12 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "chesstory";
+const active_folder = "octopus";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
+
+const fonts: []const []const u8 = &.{ "Arial", "Bokor", "Consolas" };
 
 pub fn build(b: *std.Build) !void {
     // A compile error stack trace of 10 is arbitrary in size but helps with debugging.
@@ -31,19 +33,19 @@ pub fn build(b: *std.Build) !void {
 
     const wf = b.addUpdateSourceFiles();
     // wf.addCopyFileToSource(msdf.path("msdf-atlas-gen.exe"), "ungit/msdf-atlas-gen.exe");
-    inline for (&.{ "Arial", "Bokor", "Consolas" }) |font_name| {
+    inline for (fonts) |font_name| {
         const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
         run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
         // TODO: -chars [0x20, 0x7e],ñ does not work, open github issue
         run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2", "-charset", "monorepo/tools/font_chars.txt" });
         run_msdf.addArg("-font");
-        run_msdf.addFileArg(b.path("assets/fonts/" ++ font_name ++ ".ttf"));
+        run_msdf.addFileArg(b.path("fonts/raw/" ++ font_name ++ ".ttf"));
         run_msdf.addArg("-json");
         const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
         run_msdf.addArg("-imageout");
         const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
-        wf.addCopyFileToSource(font_json, "assets/fonts/" ++ font_name ++ ".json");
-        wf.addCopyFileToSource(font_atlas, "assets/fonts/" ++ font_name ++ ".png");
+        wf.addCopyFileToSource(font_json, "fonts/compiled/" ++ font_name ++ ".json");
+        wf.addCopyFileToSource(font_atlas, "fonts/compiled/" ++ font_name ++ ".png");
     }
     fonts_step.dependOn(&wf.step);
     // TODO
@@ -83,7 +85,7 @@ fn build_game(b: *std.Build, comptime game_folder: []const u8) !void {
     const check_step = b.step("check", "Check if the project compiles");
 
     if (web) {
-        build_for_web(b, game_folder, .{
+        try build_for_web(b, game_folder, .{
             .install = install_step,
             .run = run_step,
             .unit_test = test_step,
@@ -145,9 +147,9 @@ fn build_for_desktop(
     });
     game_module_asdf.addImport("kommon", kommon_module);
     // TODO: better
-    inline for (&.{ "Arial", "Bokor", "Consolas" }) |font_name| {
-        game_module_asdf.addAnonymousImport("assets/fonts/" ++ font_name ++ ".json", .{
-            .root_source_file = b.path("assets/fonts/" ++ font_name ++ ".json"),
+    inline for (fonts) |font_name| {
+        game_module_asdf.addAnonymousImport("fonts/" ++ font_name ++ ".json", .{
+            .root_source_file = b.path("fonts/compiled/" ++ font_name ++ ".json"),
         });
     }
 
@@ -217,8 +219,12 @@ fn build_for_desktop(
     exe_module.addImport("kommon", kommon_module);
     exe_module.addImport("GameState", game_module_asdf);
 
-    const assets_module = assetpack.pack(b, b.path("assets"), .{});
-    exe_module.addImport("assets", assets_module);
+    if (try existingFolder(b, b.pathJoin(&.{ "games", game_folder, "assets" }))) |assets_folder| {
+        const assets_module = assetpack.pack(b, b.path(assets_folder), .{});
+        exe_module.addImport("assets", assets_module);
+    }
+    const fonts_module = assetpack.pack(b, b.path("fonts/compiled/"), .{});
+    exe_module.addImport("fonts", fonts_module);
 
     exe_module.addOptions("build_options", build_options);
 
@@ -287,9 +293,9 @@ fn build_for_web(
         hot_reloadable: HotReloadableMode,
         emit_llvm_ir: bool,
     },
-) void {
+) !void {
     const web_install_dir = std.Build.InstallDir{ .custom = "web_static" };
-    _build_for_web(b, game_folder, web_install_dir, steps, options);
+    try _build_for_web(b, game_folder, web_install_dir, steps, options);
 }
 
 fn _build_for_web(
@@ -300,7 +306,7 @@ fn _build_for_web(
     steps: anytype,
     // TODO
     options: anytype,
-) void {
+) !void {
     const kommon_module = b.addModule("kommon", .{
         .root_source_file = b.path("monorepo/kommon/kommon.zig"),
         .target = options.target,
@@ -312,9 +318,9 @@ fn _build_for_web(
     });
     game_module.addImport("kommon", kommon_module);
     // TODO: better
-    inline for (&.{ "Arial", "Bokor", "Consolas" }) |font_name| {
-        game_module.addAnonymousImport("assets/fonts/" ++ font_name ++ ".json", .{
-            .root_source_file = b.path("assets/fonts/" ++ font_name ++ ".json"),
+    inline for (fonts) |font_name| {
+        game_module.addAnonymousImport("fonts/" ++ font_name ++ ".json", .{
+            .root_source_file = b.path("fonts/compiled/" ++ font_name ++ ".json"),
         });
     }
 
@@ -356,27 +362,29 @@ fn _build_for_web(
         ).step);
     }
 
-    const custom_static_path = b.pathJoin(&.{ "games", game_folder, "static" });
-    var custom_static = true;
-    b.build_root.handle.access(custom_static_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => custom_static = false,
-        else => return err,
-    };
     const copy_static_files = b.addInstallDirectory(.{
         .install_dir = web_install_dir,
         .install_subdir = "",
-        .source_dir = b.path(if (custom_static) custom_static_path else "static"),
+        .source_dir = b.path(try existingFolder(b, b.pathJoin(&.{ "games", game_folder, "static" })) orelse "static"),
     });
     steps.install.dependOn(&copy_static_files.step);
 
-    // TODO: only copy the actually used assets
-    {
-        const copy_sound_files = b.addInstallDirectory(.{
+    if (try existingFolder(b, b.pathJoin(&.{ "games", game_folder, "assets" }))) |assets_path| {
+        const copy_asset_files = b.addInstallDirectory(.{
             .install_dir = web_install_dir,
             .install_subdir = "assets",
-            .source_dir = b.path("assets"),
+            .source_dir = b.path(assets_path),
         });
-        steps.install.dependOn(&copy_sound_files.step);
+        steps.install.dependOn(&copy_asset_files.step);
+    }
+
+    {
+        const copy_font_files = b.addInstallDirectory(.{
+            .install_dir = web_install_dir,
+            .install_subdir = "fonts",
+            .source_dir = b.path(b.pathJoin(&.{ "fonts", "compiled" })),
+        });
+        steps.install.dependOn(&copy_font_files.step);
     }
 
     const generate_keycodes = b.addExecutable(.{
@@ -437,7 +445,7 @@ fn build_all_games_html(b: *std.Build) !void {
         "snakanake",
         "tres_undos",
     }) |game_folder| {
-        _build_for_web(
+        try _build_for_web(
             b,
             game_folder,
             std.Build.InstallDir{ .custom = "web_static/" ++ game_folder },
@@ -458,4 +466,12 @@ fn build_all_games_html(b: *std.Build) !void {
             },
         );
     }
+}
+
+fn existingFolder(b: *std.Build, path: []const u8) !?[]const u8 {
+    b.build_root.handle.access(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    return path;
 }
