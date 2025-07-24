@@ -125,7 +125,7 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
         }
 
         pub fn fromAsciiAndMap(allocator: std.mem.Allocator, ascii: []const u8, comptime map_fn: fn (v: u8) T) !Self {
-            const ascii_grid: Grid2D(u8) = try .fromAscii(allocator, ascii);
+            const ascii_grid: Grid2D(u8, null) = try .fromAscii(allocator, ascii);
             defer ascii_grid.deinit(allocator);
             return try ascii_grid.map(allocator, T, map_fn);
         }
@@ -149,7 +149,7 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             };
         }
 
-        pub fn map(self: Self, allocator: std.mem.Allocator, comptime NewType: type, comptime map_fn: fn (v: T) NewType) !Grid2D(NewType) {
+        pub fn map(self: Self, allocator: std.mem.Allocator, comptime NewType: type, comptime map_fn: fn (v: T) NewType) !Grid2D(NewType, max_size) {
             const new_data = try allocator.alloc(NewType, self.data.len);
             for (0..self.size.y) |j| {
                 for (0..self.size.x) |i| {
