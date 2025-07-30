@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "octopus";
+const active_folder = "loopmouse";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
@@ -441,6 +441,7 @@ fn build_all_games_html(b: *std.Build) !void {
     try html_index_contents.appendSlice("<ul>\n");
 
     inline for (.{
+        "loopmouse",
         "akari",
         "alchemy",
         "hexditor",
