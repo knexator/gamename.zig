@@ -138,4 +138,20 @@ pub fn reverseRange(comptime T: type, min_inclusive: T, max_inclusive: T) Revers
     return .init(min_inclusive, max_inclusive);
 }
 
+pub fn argMin(it: anytype) usize {
+    var best_value = it.next().?;
+    var best_index: usize = 0;
+
+    var cur_index: usize = 0;
+    while (it.next()) |v| {
+        cur_index += 1;
+        if (v < best_value) {
+            best_value = v;
+            best_index = cur_index;
+        }
+    }
+
+    return best_index;
+}
+
 const std = @import("std");

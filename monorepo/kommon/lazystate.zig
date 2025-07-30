@@ -13,7 +13,6 @@ pub const LazyState = struct {
     }
 
     pub fn deinit(self: *LazyState) void {
-        self.arena.deinit();
         self.f32s.deinit();
         self.fcolors.deinit();
         self.rects.deinit();
