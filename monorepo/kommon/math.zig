@@ -863,6 +863,10 @@ pub const Rect = extern struct {
         size: Vec2,
     };
 
+    pub fn getAt(self: Rect, local_pos: Vec2) Vec2 {
+        return self.worldFromLocal(local_pos);
+    }
+
     pub fn get(self: Rect, which: MeasureKind) Vec2 {
         return switch (which) {
             .top_left => self.top_left,
