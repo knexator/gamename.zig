@@ -3,14 +3,13 @@ const PlayerState = struct {
 };
 
 /// all times are in [0,1)
-const PointArea = struct {
+const RewardedDirection = struct {
     start: f32,
     duration: f32,
-    rect: Rect,
-    // TODO: use
-    positive: bool = true,
+    pos: Vec2,
+    dir: Vec2,
 
-    fn isActive(self: PointArea, t: f32) bool {
+    fn isActive(self: RewardedDirection, t: f32) bool {
         var after = t - self.start;
         if (after < 0) after += 1;
         assert(after >= 0);
@@ -46,7 +45,7 @@ const loop_duration = 1.5;
 
 started: bool = false,
 
-point_areas: std.SegmentedList(PointArea, 256) = .{},
+point_areas: std.SegmentedList(RewardedDirection, 256) = .{},
 
 history: std.SegmentedList(PlayerState, 1024) = .{},
 history_ages: std.SegmentedList(f32, 1024) = .{},
@@ -116,7 +115,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             try self.point_areas.append(self.mem.forever.allocator(), .{
                 .start = 0.05,
                 .duration = 0.5,
-                .rect = camera.resizeRel(0.2, .top_right).withAspectRatio(1, .shrink, .bottom_left),
+                .pos = camera.getAt(.new(0.75, 0.25)),
+                .dir = Vec2.new(1, 1).normalized(),
             });
         }
 
@@ -130,15 +130,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     try self.history.append(self.mem.level.allocator(), cur_state);
 
     const entered_new_loop = @mod(cur_t, loop_duration) < @mod(prev_t, loop_duration);
-    if (entered_new_loop) {
+    const loop_index: u32 = @intFromFloat(@divFloor(cur_t, loop_duration));
+    if (entered_new_loop and loop_index % 1 == 0) {
         const random: math.Random = .init(self.random.random());
         try self.point_areas.append(self.mem.level.allocator(), .{
             .start = random.between(0, 1),
             .duration = 0.5 + random.around0(0.1),
-            .rect = .fromCenterAndSize(random.inRect(camera.plusMargin(-10)), .new(
-                random.between(3, 10),
-                random.between(3, 10),
-            )),
+            .pos = random.inRect(camera.plusMargin(-10)),
+            .dir = random.direction(),
         });
     }
 
@@ -158,7 +157,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     point_areas_it.set(0);
     while (point_areas_it.next()) |point_area| {
         if (point_area.isActive(@mod(cur_t / loop_duration, 1.0))) {
-            self.canvas.fillRect(camera, point_area.rect, FColor.white.withAlpha(0.4));
+            self.canvas.line(camera, &.{
+                point_area.pos.sub(point_area.dir.scale(5)),
+                point_area.pos.add(point_area.dir.scale(5)),
+                point_area.pos.add(point_area.dir.scale(5)).add(point_area.dir.rotate(3.0 / 8.0).scale(2)),
+            }, 1, FColor.black.withAlpha(0.5));
         }
     }
 
