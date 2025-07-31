@@ -2,19 +2,10 @@ const PlayerState = struct {
     pos: Vec2,
 };
 
-/// all times are in [0,1)
 const RewardedDirection = struct {
-    start: f32,
-    duration: f32,
     pos: Vec2,
     dir: Vec2,
-
-    fn isActive(self: RewardedDirection, t: f32) bool {
-        var after = t - self.start;
-        if (after < 0) after += 1;
-        assert(after >= 0);
-        return after < self.duration;
-    }
+    progress: f32,
 };
 
 pub const GameState = @This();
@@ -45,8 +36,7 @@ const loop_duration = 1.5;
 
 started: bool = false,
 
-point_areas: std.SegmentedList(RewardedDirection, 256) = .{},
-
+active_reward: RewardedDirection = undefined,
 history: std.SegmentedList(PlayerState, 1024) = .{},
 history_ages: std.SegmentedList(f32, 1024) = .{},
 
@@ -112,12 +102,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.started = true;
             try self.history_ages.append(self.mem.forever.allocator(), 0);
             try self.history.append(self.mem.forever.allocator(), .{ .pos = mouse.cur.position });
-            try self.point_areas.append(self.mem.forever.allocator(), .{
-                .start = 0.05,
-                .duration = 0.5,
+            self.active_reward = .{
                 .pos = camera.getAt(.new(0.75, 0.25)),
                 .dir = Vec2.new(1, 1).normalized(),
-            });
+                .progress = 0,
+            };
         }
 
         return false;
@@ -129,16 +118,30 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     try self.history_ages.append(self.mem.level.allocator(), cur_t);
     try self.history.append(self.mem.level.allocator(), cur_state);
 
-    const entered_new_loop = @mod(cur_t, loop_duration) < @mod(prev_t, loop_duration);
-    const loop_index: u32 = @intFromFloat(@divFloor(cur_t, loop_duration));
-    if (entered_new_loop and loop_index % 1 == 0) {
-        const random: math.Random = .init(self.random.random());
-        try self.point_areas.append(self.mem.level.allocator(), .{
-            .start = random.between(0, 1),
-            .duration = 0.5 + random.around0(0.1),
-            .pos = random.inRect(camera.plusMargin(-10)),
-            .dir = random.direction(),
-        });
+    // const entered_new_loop = @mod(cur_t, loop_duration) < @mod(prev_t, loop_duration);
+    // const loop_index: u32 = @intFromFloat(@divFloor(cur_t, loop_duration));
+
+    {
+        const t = math.projectPointOnLine(
+            cur_state.pos,
+            self.active_reward.pos.sub(self.active_reward.dir.scale(5)),
+            self.active_reward.dir,
+        ) / 10.0;
+        // const projected_p = self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(t));
+        const projected_p = self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(self.active_reward.progress));
+        if (projected_p.sub(cur_state.pos).mag() > 2) {
+            self.active_reward.progress = 0;
+        } else {
+            self.active_reward.progress = math.clamp01(t);
+            if (self.active_reward.progress >= 1) {
+                const random: math.Random = .init(self.random.random());
+                self.active_reward = .{
+                    .pos = random.inRect(camera.plusMargin(-10)),
+                    .dir = random.direction(),
+                    .progress = 0,
+                };
+            }
+        }
     }
 
     var active_indices: std.ArrayList(usize) = .init(self.mem.frame.allocator());
@@ -152,18 +155,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     platform.gl.clear(COLORS.bg);
 
-    var point_areas_it = self.point_areas.constIterator(0);
-
-    point_areas_it.set(0);
-    while (point_areas_it.next()) |point_area| {
-        if (point_area.isActive(@mod(cur_t / loop_duration, 1.0))) {
-            self.canvas.line(camera, &.{
-                point_area.pos.sub(point_area.dir.scale(5)),
-                point_area.pos.add(point_area.dir.scale(5)),
-                point_area.pos.add(point_area.dir.scale(5)).add(point_area.dir.rotate(3.0 / 8.0).scale(2)),
-            }, 1, FColor.black.withAlpha(0.5));
-        }
-    }
+    self.canvas.line(camera, &.{
+        self.active_reward.pos.sub(self.active_reward.dir.scale(5)),
+        self.active_reward.pos.add(self.active_reward.dir.scale(5)),
+        self.active_reward.pos.add(self.active_reward.dir.scale(5)).add(self.active_reward.dir.rotate(3.0 / 8.0).scale(2)),
+    }, 1, FColor.black.withAlpha(0.5));
+    self.canvas.line(camera, &.{
+        self.active_reward.pos.sub(self.active_reward.dir.scale(5)),
+        self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(self.active_reward.progress)),
+    }, 1, FColor.white.withAlpha(0.5));
 
     var points: std.ArrayList(Vec2) = .init(self.mem.frame.allocator());
     {

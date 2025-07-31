@@ -1736,3 +1736,14 @@ pub fn lineCircleIntersection(line_pos: Vec2, line_dir: Vec2, circle_center: Vec
     // Return the closest intersection point
     return @min(t1, t2);
 }
+
+pub fn projectPointOnLine(p: Vec2, line_origin: Vec2, line_dir: Vec2) f32 {
+    assert(std.math.approxEqAbs(f32, line_dir.mag(), 1.0, 0.001));
+    const line_to_point = p.sub(line_origin);
+    const projection_length = line_to_point.dot(line_dir);
+    return projection_length / line_dir.mag();
+}
+
+test "projectPointOnLine" {
+    try std.testing.expectEqual(1.5, projectPointOnLine(.new(3.5, 2), .new(2, 2), .new(1, 0)));
+}
