@@ -51,14 +51,14 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
+    random_seed: u64,
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
     dst.mem = .init(gpa);
     dst.canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
     dst.smooth = .init(dst.mem.forever.allocator());
     // dst.lazy_state = .init(gpa);
-    // TODO: random seed
-    dst.random = .init(1);
+    dst.random = .init(random_seed);
 }
 
 // TODO: take gl parameter

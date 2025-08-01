@@ -242,7 +242,7 @@ wasm_exports.preload();
 resizeCanvas();
 document.title = getNullTerminatedString(wasm_exports.getTitle());
 const images = await Promise.all(image_promises);
-wasm_exports.init();
+wasm_exports.init(Math.floor(Math.random() * 2**32));
 
 // TODO(eternal): some more reliable way to detect if it's a hot reloading build
 if (location.hostname === "localhost") {

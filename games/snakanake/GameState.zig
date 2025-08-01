@@ -88,10 +88,10 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
+    random_seed: u64,
 ) !void {
-    // TODO: get random seed as param?
     dst.* = .{
-        .rnd_instance = .init(0),
+        .rnd_instance = .init(random_seed),
         .canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
         // TODO: store this in kommon for later use
         .debug_fwidth = try gl.buildRenderable(

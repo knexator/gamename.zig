@@ -34,8 +34,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         }
     }
 
-    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: Gl, loaded_images: std.EnumArray(GameState.Images, *const anyopaque)) !void {
-        try dst.state.init(gpa, sdl_gl, loaded_images);
+    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: Gl, loaded_images: std.EnumArray(GameState.Images, *const anyopaque), random_seed: u64) !void {
+        try dst.state.init(gpa, sdl_gl, loaded_images, random_seed);
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -645,7 +645,9 @@ pub fn main() !void {
         try my_game.preload(sdl_platform.gl);
     }
 
-    try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers);
+    var seed: u64 = undefined;
+    try std.posix.getrandom(std.mem.asBytes(&seed));
+    try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers, seed);
     // TODO: gl on deinit
     defer my_game.deinit(sdl_platform.gpa);
 

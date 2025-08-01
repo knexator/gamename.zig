@@ -794,11 +794,11 @@ export fn getTitle() [*:0]const u8 {
     return stuff.metadata.name;
 }
 
-export fn init() void {
+export fn init(random_seed: u32) void {
     js.webgl2.enable(.BLEND);
     js.webgl2.blendFunc(.SRC_ALPHA, .ONE_MINUS_SRC_ALPHA);
 
-    my_game.init(gpa, web_platform.gl, images_pointers) catch unreachable;
+    my_game.init(gpa, web_platform.gl, images_pointers, @intCast(random_seed)) catch unreachable;
 }
 
 export fn update(delta_seconds: f32) void {

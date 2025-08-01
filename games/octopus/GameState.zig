@@ -375,6 +375,7 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
+    _: u64,
 ) !void {
     dst.mem = .init(gpa);
     for (level_infos, &dst.old_states) |info, *state| {

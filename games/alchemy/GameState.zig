@@ -403,6 +403,7 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
+    _: u64,
 ) !void {
     // dst.* = kommon.meta.initDefaultFields(GameState);
     dst.global_seconds_at_focus = null;
