@@ -123,15 +123,15 @@ pub fn allOOP(
     } else return true;
 }
 
-pub fn linspace01(n_steps: usize, include_endpoint: bool) [n_steps]f32 {
+pub fn linspace01(comptime n_steps: usize, comptime include_endpoint: bool) [n_steps]f32 {
     return linspace(0, 1, n_steps, include_endpoint);
 }
 
-pub fn linspace(min: f32, max: f32, n_steps: usize, include_endpoint: bool) [n_steps]f32 {
+pub fn linspace(comptime min: f32, comptime max: f32, comptime n_steps: usize, comptime include_endpoint: bool) [n_steps]f32 {
     const denominator: f32 = @floatFromInt(if (include_endpoint) (n_steps - 1) else n_steps);
     return fromCount(n_steps, struct {
         pub fn anon(n: usize) f32 {
-            return std.math.lerp(min, max, n / denominator);
+            return std.math.lerp(min, max, kommon.math.tof32(n) / denominator);
         }
     }.anon);
 }
@@ -217,3 +217,5 @@ pub fn closure(
 ) Closure(f, @TypeOf(capture)) {
     return Closure(f, @TypeOf(capture)){ .capture = capture };
 }
+
+const kommon = @import("./kommon.zig");

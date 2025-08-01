@@ -6,6 +6,30 @@ const RewardedDirection = struct {
     pos: Vec2,
     dir: Vec2,
     progress: f32,
+
+    const Circle = struct {
+        pos: Vec2,
+        radius: f32,
+
+        fn contains(self: Circle, p: Vec2) bool {
+            return p.sub(self.pos).magSq() < (self.radius * self.radius);
+        }
+    };
+
+    pub fn circleAt(self: RewardedDirection, t: f32) Circle {
+        return .{
+            .pos = self.pos.add(self.dir.scale(12 * t)),
+            .radius = 1.5 + 3 * (1.0 - t),
+        };
+    }
+
+    pub fn progressAt(self: RewardedDirection, p: Vec2) f32 {
+        return math.projectPointOnLine(
+            p,
+            self.pos,
+            self.dir,
+        ) / 12.0;
+    }
 };
 
 pub const GameState = @This();
@@ -126,21 +150,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     // const loop_index: u32 = @intFromFloat(@divFloor(cur_t, loop_duration));
 
     {
-        const t = math.projectPointOnLine(
-            cur_state.pos,
-            self.active_reward.pos.sub(self.active_reward.dir.scale(5)),
-            self.active_reward.dir,
-        ) / 10.0;
-        // const projected_p = self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(t));
-        const projected_p = self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(self.active_reward.progress));
-        if (projected_p.sub(cur_state.pos).mag() > 3) {
-            self.active_reward.progress = 0;
+        const cur_circle = self.active_reward.circleAt(self.active_reward.progress);
+        if (!cur_circle.contains(cur_state.pos)) {
+            math.towards(&self.active_reward.progress, 0, platform.delta_seconds / 0.2);
         } else {
-            self.active_reward.progress = math.clamp01(t);
+            self.active_reward.progress = math.clamp01(self.active_reward.progressAt(cur_state.pos));
             if (self.active_reward.progress >= 1) {
                 const random: math.Random = .init(self.random.random());
                 self.active_reward = .{
-                    .pos = random.inRect(camera.plusMargin(-10)),
+                    .pos = random.inRect(camera.plusMargin(-13)),
                     .dir = random.direction(),
                     .progress = 0,
                 };
@@ -159,15 +177,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     platform.gl.clear(COLORS.bg);
 
-    self.canvas.line(camera, &.{
-        self.active_reward.pos.sub(self.active_reward.dir.scale(5)),
-        self.active_reward.pos.add(self.active_reward.dir.scale(5)),
-        self.active_reward.pos.add(self.active_reward.dir.scale(5)).add(self.active_reward.dir.rotate(3.0 / 8.0).scale(2)),
-    }, 1, FColor.black.withAlpha(0.5));
-    self.canvas.line(camera, &.{
-        self.active_reward.pos.sub(self.active_reward.dir.scale(5)),
-        self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(self.active_reward.progress)),
-    }, 1, FColor.white.withAlpha(0.5));
+    for (&kommon.funktional.linspace01(50, true)) |t| {
+        const c = self.active_reward.circleAt(t);
+        self.canvas.strokeCircle(128, camera, c.pos, c.radius, 0.1, FColor.white.withAlpha(0.04));
+    }
+    {
+        const c = self.active_reward.circleAt(self.active_reward.progress);
+        self.canvas.strokeCircle(128, camera, c.pos, c.radius, 0.1, FColor.white);
+    }
 
     var points: std.ArrayList(Vec2) = .init(self.mem.frame.allocator());
     {
