@@ -34,6 +34,8 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         global_seconds: f32,
         sound_queue: *std.EnumSet(std.meta.FieldEnum(@TypeOf(sounds))),
         loop_volumes: *std.EnumArray(std.meta.FieldEnum(@TypeOf(loops)), f32),
+        sample_rate: f32,
+        enqueueSamples: *const fn (src: []const f32) void,
         gl: Gl,
 
         pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {

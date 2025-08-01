@@ -188,6 +188,25 @@ async function getWasm() {
       },
       setLoopVolume: (loop_id, v) => loops[loop_id].setVolume(v),
 
+      enqueueSamples: (src_ptr, src_len) => {
+        const src = wasmMem().subarray(src_ptr, src_ptr + src_len);
+        const dst = new Uint8Array(sharedAudioBuffer)
+
+        if (write_index + src.length < dst.length) {
+          dst.set(src, write_index);
+        } else {
+          dst.set(src.subarray(0, dst.length - write_index), write_index);
+          dst.set(src.subarray(dst.length - write_index));
+        }
+        write_index = (write_index + src.length) % dst.length;
+
+        // easier version
+        // for (let i = 0; i < src.length; i++) {
+        //   dst[write_index] = src[i];
+        //   write_index = (write_index + 1) % dst.length;
+        // }
+      },
+
       // webgl2
       createShader: (type) => storeGlObject(gl.createShader(type)),
       shaderSource: (shader, source_ptr, source_len) => gl.shaderSource(gl_objects[shader], "#version 300 es\n\n" + getString(source_ptr, source_len)),
@@ -242,7 +261,7 @@ wasm_exports.preload();
 resizeCanvas();
 document.title = getNullTerminatedString(wasm_exports.getTitle());
 const images = await Promise.all(image_promises);
-wasm_exports.init(Math.floor(Math.random() * 2**32));
+wasm_exports.init(Math.floor(Math.random() * 2 ** 32));
 
 // TODO(eternal): some more reliable way to detect if it's a hot reloading build
 if (location.hostname === "localhost") {
@@ -331,3 +350,55 @@ function rgbToHex(r, g, b, a) {
 }
 
 requestAnimationFrame(every_frame);
+
+// 10 blocks
+const sharedAudioBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * 128 * 10);
+(new Float32Array(sharedAudioBuffer)).fill(0);
+
+// see https://github.com/ringtailsoftware/zig-wasm-audio-framebuffer/blob/1f7fc03b94f5692139aa1c404ba6841c92f5b065/src/pcm-processor.js
+const sharedAudioInfoBuffer = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * 2);
+const audio_write_ptr = new Uint32Array(sharedAudioInfoBuffer, 0, 1);
+const audio_read_ptr = new Uint32Array(sharedAudioInfoBuffer, 4, 1);
+
+var write_index = 0;
+
+document.addEventListener('click', async _ => {
+  const audioCtx = new AudioContext();
+
+  const processorCode = `
+    class MyProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.read_index = 0;
+        this.buffer = null;
+        this.port.onmessage = (e) => {
+          this.buffer = new Float32Array(e.data.audio_buffer);
+          this.length = this.buffer.length;
+          this.write_ptr = new Uint32Array(e.data.audio_data, 0, 1);
+          this.read_ptr = new Uint32Array(e.data.audio_data, 4, 1);
+        };
+      }
+
+      process(inputs, outputs, parameters) {
+        const output = outputs[0];
+        const channel = output[0];
+
+        // TODO: use .set
+        for (let i = 0; i < channel.length; i++) {
+          channel[i] = this.buffer[this.read_index];
+          this.read_index = (this.read_index + 1) % this.buffer.length;
+        }
+        return true;
+      }
+    }
+    registerProcessor('my-processor', MyProcessor);
+  `;
+
+  const blob = new Blob([processorCode], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  await audioCtx.audioWorklet.addModule(url);
+  const node = new AudioWorkletNode(audioCtx, 'my-processor');
+  node.port.postMessage({audio_buffer: sharedAudioBuffer, audio_data: sharedAudioInfoBuffer});
+  node.connect(audioCtx.destination);
+  wasm_exports.setSampleRate(audioCtx.sampleRate);
+}, { once: true });

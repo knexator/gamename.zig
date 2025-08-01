@@ -638,6 +638,14 @@ pub fn main() !void {
         .global_seconds = 0,
         .sound_queue = &sound_queue,
         .loop_volumes = &loop_volumes,
+        // TODO
+        .sample_rate = 48000,
+        // TODO
+        .enqueueSamples = struct {
+            pub fn anon(src: []const f32) void {
+                _ = src;
+            }
+        }.anon,
         .gl = sdl_gl.vtable,
     };
 

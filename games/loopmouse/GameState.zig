@@ -71,6 +71,16 @@ mem: Mem,
 smooth: kommon.LazyState,
 // lazy_state: LocalDecisions,
 
+var queued_audio_seconds: f32 = 0;
+const wave: [128]f32 = blk: {
+    @setEvalBranchQuota(10000);
+    var result: [128]f32 = undefined;
+    for (&result, 0..) |*dst, k| {
+        dst.* = math.sin(tof32(k) / 128.0);
+    }
+    break :blk result;
+};
+
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -100,8 +110,16 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
+// var first = true;
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
+    // if (first) {
+    //     // for (0..50) |_| {
+    //     platform.enqueueSamples(&wave);
+    //     // }
+    //     first = false;
+    // }
+
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
     self.smooth.last_delta_seconds = platform.delta_seconds;
@@ -212,6 +230,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             break;
         }
     }
+
+    while (queued_audio_seconds < 30.0 / 30.0) {
+        platform.enqueueSamples(&wave);
+        queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
+    }
+
+    // {
+    //     var points2: std.ArrayList(Vec2) = .init(self.mem.frame.allocator());
+    //     for (&wave, 0..) |v, k| {
+    //         try points2.append(.new(tof32(k) / wave.len, math.remap(v, -1, 1, 0, 1)));
+    //     }
+    //     self.canvas.line(.unit, points2.items, 0.05, .black);
+    // }
 
     return false;
 }

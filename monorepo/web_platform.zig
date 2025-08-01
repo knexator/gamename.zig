@@ -318,6 +318,7 @@ const js = struct {
         extern fn playSound(sound_id: usize) void;
         extern fn loadAndStartLoop(url_ptr: [*]const u8, url_len: usize) usize;
         extern fn setLoopVolume(loop_id: usize, volume: f32) void;
+        extern fn enqueueSamples(src_ptr: [*]const f32, src_len: usize) void;
     };
 };
 
@@ -364,6 +365,10 @@ const js_better = struct {
         pub fn loadSound(url: []const u8) usize {
             return js.audio.loadSound(url.ptr, url.len);
         }
+
+        pub fn enqueueSamples(src: []const f32) void {
+            return js.audio.enqueueSamples(src.ptr, src.len * @sizeOf(f32));
+        }
     };
 };
 
@@ -405,6 +410,8 @@ var web_platform: PlatformGives = .{
     .global_seconds = 0,
     .sound_queue = &sound_queue,
     .loop_volumes = &loop_volumes,
+    .sample_rate = 48000,
+    .enqueueSamples = js_better.audio.enqueueSamples,
     .gl = web_gl.vtable,
 };
 
@@ -763,6 +770,10 @@ const web_gl = struct {
         }, 0, @intCast(instance_count));
     }
 };
+
+export fn setSampleRate(new_rate: f32) void {
+    web_platform.sample_rate = new_rate;
+}
 
 export fn preload() void {
     inline for (comptime std.enums.values(Sounds)) |sound| {
