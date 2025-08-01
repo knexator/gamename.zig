@@ -189,8 +189,12 @@ async function getWasm() {
       setLoopVolume: (loop_id, v) => loops[loop_id].setVolume(v),
 
       enqueueSamples: (src_ptr, src_len) => {
-        const src = wasmMem().subarray(src_ptr, src_ptr + src_len);
-        const dst = new Uint8Array(sharedAudioBuffer)
+        const src_bytes = wasmMem().subarray(src_ptr, src_ptr + src_len);
+        if (src_bytes.byteOffset % 4 !== 0) {
+          throw new Error("Byte length is not a multiple of 4, can't interpret as Float32Array");
+        }
+        const src = new Float32Array(src_bytes.buffer, src_bytes.byteOffset, src_bytes.byteLength / 4);
+        const dst = new Float32Array(sharedAudioBuffer);
 
         if (write_index + src.length < dst.length) {
           dst.set(src, write_index);
