@@ -187,8 +187,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     for (active_indices.items[1..]) |i| {
         const state = self.history.at(i);
         if (state.pos.sub(cur_state.pos).magSq() < 4) {
-            self.history.shrink(i);
-            self.history_ages.shrink(i);
+            self.started = false;
+            self.history.clearRetainingCapacity();
+            self.history_ages.clearRetainingCapacity();
+            // self.history.shrink(i);
+            // self.history_ages.shrink(i);
             break;
         }
     }
