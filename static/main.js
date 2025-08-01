@@ -188,6 +188,7 @@ async function getWasm() {
       },
       setLoopVolume: (loop_id, v) => loops[loop_id].setVolume(v),
 
+      // queuedSeconds: () => {}
       enqueueSamples: (src_ptr, src_len) => {
         const src_bytes = wasmMem().subarray(src_ptr, src_ptr + src_len);
         if (src_bytes.byteOffset % 4 !== 0) {
@@ -196,19 +197,31 @@ async function getWasm() {
         const src = new Float32Array(src_bytes.buffer, src_bytes.byteOffset, src_bytes.byteLength / 4);
         const dst = new Float32Array(sharedAudioBuffer);
 
-        if (write_index + src.length < dst.length) {
-          dst.set(src, write_index);
-        } else {
-          dst.set(src.subarray(0, dst.length - write_index), write_index);
-          dst.set(src.subarray(dst.length - write_index));
+        const rd = Atomics.load(audio_read_ptr, 0);
+        var wr = Atomics.load(audio_write_ptr, 0);
+
+        const available_space = (rd - wr + dst.length);
+        if (available_space < src.length) {
+          throw new Error("queued too much audio");
         }
-        write_index = (write_index + src.length) % dst.length;
+
+        // if (write_index + src.length < dst.length) {
+        //   dst.set(src, write_index);
+        // } else {
+        //   dst.set(src.subarray(0, dst.length - write_index), write_index);
+        //   dst.set(src.subarray(dst.length - write_index));
+        // }
+        // write_index = (write_index + src.length) % dst.length;
 
         // easier version
-        // for (let i = 0; i < src.length; i++) {
-        //   dst[write_index] = src[i];
-        //   write_index = (write_index + 1) % dst.length;
-        // }
+        for (let i = 0; i < src.length; i++) {
+          dst[wr] = src[i];
+          wr = (wr + 1) % dst.length;
+          // dst[write_index] = src[i];
+          // write_index = (write_index + 1) % dst.length;
+        }
+
+        Atomics.store(audio_write_ptr, 0, wr);
       },
 
       // webgl2
@@ -371,27 +384,38 @@ document.addEventListener('click', async _ => {
 
   const processorCode = `
     class MyProcessor extends AudioWorkletProcessor {
-      constructor() {
+      constructor(options) {
         super();
         this.read_index = 0;
-        this.buffer = null;
-        this.port.onmessage = (e) => {
-          this.buffer = new Float32Array(e.data.audio_buffer);
-          this.length = this.buffer.length;
-          this.write_ptr = new Uint32Array(e.data.audio_data, 0, 1);
-          this.read_ptr = new Uint32Array(e.data.audio_data, 4, 1);
-        };
+        this.buffer = new Float32Array(options.processorOptions.audio_buffer);
+        this.write_ptr = new Uint32Array(options.processorOptions.audio_data, 0, 1);
+        this.read_ptr = new Uint32Array(options.processorOptions.audio_data, 4, 1);
       }
 
       process(inputs, outputs, parameters) {
         const output = outputs[0];
         const channel = output[0];
 
+        var rd = Atomics.load(this.read_ptr, 0);
+        const wr = Atomics.load(this.write_ptr, 0);
+        const available_read = (wr - rd + this.buffer.length) % this.buffer.length;
+
+        if (available_read < channel.length) {
+          console.log("UNDERFLOW");  
+          return true;
+        }
+
         // TODO: use .set
         for (let i = 0; i < channel.length; i++) {
-          channel[i] = this.buffer[this.read_index];
-          this.read_index = (this.read_index + 1) % this.buffer.length;
+          channel[i] = this.buffer[rd];
+          rd = (rd + 1) % this.buffer.length;
+
+          // channel[i] = this.buffer[this.read_index];
+          // this.read_index = (this.read_index + 1) % this.buffer.length;
         }
+
+        Atomics.store(this.read_ptr, 0, rd);
+
         return true;
       }
     }
@@ -401,8 +425,12 @@ document.addEventListener('click', async _ => {
   const blob = new Blob([processorCode], { type: 'application/javascript' });
   const url = URL.createObjectURL(blob);
   await audioCtx.audioWorklet.addModule(url);
-  const node = new AudioWorkletNode(audioCtx, 'my-processor');
-  node.port.postMessage({audio_buffer: sharedAudioBuffer, audio_data: sharedAudioInfoBuffer});
+  const node = new AudioWorkletNode(audioCtx, 'my-processor', {
+    processorOptions: {
+      audio_buffer: sharedAudioBuffer,
+      audio_data: sharedAudioInfoBuffer
+    },
+  });
   node.connect(audioCtx.destination);
   wasm_exports.setSampleRate(audioCtx.sampleRate);
 }, { once: true });
