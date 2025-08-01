@@ -33,6 +33,7 @@ const COLORS = struct {
 }{};
 
 const loop_duration = 1.5;
+const superhot = false;
 
 started: bool = false,
 
@@ -113,10 +114,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     const prev_t = self.history_ages.at(self.history_ages.len - 1).*;
-    const cur_t: f32 = platform.delta_seconds + prev_t;
+    const delta_t = if (superhot) mouse.deltaPos().mag() * 0.1 else platform.delta_seconds;
+    const cur_t: f32 = delta_t + prev_t;
     const cur_state: PlayerState = .{ .pos = mouse.cur.position };
-    try self.history_ages.append(self.mem.level.allocator(), cur_t);
-    try self.history.append(self.mem.level.allocator(), cur_state);
+    if (delta_t > 0) {
+        try self.history_ages.append(self.mem.level.allocator(), cur_t);
+        try self.history.append(self.mem.level.allocator(), cur_state);
+    }
 
     // const entered_new_loop = @mod(cur_t, loop_duration) < @mod(prev_t, loop_duration);
     // const loop_index: u32 = @intFromFloat(@divFloor(cur_t, loop_duration));
@@ -129,7 +133,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         ) / 10.0;
         // const projected_p = self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(t));
         const projected_p = self.active_reward.pos.sub(self.active_reward.dir.scale(5)).add(self.active_reward.dir.scale(10).scale(self.active_reward.progress));
-        if (projected_p.sub(cur_state.pos).mag() > 2) {
+        if (projected_p.sub(cur_state.pos).mag() > 3) {
             self.active_reward.progress = 0;
         } else {
             self.active_reward.progress = math.clamp01(t);
