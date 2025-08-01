@@ -61,6 +61,7 @@ fn ParamsLen(map_fn: anytype) usize {
 }
 
 pub fn fromCount(comptime n: usize, comptime map_fn: anytype) [n]ReturnOf(map_fn) {
+    @setEvalBranchQuota(n * 100);
     std.debug.assert(SingleInputOf(map_fn) == usize);
     var result: [n]ReturnOf(map_fn) = undefined;
     for (0..n, &result) |k, *target| {
