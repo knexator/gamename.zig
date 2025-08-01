@@ -122,6 +122,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     //     first = false;
     // }
 
+    while (platform.queuedSeconds() < 3.0 / 30.0) {
+        // const cur_wave = try self.mem.frame.allocator().alloc(f32, 1280);
+        // for (cur_wave) |*dst| {
+        //     dst.* = math.sin(audio_phase * 440);
+        //     audio_phase += 1.0 / platform.sample_rate;
+        // }
+        // platform.enqueueSamples(cur_wave);
+        // queued_audio_seconds += tof32(cur_wave.len) / platform.sample_rate;
+
+        platform.enqueueSamples(&wave);
+        // queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
+    }
+
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
     self.smooth.last_delta_seconds = platform.delta_seconds;
@@ -233,8 +246,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    queued_audio_seconds -= platform.delta_seconds;
-    while (queued_audio_seconds < 30.0 / 30.0) {
+    while (platform.queuedSeconds() < 3.0 / 30.0) {
         // const cur_wave = try self.mem.frame.allocator().alloc(f32, 1280);
         // for (cur_wave) |*dst| {
         //     dst.* = math.sin(audio_phase * 440);
@@ -244,7 +256,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // queued_audio_seconds += tof32(cur_wave.len) / platform.sample_rate;
 
         platform.enqueueSamples(&wave);
-        queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
+        // queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
     }
 
     if (false) {

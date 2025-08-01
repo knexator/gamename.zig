@@ -188,7 +188,13 @@ async function getWasm() {
       },
       setLoopVolume: (loop_id, v) => loops[loop_id].setVolume(v),
 
-      // queuedSeconds: () => {}
+      queuedSeconds: () => {
+        const rd = Atomics.load(audio_read_ptr, 0);
+        const wr = Atomics.load(audio_write_ptr, 0);
+        const dst = new Float32Array(sharedAudioBuffer);
+        const available_read = (wr - rd + dst.length) % dst.length;
+        return available_read / sample_rate;
+      },
       enqueueSamples: (src_ptr, src_len) => {
         const src_bytes = wasmMem().subarray(src_ptr, src_ptr + src_len);
         if (src_bytes.byteOffset % 4 !== 0) {
@@ -376,6 +382,7 @@ const sharedAudioBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT *
 const sharedAudioInfoBuffer = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * 2);
 const audio_write_ptr = new Uint32Array(sharedAudioInfoBuffer, 0, 1);
 const audio_read_ptr = new Uint32Array(sharedAudioInfoBuffer, 4, 1);
+var sample_rate = 48000;
 
 var write_index = 0;
 
@@ -432,5 +439,6 @@ document.addEventListener('click', async _ => {
     },
   });
   node.connect(audioCtx.destination);
+  sample_rate = audioCtx.sampleRate;
   wasm_exports.setSampleRate(audioCtx.sampleRate);
 }, { once: true });
