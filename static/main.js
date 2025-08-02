@@ -206,11 +206,15 @@ async function getWasm() {
         const rd = Atomics.load(audio_read_ptr, 0);
         var wr = Atomics.load(audio_write_ptr, 0);
 
-        const available_space = (rd - wr + dst.length);
+        // one less, since there's a reserved gap
+        const available_space = (rd - wr + dst.length) - 1;
         if (available_space < src.length) {
-          throw new Error("queued too much audio");
+          return;
+          // TODO
+          // throw new Error("queued too much audio");
         }
 
+        // TODO: use .set
         // if (write_index + src.length < dst.length) {
         //   dst.set(src, write_index);
         // } else {
@@ -223,8 +227,6 @@ async function getWasm() {
         for (let i = 0; i < src.length; i++) {
           dst[wr] = src[i];
           wr = (wr + 1) % dst.length;
-          // dst[write_index] = src[i];
-          // write_index = (write_index + 1) % dst.length;
         }
 
         Atomics.store(audio_write_ptr, 0, wr);
@@ -360,22 +362,12 @@ document.addEventListener("keyup", (ev) => {
   }
 });
 
-function rgbToHex(r, g, b, a) {
-  return (
-    "#" +
-    [r, g, b, a]
-      .map((num) => {
-        const hex = num.toString(16);
-        return hex.length === 1 ? "0" + hex : hex;
-      })
-      .join("")
-  );
-}
-
 requestAnimationFrame(every_frame);
 
-// 10 blocks
-const sharedAudioBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * 128 * 10);
+// at 48000Hz, each 128-sample block is 0.00026[6] seconds long
+// at 60fps, each frame needs 6.25 blocks
+// To be safe, we put room for 512 blocks, around 1 second.
+const sharedAudioBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * 128 * 512);
 (new Float32Array(sharedAudioBuffer)).fill(0);
 
 // see https://github.com/ringtailsoftware/zig-wasm-audio-framebuffer/blob/1f7fc03b94f5692139aa1c404ba6841c92f5b065/src/pcm-processor.js

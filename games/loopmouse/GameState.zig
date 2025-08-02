@@ -112,27 +112,15 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
-// var first = true;
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    // if (first) {
-    //     // for (0..50) |_| {
-    //     platform.enqueueSamples(&wave);
-    //     // }
-    //     first = false;
-    // }
-
     while (platform.queuedSeconds() < 3.0 / 30.0) {
-        // const cur_wave = try self.mem.frame.allocator().alloc(f32, 1280);
-        // for (cur_wave) |*dst| {
-        //     dst.* = math.sin(audio_phase * 440);
-        //     audio_phase += 1.0 / platform.sample_rate;
-        // }
-        // platform.enqueueSamples(cur_wave);
-        // queued_audio_seconds += tof32(cur_wave.len) / platform.sample_rate;
-
-        platform.enqueueSamples(&wave);
-        // queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
+        const cur_wave = try self.mem.frame.allocator().alloc(f32, 128);
+        for (cur_wave) |*dst| {
+            dst.* = math.sin(audio_phase * 440);
+            audio_phase += 1.0 / platform.sample_rate;
+        }
+        platform.enqueueSamples(cur_wave);
     }
 
     _ = self.mem.frame.reset(.retain_capacity);
@@ -246,18 +234,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    while (platform.queuedSeconds() < 3.0 / 30.0) {
-        // const cur_wave = try self.mem.frame.allocator().alloc(f32, 1280);
-        // for (cur_wave) |*dst| {
-        //     dst.* = math.sin(audio_phase * 440);
-        //     audio_phase += 1.0 / platform.sample_rate;
-        // }
-        // platform.enqueueSamples(cur_wave);
-        // queued_audio_seconds += tof32(cur_wave.len) / platform.sample_rate;
+    // std.log.debug("queued before: {d}", .{platform.queuedSeconds()});
+    // while (platform.queuedSeconds() < 3.0 / 30.0) {
+    // const cur_wave = try self.mem.frame.allocator().alloc(f32, 1280);
+    // for (cur_wave) |*dst| {
+    //     dst.* = math.sin(audio_phase * 440);
+    //     audio_phase += 1.0 / platform.sample_rate;
+    // }
+    // platform.enqueueSamples(cur_wave);
+    // queued_audio_seconds += tof32(cur_wave.len) / platform.sample_rate;
 
-        platform.enqueueSamples(&wave);
-        // queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
-    }
+    // platform.enqueueSamples(&wave);
+    // queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
+    // }
+    // std.log.debug("queued after: {d}", .{platform.queuedSeconds()});
 
     if (false) {
         const cur_wave = try self.mem.frame.allocator().alloc(f32, 1000);
