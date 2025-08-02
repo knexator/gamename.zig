@@ -70,18 +70,7 @@ canvas: Canvas,
 mem: Mem,
 smooth: kommon.LazyState,
 // lazy_state: LocalDecisions,
-
-var audio_phase: f32 = 0;
-
-var queued_audio_seconds: f32 = 0;
-const wave: [128]f32 = blk: {
-    @setEvalBranchQuota(10000);
-    var result: [128]f32 = undefined;
-    for (&result, 0..) |*dst, k| {
-        dst.* = math.sin(tof32(k) / 128.0);
-    }
-    break :blk result;
-};
+musician: Musician = .{},
 
 pub fn init(
     dst: *GameState,
@@ -112,14 +101,24 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
+const Musician = struct {
+    sin_phase: f32 = 0,
+    sin_freq: f32 = 440,
+
+    fn packet(self: *Musician, out: []f32, sample_rate: f32) void {
+        for (out) |*dst| {
+            dst.* = math.sin(self.sin_phase);
+            self.sin_phase += self.sin_freq / sample_rate;
+        }
+    }
+};
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
+    self.musician.sin_freq = 440 + 40 * math.sin(platform.global_seconds);
     while (platform.queuedSeconds() < 3.0 / 30.0) {
         const cur_wave = try self.mem.frame.allocator().alloc(f32, 128);
-        for (cur_wave) |*dst| {
-            dst.* = math.sin(audio_phase * 440);
-            audio_phase += 1.0 / platform.sample_rate;
-        }
+        self.musician.packet(cur_wave, platform.sample_rate);
         platform.enqueueSamples(cur_wave);
     }
 
@@ -233,43 +232,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             break;
         }
     }
-
-    // std.log.debug("queued before: {d}", .{platform.queuedSeconds()});
-    // while (platform.queuedSeconds() < 3.0 / 30.0) {
-    // const cur_wave = try self.mem.frame.allocator().alloc(f32, 1280);
-    // for (cur_wave) |*dst| {
-    //     dst.* = math.sin(audio_phase * 440);
-    //     audio_phase += 1.0 / platform.sample_rate;
-    // }
-    // platform.enqueueSamples(cur_wave);
-    // queued_audio_seconds += tof32(cur_wave.len) / platform.sample_rate;
-
-    // platform.enqueueSamples(&wave);
-    // queued_audio_seconds += tof32(wave.len) / platform.sample_rate;
-    // }
-    // std.log.debug("queued after: {d}", .{platform.queuedSeconds()});
-
-    if (false) {
-        const cur_wave = try self.mem.frame.allocator().alloc(f32, 1000);
-        for (cur_wave) |*dst| {
-            dst.* = math.sin(audio_phase * 440);
-            audio_phase += 1.0 / platform.sample_rate;
-        }
-
-        var points2: std.ArrayList(Vec2) = .init(self.mem.frame.allocator());
-        for (cur_wave, 0..) |v, k| {
-            try points2.append(.new(tof32(k) / tof32(cur_wave.len), math.remap(v, -1, 1, 0, 1)));
-        }
-        self.canvas.line(.unit, points2.items, 0.05, .black);
-    }
-
-    // {
-    //     var points2: std.ArrayList(Vec2) = .init(self.mem.frame.allocator());
-    //     for (&wave, 0..) |v, k| {
-    //         try points2.append(.new(tof32(k) / wave.len, math.remap(v, -1, 1, 0, 1)));
-    //     }
-    //     self.canvas.line(.unit, points2.items, 0.05, .black);
-    // }
 
     return false;
 }
