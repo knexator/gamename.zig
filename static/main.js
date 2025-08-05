@@ -376,8 +376,6 @@ const audio_write_ptr = new Uint32Array(sharedAudioInfoBuffer, 0, 1);
 const audio_read_ptr = new Uint32Array(sharedAudioInfoBuffer, 4, 1);
 var sample_rate = 48000;
 
-var write_index = 0;
-
 document.addEventListener('click', async _ => {
   const audioCtx = new AudioContext();
 

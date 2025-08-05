@@ -104,10 +104,11 @@ pub fn afterHotReload(self: *GameState) !void {
 const Musician = struct {
     sin_phase: f32 = 0,
     sin_freq: f32 = 440,
+    sin_gain: f32 = 1,
 
     fn packet(self: *Musician, out: []f32, sample_rate: f32) void {
         for (out) |*dst| {
-            dst.* = math.sin(self.sin_phase);
+            dst.* = self.sin_gain * math.sin(self.sin_phase);
             self.sin_phase += self.sin_freq / sample_rate;
         }
     }
@@ -115,7 +116,7 @@ const Musician = struct {
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    self.musician.sin_freq = 440 + 40 * math.sin(platform.global_seconds);
+    self.musician.sin_freq = 440.0 * std.math.pow(f32, 2.0, self.active_reward.progress);
     while (platform.queuedSeconds() < 3.0 / 30.0) {
         const cur_wave = try self.mem.frame.allocator().alloc(f32, 128);
         self.musician.packet(cur_wave, platform.sample_rate);

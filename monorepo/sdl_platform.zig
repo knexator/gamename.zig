@@ -639,6 +639,13 @@ pub fn main() !void {
         .sound_queue = &sound_queue,
         .loop_volumes = &loop_volumes,
         // TODO
+        .queuedSeconds = struct {
+            pub fn anon() f32 {
+                std.debug.panic("TODO", .{});
+                // return 1.0;
+            }
+        }.anon,
+        // TODO
         .sample_rate = 48000,
         // TODO
         .enqueueSamples = struct {
