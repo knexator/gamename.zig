@@ -110,13 +110,15 @@ const Musician = struct {
         for (out) |*dst| {
             dst.* = self.sin_gain * math.sin(self.sin_phase);
             self.sin_phase += self.sin_freq / sample_rate;
+            self.sin_phase = @mod(self.sin_phase, 1.0);
         }
     }
 };
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    self.musician.sin_freq = 440.0 * std.math.pow(f32, 2.0, self.active_reward.progress);
+    self.musician.sin_freq = 220.0 * std.math.pow(f32, 2.0, self.active_reward.progress);
+    self.musician.sin_gain = try self.smooth.float(.fromString("gain"), self.active_reward.progress);
     while (platform.queuedSeconds() < 3.0 / 30.0) {
         const cur_wave = try self.mem.frame.allocator().alloc(f32, 128);
         self.musician.packet(cur_wave, platform.sample_rate);
@@ -226,6 +228,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const state = self.history.at(i);
         if (state.pos.sub(cur_state.pos).magSq() < 4) {
             self.started = false;
+            self.active_reward.progress = 0;
             self.history.clearRetainingCapacity();
             self.history_ages.clearRetainingCapacity();
             // self.history.shrink(i);
