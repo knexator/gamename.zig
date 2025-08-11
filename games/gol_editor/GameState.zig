@@ -29,8 +29,8 @@ const CellState = enum {
 
     pub fn color(self: CellState) FColor {
         return switch (self) {
-            .black => .black,
-            .gray => .gray(0.5),
+            .black => .fromHex("#444444"),
+            .gray => .fromHex("#999999"),
             .white => .white,
         };
     }
@@ -86,6 +86,13 @@ pub fn init(
 
     dst.cells_states = .init(gpa);
     dst.cells_types = .init(gpa);
+
+    try dst.cells_states.put(.new(1, 1), .gray);
+    try dst.cells_states.put(.new(1, 2), .white);
+    try dst.cells_types.put(.new(1, 3), .@"+");
+    try dst.cells_types.put(.new(1, 4), .@"*");
+    try dst.cells_types.put(.new(1, 5), .O);
+    try dst.cells_types.put(.new(1, 6), .@"=");
 }
 
 // TODO: take gl parameter
@@ -213,6 +220,24 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             );
         }
         cell_texts.draw(camera);
+    }
+
+    if (true) {
+        var segments: std.ArrayList(Canvas.Segment) = .init(self.mem.frame.allocator());
+        {
+            var x = @floor(camera.top_left.x);
+            while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
+                try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = .black });
+            }
+        }
+        {
+            var y = @floor(camera.top_left.y);
+            while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
+                try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = .black });
+            }
+        }
+
+        self.canvas.instancedSegments(camera, segments.items, 0.05);
     }
 
     if (true) {
