@@ -45,10 +45,20 @@ const CellType = enum {
 
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
+            .empty => unreachable,
             inline else => |x| @tagName(x),
         };
     }
 };
+
+const Toolbar = struct {
+    active_state: CellState = .white,
+    active_type: CellType = .empty,
+
+    active_tool: enum { paint_state, paint_type },
+};
+
+toolbar: Toolbar = .{ .active_tool = .paint_state },
 
 camera: Rect = .{ .top_left = .zero, .size = Vec2.new(4, 3).scale(8) },
 cells_states: std.AutoArrayHashMap(IVec2, CellState),
@@ -129,29 +139,47 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.camera = self.camera.move(mouse.deltaPos().neg());
         }
     } else {
-        if (mouse.wasPressed(.left)) {
-            const old_type: CellState = self.cells_states.get(cell_under_mouse) orelse .black;
-            try self.cells_states.put(cell_under_mouse, switch (old_type) {
-                .black => .gray,
-                .gray => .white,
-                .white => .black,
-            });
-        }
-
-        if (mouse.wasPressed(.right)) {
-            const old_type: CellState = self.cells_states.get(cell_under_mouse) orelse .black;
-            try self.cells_states.put(cell_under_mouse, switch (old_type) {
-                .black => .white,
-                .gray => .black,
-                .white => .gray,
-            });
+        switch (self.toolbar.active_tool) {
+            .paint_state => {
+                if (mouse.cur.isDown(.left)) {
+                    try self.cells_states.put(cell_under_mouse, self.toolbar.active_state);
+                }
+                if (mouse.wasPressed(.right)) {
+                    self.toolbar.active_state = self.cells_states.get(cell_under_mouse) orelse .black;
+                }
+            },
+            .paint_type => {
+                if (mouse.cur.isDown(.left)) {
+                    try self.cells_types.put(cell_under_mouse, self.toolbar.active_type);
+                }
+                if (mouse.wasPressed(.right)) {
+                    self.toolbar.active_type = self.cells_types.get(cell_under_mouse) orelse .empty;
+                }
+            },
         }
     }
 
-    for (&[_]CellType{ .empty, .@"+", .@"*", .@"+", .O, .@"=" }, 0..) |t, k| {
-        if (platform.keyboard.wasPressed(.digit(k + 1))) {
-            try self.cells_types.put(cell_under_mouse, t);
-        }
+    switch (self.toolbar.active_tool) {
+        .paint_state => {
+            for (&[_]CellState{ .black, .gray, .white }, 0..) |t, k| {
+                if (platform.keyboard.wasPressed(.digit(k + 2))) {
+                    self.toolbar.active_state = t;
+                }
+            }
+            if (platform.keyboard.wasPressed(.Digit1)) {
+                self.toolbar.active_tool = .paint_type;
+            }
+        },
+        .paint_type => {
+            for (&[_]CellType{ .@"+", .@"*", .O, .@"=", .empty }, 0..) |t, k| {
+                if (platform.keyboard.wasPressed(.digit(k + 2))) {
+                    self.toolbar.active_type = t;
+                }
+            }
+            if (platform.keyboard.wasPressed(.Digit1)) {
+                self.toolbar.active_tool = .paint_state;
+            }
+        },
     }
 
     platform.gl.clear(CellState.black.color());
@@ -174,9 +202,30 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         var it = self.cells_types.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .empty) continue;
-            try cell_texts.addText(kv.value_ptr.*.text(), .centeredAt(kv.key_ptr.*.tof32().add(.half)), 1.0, .cyan);
+            try cell_texts.addText(
+                kv.value_ptr.*.text(),
+                .centeredAt(kv.key_ptr.*.tof32().add(.half)),
+                1.0,
+                if ((self.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
+                    .white
+                else
+                    .black,
+            );
         }
         cell_texts.draw(camera);
+    }
+
+    if (true) {
+        const ui_cam = camera.with(.{ .top_left = .zero }, .size);
+        self.canvas.fillRect(ui_cam, Rect.unit.plusMargin(0.1), .cyan);
+        switch (self.toolbar.active_tool) {
+            .paint_state => self.canvas.fillRect(ui_cam, .unit, self.toolbar.active_state.color()),
+            .paint_type => if (self.toolbar.active_type != .empty) {
+                var cell_texts = self.canvas.textBatch(0);
+                try cell_texts.addText(self.toolbar.active_type.text(), .centeredAt(.half), 1.0, .black);
+                cell_texts.draw(ui_cam);
+            },
+        }
     }
 
     return false;
