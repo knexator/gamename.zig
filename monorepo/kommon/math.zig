@@ -259,6 +259,13 @@ pub const Vec2 = extern struct {
     pub const Coord = enum { x, y };
     pub const coords: [2]Coord = .{ .x, .y };
 
+    pub const cardinal_directions = [4]Self{
+        .new(1, 0),
+        .new(0, 1),
+        .new(-1, 0),
+        .new(0, -1),
+    };
+
     pub fn new(x: Scalar, y: Scalar) Self {
         return .{ .x = x, .y = y };
     }
@@ -314,7 +321,11 @@ pub const Vec2 = extern struct {
     }
 
     pub fn toInt(v: Self, S: type) ZVec2(S) {
-        return .new(@intFromFloat(v.x), @intFromFloat(v.y));
+        const v2: Vec2 = switch (@typeInfo(S).int.signedness) {
+            .unsigned => v,
+            .signed => .new(@floor(v.x), @floor(v.y)),
+        };
+        return .new(@intFromFloat(v2.x), @intFromFloat(v2.y));
     }
 
     pub fn both(v: Scalar) Self {
@@ -989,6 +1000,11 @@ pub const Rect = extern struct {
                 }
             },
         }
+    }
+
+    pub fn zoom(original: Rect, fixed_world_pos: Vec2, scale: f32) Rect {
+        const new_size = original.size.scale(scale);
+        return .fromPivotAndSize(fixed_world_pos, original.localFromWorldPosition(fixed_world_pos), new_size);
     }
 
     pub fn with2(original: Rect, change_kind: MeasureKind, change_value: Vec2, keep: MeasureKind) Rect {

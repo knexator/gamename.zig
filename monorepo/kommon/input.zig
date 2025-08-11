@@ -141,6 +141,22 @@ pub fn CustomKeyboard(CustomKeyboardButton: type) type {
 }
 
 pub const KeyboardButton = enum(u8) {
+    pub fn digit(n: usize) KeyboardButton {
+        return switch (n) {
+            0 => .Digit0,
+            1 => .Digit1,
+            2 => .Digit2,
+            3 => .Digit3,
+            4 => .Digit4,
+            5 => .Digit5,
+            6 => .Digit6,
+            7 => .Digit7,
+            8 => .Digit8,
+            9 => .Digit9,
+            else => unreachable,
+        };
+    }
+
     Escape,
     Digit1,
     Digit2,
