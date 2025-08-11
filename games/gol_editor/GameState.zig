@@ -53,7 +53,7 @@ const CellType = enum {
 
 const Toolbar = struct {
     active_state: CellState = .white,
-    active_type: CellType = .empty,
+    active_type: CellType = .@"+",
 
     active_tool: enum { paint_state, paint_type },
 };
