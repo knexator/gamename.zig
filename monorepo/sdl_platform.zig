@@ -654,6 +654,8 @@ pub fn main() !void {
             }
         }.anon,
         .gl = sdl_gl.vtable,
+        // TODO
+        .downloadAsFile = undefined,
     };
 
     if (@hasField(@TypeOf(my_game), "preload")) {

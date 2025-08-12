@@ -38,6 +38,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         enqueueSamples: *const fn (src: []const f32) void,
         queuedSeconds: *const fn () f32,
         gl: Gl,
+        downloadAsFile: *const fn (filename: []const u8, contents: []const u8) void,
 
         pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
             if (self.keyboard.wasPressed(key)) return true;

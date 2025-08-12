@@ -59,6 +59,12 @@ const Toolbar = struct {
     active_tool: enum { paint_state, paint_type },
 };
 
+const BoardState = struct {
+    pub fn toText(out: std.io.AnyWriter) !void {
+        try out.writeAll("TODO");
+    }
+};
+
 toolbar: Toolbar = .{ .active_tool = .paint_state },
 
 camera: Rect = .{ .top_left = .zero, .size = Vec2.new(4, 3).scale(8) },
@@ -187,6 +193,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.toolbar.active_tool = .paint_state;
             }
         },
+    }
+
+    if (platform.keyboard.wasPressed(.KeyF)) {
+        var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
+        defer buf.deinit();
+        try BoardState.toText(buf.writer().any());
+        platform.downloadAsFile("gol_level.txt", buf.items);
     }
 
     platform.gl.clear(CellState.black.color());

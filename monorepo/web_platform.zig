@@ -321,6 +321,10 @@ const js = struct {
         extern fn enqueueSamples(src_ptr: [*]const f32, src_len: usize) void;
         extern fn queuedSeconds() f32;
     };
+
+    pub const storage = struct {
+        extern fn downloadAsFile(filename_ptr: [*]const u8, filename_len: usize, mime_ptr: [*]const u8, mime_len: usize, contents_ptr: [*]const u8, contents_len: usize) void;
+    };
 };
 
 const js_better = struct {
@@ -376,6 +380,15 @@ const js_better = struct {
             return js.audio.queuedSeconds();
         }
     };
+
+    pub const storage = struct {
+        pub fn downloadAsFile(filename: []const u8, mime: enum { txt }, contents: []const u8) void {
+            const mime_str = switch (mime) {
+                .txt => "text/plain",
+            };
+            js.storage.downloadAsFile(filename.ptr, mime_str.len, mime_str.ptr, contents.len, contents.ptr, contents.len);
+        }
+    };
 };
 
 const GameState = @import("GameState");
@@ -420,6 +433,11 @@ var web_platform: PlatformGives = .{
     .enqueueSamples = js_better.audio.enqueueSamples,
     .queuedSeconds = js_better.audio.queuedSeconds,
     .gl = web_gl.vtable,
+    .downloadAsFile = struct {
+        fn anon(filename: []const u8, contents: []const u8) void {
+            return js_better.storage.downloadAsFile(filename, .txt, contents);
+        }
+    }.anon,
 };
 
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));

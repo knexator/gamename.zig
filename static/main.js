@@ -276,6 +276,23 @@ async function getWasm() {
       texParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
       texImage2D_basic: (target, level, internalformat, format, type, pixels) => gl.texImage2D(target, level, internalformat, format, type, images[pixels]),
       generateMipmap: (target) => gl.generateMipmap(target),
+
+      // storage
+      downloadAsFile: (filename_ptr, filename_len, mime_ptr, mime_len, contents_ptr, contents_len) => {
+        const blob = new Blob(
+          [getString(contents_ptr, contents_len)],
+          { type: getString(mime_ptr, mime_len) },
+        );
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = getString(filename_ptr, filename_len);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      },
     },
   });
   return wasm_module.instance.exports;
