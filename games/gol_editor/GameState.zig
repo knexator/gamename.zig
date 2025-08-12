@@ -126,9 +126,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .up => 0.9,
     });
 
-    for (Vec2.cardinal_directions, &[4]KeyboardButton{ .KeyD, .KeyS, .KeyA, .KeyW }) |d, k| {
-        if (platform.keyboard.cur.isDown(k)) {
-            self.camera = self.camera.move(d.scale(platform.delta_seconds * 0.8 * self.camera.size.y));
+    for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
+        &.{ .KeyD, .ArrowRight },
+        &.{ .KeyS, .ArrowDown },
+        &.{ .KeyA, .ArrowLeft },
+        &.{ .KeyW, .ArrowUp },
+    }) |d, ks| {
+        for (ks) |k| {
+            if (platform.keyboard.cur.isDown(k)) {
+                self.camera = self.camera.move(d.scale(platform.delta_seconds * 0.8 * self.camera.size.y));
+            }
         }
     }
 
