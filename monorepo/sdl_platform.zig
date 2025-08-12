@@ -656,6 +656,13 @@ pub fn main() !void {
         .gl = sdl_gl.vtable,
         // TODO
         .downloadAsFile = undefined,
+        .askUserForFile = undefined,
+        .userUploadedFile = struct {
+            pub fn anon() ?std.io.AnyReader {
+                return null;
+            }
+        }.anon,
+        .forgetUserUploadedFile = undefined,
     };
 
     if (@hasField(@TypeOf(my_game), "preload")) {

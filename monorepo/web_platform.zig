@@ -1,3 +1,27 @@
+const JsReader = struct {
+    file_index: usize,
+
+    pub fn isReady(self: JsReader) bool {
+        return js.reader.isLoaded(self.file_index);
+    }
+
+    pub fn isNull(self: JsReader) bool {
+        return js.reader.isNull(self.file_index);
+    }
+
+    pub const Error = error{FileNotReady};
+    pub fn read(self: *JsReader, buf: []u8) Error!usize {
+        if (buf.len == 0) return 0;
+        if (!js.reader.isLoaded(self.file_index)) return error.FileNotReady;
+        const bytes_readed = js.reader.readInto(self.file_index, buf.ptr, buf.len);
+        return bytes_readed;
+    }
+
+    pub fn reader(self: *JsReader) std.io.Reader(*JsReader, Error, read) {
+        return .{ .context = self };
+    }
+};
+
 const js = struct {
     pub const debug = struct {
         extern fn logInt(arg: u32) void;
@@ -324,6 +348,15 @@ const js = struct {
 
     pub const storage = struct {
         extern fn downloadAsFile(filename_ptr: [*]const u8, filename_len: usize, mime_ptr: [*]const u8, mime_len: usize, contents_ptr: [*]const u8, contents_len: usize) void;
+        /// returns index of reader
+        extern fn askUserForFile() usize;
+    };
+
+    pub const reader = struct {
+        extern fn isLoaded(file_index: usize) bool;
+        extern fn isNull(file_index: usize) bool;
+        /// returns bytes readed
+        extern fn readInto(file_index: usize, dst_ptr: [*]u8, dst_len: usize) usize;
     };
 };
 
@@ -438,7 +471,30 @@ var web_platform: PlatformGives = .{
             return js_better.storage.downloadAsFile(filename, .txt, contents);
         }
     }.anon,
+    .askUserForFile = struct {
+        fn anon() void {
+            // JS doesn't correctly now if the file is null :(
+            // assert(user_uploaded_file == null or user_uploaded_file.?.isNull());
+            const index = js.storage.askUserForFile();
+            user_uploaded_file = .{ .file_index = index };
+        }
+    }.anon,
+    .userUploadedFile = struct {
+        fn anon() ?std.io.AnyReader {
+            if (user_uploaded_file == null) return null;
+            if (!user_uploaded_file.?.isReady()) return null;
+            return user_uploaded_file.?.reader().any();
+        }
+    }.anon,
+    .forgetUserUploadedFile = struct {
+        fn anon() void {
+            assert(user_uploaded_file != null);
+            user_uploaded_file = null;
+        }
+    }.anon,
 };
+
+var user_uploaded_file: ?JsReader = null;
 
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();

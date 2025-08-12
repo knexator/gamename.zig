@@ -38,10 +38,42 @@ function resizeCanvas() {
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
+
+var readers = [null];
+
+class JsReader {
+  constructor() {
+    this.buffer = new Uint8Array(0);
+    this.position = 0;
+    this.loaded = false;
+    this.null = false;
+  }
+
+  /// returns the number of bytes read
+  readInto(buf_ptr, buf_len) {
+    if (this.null) throw new Error("Null reader");
+    if (!this.loaded) throw new Error("Buffer not loaded yet");
+    const data_len = Math.min(buf_len, this.buffer.length - this.position);
+    if (data_len <= 0) return 0;
+    wasmMem().set(
+      this.buffer.subarray(this.position, this.position + data_len),
+      buf_ptr,
+    );
+    this.position += data_len;
+    return data_len;
+  }
+
+  isNull() {
+    if (!this.loaded) throw new Error("Not loaded yet");
+    return this.null;
+  }
+}
+
+
 const image_promises = [];
 
 // from https://www.fabiofranchino.com/log/load-an-image-with-javascript-using-await/
-export function imageFromUrl(url) {
+function imageFromUrl(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous'; // to avoid CORS if used with Canvas
@@ -55,7 +87,7 @@ export function imageFromUrl(url) {
   })
 }
 
-export function imageFromBase64(data) {
+function imageFromBase64(data) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous'; // to avoid CORS if used with Canvas
@@ -293,6 +325,37 @@ async function getWasm() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       },
+      askUserForFile: () => {
+        const js_reader = new JsReader();
+        readers.push(js_reader);
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.addEventListener('change', (event) => {
+          // WARNING: selecting a null file doesn't trigger it
+          const file = event.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const contents = e.target.result;
+              js_reader.buffer = text_encoder.encode(contents);
+              js_reader.position = 0;
+              js_reader.loaded = true;
+            };
+            reader.readAsText(file);
+          } else {
+            js_reader.null = true;
+            js_reader.loaded = true;
+          }
+        });
+        fileInput.click();
+
+        return readers.length - 1; // Return the index of the reader
+      },
+
+      isLoaded: (reader_index) => readers[reader_index].loaded,
+      isNull: (reader_index) => readers[reader_index].isNull(),
+      readInto: (reader_index, buf_ptr, buf_len) => readers[reader_index].readInto(buf_ptr, buf_len),
     },
   });
   return wasm_module.instance.exports;

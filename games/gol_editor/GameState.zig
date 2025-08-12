@@ -202,6 +202,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         platform.downloadAsFile("gol_level.txt", buf.items);
     }
 
+    if (platform.userUploadedFile()) |reader| {
+        // TODO: don't require this
+        defer platform.forgetUserUploadedFile();
+
+        var buf: [1000]u8 = undefined;
+        const n = try reader.readAll(&buf);
+        std.log.debug("{s}", .{buf[0..n]});
+    }
+
+    if (platform.keyboard.wasPressed(.KeyR)) {
+        std.log.debug("asking", .{});
+        platform.askUserForFile();
+    }
+
     platform.gl.clear(CellState.black.color());
 
     if (true) {
