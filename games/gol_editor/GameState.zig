@@ -60,6 +60,22 @@ const Toolbar = struct {
 };
 
 const BoardState = struct {
+    cells_states: std.AutoArrayHashMap(IVec2, CellState),
+    cells_types: std.AutoArrayHashMap(IVec2, CellType),
+
+    pub fn init(dst: *BoardState, gpa: std.mem.Allocator) !void {
+        dst.cells_states = .init(gpa);
+        dst.cells_types = .init(gpa);
+
+        try dst.cells_states.put(.new(1, 1), .gray);
+        try dst.cells_states.put(.new(1, 2), .white);
+        try dst.cells_types.put(.new(1, 3), .@"+");
+        try dst.cells_types.put(.new(1, 4), .@"*");
+        try dst.cells_types.put(.new(1, 5), .O);
+        try dst.cells_types.put(.new(1, 6), .@"=");
+        try dst.cells_types.put(.new(1, 7), .@"-");
+    }
+
     pub fn toText(out: std.io.AnyWriter) !void {
         try out.writeAll("TODO");
     }
@@ -68,8 +84,7 @@ const BoardState = struct {
 toolbar: Toolbar = .{ .active_tool = .paint_state },
 
 camera: Rect = .{ .top_left = .zero, .size = Vec2.new(4, 3).scale(8) },
-cells_states: std.AutoArrayHashMap(IVec2, CellState),
-cells_types: std.AutoArrayHashMap(IVec2, CellType),
+board: BoardState,
 
 random: std.Random.DefaultPrng,
 canvas: Canvas,
@@ -91,16 +106,7 @@ pub fn init(
     // dst.lazy_state = .init(gpa);
     dst.random = .init(random_seed);
 
-    dst.cells_states = .init(gpa);
-    dst.cells_types = .init(gpa);
-
-    try dst.cells_states.put(.new(1, 1), .gray);
-    try dst.cells_states.put(.new(1, 2), .white);
-    try dst.cells_types.put(.new(1, 3), .@"+");
-    try dst.cells_types.put(.new(1, 4), .@"*");
-    try dst.cells_types.put(.new(1, 5), .O);
-    try dst.cells_types.put(.new(1, 6), .@"=");
-    try dst.cells_types.put(.new(1, 7), .@"-");
+    try dst.board.init(gpa);
 }
 
 // TODO: take gl parameter
@@ -156,18 +162,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     switch (self.toolbar.active_tool) {
         .paint_state => {
             if (mouse.cur.isDown(.left)) {
-                try self.cells_states.put(cell_under_mouse, self.toolbar.active_state);
+                try self.board.cells_states.put(cell_under_mouse, self.toolbar.active_state);
             }
             if (mouse.wasPressed(.right)) {
-                self.toolbar.active_state = self.cells_states.get(cell_under_mouse) orelse .black;
+                self.toolbar.active_state = self.board.cells_states.get(cell_under_mouse) orelse .black;
             }
         },
         .paint_type => {
             if (mouse.cur.isDown(.left)) {
-                try self.cells_types.put(cell_under_mouse, self.toolbar.active_type);
+                try self.board.cells_types.put(cell_under_mouse, self.toolbar.active_type);
             }
             if (mouse.wasPressed(.right)) {
-                self.toolbar.active_type = self.cells_types.get(cell_under_mouse) orelse .empty;
+                self.toolbar.active_type = self.board.cells_types.get(cell_under_mouse) orelse .empty;
             }
         },
     }
@@ -220,7 +226,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-        var it = self.cells_states.iterator();
+        var it = self.board.cells_states.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .black) continue;
             try cell_bgs.append(.{
@@ -233,14 +239,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         var cell_texts = self.canvas.textBatch(0);
-        var it = self.cells_types.iterator();
+        var it = self.board.cells_types.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .empty) continue;
             try cell_texts.addText(
                 kv.value_ptr.*.text(),
                 .centeredAt(kv.key_ptr.*.tof32().add(.half)),
                 1.0,
-                if ((self.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
+                if ((self.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
                     .white
                 else
                     .black,
