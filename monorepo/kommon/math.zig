@@ -159,6 +159,10 @@ pub fn ZVec2(T: type) type {
             return a.cast(isize).add(b).cast(usize);
         }
 
+        pub fn addUnsigned(a: IVec2, b: UVec2) IVec2 {
+            return a.add(b.cast(isize));
+        }
+
         pub fn subToSigned(a: UVec2, b: UVec2) IVec2 {
             return a.cast(isize).sub(b.cast(isize));
         }
@@ -793,6 +797,42 @@ pub const URect = struct {
         return .{
             .top_left = top_left,
             .inner_size = .sub(bottom_right, top_left),
+        };
+    }
+};
+
+/// unitialized if inner_size is zero
+pub const IBounds = struct {
+    top_left: IVec2,
+    inner_size: UVec2,
+
+    pub const empty: IBounds = .{ .inner_size = .zero, .top_left = undefined };
+
+    pub fn plusTile(original: *IBounds, p: IVec2) void {
+        original.* = original.bounding(p);
+    }
+
+    pub fn bounding(original: IBounds, p: IVec2) IBounds {
+        if (original.inner_size.equals(.zero)) return .{
+            .top_left = p,
+            .inner_size = .one,
+        };
+        var top_left = original.top_left;
+        var bottom_right = original.top_left.add(original.inner_size.cast(isize));
+        top_left.x = @min(top_left.x, p.x);
+        top_left.y = @min(top_left.y, p.y);
+        bottom_right.x = @max(bottom_right.x, p.x);
+        bottom_right.y = @max(bottom_right.y, p.y);
+
+        return .fromCorners(top_left, bottom_right);
+    }
+
+    pub fn fromCorners(top_left: IVec2, bottom_right: IVec2) IBounds {
+        assert(top_left.x < bottom_right.x);
+        assert(top_left.y < bottom_right.y);
+        return .{
+            .top_left = top_left,
+            .inner_size = IVec2.sub(bottom_right, top_left).cast(usize),
         };
     }
 };

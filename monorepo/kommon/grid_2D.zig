@@ -132,6 +132,27 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
 
         pub fn fromAscii(allocator: std.mem.Allocator, ascii: []const u8) !Self {
             if (T != u8) @compileError("fromAscii only works on Grid2D(u8)");
+            // TODO: windows line endings
+            var lines = std.mem.splitScalar(u8, ascii, '\n');
+            const width = lines.peek().?.len;
+            const height = kommon.itertools.iteratorLen(lines);
+            const data = try allocator.alloc(T, width * height);
+            errdefer allocator.free(data);
+            var j: usize = 0;
+            while (lines.next()) |line| {
+                if (line.len != width) return error.NotAnAsciiRectangle;
+                std.mem.copyForwards(T, data[j * width ..], line);
+                j += 1;
+            }
+            return .{
+                .size = .new(width, height),
+                .data = data,
+            };
+        }
+
+        pub fn fromAsciiWide(comptime N: usize, allocator: std.mem.Allocator, ascii: []const u8) !Self {
+            if (T != [N]u8) @compileError("fromAscii only works on Grid2D(u8)");
+            // TODO: windows line endings
             var lines = std.mem.splitScalar(u8, ascii, '\n');
             const width = lines.peek().?.len;
             const height = kommon.itertools.iteratorLen(lines);

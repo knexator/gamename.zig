@@ -76,9 +76,60 @@ const BoardState = struct {
         try dst.cells_types.put(.new(1, 7), .@"-");
     }
 
-    pub fn toText(out: std.io.AnyWriter) !void {
-        try out.writeAll("TODO");
+    pub fn boundingRect(self: BoardState) math.IBounds {
+        var result: math.IBounds = .empty;
+
+        var it_states = self.cells_states.iterator();
+        while (it_states.next()) |kv| {
+            result.plusTile(kv.key_ptr.*);
+        }
+
+        var it_types = self.cells_types.iterator();
+        while (it_types.next()) |kv| {
+            result.plusTile(kv.key_ptr.*);
+        }
+
+        return result;
     }
+
+    pub fn stateAt(self: BoardState, pos: IVec2) CellState {
+        return self.cells_states.get(pos) orelse .black;
+    }
+
+    pub fn typeAt(self: BoardState, pos: IVec2) CellType {
+        return self.cells_types.get(pos) orelse .empty;
+    }
+
+    pub fn toText(self: BoardState, out: std.io.AnyWriter) !void {
+        const bounds = self.boundingRect();
+        try out.writeAll("V1\n");
+        for (0..bounds.inner_size.y) |dj| {
+            for (0..bounds.inner_size.x) |di| {
+                const p = bounds.top_left.addUnsigned(.new(di, dj));
+                try out.writeAll(switch (self.stateAt(p)) {
+                    .black => " ",
+                    .gray => ".",
+                    .white => ":",
+                });
+                try out.writeAll(switch (self.typeAt(p)) {
+                    .empty => ".",
+                    else => |t| t.text(),
+                });
+            }
+            try out.writeAll("\n");
+        }
+    }
+
+    pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, in: std.io.AnyReader) !void {
+        dst.cells_states.clearRetainingCapacity();
+        dst.cells_types.clearRetainingCapacity();
+        const contents = try in.readAllAlloc(scratch, std.math.maxInt(usize));
+        assert(std.mem.startsWith(u8, contents, "V1\n"));
+        const raw_ascii = try kommon.Grid2D(u8).fromAscii(scratch, contents["V1\n".len..]);
+        var it = raw_ascii.iterator();
+    }
+
+    fn nextRead()
 };
 
 toolbar: Toolbar = .{ .active_tool = .paint_state },
@@ -204,7 +255,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (platform.keyboard.wasPressed(.KeyF)) {
         var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
         defer buf.deinit();
-        try BoardState.toText(buf.writer().any());
+        try self.board.toText(buf.writer().any());
         platform.downloadAsFile("gol_level.txt", buf.items);
     }
 
