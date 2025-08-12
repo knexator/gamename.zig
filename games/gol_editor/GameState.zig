@@ -42,6 +42,7 @@ const CellType = enum {
     @"*",
     O,
     @"=",
+    @"-",
 
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
@@ -93,6 +94,7 @@ pub fn init(
     try dst.cells_types.put(.new(1, 4), .@"*");
     try dst.cells_types.put(.new(1, 5), .O);
     try dst.cells_types.put(.new(1, 6), .@"=");
+    try dst.cells_types.put(.new(1, 7), .@"-");
 }
 
 // TODO: take gl parameter
@@ -139,58 +141,49 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (mouse.cur.isDown(.middle)) {
+    if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
         // TODO
         // platform.setCursor(.dragging)
         self.camera = self.camera.move(mouse.deltaPos().neg());
     }
 
-    if (platform.keyboard.cur.isDown(.Space)) {
-        // TODO
-        // platform.setCursor(.drag)
-        if (mouse.cur.isDown(.left) or mouse.cur.isDown(.middle) or mouse.cur.isDown(.right)) {
-            // platform.setCursor(.dragging)
-            self.camera = self.camera.move(mouse.deltaPos().neg());
-        }
-    } else {
-        switch (self.toolbar.active_tool) {
-            .paint_state => {
-                if (mouse.cur.isDown(.left)) {
-                    try self.cells_states.put(cell_under_mouse, self.toolbar.active_state);
-                }
-                if (mouse.wasPressed(.right)) {
-                    self.toolbar.active_state = self.cells_states.get(cell_under_mouse) orelse .black;
-                }
-            },
-            .paint_type => {
-                if (mouse.cur.isDown(.left)) {
-                    try self.cells_types.put(cell_under_mouse, self.toolbar.active_type);
-                }
-                if (mouse.wasPressed(.right)) {
-                    self.toolbar.active_type = self.cells_types.get(cell_under_mouse) orelse .empty;
-                }
-            },
-        }
+    switch (self.toolbar.active_tool) {
+        .paint_state => {
+            if (mouse.cur.isDown(.left)) {
+                try self.cells_states.put(cell_under_mouse, self.toolbar.active_state);
+            }
+            if (mouse.wasPressed(.right)) {
+                self.toolbar.active_state = self.cells_states.get(cell_under_mouse) orelse .black;
+            }
+        },
+        .paint_type => {
+            if (mouse.cur.isDown(.left)) {
+                try self.cells_types.put(cell_under_mouse, self.toolbar.active_type);
+            }
+            if (mouse.wasPressed(.right)) {
+                self.toolbar.active_type = self.cells_types.get(cell_under_mouse) orelse .empty;
+            }
+        },
     }
 
     switch (self.toolbar.active_tool) {
         .paint_state => {
             for (&[_]CellState{ .black, .gray, .white }, 0..) |t, k| {
-                if (platform.keyboard.wasPressed(.digit(k + 2))) {
+                if (platform.keyboard.wasPressed(.digit(k + 1))) {
                     self.toolbar.active_state = t;
                 }
             }
-            if (platform.keyboard.wasPressed(.Digit1)) {
+            if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
                 self.toolbar.active_tool = .paint_type;
             }
         },
         .paint_type => {
-            for (&[_]CellType{ .@"+", .@"*", .O, .@"=", .empty }, 0..) |t, k| {
-                if (platform.keyboard.wasPressed(.digit(k + 2))) {
+            for (&[_]CellType{ .@"+", .@"*", .O, .@"=", .@"-", .empty }, 0..) |t, k| {
+                if (platform.keyboard.wasPressed(.digit(k + 1))) {
                     self.toolbar.active_type = t;
                 }
             }
-            if (platform.keyboard.wasPressed(.Digit1)) {
+            if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
                 self.toolbar.active_tool = .paint_state;
             }
         },
