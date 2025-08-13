@@ -40,7 +40,7 @@ const CellType = enum {
     empty,
     @"+",
     @"*",
-    O,
+    o,
     @"=",
     @"-",
 
@@ -71,7 +71,7 @@ const BoardState = struct {
         try dst.cells_states.put(.new(1, 2), .white);
         try dst.cells_types.put(.new(1, 3), .@"+");
         try dst.cells_types.put(.new(1, 4), .@"*");
-        try dst.cells_types.put(.new(1, 5), .O);
+        try dst.cells_types.put(.new(1, 5), .o);
         try dst.cells_types.put(.new(1, 6), .@"=");
         try dst.cells_types.put(.new(1, 7), .@"-");
     }
@@ -125,11 +125,29 @@ const BoardState = struct {
         dst.cells_types.clearRetainingCapacity();
         const contents = try in.readAllAlloc(scratch, std.math.maxInt(usize));
         assert(std.mem.startsWith(u8, contents, "V1\n"));
-        const raw_ascii = try kommon.Grid2D(u8).fromAscii(scratch, contents["V1\n".len..]);
-        var it = raw_ascii.iterator();
+        const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trim(u8, contents["V1".len..], &std.ascii.whitespace));
+        var it = raw_ascii.iteratorSigned();
+        while (it.next()) |p| {
+            const t = raw_ascii.atSigned(p);
+            const cell_state: CellState = switch (t[0]) {
+                ' ' => .black,
+                '.' => .gray,
+                ':' => .white,
+                else => return error.BadText,
+            };
+            const cell_type: CellType = switch (t[1]) {
+                '.' => .empty,
+                '+' => .@"+",
+                '*' => .@"*",
+                'o' => .o,
+                '=' => .@"=",
+                '-' => .@"-",
+                else => return error.BadText,
+            };
+            if (cell_state != .black) try dst.cells_states.put(p, cell_state);
+            if (cell_type != .empty) try dst.cells_types.put(p, cell_type);
+        }
     }
-
-    fn nextRead()
 };
 
 toolbar: Toolbar = .{ .active_tool = .paint_state },
@@ -180,6 +198,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.scratch.reset(.retain_capacity);
     self.smooth.last_delta_seconds = platform.delta_seconds;
     // self.lazy_state.frameStart();
+
+    if (platform.userUploadedFile()) |reader| {
+        defer platform.forgetUserUploadedFile();
+        try self.board.fromText(self.mem.frame.allocator(), reader);
+    }
 
     const camera = self.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left);
     const mouse = platform.getMouse(camera);
@@ -241,7 +264,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         },
         .paint_type => {
-            for (&[_]CellType{ .@"+", .@"*", .O, .@"=", .@"-", .empty }, 0..) |t, k| {
+            for (&[_]CellType{ .@"+", .@"*", .o, .@"=", .@"-", .empty }, 0..) |t, k| {
                 if (platform.keyboard.wasPressed(.digit(k + 1))) {
                     self.toolbar.active_type = t;
                 }
@@ -259,17 +282,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         platform.downloadAsFile("gol_level.txt", buf.items);
     }
 
-    if (platform.userUploadedFile()) |reader| {
-        // TODO: don't require this
-        defer platform.forgetUserUploadedFile();
-
-        var buf: [1000]u8 = undefined;
-        const n = try reader.readAll(&buf);
-        std.log.debug("{s}", .{buf[0..n]});
-    }
-
     if (platform.keyboard.wasPressed(.KeyR)) {
-        std.log.debug("asking", .{});
         platform.askUserForFile();
     }
 

@@ -41,6 +41,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         downloadAsFile: *const fn (filename: []const u8, contents: []const u8) void,
         askUserForFile: *const fn () void,
         userUploadedFile: *const fn () ?std.io.AnyReader,
+        // TODO: don't require this
         forgetUserUploadedFile: *const fn () void,
 
         pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
