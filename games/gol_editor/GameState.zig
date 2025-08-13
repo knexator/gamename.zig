@@ -127,7 +127,7 @@ const BoardState = struct {
         dst.cells_types.clearRetainingCapacity();
         const contents = try in.readAllAlloc(scratch, std.math.maxInt(usize));
         assert(std.mem.startsWith(u8, contents, "V1\n"));
-        const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trim(u8, contents["V1".len..], &std.ascii.whitespace));
+        const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
         var it = raw_ascii.iteratorSigned();
         while (it.next()) |p| {
             const t = raw_ascii.atSigned(p);
@@ -154,7 +154,7 @@ const BoardState = struct {
 
 toolbar: Toolbar = .{ .active_tool = .paint_state },
 
-camera: Rect = .{ .top_left = .zero, .size = Vec2.new(4, 3).scale(8) },
+camera: Rect = .{ .top_left = .new(-10, -5), .size = Vec2.new(4, 3).scale(8) },
 board: BoardState,
 
 random: std.Random.DefaultPrng,
@@ -255,6 +255,45 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    // save button
+    if (true) {
+        const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
+        const hot = button.contains(ui_mouse.cur.position);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = "save",
+            .radio_selected = hot,
+        });
+        if (hot) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
+                defer buf.deinit();
+                try self.board.toText(buf.writer().any());
+                platform.downloadAsFile("gol_level.txt", buf.items);
+            }
+        }
+    }
+
+    // load button
+    if (true) {
+        const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
+        const hot = button.contains(ui_mouse.cur.position);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = "load",
+            .radio_selected = hot,
+        });
+        if (hot) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                platform.askUserForFile();
+            }
+        }
+    }
+
     self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
         .none => 1,
         .down => 1.1,
@@ -322,17 +361,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.toolbar.active_tool = .paint_state;
             }
         },
-    }
-
-    if (platform.keyboard.wasPressed(.KeyF)) {
-        var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
-        defer buf.deinit();
-        try self.board.toText(buf.writer().any());
-        platform.downloadAsFile("gol_level.txt", buf.items);
-    }
-
-    if (platform.keyboard.wasPressed(.KeyR)) {
-        platform.askUserForFile();
     }
 
     platform.gl.clear(CellState.black.color());
