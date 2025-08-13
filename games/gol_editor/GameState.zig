@@ -85,6 +85,26 @@ const BoardState = struct {
         };
     }
 
+    pub fn equals(self: BoardState, other: BoardState) bool {
+        return self.isSubsetOf(other) and other.isSubsetOf(self);
+    }
+
+    fn isSubsetOf(self: BoardState, other: BoardState) bool {
+        {
+            var it = self.cells_states.iterator();
+            while (it.next()) |kv| {
+                if (other.stateAt(kv.key_ptr.*) != kv.value_ptr.*) return false;
+            }
+        }
+        {
+            var it = self.cells_types.iterator();
+            while (it.next()) |kv| {
+                if (other.typeAt(kv.key_ptr.*) != kv.value_ptr.*) return false;
+            }
+        }
+        return true;
+    }
+
     pub fn boundingRect(self: BoardState) math.IBounds {
         var result: math.IBounds = .empty;
 
@@ -205,6 +225,22 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
+fn onCatalogueOpened(self: *GameState) !void {
+    try self.saveState();
+}
+
+fn saveState(self: *GameState) !void {
+    for (self.saved_states.items, 0..) |state, k| {
+        if (self.board.equals(state)) {
+            self.catalogue_index = k;
+            break;
+        }
+    } else {
+        self.catalogue_index += 1;
+        try self.saved_states.insert(self.catalogue_index, try self.board.clone());
+    }
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
@@ -281,9 +317,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (mouse.wasPressed(.left)) {
                 self.catalogue_open = !self.catalogue_open;
                 if (self.catalogue_open) {
-                    // TODO: don't append if unchanged
-                    try self.saved_states.append(try self.board.clone());
-                    self.catalogue_index = self.saved_states.items.len - 1;
+                    try self.onCatalogueOpened();
                 }
             }
         }
@@ -292,13 +326,33 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (platform.keyboard.wasPressed(.KeyC)) {
         self.catalogue_open = !self.catalogue_open;
         if (self.catalogue_open) {
-            // TODO: don't append if unchanged
-            try self.saved_states.append(try self.board.clone());
-            self.catalogue_index = self.saved_states.items.len - 1;
+            try self.onCatalogueOpened();
         }
     }
 
     // save button
+    if (true) {
+        const button: Rect = (Rect{ .top_left = .new(5, 0), .size = .one }).plusMargin(-0.1);
+        const hot = button.contains(ui_mouse.cur.position);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = "X",
+            .radio_selected = hot,
+        });
+        if (hot) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                try self.saveState();
+            }
+        }
+    }
+
+    if (platform.keyboard.wasPressed(.KeyX)) {
+        try self.saveState();
+    }
+
+    // save to file button
     if (true) {
         const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
         const hot = button.contains(ui_mouse.cur.position);
@@ -319,7 +373,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    // load button
+    // load from file button
     if (true) {
         const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
         const hot = button.contains(ui_mouse.cur.position);
@@ -357,6 +411,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             }
         }
+
+        if (!mouse_over_ui and mouse.wasPressed(.left)) {
+            self.catalogue_open = false;
+        }
     }
 
     if (mouse_over_ui) {
@@ -367,7 +425,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (mouse.cur.scrolled != .none) {
         if (self.catalogue_open) {
-            self.catalogue_index = kommon.moveIndex(self.catalogue_index, mouse.cur.scrolled.toInt(), self.saved_states.items.len, .clamp);
+            self.catalogue_index = kommon.moveIndex(self.catalogue_index, -mouse.cur.scrolled.toInt(), self.saved_states.items.len, .clamp);
             self.board = self.saved_states.items[self.catalogue_index];
         } else {
             self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
