@@ -44,9 +44,11 @@ const CellType = enum {
     @"=",
     @"-",
 
+    pub const all: [6]CellType = .{ .@"+", .@"*", .o, .@"=", .@"-", .empty };
+
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
-            .empty => unreachable,
+            .empty => "",
             inline else => |x| @tagName(x),
         };
     }
@@ -208,6 +210,51 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const mouse = platform.getMouse(camera);
     const cell_under_mouse = mouse.cur.position.toInt(isize);
 
+    const ui_cam: Rect = .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(10) };
+    const ui_mouse = platform.getMouse(ui_cam);
+    var ui_buttons: std.ArrayList(struct {
+        pos: Rect,
+        color: ?FColor,
+        text: ?[]const u8,
+        radio_selected: bool,
+    }) = .init(self.mem.frame.allocator());
+
+    var mouse_over_ui = false;
+
+    for ([3]CellState{ .black, .gray, .white }, 0..) |c, k| {
+        const button: Rect = (Rect{ .top_left = .new(tof32(k), 0), .size = .one }).plusMargin(-0.1);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = c.color(),
+            .text = null,
+            .radio_selected = self.toolbar.active_tool == .paint_state and (c == self.toolbar.active_state),
+        });
+        if (button.contains(ui_mouse.cur.position)) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                self.toolbar.active_state = c;
+                self.toolbar.active_tool = .paint_state;
+            }
+        }
+    }
+
+    for (CellType.all, 0..) |t, k| {
+        const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = t.text(),
+            .radio_selected = self.toolbar.active_tool == .paint_type and (t == self.toolbar.active_type),
+        });
+        if (button.contains(ui_mouse.cur.position)) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                self.toolbar.active_type = t;
+                self.toolbar.active_tool = .paint_type;
+            }
+        }
+    }
+
     self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
         .none => 1,
         .down => 1.1,
@@ -233,23 +280,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.camera = self.camera.move(mouse.deltaPos().neg());
     }
 
-    switch (self.toolbar.active_tool) {
-        .paint_state => {
-            if (mouse.cur.isDown(.left)) {
-                try self.board.cells_states.put(cell_under_mouse, self.toolbar.active_state);
-            }
-            if (mouse.wasPressed(.right)) {
-                self.toolbar.active_state = self.board.cells_states.get(cell_under_mouse) orelse .black;
-            }
-        },
-        .paint_type => {
-            if (mouse.cur.isDown(.left)) {
-                try self.board.cells_types.put(cell_under_mouse, self.toolbar.active_type);
-            }
-            if (mouse.wasPressed(.right)) {
-                self.toolbar.active_type = self.board.cells_types.get(cell_under_mouse) orelse .empty;
-            }
-        },
+    if (!mouse_over_ui) {
+        switch (self.toolbar.active_tool) {
+            .paint_state => {
+                if (mouse.cur.isDown(.left)) {
+                    try self.board.cells_states.put(cell_under_mouse, self.toolbar.active_state);
+                }
+                if (mouse.wasPressed(.right)) {
+                    self.toolbar.active_state = self.board.cells_states.get(cell_under_mouse) orelse .black;
+                }
+            },
+            .paint_type => {
+                if (mouse.cur.isDown(.left)) {
+                    try self.board.cells_types.put(cell_under_mouse, self.toolbar.active_type);
+                }
+                if (mouse.wasPressed(.right)) {
+                    self.toolbar.active_type = self.board.cells_types.get(cell_under_mouse) orelse .empty;
+                }
+            },
+        }
     }
 
     switch (self.toolbar.active_tool) {
@@ -264,7 +313,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         },
         .paint_type => {
-            for (&[_]CellType{ .@"+", .@"*", .o, .@"=", .@"-", .empty }, 0..) |t, k| {
+            for (&CellType.all, 0..) |t, k| {
                 if (platform.keyboard.wasPressed(.digit(k + 1))) {
                     self.toolbar.active_type = t;
                 }
@@ -337,16 +386,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.canvas.instancedSegments(camera, segments.items, 0.05);
     }
 
-    if (true) {
-        const ui_cam = camera.with(.{ .top_left = .zero }, .size);
-        self.canvas.fillRect(ui_cam, Rect.unit.plusMargin(0.1), .cyan);
-        switch (self.toolbar.active_tool) {
-            .paint_state => self.canvas.fillRect(ui_cam, .unit, self.toolbar.active_state.color()),
-            .paint_type => if (self.toolbar.active_type != .empty) {
-                var cell_texts = self.canvas.textBatch(0);
-                try cell_texts.addText(self.toolbar.active_type.text(), .centeredAt(.half), 1.0, .black);
-                cell_texts.draw(ui_cam);
-            },
+    {
+        var ui_texts = self.canvas.textBatch(0);
+        defer ui_texts.draw(ui_cam);
+        for (ui_buttons.items) |button| {
+            self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
+            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), button.color orelse CellState.gray.color());
+            if (button.text) |text| try ui_texts.addText(text, .centeredAt(button.pos.getCenter()), 0.75, .black);
         }
     }
 
