@@ -184,6 +184,7 @@ const BoardState = struct {
 toolbar: Toolbar = .{ .active_tool = .paint_state },
 catalogue_open: bool = false,
 catalogue_index: usize = 0,
+catalogue_view_offset: f32 = 0,
 saved_states: std.ArrayList(BoardState),
 camera: Rect = .{ .top_left = .new(-10, -5), .size = Vec2.new(4, 3).scale(8) },
 board: BoardState,
@@ -270,7 +271,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     var catalogue_buttons: std.ArrayList(struct {
         pos: Rect,
         radio_selected: bool,
-        board: BoardState,
+        board: *const BoardState,
+        hot: bool,
     }) = .init(self.mem.frame.allocator());
 
     var mouse_over_ui = false;
@@ -398,19 +400,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    var visible_board: *const BoardState = &self.board;
+
     if (self.catalogue_open) {
-        for (self.saved_states.items, 0..) |board, k| {
-            const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k), 0)).plusMargin(-0.1);
+        math.lerp_towards(&self.catalogue_view_offset, tof32(self.catalogue_index), 0.2, platform.delta_seconds);
+        for (self.saved_states.items, 0..) |*board, k| {
+            const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k) - self.catalogue_view_offset + ui_cam.size.x / 2 - 0.5, 0)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try catalogue_buttons.append(.{
                 .pos = button,
                 .board = board,
                 .radio_selected = k == self.catalogue_index,
+                .hot = hot,
             });
             if (hot) {
                 mouse_over_ui = true;
-                self.catalogue_index = k;
-                self.board = board;
+                visible_board = board;
+                if (mouse.wasPressed(.left)) {
+                    self.catalogue_index = k;
+                    self.board = board.*;
+                }
                 if (mouse.wasPressed(.right) and self.saved_states.items.len > 1) {
                     _ = self.saved_states.orderedRemove(k);
                     break;
@@ -508,7 +517,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-        var it = self.board.cells_states.iterator();
+        var it = visible_board.cells_states.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .black) continue;
             try cell_bgs.append(.{
@@ -521,14 +530,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         var cell_texts = self.canvas.textBatch(0);
-        var it = self.board.cells_types.iterator();
+        var it = visible_board.cells_types.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .empty) continue;
             try cell_texts.addText(
                 kv.value_ptr.*.text(),
                 .centeredAt(kv.key_ptr.*.tof32().add(.half)),
                 1.0,
-                if ((self.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
+                if ((visible_board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
                     .white
                 else
                     .black,
@@ -567,7 +576,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     {
         for (catalogue_buttons.items) |button| {
-            self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
+            self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
             self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), CellState.black.color());
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
@@ -598,7 +607,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         kv.value_ptr.*.text(),
                         .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).scale(scale))),
                         scale * button.pos.size.y,
-                        if ((self.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
+                        if ((button.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
                             .white
                         else
                             .black,
