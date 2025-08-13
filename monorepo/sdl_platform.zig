@@ -663,6 +663,12 @@ pub fn main() !void {
             }
         }.anon,
         .forgetUserUploadedFile = undefined,
+        // TODO
+        .setCursor = struct {
+            pub fn anon(cursor: Mouse.Cursor) void {
+                _ = cursor;
+            }
+        }.anon,
     };
 
     if (@hasField(@TypeOf(my_game), "preload")) {

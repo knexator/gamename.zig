@@ -23,6 +23,8 @@ const JsReader = struct {
 };
 
 const js = struct {
+    extern fn setCursor(cursor: Mouse.Cursor) void;
+
     pub const debug = struct {
         extern fn logInt(arg: u32) void;
         extern fn logFloat(arg: f32) void;
@@ -490,6 +492,11 @@ var web_platform: PlatformGives = .{
         fn anon() void {
             assert(user_uploaded_file != null);
             user_uploaded_file = null;
+        }
+    }.anon,
+    .setCursor = struct {
+        fn anon(cursor: Mouse.Cursor) void {
+            js.setCursor(cursor);
         }
     }.anon,
 };

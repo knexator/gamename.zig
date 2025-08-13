@@ -294,6 +294,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    if (mouse_over_ui) {
+        platform.setCursor(.pointer);
+    } else {
+        platform.setCursor(.default);
+    }
+
     self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
         .none => 1,
         .down => 1.1,
@@ -314,8 +320,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
-        // TODO
-        // platform.setCursor(.dragging)
+        platform.setCursor(.grabbing);
         self.camera = self.camera.move(mouse.deltaPos().neg());
     }
 

@@ -43,6 +43,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         userUploadedFile: *const fn () ?std.io.AnyReader,
         // TODO: don't require this
         forgetUserUploadedFile: *const fn () void,
+        setCursor: *const fn (cursor: Mouse.Cursor) void,
 
         pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
             if (self.keyboard.wasPressed(key)) return true;

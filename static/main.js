@@ -186,6 +186,11 @@ async function getWasm() {
     env: {
       memory: wasm_memory,
 
+      setCursor: (k) => {
+        const cursors = ["default", "grab", "grabbing", "pointer"];
+        document.body.style.cursor = cursors[k];
+      },
+
       // debug
       logInt: (x) => console.log(x),
       logFloat: (arg) => console.log(arg),

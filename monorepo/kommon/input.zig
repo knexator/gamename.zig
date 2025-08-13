@@ -59,6 +59,8 @@ pub const Mouse = struct {
     last_change_at: kommon.meta.StructFromEnum(MouseButton, f32, false) = undefined,
     cur_time: f32,
 
+    pub const Cursor = enum(u8) { default, could_grab, grabbing, pointer };
+
     pub fn deltaPos(self: Mouse) Vec2 {
         return self.cur.position.sub(self.prev.position);
     }
