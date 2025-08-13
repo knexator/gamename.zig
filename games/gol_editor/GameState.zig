@@ -110,11 +110,13 @@ const BoardState = struct {
 
         var it_states = self.cells_states.iterator();
         while (it_states.next()) |kv| {
+            if (kv.value_ptr.* == .black) continue;
             result.plusTile(kv.key_ptr.*);
         }
 
         var it_types = self.cells_types.iterator();
         while (it_types.next()) |kv| {
+            if (kv.value_ptr.* == .empty) continue;
             result.plusTile(kv.key_ptr.*);
         }
 
@@ -265,6 +267,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         text: ?[]const u8,
         radio_selected: bool,
     }) = .init(self.mem.frame.allocator());
+    var catalogue_buttons: std.ArrayList(struct {
+        pos: Rect,
+        radio_selected: bool,
+        board: BoardState,
+    }) = .init(self.mem.frame.allocator());
 
     var mouse_over_ui = false;
 
@@ -395,10 +402,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         for (self.saved_states.items, 0..) |board, k| {
             const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k), 0)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
-            try ui_buttons.append(.{
+            try catalogue_buttons.append(.{
                 .pos = button,
-                .color = null,
-                .text = null,
+                .board = board,
                 .radio_selected = k == self.catalogue_index,
             });
             if (hot) {
@@ -556,6 +562,50 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
             self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), button.color orelse CellState.gray.color());
             if (button.text) |text| try ui_texts.addText(text, .centeredAt(button.pos.getCenter()), 0.75, .black);
+        }
+    }
+
+    {
+        for (catalogue_buttons.items) |button| {
+            self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
+            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), CellState.black.color());
+
+            const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
+            const offset = bounds.top_left;
+            const scale = 1.0 / (bounds.size.y + 1);
+
+            {
+                var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+                var it = button.board.cells_states.iterator();
+                while (it.next()) |kv| {
+                    if (kv.value_ptr.* == .black) continue;
+
+                    try cell_bgs.append(.{
+                        .point = .{ .pos = button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).scale(scale)), .scale = scale * button.pos.size.y },
+                        .color = kv.value_ptr.*.color(),
+                    });
+                }
+                self.canvas.fillShapesInstanced(ui_cam, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+            }
+
+            {
+                var cell_texts = self.canvas.textBatch(0);
+                var it = button.board.cells_types.iterator();
+                while (it.next()) |kv| {
+                    if (kv.value_ptr.* == .empty) continue;
+
+                    try cell_texts.addText(
+                        kv.value_ptr.*.text(),
+                        .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).scale(scale))),
+                        scale * button.pos.size.y,
+                        if ((self.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
+                            .white
+                        else
+                            .black,
+                    );
+                }
+                cell_texts.draw(ui_cam);
+            }
         }
     }
 

@@ -835,6 +835,13 @@ pub const IBounds = struct {
             .inner_size = IVec2.sub(bottom_right, top_left).cast(usize),
         };
     }
+
+    pub fn asRect(self: IBounds) Rect {
+        return .{
+            .top_left = self.top_left.tof32(),
+            .size = self.inner_size.tof32(),
+        };
+    }
 };
 
 pub const Rect = extern struct {
