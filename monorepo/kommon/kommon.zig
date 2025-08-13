@@ -37,6 +37,15 @@ comptime {
     std.testing.refAllDeclsRecursive(@This());
 }
 
+pub fn moveIndex(original: usize, delta: isize, arr_size: usize, mode: enum { clamp, mod }) usize {
+    std.debug.assert(arr_size > 0);
+    const new_index: isize = @as(isize, @intCast(original)) + delta;
+    return switch (mode) {
+        .clamp => @intCast(std.math.clamp(new_index, 0, @as(isize, @intCast(arr_size - 1)))),
+        .mod => @intCast(@mod(new_index, @as(isize, @intCast(arr_size)))),
+    };
+}
+
 pub fn safeAt(T: type, arr: []const T, index: usize) ?T {
     if (index >= arr.len) {
         return null;

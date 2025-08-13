@@ -78,6 +78,13 @@ const BoardState = struct {
         try dst.cells_types.put(.new(1, 7), .@"-");
     }
 
+    pub fn clone(self: BoardState) !BoardState {
+        return .{
+            .cells_states = try self.cells_states.clone(),
+            .cells_types = try self.cells_types.clone(),
+        };
+    }
+
     pub fn boundingRect(self: BoardState) math.IBounds {
         var result: math.IBounds = .empty;
 
@@ -153,7 +160,9 @@ const BoardState = struct {
 };
 
 toolbar: Toolbar = .{ .active_tool = .paint_state },
-
+catalogue_open: bool = false,
+catalogue_index: usize = 0,
+saved_states: std.ArrayList(BoardState),
 camera: Rect = .{ .top_left = .new(-10, -5), .size = Vec2.new(4, 3).scale(8) },
 board: BoardState,
 
@@ -178,6 +187,8 @@ pub fn init(
     dst.random = .init(random_seed);
 
     try dst.board.init(gpa);
+    dst.saved_states = .init(gpa);
+    try dst.saved_states.append(try dst.board.clone());
 }
 
 // TODO: take gl parameter
@@ -255,6 +266,38 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    // toggle catalogue
+    if (true) {
+        const button: Rect = (Rect{ .top_left = .new(4, 0), .size = .one }).plusMargin(-0.1);
+        const hot = button.contains(ui_mouse.cur.position);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = "C",
+            .radio_selected = hot or self.catalogue_open,
+        });
+        if (hot) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                self.catalogue_open = !self.catalogue_open;
+                if (self.catalogue_open) {
+                    // TODO: don't append if unchanged
+                    try self.saved_states.append(try self.board.clone());
+                    self.catalogue_index = self.saved_states.items.len - 1;
+                }
+            }
+        }
+    }
+
+    if (platform.keyboard.wasPressed(.KeyC)) {
+        self.catalogue_open = !self.catalogue_open;
+        if (self.catalogue_open) {
+            // TODO: don't append if unchanged
+            try self.saved_states.append(try self.board.clone());
+            self.catalogue_index = self.saved_states.items.len - 1;
+        }
+    }
+
     // save button
     if (true) {
         const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
@@ -294,17 +337,46 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    if (self.catalogue_open) {
+        for (self.saved_states.items, 0..) |board, k| {
+            const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k), 0)).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = null,
+                .radio_selected = k == self.catalogue_index,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                self.catalogue_index = k;
+                self.board = board;
+                if (mouse.wasPressed(.right) and self.saved_states.items.len > 1) {
+                    _ = self.saved_states.orderedRemove(k);
+                    break;
+                }
+            }
+        }
+    }
+
     if (mouse_over_ui) {
         platform.setCursor(.pointer);
     } else {
         platform.setCursor(.default);
     }
 
-    self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
-        .none => 1,
-        .down => 1.1,
-        .up => 0.9,
-    });
+    if (mouse.cur.scrolled != .none) {
+        if (self.catalogue_open) {
+            self.catalogue_index = kommon.moveIndex(self.catalogue_index, mouse.cur.scrolled.toInt(), self.saved_states.items.len, .clamp);
+            self.board = self.saved_states.items[self.catalogue_index];
+        } else {
+            self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
+                .none => unreachable,
+                .down => 1.1,
+                .up => 0.9,
+            });
+        }
+    }
 
     for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
         &.{ .KeyD, .ArrowRight },
@@ -324,7 +396,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.camera = self.camera.move(mouse.deltaPos().neg());
     }
 
-    if (!mouse_over_ui) {
+    if (!mouse_over_ui and !self.catalogue_open) {
         switch (self.toolbar.active_tool) {
             .paint_state => {
                 if (mouse.cur.isDown(.left)) {

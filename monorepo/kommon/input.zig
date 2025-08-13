@@ -21,6 +21,14 @@ pub const MouseState = struct {
                 .down => -1,
             };
         }
+
+        pub fn toInt(self: @This()) isize {
+            return switch (self) {
+                .none => 0,
+                .up => 1,
+                .down => -1,
+            };
+        }
     },
     buttons: kommon.meta.BoolFlags(MouseButton, false),
     // buttons: std.enums.EnumSet(MouseButton),
