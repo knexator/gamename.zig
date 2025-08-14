@@ -78,11 +78,17 @@ const BoardState = struct {
         try dst.cells_types.put(.new(1, 7), .@"-");
     }
 
-    pub fn clone(self: BoardState) !BoardState {
+    fn clone(self: BoardState) !BoardState {
         return .{
             .cells_states = try self.cells_states.clone(),
             .cells_types = try self.cells_types.clone(),
         };
+    }
+
+    pub fn cloneAndGetPtr(self: BoardState, pool: *std.heap.MemoryPool(BoardState)) !*BoardState {
+        const res = try pool.create();
+        res.* = try self.clone();
+        return res;
     }
 
     pub fn equals(self: BoardState, other: BoardState) bool {
@@ -185,9 +191,10 @@ toolbar: Toolbar = .{ .active_tool = .paint_state },
 catalogue_open: bool = false,
 catalogue_index: usize = 0,
 catalogue_view_offset: f32 = 0,
-saved_states: std.ArrayList(BoardState),
+saved_states: std.ArrayList(*const BoardState),
 camera: Rect = .{ .top_left = .new(-10, -5), .size = Vec2.new(4, 3).scale(8) },
-board: BoardState,
+board: *BoardState,
+pool: std.heap.MemoryPool(BoardState),
 
 random: std.Random.DefaultPrng,
 canvas: Canvas,
@@ -209,9 +216,11 @@ pub fn init(
     // dst.lazy_state = .init(gpa);
     dst.random = .init(random_seed);
 
+    dst.pool = .init(gpa);
+    dst.board = try dst.pool.create();
     try dst.board.init(gpa);
     dst.saved_states = .init(gpa);
-    try dst.saved_states.append(try dst.board.clone());
+    try dst.saved_states.append(try dst.board.cloneAndGetPtr(&dst.pool));
 }
 
 // TODO: take gl parameter
@@ -234,13 +243,13 @@ fn onCatalogueOpened(self: *GameState) !void {
 
 fn saveState(self: *GameState) !void {
     for (self.saved_states.items, 0..) |state, k| {
-        if (self.board.equals(state)) {
+        if (self.board.equals(state.*)) {
             self.catalogue_index = k;
             break;
         }
     } else {
         self.catalogue_index += 1;
-        try self.saved_states.insert(self.catalogue_index, try self.board.clone());
+        try self.saved_states.insert(self.catalogue_index, try self.board.cloneAndGetPtr(&self.pool));
     }
 }
 
@@ -400,11 +409,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    var visible_board: *const BoardState = &self.board;
+    var visible_board: *const BoardState = self.board;
 
     if (self.catalogue_open) {
         math.lerp_towards(&self.catalogue_view_offset, tof32(self.catalogue_index), 0.2, platform.delta_seconds);
-        for (self.saved_states.items, 0..) |*board, k| {
+        for (self.saved_states.items, 0..) |board, k| {
             const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k) - self.catalogue_view_offset + ui_cam.size.x / 2 - 0.5, 0)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try catalogue_buttons.append(.{
@@ -418,7 +427,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 visible_board = board;
                 if (mouse.wasPressed(.left)) {
                     self.catalogue_index = k;
-                    self.board = board.*;
+                    self.pool.destroy(self.board);
+                    self.board = try board.cloneAndGetPtr(&self.pool);
                 }
                 if (mouse.wasPressed(.right) and self.saved_states.items.len > 1) {
                     _ = self.saved_states.orderedRemove(k);
@@ -441,7 +451,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (mouse.cur.scrolled != .none) {
         if (self.catalogue_open) {
             self.catalogue_index = kommon.moveIndex(self.catalogue_index, -mouse.cur.scrolled.toInt(), self.saved_states.items.len, .clamp);
-            self.board = self.saved_states.items[self.catalogue_index];
+            self.pool.destroy(self.board);
+            self.board = try self.saved_states.items[self.catalogue_index].cloneAndGetPtr(&self.pool);
         } else {
             self.camera = self.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
                 .none => unreachable,
