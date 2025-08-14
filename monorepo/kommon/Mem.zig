@@ -10,12 +10,16 @@ level: std.heap.ArenaAllocator,
 /// same lifetime as the game
 forever: std.heap.ArenaAllocator,
 
+/// use sparingly!
+gpa: std.mem.Allocator,
+
 pub fn init(gpa: std.mem.Allocator) @This() {
     return .{
         .frame = .init(gpa),
         .scratch = .init(gpa),
         .level = .init(gpa),
         .forever = .init(gpa),
+        .gpa = gpa,
     };
 }
 

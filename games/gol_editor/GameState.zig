@@ -59,7 +59,11 @@ const Toolbar = struct {
     active_type: CellType = .@"+",
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
-    rect_tool_state: enum { none, selecting, moving } = .none,
+    rect_tool_state: union(enum) {
+        none,
+        selecting,
+        moving: kommon.Grid2D(BoardState.FullCell),
+    } = .none,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
@@ -580,7 +584,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         if (inside_rect) {
                             platform.setCursor(.could_grab);
                             if (mouse.wasPressed(.left)) {
-                                self.toolbar.rect_tool_state = .moving;
+                                self.toolbar.rect_tool_state = .{ .moving = try self.board.getSubrect(
+                                    self.mem.gpa,
+                                    self.toolbar.selectedRect(),
+                                ) };
+                                try self.board.clearSubrect(self.toolbar.selectedRect());
                             }
                         } else {
                             if (mouse.wasPressed(.left)) {
@@ -603,13 +611,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             platform.setCursor(.grabbing);
                             const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
                             const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
-                            if (!mouse_cell_delta.equals(.zero)) {
-                                const values = try self.board.getSubrect(self.mem.frame.allocator(), self.toolbar.selectedRect());
-                                try self.board.clearSubrect(self.toolbar.selectedRect());
-                                try self.board.setSubrect(values, self.toolbar.selectedRect().move(mouse_cell_delta));
-                                self.toolbar.moveSelectedRect(mouse_cell_delta);
-                            }
+                            self.toolbar.moveSelectedRect(mouse_cell_delta);
                         } else {
+                            try self.board.setSubrect(self.toolbar.rect_tool_state.moving, self.toolbar.selectedRect());
+                            self.toolbar.rect_tool_state.moving.deinit(self.mem.gpa);
                             self.toolbar.rect_tool_state = .none;
                         }
                     },
@@ -683,6 +688,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+        defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+
         var it = visible_board.cells_states.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .black) continue;
@@ -691,11 +698,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .color = kv.value_ptr.*.color(),
             });
         }
-        self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
     }
 
     if (true) {
         var cell_texts = self.canvas.textBatch(0);
+        defer cell_texts.draw(camera);
+
         var it = visible_board.cells_types.iterator();
         while (it.next()) |kv| {
             if (kv.value_ptr.* == .empty) continue;
@@ -709,7 +717,36 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     .black,
             );
         }
-        cell_texts.draw(camera);
+    }
+
+    if (std.meta.activeTag(self.toolbar.rect_tool_state) == .moving) {
+        const values = self.toolbar.rect_tool_state.moving;
+
+        if (true) {
+            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+            var cell_texts = self.canvas.textBatch(0);
+
+            defer cell_texts.draw(camera);
+            defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+
+            var it = values.iteratorSigned();
+            while (it.next()) |p| {
+                const cell = values.atSigned(p);
+                try cell_bgs.append(.{
+                    .point = .{ .pos = p.add(self.toolbar.selectedRect().top_left).tof32() },
+                    .color = cell.cell_state.color(),
+                });
+
+                if (cell.cell_type != .empty) {
+                    try cell_texts.addText(
+                        cell.cell_type.text(),
+                        .centeredAt(p.add(self.toolbar.selectedRect().top_left).tof32().add(.half)),
+                        1.0,
+                        if (cell.cell_state == .black) .white else .black,
+                    );
+                }
+            }
+        }
     }
 
     // board lines
