@@ -481,6 +481,7 @@ test "foo" {
     }, rect);
 }
 
+// TODO: move to itertools
 const GridIterator = struct {
     i: kommon.itertools.Iterator(usize),
     j: kommon.itertools.Iterator(usize),

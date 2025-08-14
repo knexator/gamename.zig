@@ -151,6 +151,10 @@ pub fn ZVec2(T: type) type {
             return new(v, v);
         }
 
+        pub fn addInPlace(a: *Self, b: Self) void {
+            a.* = a.add(b);
+        }
+
         pub fn add(a: Self, b: Self) Self {
             return new(a.x + b.x, a.y + b.y);
         }
@@ -841,6 +845,22 @@ pub const IBounds = struct {
             .top_left = self.top_left.tof32(),
             .size = self.inner_size.tof32(),
         };
+    }
+
+    pub fn contains(self: IBounds, p: IVec2) bool {
+        return inRange(p.x, self.top_left.x, self.top_left.x + self.inner_size.cast(isize).x) and
+            inRange(p.y, self.top_left.y, self.top_left.y + self.inner_size.cast(isize).y);
+    }
+
+    pub fn move(original: IBounds, delta: IVec2) IBounds {
+        return .{
+            .top_left = original.top_left.add(delta),
+            .inner_size = original.inner_size,
+        };
+    }
+
+    pub fn bottomRight(self: IBounds) IVec2 {
+        return self.top_left.addUnsigned(self.inner_size);
     }
 };
 

@@ -154,4 +154,42 @@ pub fn argMin(it: anytype) usize {
     return best_index;
 }
 
+pub fn inIBounds(bounds: IBounds) Signed2DIterator {
+    return .init(bounds);
+}
+
+const Signed2DIterator = struct {
+    i: kommon.itertools.Iterator(isize),
+    j: kommon.itertools.Iterator(isize),
+
+    pub fn init(bounds: IBounds) Signed2DIterator {
+        return .{
+            .i = .init(bounds.top_left.x, bounds.bottomRight().x - 1),
+            .j = .init(bounds.top_left.y, bounds.bottomRight().y - 1),
+        };
+    }
+
+    pub fn reset(self: *Signed2DIterator) void {
+        self.i.reset();
+        self.j.reset();
+    }
+
+    pub fn next(self: *Signed2DIterator) ?math.IVec2 {
+        if (self.j.cur()) |j| {
+            if (self.i.next()) |i| {
+                return .new(i, j);
+            } else {
+                self.j.advance();
+                self.i.reset();
+                return self.next();
+            }
+        } else {
+            return null;
+        }
+    }
+};
+
 const std = @import("std");
+const kommon = @import("kommon.zig");
+const math = kommon.math;
+const IBounds = math.IBounds;

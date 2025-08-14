@@ -57,19 +57,30 @@ const CellType = enum {
 const Toolbar = struct {
     active_state: CellState = .white,
     active_type: CellType = .@"+",
-    selected_rect_inner_corner1: IVec2 = undefined,
-    selected_rect_inner_corner2: IVec2 = undefined,
+    selected_rect_inner_corner1: IVec2 = .zero,
+    selected_rect_inner_corner2: IVec2 = .zero,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
     prev_tool: Tool = undefined,
 
     const Tool = enum { paint_state, paint_type, selecting_rect, catalogue, panning };
+
+    pub fn selectedRect(self: Toolbar) math.IBounds {
+        return math.IBounds.empty.bounding(self.selected_rect_inner_corner1).bounding(self.selected_rect_inner_corner2);
+    }
+
+    pub fn moveSelectedRect(self: *Toolbar, delta: IVec2) void {
+        self.selected_rect_inner_corner1.addInPlace(delta);
+        self.selected_rect_inner_corner2.addInPlace(delta);
+    }
 };
 
 const BoardState = struct {
     cells_states: std.AutoArrayHashMap(IVec2, CellState),
     cells_types: std.AutoArrayHashMap(IVec2, CellType),
+
+    const FullCell = struct { cell_state: CellState, cell_type: CellType };
 
     pub fn init(dst: *BoardState, gpa: std.mem.Allocator) !void {
         dst.cells_states = .init(gpa);
@@ -143,6 +154,13 @@ const BoardState = struct {
         return self.cells_types.get(pos) orelse .empty;
     }
 
+    pub fn fullAt(self: BoardState, pos: IVec2) FullCell {
+        return .{
+            .cell_state = self.stateAt(pos),
+            .cell_type = self.typeAt(pos),
+        };
+    }
+
     pub fn toText(self: BoardState, out: std.io.AnyWriter) !void {
         const bounds = self.boundingRect();
         try out.writeAll("V1\n");
@@ -189,6 +207,34 @@ const BoardState = struct {
             };
             if (cell_state != .black) try dst.cells_states.put(p, cell_state);
             if (cell_type != .empty) try dst.cells_types.put(p, cell_type);
+        }
+    }
+
+    pub fn getSubrect(self: BoardState, alloc: std.mem.Allocator, bounds: math.IBounds) !kommon.Grid2D(FullCell) {
+        const result: kommon.Grid2D(FullCell) = try .initUndefined(alloc, bounds.inner_size);
+        var it = result.iteratorSigned();
+        while (it.next()) |p| {
+            result.setSigned(p, self.fullAt(p.add(bounds.top_left)));
+        }
+        return result;
+    }
+
+    pub fn clearSubrect(self: *BoardState, bounds: math.IBounds) !void {
+        // TODO: could be optimized, by removing instead of adding elements
+        var it = kommon.itertools.inIBounds(bounds);
+        while (it.next()) |p| {
+            try self.cells_states.put(p, .black);
+            try self.cells_types.put(p, .empty);
+        }
+    }
+
+    pub fn setSubrect(self: *BoardState, values: kommon.Grid2D(FullCell), bounds: math.IBounds) !void {
+        assert(bounds.inner_size.equals(values.size));
+        var it = values.iteratorSigned();
+        while (it.next()) |p| {
+            const cell = values.atSigned(p);
+            try self.cells_states.put(p.add(bounds.top_left), cell.cell_state);
+            try self.cells_types.put(p.add(bounds.top_left), cell.cell_type);
         }
     }
 };
@@ -488,26 +534,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    // always available: move camera
-    for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
-        &.{ .KeyD, .ArrowRight },
-        &.{ .KeyS, .ArrowDown },
-        &.{ .KeyA, .ArrowLeft },
-        &.{ .KeyW, .ArrowUp },
-    }) |d, ks| {
-        for (ks) |k| {
-            if (platform.keyboard.cur.isDown(k)) {
-                self.camera = self.camera.move(d.scale(platform.delta_seconds * 0.8 * self.camera.size.y));
-            }
-        }
-    }
-
-    // always available: drag view
-    if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
-        platform.setCursor(.grabbing);
-        self.camera = self.camera.move(mouse.deltaPos().neg());
-    }
-
     // tool specific mouse scroll
     if (mouse.cur.scrolled != .none) {
         switch (self.toolbar.active_tool) {
@@ -547,11 +573,28 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             },
             .selecting_rect => {
-                if (mouse.wasPressed(.left)) {
-                    self.toolbar.selected_rect_inner_corner1 = cell_under_mouse;
-                    self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
-                } else if (mouse.cur.isDown(.left)) {
-                    self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                const inside_rect = self.toolbar.selectedRect().contains(cell_under_mouse);
+                if (inside_rect) {
+                    if (mouse.cur.isDown(.left)) {
+                        platform.setCursor(.grabbing);
+                        const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
+                        const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
+                        if (!mouse_cell_delta.equals(.zero)) {
+                            const values = try self.board.getSubrect(self.mem.frame.allocator(), self.toolbar.selectedRect());
+                            try self.board.clearSubrect(self.toolbar.selectedRect());
+                            try self.board.setSubrect(values, self.toolbar.selectedRect().move(mouse_cell_delta));
+                            self.toolbar.moveSelectedRect(mouse_cell_delta);
+                        }
+                    } else {
+                        platform.setCursor(.could_grab);
+                    }
+                } else {
+                    if (mouse.wasPressed(.left)) {
+                        self.toolbar.selected_rect_inner_corner1 = cell_under_mouse;
+                        self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                    } else if (mouse.cur.isDown(.left)) {
+                        self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                    }
                 }
             },
             .catalogue => {
@@ -596,6 +639,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         },
         .selecting_rect, .catalogue, .panning => {},
+    }
+
+    // always available: move camera
+    for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
+        &.{ .KeyD, .ArrowRight },
+        &.{ .KeyS, .ArrowDown },
+        &.{ .KeyA, .ArrowLeft },
+        &.{ .KeyW, .ArrowUp },
+    }) |d, ks| {
+        for (ks) |k| {
+            if (platform.keyboard.cur.isDown(k)) {
+                self.camera = self.camera.move(d.scale(platform.delta_seconds * 0.8 * self.camera.size.y));
+            }
+        }
+    }
+
+    // always available: drag view
+    if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
+        platform.setCursor(.grabbing);
+        self.camera = self.camera.move(mouse.deltaPos().neg());
     }
 
     platform.gl.clear(CellState.black.color());
@@ -651,7 +714,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (self.toolbar.active_tool == .selecting_rect) {
-        const rect = math.IBounds.empty.bounding(self.toolbar.selected_rect_inner_corner1).bounding(self.toolbar.selected_rect_inner_corner2).asRect();
+        const rect = self.toolbar.selectedRect().asRect();
         self.canvas.strokeRect(camera, rect, 0.1, .cyan);
     }
 
