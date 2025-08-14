@@ -59,6 +59,7 @@ const Toolbar = struct {
     active_type: CellType = .@"+",
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
+    rect_tool_state: enum { none, selecting, moving } = .none,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
@@ -574,27 +575,44 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             },
             .selecting_rect => {
                 const inside_rect = self.toolbar.selectedRect().contains(cell_under_mouse);
-                if (inside_rect) {
-                    if (mouse.cur.isDown(.left)) {
-                        platform.setCursor(.grabbing);
-                        const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
-                        const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
-                        if (!mouse_cell_delta.equals(.zero)) {
-                            const values = try self.board.getSubrect(self.mem.frame.allocator(), self.toolbar.selectedRect());
-                            try self.board.clearSubrect(self.toolbar.selectedRect());
-                            try self.board.setSubrect(values, self.toolbar.selectedRect().move(mouse_cell_delta));
-                            self.toolbar.moveSelectedRect(mouse_cell_delta);
+                switch (self.toolbar.rect_tool_state) {
+                    .none => {
+                        if (inside_rect) {
+                            platform.setCursor(.could_grab);
+                            if (mouse.wasPressed(.left)) {
+                                self.toolbar.rect_tool_state = .moving;
+                            }
+                        } else {
+                            if (mouse.wasPressed(.left)) {
+                                self.toolbar.rect_tool_state = .selecting;
+                                self.toolbar.selected_rect_inner_corner1 = cell_under_mouse;
+                                self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                            }
                         }
-                    } else {
-                        platform.setCursor(.could_grab);
-                    }
-                } else {
-                    if (mouse.wasPressed(.left)) {
-                        self.toolbar.selected_rect_inner_corner1 = cell_under_mouse;
-                        self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
-                    } else if (mouse.cur.isDown(.left)) {
-                        self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
-                    }
+                    },
+                    .selecting => {
+                        if (mouse.cur.isDown(.left)) {
+                            self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                        } else {
+                            self.toolbar.rect_tool_state = .none;
+                        }
+                    },
+                    .moving => {
+                        platform.setCursor(.grabbing);
+                        if (mouse.cur.isDown(.left)) {
+                            platform.setCursor(.grabbing);
+                            const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
+                            const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
+                            if (!mouse_cell_delta.equals(.zero)) {
+                                const values = try self.board.getSubrect(self.mem.frame.allocator(), self.toolbar.selectedRect());
+                                try self.board.clearSubrect(self.toolbar.selectedRect());
+                                try self.board.setSubrect(values, self.toolbar.selectedRect().move(mouse_cell_delta));
+                                self.toolbar.moveSelectedRect(mouse_cell_delta);
+                            }
+                        } else {
+                            self.toolbar.rect_tool_state = .none;
+                        }
+                    },
                 }
             },
             .catalogue => {
