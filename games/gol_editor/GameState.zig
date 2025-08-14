@@ -57,8 +57,10 @@ const CellType = enum {
 const Toolbar = struct {
     active_state: CellState = .white,
     active_type: CellType = .@"+",
+    selected_rect_inner_corner1: IVec2 = undefined,
+    selected_rect_inner_corner2: IVec2 = undefined,
 
-    active_tool: enum { paint_state, paint_type },
+    active_tool: enum { paint_state, paint_type, selecting_rect },
 };
 
 const BoardState = struct {
@@ -286,6 +288,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     var mouse_over_ui = false;
 
+    // paint cell states
     for ([3]CellState{ .black, .gray, .white }, 0..) |c, k| {
         const button: Rect = (Rect{ .top_left = .new(tof32(k), 0), .size = .one }).plusMargin(-0.1);
         try ui_buttons.append(.{
@@ -303,6 +306,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    // paint cell types
     for (CellType.all, 0..) |t, k| {
         const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
         try ui_buttons.append(.{
@@ -316,6 +320,23 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (mouse.wasPressed(.left)) {
                 self.toolbar.active_type = t;
                 self.toolbar.active_tool = .paint_type;
+            }
+        }
+    }
+
+    // rect select mode
+    if (true) {
+        const button: Rect = (Rect{ .top_left = .new(4, 1), .size = .one }).plusMargin(-0.1);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = "[]",
+            .radio_selected = self.toolbar.active_tool == .selecting_rect,
+        });
+        if (button.contains(ui_mouse.cur.position)) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                self.toolbar.active_tool = .selecting_rect;
             }
         }
     }
@@ -498,6 +519,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     self.toolbar.active_type = self.board.cells_types.get(cell_under_mouse) orelse .empty;
                 }
             },
+            .selecting_rect => {
+                if (mouse.wasPressed(.left)) {
+                    self.toolbar.selected_rect_inner_corner1 = cell_under_mouse;
+                    self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                } else if (mouse.cur.isDown(.left)) {
+                    self.toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                }
+            },
         }
     }
 
@@ -522,6 +551,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.toolbar.active_tool = .paint_state;
             }
         },
+        .selecting_rect => {},
     }
 
     platform.gl.clear(CellState.black.color());
@@ -557,6 +587,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         cell_texts.draw(camera);
     }
 
+    // board lines
     if (true) {
         var segments: std.ArrayList(Canvas.Segment) = .init(self.mem.frame.allocator());
         {
@@ -573,6 +604,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         self.canvas.instancedSegments(camera, segments.items, 0.05);
+    }
+
+    if (self.toolbar.active_tool == .selecting_rect) {
+        const rect = math.IBounds.empty.bounding(self.toolbar.selected_rect_inner_corner1).bounding(self.toolbar.selected_rect_inner_corner2).asRect();
+        self.canvas.strokeRect(camera, rect, 0.1, .cyan);
     }
 
     {
@@ -592,7 +628,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
             const offset = bounds.top_left;
-            const scale = 1.0 / (bounds.size.y + 1);
+            const scale = 1.0 / bounds.size.y;
 
             {
                 var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());

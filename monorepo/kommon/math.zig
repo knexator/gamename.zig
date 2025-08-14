@@ -821,8 +821,8 @@ pub const IBounds = struct {
         var bottom_right = original.top_left.add(original.inner_size.cast(isize));
         top_left.x = @min(top_left.x, p.x);
         top_left.y = @min(top_left.y, p.y);
-        bottom_right.x = @max(bottom_right.x, p.x);
-        bottom_right.y = @max(bottom_right.y, p.y);
+        bottom_right.x = @max(bottom_right.x, p.x + 1);
+        bottom_right.y = @max(bottom_right.y, p.y + 1);
 
         return .fromCorners(top_left, bottom_right);
     }
