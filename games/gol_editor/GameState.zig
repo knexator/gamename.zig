@@ -245,6 +245,7 @@ const BoardState = struct {
     }
 };
 
+is_editor: bool = true,
 toolbar: Toolbar = .{ .active_tool = .paint_state },
 catalogue_index: usize = 0,
 catalogue_view_offset: f32 = 0,
@@ -362,25 +363,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     // paint cell types
-    for (CellType.all, 0..) |t, k| {
-        const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = t.text(),
-            .radio_selected = self.toolbar.active_tool == .paint_type and (t == self.toolbar.active_type),
-        });
-        if (button.contains(ui_mouse.cur.position)) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                self.toolbar.active_type = t;
-                self.toolbar.active_tool = .paint_type;
+    if (self.is_editor) {
+        for (CellType.all, 0..) |t, k| {
+            const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = t.text(),
+                .radio_selected = self.toolbar.active_tool == .paint_type and (t == self.toolbar.active_type),
+            });
+            if (button.contains(ui_mouse.cur.position)) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    self.toolbar.active_type = t;
+                    self.toolbar.active_tool = .paint_type;
+                }
             }
         }
     }
 
     // rect select/move mode
-    if (true) {
+    if (self.is_editor) {
         const button: Rect = (Rect{ .top_left = .new(4, 1), .size = .one }).plusMargin(-0.1);
         try ui_buttons.append(.{
             .pos = button,
@@ -449,7 +452,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    // save button
+    // save to catalogue button
     if (true) {
         const button: Rect = (Rect{ .top_left = .new(5, 0), .size = .one }).plusMargin(-0.1);
         const hot = button.contains(ui_mouse.cur.position);
@@ -472,7 +475,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     // save to file button
-    if (true) {
+    if (self.is_editor) {
         const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
         const hot = button.contains(ui_mouse.cur.position);
         try ui_buttons.append(.{
@@ -493,7 +496,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     // load from file button
-    if (true) {
+    if (self.is_editor) {
         const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
         const hot = button.contains(ui_mouse.cur.position);
         try ui_buttons.append(.{
@@ -691,6 +694,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.camera = self.camera.move(mouse.deltaPos().neg());
     }
 
+    // always available: toggle editor
+    if (platform.keyboard.wasPressed(.KeyE)) {
+        self.is_editor = !self.is_editor;
+    }
+
     platform.gl.clear(CellState.black.color());
 
     if (true) {
@@ -790,7 +798,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.canvas.strokeRect(camera, rect, 0.1, .cyan);
     }
 
-    {
+    // ui buttons
+    if (true) {
         var ui_texts = self.canvas.textBatch(0);
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
@@ -800,7 +809,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    {
+    // ui buttons special case: catalogue buttons
+    if (true) {
         for (catalogue_buttons.items) |button| {
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
             self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), CellState.black.color());
