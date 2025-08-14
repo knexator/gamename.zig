@@ -64,7 +64,7 @@ const Toolbar = struct {
     /// only defined when active tool is catalogue
     prev_tool: Tool = undefined,
 
-    const Tool = enum { paint_state, paint_type, selecting_rect, catalogue };
+    const Tool = enum { paint_state, paint_type, selecting_rect, catalogue, panning };
 };
 
 const BoardState = struct {
@@ -344,6 +344,23 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    // panning mode
+    if (true) {
+        const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .one }).plusMargin(-0.1);
+        try ui_buttons.append(.{
+            .pos = button,
+            .color = null,
+            .text = "g",
+            .radio_selected = self.toolbar.active_tool == .panning,
+        });
+        if (button.contains(ui_mouse.cur.position)) {
+            mouse_over_ui = true;
+            if (mouse.wasPressed(.left)) {
+                self.toolbar.active_tool = .panning;
+            }
+        }
+    }
+
     // toggle catalogue
     if (true) {
         const button: Rect = (Rect{ .top_left = .new(4, 0), .size = .one }).plusMargin(-0.1);
@@ -443,6 +460,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     var visible_board: *const BoardState = self.board;
 
+    // tool specific UI
     if (self.toolbar.active_tool == .catalogue) {
         math.lerp_towards(&self.catalogue_view_offset, tof32(self.catalogue_index), 0.2, platform.delta_seconds);
         for (self.saved_states.items, 0..) |board, k| {
@@ -470,12 +488,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (mouse_over_ui) {
-        platform.setCursor(.pointer);
-    } else {
-        platform.setCursor(.default);
+    // always available: move camera
+    for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
+        &.{ .KeyD, .ArrowRight },
+        &.{ .KeyS, .ArrowDown },
+        &.{ .KeyA, .ArrowLeft },
+        &.{ .KeyW, .ArrowUp },
+    }) |d, ks| {
+        for (ks) |k| {
+            if (platform.keyboard.cur.isDown(k)) {
+                self.camera = self.camera.move(d.scale(platform.delta_seconds * 0.8 * self.camera.size.y));
+            }
+        }
     }
 
+    // always available: drag view
+    if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
+        platform.setCursor(.grabbing);
+        self.camera = self.camera.move(mouse.deltaPos().neg());
+    }
+
+    // tool specific mouse scroll
     if (mouse.cur.scrolled != .none) {
         switch (self.toolbar.active_tool) {
             .catalogue => {
@@ -493,25 +526,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
-        &.{ .KeyD, .ArrowRight },
-        &.{ .KeyS, .ArrowDown },
-        &.{ .KeyA, .ArrowLeft },
-        &.{ .KeyW, .ArrowUp },
-    }) |d, ks| {
-        for (ks) |k| {
-            if (platform.keyboard.cur.isDown(k)) {
-                self.camera = self.camera.move(d.scale(platform.delta_seconds * 0.8 * self.camera.size.y));
-            }
-        }
-    }
-
-    if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
-        platform.setCursor(.grabbing);
-        self.camera = self.camera.move(mouse.deltaPos().neg());
-    }
-
+    // tool mouse interactions
     if (!mouse_over_ui) {
+        platform.setCursor(.default);
         switch (self.toolbar.active_tool) {
             .paint_state => {
                 if (mouse.cur.isDown(.left)) {
@@ -543,9 +560,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     self.toolbar.prev_tool = undefined;
                 }
             },
+            .panning => {
+                if (mouse.cur.isDown(.left)) {
+                    platform.setCursor(.grabbing);
+                    self.camera = self.camera.move(mouse.deltaPos().neg());
+                } else {
+                    platform.setCursor(.could_grab);
+                }
+            },
         }
+    } else {
+        platform.setCursor(.pointer);
     }
 
+    // tool keyboard interactions
     switch (self.toolbar.active_tool) {
         .paint_state => {
             for (&[_]CellState{ .black, .gray, .white }, 0..) |t, k| {
@@ -567,7 +595,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.toolbar.active_tool = .paint_state;
             }
         },
-        .selecting_rect, .catalogue => {},
+        .selecting_rect, .catalogue, .panning => {},
     }
 
     platform.gl.clear(CellState.black.color());
