@@ -69,7 +69,7 @@ const Toolbar = struct {
     /// only defined when active tool is catalogue
     prev_tool: Tool = undefined,
 
-    const Tool = enum { paint_state, paint_type, selecting_rect, catalogue, panning };
+    const Tool = enum { paint_state, paint_type, rect, catalogue, panning };
 
     pub fn selectedRect(self: Toolbar) math.IBounds {
         return math.IBounds.empty.bounding(self.selected_rect_inner_corner1).bounding(self.selected_rect_inner_corner2);
@@ -378,19 +378,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    // rect select mode
+    // rect select/move mode
     if (true) {
         const button: Rect = (Rect{ .top_left = .new(4, 1), .size = .one }).plusMargin(-0.1);
         try ui_buttons.append(.{
             .pos = button,
             .color = null,
             .text = "[]",
-            .radio_selected = self.toolbar.active_tool == .selecting_rect,
+            .radio_selected = self.toolbar.active_tool == .rect,
         });
         if (button.contains(ui_mouse.cur.position)) {
             mouse_over_ui = true;
             if (mouse.wasPressed(.left)) {
-                self.toolbar.active_tool = .selecting_rect;
+                self.toolbar.active_tool = .rect;
             }
         }
     }
@@ -577,7 +577,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     self.toolbar.active_type = self.board.cells_types.get(cell_under_mouse) orelse .empty;
                 }
             },
-            .selecting_rect => {
+            .rect => {
                 const inside_rect = self.toolbar.selectedRect().contains(cell_under_mouse);
                 switch (self.toolbar.rect_tool_state) {
                     .none => {
@@ -661,7 +661,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 self.toolbar.active_tool = .paint_state;
             }
         },
-        .selecting_rect, .catalogue, .panning => {},
+        .rect, .catalogue, .panning => {},
     }
 
     // always available: move camera
@@ -768,7 +768,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.canvas.instancedSegments(camera, segments.items, 0.05);
     }
 
-    if (self.toolbar.active_tool == .selecting_rect) {
+    if (self.toolbar.active_tool == .rect) {
         const rect = self.toolbar.selectedRect().asRect();
         self.canvas.strokeRect(camera, rect, 0.1, .cyan);
     }
