@@ -64,6 +64,7 @@ const Toolbar = struct {
         selecting,
         moving: kommon.Grid2D(BoardState.FullCell),
     } = .none,
+    rect_tool_moving_include_blank: bool = true,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
@@ -589,11 +590,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                     self.toolbar.selectedRect(),
                                 ) };
                                 try self.board.clearSubrect(self.toolbar.selectedRect());
+                                self.toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
                             } else if (mouse.wasPressed(.right)) {
                                 self.toolbar.rect_tool_state = .{ .moving = try self.board.getSubrect(
                                     self.mem.gpa,
                                     self.toolbar.selectedRect(),
                                 ) };
+                                self.toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
                             }
                         } else {
                             if (mouse.wasPressed(.left)) {
@@ -618,7 +621,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
                             self.toolbar.moveSelectedRect(mouse_cell_delta);
                         } else {
-                            try self.board.setSubrect(self.toolbar.rect_tool_state.moving, self.toolbar.selectedRect());
+                            try self.board.setSubrect(self.toolbar.rect_tool_state.moving, self.toolbar.selectedRect(), self.toolbar.rect_tool_moving_include_blank);
                             self.toolbar.rect_tool_state.moving.deinit(self.mem.gpa);
                             self.toolbar.rect_tool_state = .none;
                         }
