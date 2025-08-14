@@ -589,6 +589,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                     self.toolbar.selectedRect(),
                                 ) };
                                 try self.board.clearSubrect(self.toolbar.selectedRect());
+                            } else if (mouse.wasPressed(.right)) {
+                                self.toolbar.rect_tool_state = .{ .moving = try self.board.getSubrect(
+                                    self.mem.gpa,
+                                    self.toolbar.selectedRect(),
+                                ) };
                             }
                         } else {
                             if (mouse.wasPressed(.left)) {
@@ -607,7 +612,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     },
                     .moving => {
                         platform.setCursor(.grabbing);
-                        if (mouse.cur.isDown(.left)) {
+                        if (mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) {
                             platform.setCursor(.grabbing);
                             const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
                             const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
