@@ -234,13 +234,13 @@ const BoardState = struct {
         }
     }
 
-    pub fn setSubrect(self: *BoardState, values: kommon.Grid2D(FullCell), bounds: math.IBounds) !void {
+    pub fn setSubrect(self: *BoardState, values: kommon.Grid2D(FullCell), bounds: math.IBounds, include_blanks: bool) !void {
         assert(bounds.inner_size.equals(values.size));
         var it = values.iteratorSigned();
         while (it.next()) |p| {
             const cell = values.atSigned(p);
-            try self.cells_states.put(p.add(bounds.top_left), cell.cell_state);
-            try self.cells_types.put(p.add(bounds.top_left), cell.cell_type);
+            if (include_blanks or cell.cell_state != .black) try self.cells_states.put(p.add(bounds.top_left), cell.cell_state);
+            if (include_blanks or cell.cell_type != .empty) try self.cells_types.put(p.add(bounds.top_left), cell.cell_type);
         }
     }
 };
@@ -590,13 +590,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                     self.toolbar.selectedRect(),
                                 ) };
                                 try self.board.clearSubrect(self.toolbar.selectedRect());
-                                self.toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
                             } else if (mouse.wasPressed(.right)) {
                                 self.toolbar.rect_tool_state = .{ .moving = try self.board.getSubrect(
                                     self.mem.gpa,
                                     self.toolbar.selectedRect(),
                                 ) };
-                                self.toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
                             }
                         } else {
                             if (mouse.wasPressed(.left)) {
@@ -615,6 +613,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     },
                     .moving => {
                         platform.setCursor(.grabbing);
+                        self.toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
                         if (mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) {
                             platform.setCursor(.grabbing);
                             const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
@@ -730,29 +729,39 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (std.meta.activeTag(self.toolbar.rect_tool_state) == .moving) {
         const values = self.toolbar.rect_tool_state.moving;
 
-        if (true) {
-            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-            var cell_texts = self.canvas.textBatch(0);
+        var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+        var cell_texts = self.canvas.textBatch(0);
 
-            defer cell_texts.draw(camera);
-            defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+        defer cell_texts.draw(camera);
+        defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
-            var it = values.iteratorSigned();
-            while (it.next()) |p| {
-                const cell = values.atSigned(p);
-                try cell_bgs.append(.{
-                    .point = .{ .pos = p.add(self.toolbar.selectedRect().top_left).tof32() },
-                    .color = cell.cell_state.color(),
-                });
+        var it = values.iteratorSigned();
+        while (it.next()) |p| {
+            const cell = values.atSigned(p);
+            const pos = p.add(self.toolbar.selectedRect().top_left);
 
-                if (cell.cell_type != .empty) {
-                    try cell_texts.addText(
-                        cell.cell_type.text(),
-                        .centeredAt(p.add(self.toolbar.selectedRect().top_left).tof32().add(.half)),
-                        1.0,
-                        if (cell.cell_state == .black) .white else .black,
-                    );
-                }
+            const visible_state = if (!self.toolbar.rect_tool_moving_include_blank and cell.cell_state == .black)
+                self.board.stateAt(pos)
+            else
+                cell.cell_state;
+
+            const visible_type = if (!self.toolbar.rect_tool_moving_include_blank and cell.cell_type == .empty)
+                self.board.typeAt(pos)
+            else
+                cell.cell_type;
+
+            try cell_bgs.append(.{
+                .point = .{ .pos = pos.tof32() },
+                .color = visible_state.color(),
+            });
+
+            if (visible_type != .empty) {
+                try cell_texts.addText(
+                    visible_type.text(),
+                    .centeredAt(pos.tof32().add(.half)),
+                    1.0,
+                    if (visible_state == .black) .white else .black,
+                );
             }
         }
     }
