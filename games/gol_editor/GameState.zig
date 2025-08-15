@@ -634,6 +634,42 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
+        // exit to menu button
+        if (true) {
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 0)).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "back",
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    self.cur_level = null;
+                }
+            }
+        }
+
+        // reset level state button
+        if (true) {
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 1)).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "reset",
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    try cur_level.loadState(cur_level.initial_board, &self.pool_boardstate);
+                }
+            }
+        }
+
         var ghost_board: ?*const BoardState = null;
 
         // tool specific UI
@@ -839,6 +875,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // always available: exit to level select
         if (platform.keyboard.wasPressed(.Escape)) {
             self.cur_level = null;
+        }
+
+        // always available: reset level state
+        if (platform.keyboard.wasPressed(.KeyR)) {
+            try cur_level.loadState(cur_level.initial_board, &self.pool_boardstate);
         }
 
         //////////////
