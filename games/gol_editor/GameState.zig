@@ -55,6 +55,7 @@ const CellType = enum {
 };
 
 const Toolbar = struct {
+    painting: bool = false,
     active_state: CellState = .white,
     active_type: CellType = .@"+",
     selected_rect_inner_corner1: IVec2 = .zero,
@@ -403,6 +404,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (mouse.wasPressed(.left)) {
                     toolbar.active_state = c;
                     toolbar.active_tool = .paint_state;
+                    toolbar.painting = false;
                 }
             }
         }
@@ -422,6 +424,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (mouse.wasPressed(.left)) {
                         toolbar.active_type = t;
                         toolbar.active_tool = .paint_type;
+                        toolbar.painting = false;
                     }
                 }
             }
@@ -616,19 +619,35 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             platform.setCursor(.default);
             switch (toolbar.active_tool) {
                 .paint_state => {
-                    if (mouse.cur.isDown(.left)) {
-                        try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
-                    }
-                    if (mouse.wasPressed(.right)) {
-                        toolbar.active_state = cur_level.board.cells_states.get(cell_under_mouse) orelse .black;
+                    if (toolbar.painting) {
+                        if (!mouse.cur.isDown(.left)) {
+                            toolbar.painting = false;
+                        } else {
+                            try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
+                        }
+                    } else {
+                        if (mouse.wasPressed(.left)) {
+                            toolbar.painting = true;
+                        }
+                        if (mouse.wasPressed(.right)) {
+                            toolbar.active_state = cur_level.board.cells_states.get(cell_under_mouse) orelse .black;
+                        }
                     }
                 },
                 .paint_type => {
-                    if (mouse.cur.isDown(.left)) {
-                        try cur_level.board.cells_types.put(cell_under_mouse, toolbar.active_type);
-                    }
-                    if (mouse.wasPressed(.right)) {
-                        toolbar.active_type = cur_level.board.cells_types.get(cell_under_mouse) orelse .empty;
+                    if (toolbar.painting) {
+                        if (!mouse.cur.isDown(.left)) {
+                            toolbar.painting = false;
+                        } else {
+                            try cur_level.board.cells_types.put(cell_under_mouse, toolbar.active_type);
+                        }
+                    } else {
+                        if (mouse.wasPressed(.left)) {
+                            toolbar.painting = true;
+                        }
+                        if (mouse.wasPressed(.right)) {
+                            toolbar.active_type = cur_level.board.cells_types.get(cell_under_mouse) orelse .empty;
+                        }
                     }
                 },
                 .rect => {
