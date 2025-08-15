@@ -94,14 +94,6 @@ const BoardState = struct {
     pub fn init(dst: *BoardState, gpa: std.mem.Allocator) !void {
         dst.cells_states = .init(gpa);
         dst.cells_types = .init(gpa);
-
-        try dst.cells_states.put(.new(1, 1), .gray);
-        try dst.cells_states.put(.new(1, 2), .white);
-        try dst.cells_types.put(.new(1, 3), .@"+");
-        try dst.cells_types.put(.new(1, 4), .@"*");
-        try dst.cells_types.put(.new(1, 5), .o);
-        try dst.cells_types.put(.new(1, 6), .@"=");
-        try dst.cells_types.put(.new(1, 7), .@"-");
     }
 
     pub fn deinit(self: *BoardState) void {
@@ -255,7 +247,7 @@ const BoardState = struct {
 
 const LevelState = struct {
     toolbar: Toolbar = .{ .active_tool = .paint_state },
-    camera: Rect = .{ .top_left = .new(-10, -5), .size = Vec2.new(4, 3).scale(8) },
+    camera: Rect = .{ .top_left = .new(-12, -10), .size = Vec2.new(4, 3).scale(8) },
     saved_states: std.ArrayList(*const BoardState),
     board: *BoardState,
     initial_board: *const BoardState,
@@ -287,8 +279,9 @@ const LevelState = struct {
 };
 
 all_levels: std.ArrayList(*LevelState),
-cur_level: ?*LevelState,
+cur_level: ?*LevelState = null,
 is_editor: bool = true,
+levelselect_view_offset: f32 = 0,
 
 pool_boardstate: std.heap.MemoryPool(BoardState),
 pool_levelstate: std.heap.MemoryPool(LevelState),
@@ -315,22 +308,34 @@ pub fn init(
 
     dst.pool_levelstate = .init(gpa);
     dst.pool_boardstate = .init(gpa);
-    // TODO: extract to func
-    dst.cur_level = try dst.pool_levelstate.create();
-    dst.cur_level.?.* = .{
+
+    dst.all_levels = .init(gpa);
+    try dst.addEmptyLevel();
+}
+
+fn addEmptyLevel(self: *GameState) !void {
+    const level = try self.pool_levelstate.create();
+    level.* = .{
         .initial_board = blk: {
-            const res = try dst.pool_boardstate.create();
-            try res.init(gpa);
+            const res = try self.pool_boardstate.create();
+            try res.init(self.mem.gpa);
+
+            try res.cells_states.put(.new(1, 1), .gray);
+            try res.cells_states.put(.new(1, 2), .white);
+            try res.cells_types.put(.new(2, 0), .@"+");
+            try res.cells_types.put(.new(2, 1), .@"*");
+            try res.cells_types.put(.new(2, 2), .o);
+            try res.cells_types.put(.new(3, 0), .@"=");
+            try res.cells_types.put(.new(3, 1), .@"-");
+
             break :blk res;
         },
         .board = undefined,
-        .saved_states = .init(gpa),
+        .saved_states = .init(self.mem.gpa),
     };
-    dst.cur_level.?.board = try dst.cur_level.?.initial_board.cloneAndGetPtr(&dst.pool_boardstate);
-    try dst.cur_level.?.saved_states.append(try dst.cur_level.?.board.cloneAndGetPtr(&dst.pool_boardstate));
-    dst.all_levels = .init(gpa);
-    try dst.all_levels.append(dst.cur_level.?);
-    dst.cur_level = null;
+    level.board = try level.initial_board.cloneAndGetPtr(&self.pool_boardstate);
+    try level.saved_states.append(try level.board.cloneAndGetPtr(&self.pool_boardstate));
+    try self.all_levels.append(level);
 }
 
 // TODO: take gl parameter
@@ -365,7 +370,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const camera: Rect = if (self.cur_level) |cur_level|
         cur_level.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left)
     else
-        Rect.unit.scale(3, .top_left).withAspectRatio(platform.aspect_ratio, .grow, .top_left);
+        (Rect{ .top_left = .new(0, self.levelselect_view_offset), .size = .new(4, 3) })
+            .withAspectRatio(platform.aspect_ratio, .grow, .top_left);
     const mouse = platform.getMouse(camera);
 
     const ui_cam: Rect = if (self.cur_level == null) camera else .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(10) };
@@ -382,6 +388,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         board: *const BoardState,
         hot: bool,
     }) = .init(self.mem.frame.allocator());
+
+    // always available: toggle editor
+    if (platform.keyboard.wasPressed(.KeyE)) {
+        self.is_editor = !self.is_editor;
+    }
 
     var mouse_over_ui = false;
 
@@ -763,11 +774,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             cur_level.camera = cur_level.camera.move(mouse.deltaPos().neg());
         }
 
-        // always available: toggle editor
-        if (platform.keyboard.wasPressed(.KeyE)) {
-            self.is_editor = !self.is_editor;
-        }
-
         // always available: exit to level select
         if (platform.keyboard.wasPressed(.Escape)) {
             self.cur_level = null;
@@ -875,8 +881,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.canvas.strokeRect(camera, rect, 0.1, .cyan);
         }
     } else {
+        var level_to_destroy: ?usize = null;
         for (self.all_levels.items, 0..) |l, k| {
-            const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(@divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
+            const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 4)), tof32(1 + @divFloor(k, 4))), .size = .one }).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try catalogue_buttons.append(.{
                 .board = l.board,
@@ -888,8 +895,55 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
                     self.cur_level = l;
+                } else if (mouse.wasPressed(.right)) {
+                    // avoid modifying the list while iterating over it
+                    level_to_destroy = k;
+                    _ = catalogue_buttons.pop();
                 }
             }
+        }
+        if (self.is_editor) {
+            const k = self.all_levels.items.len;
+            const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 4)), tof32(1 + @divFloor(k, 4))), .size = .one }).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .radio_selected = hot,
+                .color = null,
+                .text = "+",
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    try self.addEmptyLevel();
+                }
+            }
+        }
+
+        if (level_to_destroy) |k| {
+            const l = self.all_levels.orderedRemove(k);
+            l.board.deinit();
+            self.pool_boardstate.destroy(l.board);
+            for (l.saved_states.items) |b| {
+                @constCast(b).deinit();
+                self.pool_boardstate.destroy(@constCast(b));
+            }
+        }
+
+        self.levelselect_view_offset -= 10 * mouse.cur.scrolled.toNumber() * platform.delta_seconds;
+        self.levelselect_view_offset = math.clamp(
+            self.levelselect_view_offset,
+            0,
+            tof32(try std.math.divCeil(usize, self.all_levels.items.len + @as(usize, if (self.is_editor) 1 else 0), 4)),
+        );
+
+        //////////////
+        // draw
+
+        if (true) {
+            var logo_text = self.canvas.textBatch(0);
+            try logo_text.addText("GoL", .centeredAt(.new(2, 0.5)), 0.5, .white);
+            logo_text.draw(camera);
         }
     }
 
