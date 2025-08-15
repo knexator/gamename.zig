@@ -257,6 +257,7 @@ const LevelState = struct {
     camera: Rect = .{ .top_left = .new(-10, -5), .size = Vec2.new(4, 3).scale(8) },
     saved_states: std.ArrayList(*const BoardState),
     board: *BoardState,
+    initial_board: *const BoardState,
 };
 
 cur_level: *LevelState,
@@ -288,10 +289,15 @@ pub fn init(
     dst.pool_boardstate = .init(gpa);
     dst.cur_level = try dst.pool_levelstate.create();
     dst.cur_level.* = .{
-        .board = try dst.pool_boardstate.create(),
+        .initial_board = blk: {
+            const res = try dst.pool_boardstate.create();
+            try res.init(gpa);
+            break :blk res;
+        },
+        .board = undefined,
         .saved_states = .init(gpa),
     };
-    try dst.cur_level.board.init(gpa);
+    dst.cur_level.board = try dst.cur_level.initial_board.cloneAndGetPtr(&dst.pool_boardstate);
     try dst.cur_level.saved_states.append(try dst.cur_level.board.cloneAndGetPtr(&dst.pool_boardstate));
 }
 
