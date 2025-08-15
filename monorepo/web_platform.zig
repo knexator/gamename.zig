@@ -421,7 +421,7 @@ const js_better = struct {
             const mime_str = switch (mime) {
                 .txt => "text/plain",
             };
-            js.storage.downloadAsFile(filename.ptr, mime_str.len, mime_str.ptr, contents.len, contents.ptr, contents.len);
+            js.storage.downloadAsFile(filename.ptr, filename.len, mime_str.ptr, mime_str.len, contents.ptr, contents.len);
         }
     };
 };

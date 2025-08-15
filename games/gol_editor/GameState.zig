@@ -187,12 +187,13 @@ const BoardState = struct {
         }
     }
 
-    pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, in: std.io.AnyReader) !void {
+    pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, text: []const u8) !void {
         dst.cells_states.clearRetainingCapacity();
         dst.cells_types.clearRetainingCapacity();
-        const contents = try in.readAllAlloc(scratch, std.math.maxInt(usize));
+        const contents = std.mem.trim(u8, text, &std.ascii.whitespace);
         assert(std.mem.startsWith(u8, contents, "V1\n"));
         const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
+        defer raw_ascii.deinit(scratch);
         var it = raw_ascii.iteratorSigned();
         while (it.next()) |p| {
             const t = raw_ascii.atSigned(p);
@@ -313,6 +314,62 @@ pub fn init(
     try dst.addEmptyLevel();
 }
 
+test "tokenize two spaces" {
+    var it = std.mem.tokenizeSequence(u8, "a b c  d e f   g h i  ", "  ");
+    try std.testing.expectEqualStrings("a b c", std.mem.trim(u8, it.next().?, " "));
+    try std.testing.expectEqualStrings("d e f", std.mem.trim(u8, it.next().?, " "));
+    try std.testing.expectEqualStrings("g h i", std.mem.trim(u8, it.next().?, " "));
+    try std.testing.expect(it.next() == null);
+}
+
+fn saveWorld(world: []const *LevelState, out: std.io.AnyWriter) !void {
+    try out.writeAll("W1\n");
+
+    for (world) |l| {
+        try l.board.toText(out);
+        try out.writeAll("\n");
+    }
+}
+
+fn loadWorld(self: *GameState, in: std.io.AnyReader) !void {
+    // deinit all levels
+    for (self.all_levels.items) |l| {
+        l.board.deinit();
+        for (l.saved_states.items) |b| {
+            @constCast(b).deinit();
+        }
+        l.saved_states.deinit();
+    }
+    _ = self.pool_boardstate.reset(.retain_capacity);
+    _ = self.pool_levelstate.reset(.retain_capacity);
+    self.all_levels.clearRetainingCapacity();
+
+    try nextReadIs(in, "W1\n");
+
+    const contents = try in.readAllAlloc(self.mem.scratch.allocator(), std.math.maxInt(usize));
+    var it = std.mem.tokenizeSequence(u8, contents, "\n\n");
+    while (it.next()) |c| {
+        try self.addLevelFromText(c);
+    }
+}
+
+fn addLevelFromText(self: *GameState, text: []const u8) !void {
+    const level = try self.pool_levelstate.create();
+    level.* = .{
+        .initial_board = blk: {
+            const res = try self.pool_boardstate.create();
+            try res.init(self.mem.gpa);
+            try res.fromText(self.mem.scratch.allocator(), text);
+            break :blk res;
+        },
+        .board = undefined,
+        .saved_states = .init(self.mem.gpa),
+    };
+    level.board = try level.initial_board.cloneAndGetPtr(&self.pool_boardstate);
+    try level.saved_states.append(try level.board.cloneAndGetPtr(&self.pool_boardstate));
+    try self.all_levels.append(level);
+}
+
 fn addEmptyLevel(self: *GameState) !void {
     const level = try self.pool_levelstate.create();
     level.* = .{
@@ -363,8 +420,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         defer platform.forgetUserUploadedFile();
 
         if (self.cur_level) |cur_level| {
-            try cur_level.board.fromText(self.mem.frame.allocator(), reader);
-        } else @panic("TODO");
+            const text = try reader.readAllAlloc(self.mem.frame.allocator(), std.math.maxInt(usize));
+            defer self.mem.frame.allocator().free(text);
+            try cur_level.board.fromText(self.mem.frame.allocator(), text);
+        } else {
+            try self.loadWorld(reader);
+        }
     }
 
     const camera: Rect = if (self.cur_level) |cur_level|
@@ -380,6 +441,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         pos: Rect,
         color: ?FColor,
         text: ?[]const u8,
+        text_scale: ?f32 = null,
         radio_selected: bool,
     }) = .init(self.mem.frame.allocator());
     var catalogue_buttons: std.ArrayList(struct {
@@ -920,6 +982,47 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
+        // save world to file button
+        if (self.is_editor) {
+            const button: Rect = (Rect{ .top_left = .zero, .size = .new(1, 0.5) }).plusMargin(-0.05);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "save",
+                .text_scale = 0.5,
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
+                    defer buf.deinit();
+                    try saveWorld(self.all_levels.items, buf.writer().any());
+                    platform.downloadAsFile("gol_world.txt", buf.items);
+                }
+            }
+        }
+
+        // load world from file button
+        if (self.is_editor) {
+            const button: Rect = (Rect{ .top_left = .new(0, 0.5), .size = .new(1, 0.5) }).plusMargin(-0.05);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "load",
+                .text_scale = 0.5,
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    platform.askUserForFile();
+                }
+            }
+        }
+
         if (level_to_destroy) |k| {
             const l = self.all_levels.orderedRemove(k);
             l.board.deinit();
@@ -954,7 +1057,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         for (ui_buttons.items) |button| {
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
             self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), button.color orelse CellState.gray.color());
-            if (button.text) |text| try ui_texts.addText(text, .centeredAt(button.pos.getCenter()), 0.75, .black);
+            if (button.text) |text| try ui_texts.addText(text, .centeredAt(button.pos.getCenter()), 0.75 * (button.text_scale orelse 1), .black);
         }
     }
 
@@ -1038,3 +1141,10 @@ pub const Key = kommon.Key;
 pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;
 // pub const LocalDecisions = @import("../chesstory/GameState.zig").LocalDecisions;
+
+fn nextReadIs(in: std.io.AnyReader, comptime expected: []const u8) !void {
+    var buf: [expected.len]u8 = undefined;
+    const n_read = try in.readAll(&buf);
+    if (n_read != expected.len) return error.BadNextRead;
+    if (!std.mem.eql(u8, &buf, expected)) return error.BadNextRead;
+}
