@@ -1069,8 +1069,8 @@ pub const Rect = extern struct {
         }
     }
 
-    pub fn zoom(original: Rect, fixed_world_pos: Vec2, scale: f32) Rect {
-        const new_size = original.size.scale(scale);
+    pub fn zoom(original: Rect, fixed_world_pos: Vec2, s: f32) Rect {
+        const new_size = original.size.scale(s);
         return .fromPivotAndSize(fixed_world_pos, original.localFromWorldPosition(fixed_world_pos), new_size);
     }
 
@@ -1111,8 +1111,12 @@ pub const Rect = extern struct {
         };
     }
 
-    pub fn resizeRel(original: Rect, scale: f32, keep: MeasureKind) Rect {
-        return original.with(.{ .size = original.size.scale(scale) }, keep);
+    pub fn resizeRel(original: Rect, s: f32, keep: MeasureKind) Rect {
+        return original.with(.{ .size = original.size.scale(s) }, keep);
+    }
+
+    pub fn scale(original: Rect, s: f32, keep: MeasureKind) Rect {
+        return original.resizeRel(s, keep);
     }
 
     pub fn move(original: Rect, delta: Vec2) Rect {

@@ -258,10 +258,37 @@ const LevelState = struct {
     saved_states: std.ArrayList(*const BoardState),
     board: *BoardState,
     initial_board: *const BoardState,
+
+    fn saveState(self: *LevelState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !void {
+        for (self.saved_states.items, 0..) |state, k| {
+            if (self.board.equals(state.*)) {
+                self.toolbar.catalogue_index = k;
+                break;
+            }
+        } else {
+            self.toolbar.catalogue_index += 1;
+            try self.saved_states.insert(
+                self.toolbar.catalogue_index,
+                try self.board.cloneAndGetPtr(pool_boardstate),
+            );
+        }
+    }
+
+    fn onCatalogueOpened(self: *LevelState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !void {
+        try self.saveState(pool_boardstate);
+    }
+
+    fn loadState(self: *LevelState, board: *const BoardState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !void {
+        self.board.deinit();
+        pool_boardstate.destroy(self.board);
+        self.board = try board.cloneAndGetPtr(pool_boardstate);
+    }
 };
 
-cur_level: *LevelState,
+all_levels: std.ArrayList(*LevelState),
+cur_level: ?*LevelState,
 is_editor: bool = true,
+
 pool_boardstate: std.heap.MemoryPool(BoardState),
 pool_levelstate: std.heap.MemoryPool(LevelState),
 
@@ -287,8 +314,9 @@ pub fn init(
 
     dst.pool_levelstate = .init(gpa);
     dst.pool_boardstate = .init(gpa);
+    // TODO: extract to func
     dst.cur_level = try dst.pool_levelstate.create();
-    dst.cur_level.* = .{
+    dst.cur_level.?.* = .{
         .initial_board = blk: {
             const res = try dst.pool_boardstate.create();
             try res.init(gpa);
@@ -297,8 +325,11 @@ pub fn init(
         .board = undefined,
         .saved_states = .init(gpa),
     };
-    dst.cur_level.board = try dst.cur_level.initial_board.cloneAndGetPtr(&dst.pool_boardstate);
-    try dst.cur_level.saved_states.append(try dst.cur_level.board.cloneAndGetPtr(&dst.pool_boardstate));
+    dst.cur_level.?.board = try dst.cur_level.?.initial_board.cloneAndGetPtr(&dst.pool_boardstate);
+    try dst.cur_level.?.saved_states.append(try dst.cur_level.?.board.cloneAndGetPtr(&dst.pool_boardstate));
+    dst.all_levels = .init(gpa);
+    try dst.all_levels.append(dst.cur_level.?);
+    dst.cur_level = null;
 }
 
 // TODO: take gl parameter
@@ -315,25 +346,6 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
-fn onCatalogueOpened(self: *GameState) !void {
-    try self.saveState();
-}
-
-fn saveState(self: *GameState) !void {
-    for (self.cur_level.saved_states.items, 0..) |state, k| {
-        if (self.cur_level.board.equals(state.*)) {
-            self.cur_level.toolbar.catalogue_index = k;
-            break;
-        }
-    } else {
-        self.cur_level.toolbar.catalogue_index += 1;
-        try self.cur_level.saved_states.insert(
-            self.cur_level.toolbar.catalogue_index,
-            try self.cur_level.board.cloneAndGetPtr(&self.pool_boardstate),
-        );
-    }
-}
-
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
@@ -343,14 +355,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (platform.userUploadedFile()) |reader| {
         defer platform.forgetUserUploadedFile();
-        try self.cur_level.board.fromText(self.mem.frame.allocator(), reader);
+
+        if (self.cur_level) |cur_level| {
+            try cur_level.board.fromText(self.mem.frame.allocator(), reader);
+        } else @panic("TODO");
     }
 
-    const camera = self.cur_level.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left);
+    const camera: Rect = if (self.cur_level) |cur_level|
+        cur_level.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left)
+    else
+        Rect.unit.scale(3, .top_left).withAspectRatio(platform.aspect_ratio, .grow, .top_left);
     const mouse = platform.getMouse(camera);
-    const cell_under_mouse = mouse.cur.position.toInt(isize);
 
-    const ui_cam: Rect = .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(10) };
+    const ui_cam: Rect = if (self.cur_level == null) camera else .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(10) };
     const ui_mouse = platform.getMouse(ui_cam);
     var ui_buttons: std.ArrayList(struct {
         pos: Rect,
@@ -367,473 +384,494 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     var mouse_over_ui = false;
 
-    var toolbar = &self.cur_level.toolbar;
+    platform.gl.clear(CellState.black.color());
+    if (self.cur_level) |cur_level| {
+        var toolbar = &cur_level.toolbar;
+        const cell_under_mouse = mouse.cur.position.toInt(isize);
 
-    // paint cell states
-    for ([3]CellState{ .black, .gray, .white }, 0..) |c, k| {
-        const button: Rect = (Rect{ .top_left = .new(tof32(k), 0), .size = .one }).plusMargin(-0.1);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = c.color(),
-            .text = null,
-            .radio_selected = toolbar.active_tool == .paint_state and (c == toolbar.active_state),
-        });
-        if (button.contains(ui_mouse.cur.position)) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                toolbar.active_state = c;
-                toolbar.active_tool = .paint_state;
-            }
-        }
-    }
-
-    // paint cell types
-    if (self.is_editor) {
-        for (CellType.all, 0..) |t, k| {
-            const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
+        // paint cell states
+        for ([3]CellState{ .black, .gray, .white }, 0..) |c, k| {
+            const button: Rect = (Rect{ .top_left = .new(tof32(k), 0), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
-                .color = null,
-                .text = t.text(),
-                .radio_selected = toolbar.active_tool == .paint_type and (t == toolbar.active_type),
+                .color = c.color(),
+                .text = null,
+                .radio_selected = toolbar.active_tool == .paint_state and (c == toolbar.active_state),
             });
             if (button.contains(ui_mouse.cur.position)) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    toolbar.active_type = t;
+                    toolbar.active_state = c;
+                    toolbar.active_tool = .paint_state;
+                }
+            }
+        }
+
+        // paint cell types
+        if (self.is_editor) {
+            for (CellType.all, 0..) |t, k| {
+                const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
+                try ui_buttons.append(.{
+                    .pos = button,
+                    .color = null,
+                    .text = t.text(),
+                    .radio_selected = toolbar.active_tool == .paint_type and (t == toolbar.active_type),
+                });
+                if (button.contains(ui_mouse.cur.position)) {
+                    mouse_over_ui = true;
+                    if (mouse.wasPressed(.left)) {
+                        toolbar.active_type = t;
+                        toolbar.active_tool = .paint_type;
+                    }
+                }
+            }
+        }
+
+        // rect select/move mode
+        if (self.is_editor) {
+            const button: Rect = (Rect{ .top_left = .new(4, 1), .size = .one }).plusMargin(-0.1);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "[]",
+                .radio_selected = toolbar.active_tool == .rect,
+            });
+            if (button.contains(ui_mouse.cur.position)) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    toolbar.active_tool = .rect;
+                }
+            }
+        }
+
+        // panning mode
+        if (true) {
+            const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .one }).plusMargin(-0.1);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "g",
+                .radio_selected = toolbar.active_tool == .panning,
+            });
+            if (button.contains(ui_mouse.cur.position)) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    toolbar.active_tool = .panning;
+                }
+            }
+        }
+
+        // toggle catalogue
+        if (true) {
+            const button: Rect = (Rect{ .top_left = .new(4, 0), .size = .one }).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "C",
+                .radio_selected = hot or toolbar.active_tool == .catalogue,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    if (toolbar.active_tool == .catalogue) {
+                        toolbar.active_tool = toolbar.prev_tool;
+                        toolbar.prev_tool = undefined;
+                    } else {
+                        toolbar.prev_tool = toolbar.active_tool;
+                        toolbar.active_tool = .catalogue;
+                        try cur_level.onCatalogueOpened(&self.pool_boardstate);
+                    }
+                }
+            }
+        }
+
+        if (platform.keyboard.wasPressed(.KeyC)) {
+            if (toolbar.active_tool == .catalogue) {
+                toolbar.active_tool = toolbar.prev_tool;
+                toolbar.prev_tool = undefined;
+            } else {
+                toolbar.prev_tool = toolbar.active_tool;
+                toolbar.active_tool = .catalogue;
+                try cur_level.onCatalogueOpened(&self.pool_boardstate);
+            }
+        }
+
+        // save to catalogue button
+        if (true) {
+            const button: Rect = (Rect{ .top_left = .new(5, 0), .size = .one }).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "X",
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    try cur_level.saveState(&self.pool_boardstate);
+                }
+            }
+        }
+
+        if (platform.keyboard.wasPressed(.KeyX)) {
+            try cur_level.saveState(&self.pool_boardstate);
+        }
+
+        // save to file button
+        if (self.is_editor) {
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "save",
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
+                    defer buf.deinit();
+                    try cur_level.board.toText(buf.writer().any());
+                    platform.downloadAsFile("gol_level.txt", buf.items);
+                }
+            }
+        }
+
+        // load from file button
+        if (self.is_editor) {
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "load",
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    platform.askUserForFile();
+                }
+            }
+        }
+
+        var ghost_board: ?*const BoardState = null;
+
+        // tool specific UI
+        if (toolbar.active_tool == .catalogue) {
+            math.lerp_towards(&toolbar.catalogue_view_offset, tof32(toolbar.catalogue_index), 0.2, platform.delta_seconds);
+            for (cur_level.saved_states.items, 0..) |board, k| {
+                const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k) - toolbar.catalogue_view_offset + ui_cam.size.x / 2 - 0.5, 0)).plusMargin(-0.1);
+                const hot = button.contains(ui_mouse.cur.position);
+                try catalogue_buttons.append(.{
+                    .pos = button,
+                    .board = board,
+                    .radio_selected = k == toolbar.catalogue_index,
+                    .hot = hot,
+                });
+                if (hot) {
+                    mouse_over_ui = true;
+                    ghost_board = board;
+                    if (mouse.wasPressed(.left)) {
+                        toolbar.catalogue_index = k;
+                        try cur_level.loadState(board, &self.pool_boardstate);
+                    }
+                    if (mouse.wasPressed(.right) and cur_level.saved_states.items.len > 1) {
+                        const old_board: *BoardState = @constCast(cur_level.saved_states.orderedRemove(k));
+                        old_board.deinit();
+                        ghost_board = null;
+                        _ = catalogue_buttons.pop();
+                        if (k == toolbar.catalogue_index) {
+                            toolbar.catalogue_index = @min(toolbar.catalogue_index, cur_level.saved_states.items.len - 1);
+                            try cur_level.loadState(cur_level.saved_states.items[toolbar.catalogue_index], &self.pool_boardstate);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // tool specific mouse scroll
+        if (mouse.cur.scrolled != .none) {
+            switch (toolbar.active_tool) {
+                .catalogue => {
+                    toolbar.catalogue_index = kommon.moveIndex(toolbar.catalogue_index, -mouse.cur.scrolled.toInt(), cur_level.saved_states.items.len, .clamp);
+                    try cur_level.loadState(cur_level.saved_states.items[toolbar.catalogue_index], &self.pool_boardstate);
+                },
+                else => {
+                    cur_level.camera = cur_level.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
+                        .none => unreachable,
+                        .down => 1.1,
+                        .up => 0.9,
+                    });
+                },
+            }
+        }
+
+        // tool mouse interactions
+        if (!mouse_over_ui) {
+            platform.setCursor(.default);
+            switch (toolbar.active_tool) {
+                .paint_state => {
+                    if (mouse.cur.isDown(.left)) {
+                        try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
+                    }
+                    if (mouse.wasPressed(.right)) {
+                        toolbar.active_state = cur_level.board.cells_states.get(cell_under_mouse) orelse .black;
+                    }
+                },
+                .paint_type => {
+                    if (mouse.cur.isDown(.left)) {
+                        try cur_level.board.cells_types.put(cell_under_mouse, toolbar.active_type);
+                    }
+                    if (mouse.wasPressed(.right)) {
+                        toolbar.active_type = cur_level.board.cells_types.get(cell_under_mouse) orelse .empty;
+                    }
+                },
+                .rect => {
+                    const inside_rect = toolbar.selectedRect().contains(cell_under_mouse);
+                    switch (toolbar.rect_tool_state) {
+                        .none => {
+                            if (inside_rect) {
+                                platform.setCursor(.could_grab);
+                                if (mouse.wasPressed(.left)) {
+                                    toolbar.rect_tool_state = .{ .moving = try cur_level.board.getSubrect(
+                                        self.mem.gpa,
+                                        toolbar.selectedRect(),
+                                    ) };
+                                    try cur_level.board.clearSubrect(toolbar.selectedRect());
+                                } else if (mouse.wasPressed(.right)) {
+                                    toolbar.rect_tool_state = .{ .moving = try cur_level.board.getSubrect(
+                                        self.mem.gpa,
+                                        toolbar.selectedRect(),
+                                    ) };
+                                }
+                            } else {
+                                if (mouse.wasPressed(.left)) {
+                                    toolbar.rect_tool_state = .selecting;
+                                    toolbar.selected_rect_inner_corner1 = cell_under_mouse;
+                                    toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                                }
+                            }
+                        },
+                        .selecting => {
+                            if (mouse.cur.isDown(.left)) {
+                                toolbar.selected_rect_inner_corner2 = cell_under_mouse;
+                            } else {
+                                toolbar.rect_tool_state = .none;
+                            }
+                        },
+                        .moving => {
+                            platform.setCursor(.grabbing);
+                            toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown() and false;
+                            if (mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) {
+                                platform.setCursor(.grabbing);
+                                const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
+                                const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
+                                toolbar.moveSelectedRect(mouse_cell_delta);
+                            } else {
+                                try cur_level.board.setSubrect(toolbar.rect_tool_state.moving, toolbar.selectedRect(), toolbar.rect_tool_moving_include_blank);
+                                toolbar.rect_tool_state.moving.deinit(self.mem.gpa);
+                                toolbar.rect_tool_state = .none;
+                            }
+                        },
+                    }
+                },
+                .catalogue => {
+                    if (mouse.wasPressed(.left) or mouse.wasPressed(.right)) {
+                        toolbar.active_tool = toolbar.prev_tool;
+                        toolbar.prev_tool = undefined;
+                    }
+                },
+                .panning => {
+                    if (mouse.cur.isDown(.left)) {
+                        platform.setCursor(.grabbing);
+                        cur_level.camera = cur_level.camera.move(mouse.deltaPos().neg());
+                    } else {
+                        platform.setCursor(.could_grab);
+                    }
+                },
+            }
+        } else {
+            platform.setCursor(.pointer);
+        }
+
+        // tool keyboard interactions
+        switch (toolbar.active_tool) {
+            .paint_state => {
+                for (&[_]CellState{ .black, .gray, .white }, 0..) |t, k| {
+                    if (platform.keyboard.wasPressed(.digit(k + 1))) {
+                        toolbar.active_state = t;
+                    }
+                }
+                if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
                     toolbar.active_tool = .paint_type;
                 }
-            }
+            },
+            .paint_type => {
+                for (&CellType.all, 0..) |t, k| {
+                    if (platform.keyboard.wasPressed(.digit(k + 1))) {
+                        toolbar.active_type = t;
+                    }
+                }
+                if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
+                    toolbar.active_tool = .paint_state;
+                }
+            },
+            .rect, .catalogue, .panning => {},
         }
-    }
 
-    // rect select/move mode
-    if (self.is_editor) {
-        const button: Rect = (Rect{ .top_left = .new(4, 1), .size = .one }).plusMargin(-0.1);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = "[]",
-            .radio_selected = toolbar.active_tool == .rect,
-        });
-        if (button.contains(ui_mouse.cur.position)) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                toolbar.active_tool = .rect;
-            }
-        }
-    }
-
-    // panning mode
-    if (true) {
-        const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .one }).plusMargin(-0.1);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = "g",
-            .radio_selected = toolbar.active_tool == .panning,
-        });
-        if (button.contains(ui_mouse.cur.position)) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                toolbar.active_tool = .panning;
-            }
-        }
-    }
-
-    // toggle catalogue
-    if (true) {
-        const button: Rect = (Rect{ .top_left = .new(4, 0), .size = .one }).plusMargin(-0.1);
-        const hot = button.contains(ui_mouse.cur.position);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = "C",
-            .radio_selected = hot or toolbar.active_tool == .catalogue,
-        });
-        if (hot) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                if (toolbar.active_tool == .catalogue) {
-                    toolbar.active_tool = toolbar.prev_tool;
-                    toolbar.prev_tool = undefined;
-                } else {
-                    toolbar.prev_tool = toolbar.active_tool;
-                    toolbar.active_tool = .catalogue;
-                    try self.onCatalogueOpened();
+        // always available: move camera
+        for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
+            &.{ .KeyD, .ArrowRight },
+            &.{ .KeyS, .ArrowDown },
+            &.{ .KeyA, .ArrowLeft },
+            &.{ .KeyW, .ArrowUp },
+        }) |d, ks| {
+            for (ks) |k| {
+                if (platform.keyboard.cur.isDown(k)) {
+                    cur_level.camera = cur_level.camera.move(d.scale(platform.delta_seconds * 0.8 * cur_level.camera.size.y));
                 }
             }
         }
-    }
 
-    if (platform.keyboard.wasPressed(.KeyC)) {
-        if (toolbar.active_tool == .catalogue) {
-            toolbar.active_tool = toolbar.prev_tool;
-            toolbar.prev_tool = undefined;
-        } else {
-            toolbar.prev_tool = toolbar.active_tool;
-            toolbar.active_tool = .catalogue;
-            try self.onCatalogueOpened();
+        // always available: drag view
+        if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
+            platform.setCursor(.grabbing);
+            cur_level.camera = cur_level.camera.move(mouse.deltaPos().neg());
         }
-    }
 
-    // save to catalogue button
-    if (true) {
-        const button: Rect = (Rect{ .top_left = .new(5, 0), .size = .one }).plusMargin(-0.1);
-        const hot = button.contains(ui_mouse.cur.position);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = "X",
-            .radio_selected = hot,
-        });
-        if (hot) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                try self.saveState();
+        // always available: toggle editor
+        if (platform.keyboard.wasPressed(.KeyE)) {
+            self.is_editor = !self.is_editor;
+        }
+
+        // always available: exit to level select
+        if (platform.keyboard.wasPressed(.Escape)) {
+            self.cur_level = null;
+        }
+
+        //////////////
+        // draw
+
+        const visible_board = ghost_board orelse cur_level.board;
+
+        if (true) {
+            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+            defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+
+            var it = visible_board.cells_states.iterator();
+            while (it.next()) |kv| {
+                if (kv.value_ptr.* == .black) continue;
+                try cell_bgs.append(.{
+                    .point = .{ .pos = kv.key_ptr.*.tof32() },
+                    .color = kv.value_ptr.*.color(),
+                });
             }
         }
-    }
 
-    if (platform.keyboard.wasPressed(.KeyX)) {
-        try self.saveState();
-    }
+        if (true) {
+            var cell_texts = self.canvas.textBatch(0);
+            defer cell_texts.draw(camera);
 
-    // save to file button
-    if (self.is_editor) {
-        const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
-        const hot = button.contains(ui_mouse.cur.position);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = "save",
-            .radio_selected = hot,
-        });
-        if (hot) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
-                defer buf.deinit();
-                try self.cur_level.board.toText(buf.writer().any());
-                platform.downloadAsFile("gol_level.txt", buf.items);
+            var it = visible_board.cells_types.iterator();
+            while (it.next()) |kv| {
+                if (kv.value_ptr.* == .empty) continue;
+                try cell_texts.addText(
+                    kv.value_ptr.*.text(),
+                    .centeredAt(kv.key_ptr.*.tof32().add(.half)),
+                    1.0,
+                    if ((visible_board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
+                        .white
+                    else
+                        .black,
+                );
             }
         }
-    }
 
-    // load from file button
-    if (self.is_editor) {
-        const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
-        const hot = button.contains(ui_mouse.cur.position);
-        try ui_buttons.append(.{
-            .pos = button,
-            .color = null,
-            .text = "load",
-            .radio_selected = hot,
-        });
-        if (hot) {
-            mouse_over_ui = true;
-            if (mouse.wasPressed(.left)) {
-                platform.askUserForFile();
+        if (std.meta.activeTag(toolbar.rect_tool_state) == .moving) {
+            const values = toolbar.rect_tool_state.moving;
+
+            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+            var cell_texts = self.canvas.textBatch(0);
+
+            defer cell_texts.draw(camera);
+            defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+
+            var it = values.iteratorSigned();
+            while (it.next()) |p| {
+                const cell = values.atSigned(p);
+                const pos = p.add(toolbar.selectedRect().top_left);
+
+                const visible_state = if (!toolbar.rect_tool_moving_include_blank and cell.cell_state == .black)
+                    cur_level.board.stateAt(pos)
+                else
+                    cell.cell_state;
+
+                const visible_type = if (!toolbar.rect_tool_moving_include_blank and cell.cell_type == .empty)
+                    cur_level.board.typeAt(pos)
+                else
+                    cell.cell_type;
+
+                try cell_bgs.append(.{
+                    .point = .{ .pos = pos.tof32() },
+                    .color = visible_state.color(),
+                });
+
+                if (visible_type != .empty) {
+                    try cell_texts.addText(
+                        visible_type.text(),
+                        .centeredAt(pos.tof32().add(.half)),
+                        1.0,
+                        if (visible_state == .black) .white else .black,
+                    );
+                }
             }
         }
-    }
 
-    var ghost_board: ?*const BoardState = null;
+        // board lines
+        if (true) {
+            var segments: std.ArrayList(Canvas.Segment) = .init(self.mem.frame.allocator());
+            {
+                var x = @floor(camera.top_left.x);
+                while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
+                    try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = .black });
+                }
+            }
+            {
+                var y = @floor(camera.top_left.y);
+                while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
+                    try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = .black });
+                }
+            }
 
-    // tool specific UI
-    if (toolbar.active_tool == .catalogue) {
-        math.lerp_towards(&toolbar.catalogue_view_offset, tof32(toolbar.catalogue_index), 0.2, platform.delta_seconds);
-        for (self.cur_level.saved_states.items, 0..) |board, k| {
-            const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k) - toolbar.catalogue_view_offset + ui_cam.size.x / 2 - 0.5, 0)).plusMargin(-0.1);
+            self.canvas.instancedSegments(camera, segments.items, 0.05);
+        }
+
+        if (toolbar.active_tool == .rect) {
+            const rect = toolbar.selectedRect().asRect();
+            self.canvas.strokeRect(camera, rect, 0.1, .cyan);
+        }
+    } else {
+        for (self.all_levels.items, 0..) |l, k| {
+            const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(@divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try catalogue_buttons.append(.{
+                .board = l.board,
                 .pos = button,
-                .board = board,
-                .radio_selected = k == toolbar.catalogue_index,
+                .radio_selected = false,
                 .hot = hot,
             });
             if (hot) {
                 mouse_over_ui = true;
-                ghost_board = board;
                 if (mouse.wasPressed(.left)) {
-                    toolbar.catalogue_index = k;
-                    self.cur_level.board.deinit();
-                    self.pool_boardstate.destroy(self.cur_level.board);
-                    self.cur_level.board = try board.cloneAndGetPtr(&self.pool_boardstate);
-                }
-                if (mouse.wasPressed(.right) and self.cur_level.saved_states.items.len > 1) {
-                    const old_board: *BoardState = @constCast(self.cur_level.saved_states.orderedRemove(k));
-                    old_board.deinit();
-                    ghost_board = null;
-                    _ = catalogue_buttons.pop();
-                    if (k == toolbar.catalogue_index) {
-                        toolbar.catalogue_index = @min(toolbar.catalogue_index, self.cur_level.saved_states.items.len - 1);
-                        self.cur_level.board.deinit();
-                        self.pool_boardstate.destroy(self.cur_level.board);
-                        self.cur_level.board = try self.cur_level.saved_states.items[toolbar.catalogue_index].cloneAndGetPtr(&self.pool_boardstate);
-                    }
-                    break;
+                    self.cur_level = l;
                 }
             }
         }
-    }
-
-    // tool specific mouse scroll
-    if (mouse.cur.scrolled != .none) {
-        switch (toolbar.active_tool) {
-            .catalogue => {
-                toolbar.catalogue_index = kommon.moveIndex(toolbar.catalogue_index, -mouse.cur.scrolled.toInt(), self.cur_level.saved_states.items.len, .clamp);
-                self.cur_level.board.deinit();
-                self.pool_boardstate.destroy(self.cur_level.board);
-                self.cur_level.board = try self.cur_level.saved_states.items[toolbar.catalogue_index].cloneAndGetPtr(&self.pool_boardstate);
-            },
-            else => {
-                self.cur_level.camera = self.cur_level.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
-                    .none => unreachable,
-                    .down => 1.1,
-                    .up => 0.9,
-                });
-            },
-        }
-    }
-
-    // tool mouse interactions
-    if (!mouse_over_ui) {
-        platform.setCursor(.default);
-        switch (toolbar.active_tool) {
-            .paint_state => {
-                if (mouse.cur.isDown(.left)) {
-                    try self.cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
-                }
-                if (mouse.wasPressed(.right)) {
-                    toolbar.active_state = self.cur_level.board.cells_states.get(cell_under_mouse) orelse .black;
-                }
-            },
-            .paint_type => {
-                if (mouse.cur.isDown(.left)) {
-                    try self.cur_level.board.cells_types.put(cell_under_mouse, toolbar.active_type);
-                }
-                if (mouse.wasPressed(.right)) {
-                    toolbar.active_type = self.cur_level.board.cells_types.get(cell_under_mouse) orelse .empty;
-                }
-            },
-            .rect => {
-                const inside_rect = toolbar.selectedRect().contains(cell_under_mouse);
-                switch (toolbar.rect_tool_state) {
-                    .none => {
-                        if (inside_rect) {
-                            platform.setCursor(.could_grab);
-                            if (mouse.wasPressed(.left)) {
-                                toolbar.rect_tool_state = .{ .moving = try self.cur_level.board.getSubrect(
-                                    self.mem.gpa,
-                                    toolbar.selectedRect(),
-                                ) };
-                                try self.cur_level.board.clearSubrect(toolbar.selectedRect());
-                            } else if (mouse.wasPressed(.right)) {
-                                toolbar.rect_tool_state = .{ .moving = try self.cur_level.board.getSubrect(
-                                    self.mem.gpa,
-                                    toolbar.selectedRect(),
-                                ) };
-                            }
-                        } else {
-                            if (mouse.wasPressed(.left)) {
-                                toolbar.rect_tool_state = .selecting;
-                                toolbar.selected_rect_inner_corner1 = cell_under_mouse;
-                                toolbar.selected_rect_inner_corner2 = cell_under_mouse;
-                            }
-                        }
-                    },
-                    .selecting => {
-                        if (mouse.cur.isDown(.left)) {
-                            toolbar.selected_rect_inner_corner2 = cell_under_mouse;
-                        } else {
-                            toolbar.rect_tool_state = .none;
-                        }
-                    },
-                    .moving => {
-                        platform.setCursor(.grabbing);
-                        toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
-                        if (mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) {
-                            platform.setCursor(.grabbing);
-                            const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
-                            const mouse_cell_delta = cell_under_mouse.sub(prev_cell_under_mouse);
-                            toolbar.moveSelectedRect(mouse_cell_delta);
-                        } else {
-                            try self.cur_level.board.setSubrect(toolbar.rect_tool_state.moving, toolbar.selectedRect(), toolbar.rect_tool_moving_include_blank);
-                            toolbar.rect_tool_state.moving.deinit(self.mem.gpa);
-                            toolbar.rect_tool_state = .none;
-                        }
-                    },
-                }
-            },
-            .catalogue => {
-                if (mouse.wasPressed(.left) or mouse.wasPressed(.right)) {
-                    toolbar.active_tool = toolbar.prev_tool;
-                    toolbar.prev_tool = undefined;
-                }
-            },
-            .panning => {
-                if (mouse.cur.isDown(.left)) {
-                    platform.setCursor(.grabbing);
-                    self.cur_level.camera = self.cur_level.camera.move(mouse.deltaPos().neg());
-                } else {
-                    platform.setCursor(.could_grab);
-                }
-            },
-        }
-    } else {
-        platform.setCursor(.pointer);
-    }
-
-    // tool keyboard interactions
-    switch (toolbar.active_tool) {
-        .paint_state => {
-            for (&[_]CellState{ .black, .gray, .white }, 0..) |t, k| {
-                if (platform.keyboard.wasPressed(.digit(k + 1))) {
-                    toolbar.active_state = t;
-                }
-            }
-            if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
-                toolbar.active_tool = .paint_type;
-            }
-        },
-        .paint_type => {
-            for (&CellType.all, 0..) |t, k| {
-                if (platform.keyboard.wasPressed(.digit(k + 1))) {
-                    toolbar.active_type = t;
-                }
-            }
-            if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
-                toolbar.active_tool = .paint_state;
-            }
-        },
-        .rect, .catalogue, .panning => {},
-    }
-
-    // always available: move camera
-    for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
-        &.{ .KeyD, .ArrowRight },
-        &.{ .KeyS, .ArrowDown },
-        &.{ .KeyA, .ArrowLeft },
-        &.{ .KeyW, .ArrowUp },
-    }) |d, ks| {
-        for (ks) |k| {
-            if (platform.keyboard.cur.isDown(k)) {
-                self.cur_level.camera = self.cur_level.camera.move(d.scale(platform.delta_seconds * 0.8 * self.cur_level.camera.size.y));
-            }
-        }
-    }
-
-    // always available: drag view
-    if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
-        platform.setCursor(.grabbing);
-        self.cur_level.camera = self.cur_level.camera.move(mouse.deltaPos().neg());
-    }
-
-    // always available: toggle editor
-    if (platform.keyboard.wasPressed(.KeyE)) {
-        self.is_editor = !self.is_editor;
-    }
-
-    platform.gl.clear(CellState.black.color());
-
-    const visible_board = ghost_board orelse self.cur_level.board;
-
-    if (true) {
-        var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-        defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
-
-        var it = visible_board.cells_states.iterator();
-        while (it.next()) |kv| {
-            if (kv.value_ptr.* == .black) continue;
-            try cell_bgs.append(.{
-                .point = .{ .pos = kv.key_ptr.*.tof32() },
-                .color = kv.value_ptr.*.color(),
-            });
-        }
-    }
-
-    if (true) {
-        var cell_texts = self.canvas.textBatch(0);
-        defer cell_texts.draw(camera);
-
-        var it = visible_board.cells_types.iterator();
-        while (it.next()) |kv| {
-            if (kv.value_ptr.* == .empty) continue;
-            try cell_texts.addText(
-                kv.value_ptr.*.text(),
-                .centeredAt(kv.key_ptr.*.tof32().add(.half)),
-                1.0,
-                if ((visible_board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
-                    .white
-                else
-                    .black,
-            );
-        }
-    }
-
-    if (std.meta.activeTag(toolbar.rect_tool_state) == .moving) {
-        const values = toolbar.rect_tool_state.moving;
-
-        var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-        var cell_texts = self.canvas.textBatch(0);
-
-        defer cell_texts.draw(camera);
-        defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
-
-        var it = values.iteratorSigned();
-        while (it.next()) |p| {
-            const cell = values.atSigned(p);
-            const pos = p.add(toolbar.selectedRect().top_left);
-
-            const visible_state = if (!toolbar.rect_tool_moving_include_blank and cell.cell_state == .black)
-                self.cur_level.board.stateAt(pos)
-            else
-                cell.cell_state;
-
-            const visible_type = if (!toolbar.rect_tool_moving_include_blank and cell.cell_type == .empty)
-                self.cur_level.board.typeAt(pos)
-            else
-                cell.cell_type;
-
-            try cell_bgs.append(.{
-                .point = .{ .pos = pos.tof32() },
-                .color = visible_state.color(),
-            });
-
-            if (visible_type != .empty) {
-                try cell_texts.addText(
-                    visible_type.text(),
-                    .centeredAt(pos.tof32().add(.half)),
-                    1.0,
-                    if (visible_state == .black) .white else .black,
-                );
-            }
-        }
-    }
-
-    // board lines
-    if (true) {
-        var segments: std.ArrayList(Canvas.Segment) = .init(self.mem.frame.allocator());
-        {
-            var x = @floor(camera.top_left.x);
-            while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
-                try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = .black });
-            }
-        }
-        {
-            var y = @floor(camera.top_left.y);
-            while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
-                try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = .black });
-            }
-        }
-
-        self.canvas.instancedSegments(camera, segments.items, 0.05);
-    }
-
-    if (toolbar.active_tool == .rect) {
-        const rect = toolbar.selectedRect().asRect();
-        self.canvas.strokeRect(camera, rect, 0.1, .cyan);
     }
 
     // ui buttons
