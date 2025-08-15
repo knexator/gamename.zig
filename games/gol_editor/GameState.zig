@@ -819,7 +819,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         },
                         .moving => {
                             platform.setCursor(.grabbing);
-                            toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown() and false;
+                            toolbar.rect_tool_moving_include_blank = platform.keyboard.cur.isShiftDown();
                             if (mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) {
                                 platform.setCursor(.grabbing);
                                 const prev_cell_under_mouse = mouse.prev.position.toInt(isize);
