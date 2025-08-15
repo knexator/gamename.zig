@@ -475,10 +475,19 @@ var web_platform: PlatformGives = .{
     }.anon,
     .askUserForFile = struct {
         fn anon() void {
-            // JS doesn't correctly now if the file is null :(
+            // JS doesn't correctly know if the file is null :(
             // assert(user_uploaded_file == null or user_uploaded_file.?.isNull());
             const index = js.storage.askUserForFile();
             user_uploaded_file = .{ .file_index = index };
+
+            // hack since we miss any events that happened while the user was picking the file
+            // TODO: make robust by querying JS for the whole state, maybe
+            mouse.cur.scrolled = .none;
+            mouse.cur.buttons = .{
+                .left = false,
+                .middle = false,
+                .right = false,
+            };
         }
     }.anon,
     .userUploadedFile = struct {

@@ -522,7 +522,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // panning mode
         if (true) {
-            const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .one }).plusMargin(-0.1);
+            const button: Rect = (Rect{ .top_left = .new(6, 0), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
@@ -597,7 +597,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // save to file button
         if (self.is_editor) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 1)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -636,7 +636,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // exit to menu button
         if (true) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 0)).plusMargin(-0.1);
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -654,7 +654,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // reset level state button
         if (true) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 1)).plusMargin(-0.1);
+            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 0)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
