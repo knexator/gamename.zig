@@ -115,8 +115,8 @@ const BoardState = struct {
         };
     }
 
-    pub fn cloneAndGetPtr(self: BoardState, pool: *std.heap.MemoryPool(BoardState)) !*BoardState {
-        const res = try pool.create();
+    pub fn cloneAndGetPtr(self: BoardState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !*BoardState {
+        const res = try pool_boardstate.create();
         res.* = try self.clone();
         return res;
     }
@@ -261,7 +261,7 @@ const LevelState = struct {
 
 cur_level: LevelState,
 is_editor: bool = true,
-pool: std.heap.MemoryPool(BoardState),
+pool_boardstate: std.heap.MemoryPool(BoardState),
 
 random: std.Random.DefaultPrng,
 canvas: Canvas,
@@ -283,13 +283,13 @@ pub fn init(
     // dst.lazy_state = .init(gpa);
     dst.random = .init(random_seed);
 
-    dst.pool = .init(gpa);
+    dst.pool_boardstate = .init(gpa);
     dst.cur_level = .{
-        .board = try dst.pool.create(),
+        .board = try dst.pool_boardstate.create(),
         .saved_states = .init(gpa),
     };
     try dst.cur_level.board.init(gpa);
-    try dst.cur_level.saved_states.append(try dst.cur_level.board.cloneAndGetPtr(&dst.pool));
+    try dst.cur_level.saved_states.append(try dst.cur_level.board.cloneAndGetPtr(&dst.pool_boardstate));
 }
 
 // TODO: take gl parameter
@@ -320,7 +320,7 @@ fn saveState(self: *GameState) !void {
         self.cur_level.toolbar.catalogue_index += 1;
         try self.cur_level.saved_states.insert(
             self.cur_level.toolbar.catalogue_index,
-            try self.cur_level.board.cloneAndGetPtr(&self.pool),
+            try self.cur_level.board.cloneAndGetPtr(&self.pool_boardstate),
         );
     }
 }
@@ -549,8 +549,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (mouse.wasPressed(.left)) {
                     toolbar.catalogue_index = k;
                     self.cur_level.board.deinit();
-                    self.pool.destroy(self.cur_level.board);
-                    self.cur_level.board = try board.cloneAndGetPtr(&self.pool);
+                    self.pool_boardstate.destroy(self.cur_level.board);
+                    self.cur_level.board = try board.cloneAndGetPtr(&self.pool_boardstate);
                 }
                 if (mouse.wasPressed(.right) and self.cur_level.saved_states.items.len > 1) {
                     const old_board: *BoardState = @constCast(self.cur_level.saved_states.orderedRemove(k));
@@ -560,8 +560,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (k == toolbar.catalogue_index) {
                         toolbar.catalogue_index = @min(toolbar.catalogue_index, self.cur_level.saved_states.items.len - 1);
                         self.cur_level.board.deinit();
-                        self.pool.destroy(self.cur_level.board);
-                        self.cur_level.board = try self.cur_level.saved_states.items[toolbar.catalogue_index].cloneAndGetPtr(&self.pool);
+                        self.pool_boardstate.destroy(self.cur_level.board);
+                        self.cur_level.board = try self.cur_level.saved_states.items[toolbar.catalogue_index].cloneAndGetPtr(&self.pool_boardstate);
                     }
                     break;
                 }
@@ -575,8 +575,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .catalogue => {
                 toolbar.catalogue_index = kommon.moveIndex(toolbar.catalogue_index, -mouse.cur.scrolled.toInt(), self.cur_level.saved_states.items.len, .clamp);
                 self.cur_level.board.deinit();
-                self.pool.destroy(self.cur_level.board);
-                self.cur_level.board = try self.cur_level.saved_states.items[toolbar.catalogue_index].cloneAndGetPtr(&self.pool);
+                self.pool_boardstate.destroy(self.cur_level.board);
+                self.cur_level.board = try self.cur_level.saved_states.items[toolbar.catalogue_index].cloneAndGetPtr(&self.pool_boardstate);
             },
             else => {
                 self.cur_level.camera = self.cur_level.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
