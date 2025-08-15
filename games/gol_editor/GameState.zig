@@ -259,9 +259,10 @@ const LevelState = struct {
     board: *BoardState,
 };
 
-cur_level: LevelState,
+cur_level: *LevelState,
 is_editor: bool = true,
 pool_boardstate: std.heap.MemoryPool(BoardState),
+pool_levelstate: std.heap.MemoryPool(LevelState),
 
 random: std.Random.DefaultPrng,
 canvas: Canvas,
@@ -283,8 +284,10 @@ pub fn init(
     // dst.lazy_state = .init(gpa);
     dst.random = .init(random_seed);
 
+    dst.pool_levelstate = .init(gpa);
     dst.pool_boardstate = .init(gpa);
-    dst.cur_level = .{
+    dst.cur_level = try dst.pool_levelstate.create();
+    dst.cur_level.* = .{
         .board = try dst.pool_boardstate.create(),
         .saved_states = .init(gpa),
     };
