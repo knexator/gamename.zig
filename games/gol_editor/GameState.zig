@@ -253,6 +253,12 @@ const LevelState = struct {
     board: *BoardState,
     initial_board: *const BoardState,
 
+    fn setCurrentStateAsInitial(self: *LevelState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !void {
+        pool_boardstate.destroy(@constCast(self.initial_board));
+        self.initial_board = try self.board.cloneAndGetPtr(pool_boardstate);
+        try self.saveState(pool_boardstate);
+    }
+
     fn saveState(self: *LevelState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !void {
         for (self.saved_states.items, 0..) |state, k| {
             if (self.board.equals(state.*)) {
@@ -533,6 +539,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
                     toolbar.active_tool = .panning;
+                }
+            }
+        }
+
+        // overwrite initial state
+        if (self.is_editor) {
+            const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .new(3, 1) }).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "set as initial",
+                .text_scale = 0.75,
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    try cur_level.setCurrentStateAsInitial(&self.pool_boardstate);
                 }
             }
         }
