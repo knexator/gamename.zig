@@ -737,8 +737,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     platform.gl.clear(CellState.black.color());
 
-    const visible_board = self.cur_level.board;
-    // const visible_board = ghost_board orelse self.cur_level.board;
+    const visible_board = ghost_board orelse self.cur_level.board;
 
     if (true) {
         var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
