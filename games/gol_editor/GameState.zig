@@ -1145,6 +1145,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     // ui buttons special case: catalogue buttons
     if (true) {
         for (catalogue_buttons.items) |button| {
+            // only draw if actually visible
+            if (ui_cam.intersect(button.pos) == null) continue;
+
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
             self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), CellState.black.color());
 
