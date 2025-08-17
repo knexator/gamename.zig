@@ -327,6 +327,21 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
                 }
             }
         }
+
+        /// (1,0) ends at (N, 1)
+        pub fn rotatedPositive(self: Self, alloc: std.mem.Allocator) !Self {
+            comptime assert(max_size == null);
+            const result: Grid2D(T, null) = try .initUndefined(alloc, .new(self.size.y, self.size.x));
+            for (0..self.size.x) |i| {
+                for (0..self.size.y) |j| {
+                    // 0,0 -> h,0
+                    // 1,0 -> h,1
+                    // 0,1 -> h-1,1
+                    result.set(.new(self.size.y - 1 - j, i), self.at2(.new(i, j)));
+                }
+            }
+            return result;
+        }
     };
 }
 

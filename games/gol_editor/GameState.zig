@@ -883,10 +883,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (platform.keyboard.wasPressed(.KeyH)) {
                         r.mirrorHorizontally();
                     }
-                    // TODO
-                    // if (platform.keyboard.wasPressed(.KeyQ)) {
-                    //     r.rotatePositive();
-                    // }
+                    if (platform.keyboard.wasPressed(.KeyQ)) {
+                        const new_r = try r.rotatedPositive(self.mem.gpa);
+                        r.deinit(self.mem.gpa);
+                        r.* = new_r;
+                        toolbar.selected_rect_inner_corner1 = cell_under_mouse.add(toolbar.selected_rect_inner_corner1.sub(cell_under_mouse).rotateOnce());
+                        toolbar.selected_rect_inner_corner2 = cell_under_mouse.add(toolbar.selected_rect_inner_corner2.sub(cell_under_mouse).rotateOnce());
+                    }
                 },
             },
             .catalogue, .panning => {},
