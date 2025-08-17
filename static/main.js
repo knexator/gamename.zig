@@ -360,7 +360,7 @@ async function getWasm() {
 
       isLoaded: (reader_index) => {
         console.log('checking isLoaded for index ', reader_index);
-        readers[reader_index].loaded
+        return readers[reader_index].loaded;
       },
       isNull: (reader_index) => readers[reader_index].isNull(),
       readInto: (reader_index, buf_ptr, buf_len) => readers[reader_index].readInto(buf_ptr, buf_len),
