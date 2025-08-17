@@ -449,6 +449,7 @@ document.addEventListener("keyup", (ev) => {
 
 requestAnimationFrame(every_frame);
 
+if (false) {
 // at 48000Hz, each 128-sample block is 0.00026[6] seconds long
 // at 60fps, each frame needs 6.25 blocks
 // To be safe, we put room for 512 blocks, around 1 second.
@@ -460,6 +461,7 @@ const sharedAudioInfoBuffer = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMEN
 const audio_write_ptr = new Uint32Array(sharedAudioInfoBuffer, 0, 1);
 const audio_read_ptr = new Uint32Array(sharedAudioInfoBuffer, 4, 1);
 var sample_rate = 48000;
+}
 
 if (false) document.addEventListener('click', async _ => {
   const audioCtx = new AudioContext();

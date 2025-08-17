@@ -40,8 +40,8 @@ const server = http.createServer((req, res) => {
       if (err.code === "ENOENT") {
         res.writeHead(404, {
           "Content-Type": "text/html",
-          "Cross-Origin-Opener-Policy": "same-origin",
-          "Cross-Origin-Embedder-Policy": "require-corp",
+          // "Cross-Origin-Opener-Policy": "same-origin",
+          // "Cross-Origin-Embedder-Policy": "require-corp",
         });
         res.end("<h1>404 - File Not Found</h1>", "utf-8");
       } else {
@@ -51,8 +51,8 @@ const server = http.createServer((req, res) => {
     } else {
       res.writeHead(200, {
         "Content-Type": contentType,
-        "Cross-Origin-Opener-Policy": "same-origin",
-        "Cross-Origin-Embedder-Policy": "require-corp",
+        // "Cross-Origin-Opener-Policy": "same-origin",
+        // "Cross-Origin-Embedder-Policy": "require-corp",
       });
       res.end(content, "utf-8");
     }
