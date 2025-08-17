@@ -874,7 +874,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     toolbar.active_tool = .paint_state;
                 }
             },
-            .rect, .catalogue, .panning => {},
+            .rect => switch (toolbar.rect_tool_state) {
+                else => {},
+                .moving => |*r| {
+                    if (platform.keyboard.wasPressed(.KeyV)) {
+                        r.mirrorVertically();
+                    }
+                    if (platform.keyboard.wasPressed(.KeyH)) {
+                        r.mirrorHorizontally();
+                    }
+                    // TODO
+                    // if (platform.keyboard.wasPressed(.KeyQ)) {
+                    //     r.rotatePositive();
+                    // }
+                },
+            },
+            .catalogue, .panning => {},
         }
 
         // always available: move camera

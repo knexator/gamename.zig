@@ -303,6 +303,30 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
         pub fn inBoundsUnsigned(self: Self, pos: UVec2) bool {
             return pos.x < self.size.x and pos.y < self.size.y;
         }
+
+        pub fn mirrorVertically(self: *Self) void {
+            for (0..@divFloor(self.size.y, 2)) |j| {
+                for (0..self.size.x) |i| {
+                    std.mem.swap(
+                        T,
+                        self.getPtr(.new(i, j)),
+                        self.getPtr(.new(i, self.size.y - j - 1)),
+                    );
+                }
+            }
+        }
+
+        pub fn mirrorHorizontally(self: *Self) void {
+            for (0..@divFloor(self.size.x, 2)) |i| {
+                for (0..self.size.y) |j| {
+                    std.mem.swap(
+                        T,
+                        self.getPtr(.new(i, j)),
+                        self.getPtr(.new(self.size.x - i - 1, j)),
+                    );
+                }
+            }
+        }
     };
 }
 
