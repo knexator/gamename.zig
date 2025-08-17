@@ -479,6 +479,7 @@ var web_platform: PlatformGives = .{
             // assert(user_uploaded_file == null or user_uploaded_file.?.isNull());
             const index = js.storage.askUserForFile();
             user_uploaded_file = .{ .file_index = index };
+            std.log.debug("in web_platform.askUserForFile, index was set to {d} / {d}", .{ user_uploaded_file.?.file_index, index });
 
             // hack since we miss any events that happened while the user was picking the file
             // TODO: make robust by querying JS for the whole state, maybe
@@ -493,6 +494,7 @@ var web_platform: PlatformGives = .{
     .userUploadedFile = struct {
         fn anon() ?std.io.AnyReader {
             if (user_uploaded_file == null) return null;
+            std.log.debug("in web_platform.userUploadedFile, index is {d}", .{user_uploaded_file.?.file_index});
             if (!user_uploaded_file.?.isReady()) return null;
             return user_uploaded_file.?.reader().any();
         }
