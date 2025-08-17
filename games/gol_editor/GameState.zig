@@ -43,8 +43,10 @@ const CellType = enum {
     o,
     @"=",
     @"-",
+    @"&",
+    @"^",
 
-    pub const all: [6]CellType = .{ .@"+", .@"*", .o, .@"=", .@"-", .empty };
+    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{ .@"+", .@"*", .o, .@"=", .@"-", .@"&", .@"^", .empty };
 
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
@@ -441,7 +443,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .withAspectRatio(platform.aspect_ratio, .grow, .top_left);
     const mouse = platform.getMouse(camera);
 
-    const ui_cam: Rect = if (self.cur_level == null) camera else .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(10) };
+    const ui_cam: Rect = if (self.cur_level == null) camera else .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(15) };
     const ui_mouse = platform.getMouse(ui_cam);
     var ui_buttons: std.ArrayList(struct {
         pos: Rect,
@@ -701,7 +703,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (toolbar.active_tool == .catalogue) {
             math.lerp_towards(&toolbar.catalogue_view_offset, tof32(toolbar.catalogue_index), 0.2, platform.delta_seconds);
             for (cur_level.saved_states.items, 0..) |board, k| {
-                const button: Rect = ui_cam.with2(.size, .one, .bottom_left).move(.new(tof32(k) - toolbar.catalogue_view_offset + ui_cam.size.x / 2 - 0.5, 0)).plusMargin(-0.1);
+                const button: Rect = ui_cam.with2(.size, .both(2), .bottom_left)
+                    .move(Vec2.new(2 * (tof32(k) - toolbar.catalogue_view_offset) + ui_cam.size.x / 2 - 0.5, 0)).plusMargin(-0.1);
                 const hot = button.contains(ui_mouse.cur.position);
                 try catalogue_buttons.append(.{
                     .pos = button,
@@ -1068,13 +1071,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // save world to file button
         if (self.is_editor) {
-            const button: Rect = (Rect{ .top_left = .zero, .size = .new(1, 0.5) }).plusMargin(-0.05);
+            const button: Rect = (Rect{ .top_left = .zero, .size = .new(0.5, 0.25) }).plusMargin(-0.025);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
                 .text = "save",
-                .text_scale = 0.5,
+                .text_scale = 0.25,
                 .radio_selected = hot,
             });
             if (hot) {
@@ -1090,13 +1093,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // load world from file button
         if (self.is_editor) {
-            const button: Rect = (Rect{ .top_left = .new(0, 0.5), .size = .new(1, 0.5) }).plusMargin(-0.05);
+            const button: Rect = (Rect{ .top_left = .new(0, 0.25), .size = .new(0.5, 0.25) }).plusMargin(-0.025);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
                 .text = "load",
-                .text_scale = 0.5,
+                .text_scale = 0.25,
                 .radio_selected = hot,
             });
             if (hot) {
@@ -1140,7 +1143,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
-            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), button.color orelse CellState.gray.color());
+            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse CellState.gray.color());
             if (button.text) |text| try ui_texts.addText(text, .centeredAt(button.pos.getCenter()), 0.75 * (button.text_scale orelse 1), .black);
         }
     }
@@ -1152,7 +1155,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (ui_cam.intersect(button.pos) == null) continue;
 
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
-            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.05), CellState.black.color());
+            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), CellState.black.color());
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
             const offset = bounds.top_left;
