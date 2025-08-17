@@ -12,7 +12,7 @@ const JsReader = struct {
     pub const Error = error{FileNotReady};
     pub fn read(self: *JsReader, buf: []u8) Error!usize {
         if (buf.len == 0) return 0;
-        if (!js.reader.isLoaded(self.file_index)) return error.FileNotReady;
+        if (!self.isReady()) return error.FileNotReady;
         const bytes_readed = js.reader.readInto(self.file_index, buf.ptr, buf.len);
         return bytes_readed;
     }
@@ -496,7 +496,10 @@ var web_platform: PlatformGives = .{
             if (user_uploaded_file == null) return null;
             std.log.debug("in web_platform.userUploadedFile, index is {d}", .{user_uploaded_file.?.file_index});
             if (!user_uploaded_file.?.isReady()) return null;
-            return user_uploaded_file.?.reader().any();
+            // TODO(zig): removing the log causes a bug!
+            const reader = user_uploaded_file.?.reader().any();
+            std.log.err("reader is: {any}", .{reader});
+            return reader;
         }
     }.anon,
     .forgetUserUploadedFile = struct {
