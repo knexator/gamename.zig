@@ -44,9 +44,9 @@ const CellType = enum {
     @"=",
     @"-",
     @"&",
-    @"^",
+    @"?",
 
-    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{ .@"+", .@"*", .o, .@"=", .@"-", .@"&", .@"^", .empty };
+    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{ .@"+", .@"*", .o, .@"=", .@"-", .@"&", .@"?", .empty };
 
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
