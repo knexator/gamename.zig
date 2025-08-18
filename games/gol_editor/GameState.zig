@@ -7,7 +7,7 @@ pub const stuff = .{
     .metadata = .{
         .name = "gol_editor",
         .author = "knexator",
-        .desired_aspect_ratio = 4.0 / 3.0,
+        .desired_aspect_ratio = 1.0,
     },
     .sounds = .{},
     .loops = .{},
@@ -90,12 +90,44 @@ const Toolbar = struct {
     rect_tool_moving_include_blank: bool = true,
     catalogue_index: usize = 0,
     catalogue_view_offset: f32 = 0,
+    zoom: Zoom = .@"15x15",
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
     prev_tool: Tool = undefined,
 
     const Tool = enum { paint_state, paint_type, rect, catalogue, panning };
+
+    const Zoom = enum {
+        @"15x15",
+        bounds_lit,
+        bounds_all,
+        free,
+
+        pub fn levels(is_editor: bool) []const Zoom {
+            if (is_editor) {
+                return &.{ .@"15x15", .bounds_lit, .bounds_all, .free };
+            } else {
+                return &.{ .@"15x15", .bounds_lit, .bounds_all };
+            }
+        }
+
+        pub fn text(self: Zoom) []const u8 {
+            return switch (self) {
+                .@"15x15" => "z",
+                .bounds_lit => "Z1",
+                .bounds_all => "Z2",
+                .free => "free",
+            };
+        }
+
+        pub fn allowsMove(self: Zoom) bool {
+            return switch (self) {
+                .@"15x15", .free => true,
+                .bounds_lit, .bounds_all => false,
+            };
+        }
+    };
 
     pub fn selectedRect(self: Toolbar) math.IBounds {
         return math.IBounds.empty.bounding(self.selected_rect_inner_corner1).bounding(self.selected_rect_inner_corner2);
@@ -156,22 +188,33 @@ const BoardState = struct {
         return true;
     }
 
-    pub fn boundingRect(self: BoardState) math.IBounds {
+    pub fn boundingRectV2(self: BoardState, include: struct {
+        lit: bool = false,
+        elements: bool = false,
+    }) math.IBounds {
         var result: math.IBounds = .empty;
 
-        var it_states = self.cells_states.iterator();
-        while (it_states.next()) |kv| {
-            if (kv.value_ptr.* == .black) continue;
-            result.plusTile(kv.key_ptr.*);
+        if (include.lit) {
+            var it_states = self.cells_states.iterator();
+            while (it_states.next()) |kv| {
+                if (kv.value_ptr.* == .black) continue;
+                result.plusTile(kv.key_ptr.*);
+            }
         }
 
-        var it_types = self.cells_types.iterator();
-        while (it_types.next()) |kv| {
-            if (kv.value_ptr.* == .empty) continue;
-            result.plusTile(kv.key_ptr.*);
+        if (include.elements) {
+            var it_types = self.cells_types.iterator();
+            while (it_types.next()) |kv| {
+                if (kv.value_ptr.* == .empty) continue;
+                result.plusTile(kv.key_ptr.*);
+            }
         }
 
         return result;
+    }
+
+    pub fn boundingRect(self: BoardState) math.IBounds {
+        return self.boundingRectV2(.{ .lit = true, .elements = true });
     }
 
     pub fn stateAt(self: BoardState, pos: IVec2) CellState {
@@ -456,6 +499,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    if (self.cur_level) |cur_level| {
+        var target_camera = switch (cur_level.toolbar.zoom) {
+            .free => cur_level.camera,
+            .@"15x15" => cur_level.camera.withSize(.both(15), .center),
+            .bounds_all => cur_level.board.boundingRect().plusMargin(1).asRect(),
+            .bounds_lit => cur_level.board.boundingRectV2(.{
+                .lit = true,
+                .elements = false,
+            }).plusMargin(1).asRect(),
+        };
+        target_camera = target_camera.withSize(.maxEach(target_camera.size, .both(15)), .center);
+        cur_level.camera = .lerp(cur_level.camera, target_camera, 0.2);
+    }
+
     const camera: Rect = if (self.cur_level) |cur_level|
         cur_level.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left)
     else
@@ -549,7 +606,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // panning mode
-        if (self.is_editor) {
+        if (self.is_editor or toolbar.zoom.allowsMove()) {
             const button: Rect = (Rect{ .top_left = .new(6, 0), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
@@ -561,6 +618,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
                     toolbar.active_tool = .panning;
+                }
+            }
+        }
+
+        if (true) {
+            for (Toolbar.Zoom.levels(self.is_editor), 0..) |t, k| {
+                const button: Rect = (Rect{ .top_left = .new(8 + tof32(@mod(k, 2)), tof32(@divFloor(k, 2))), .size = .one }).plusMargin(-0.1);
+                const hot = button.contains(ui_mouse.cur.position);
+                try ui_buttons.append(.{
+                    .pos = button,
+                    .color = null,
+                    .text = t.text(),
+                    .text_scale = 0.75,
+                    .radio_selected = hot or t == toolbar.zoom,
+                });
+                if (hot) {
+                    mouse_over_ui = true;
+                    if (mouse.wasPressed(.left)) {
+                        toolbar.zoom = t;
+                    }
                 }
             }
         }
@@ -761,7 +838,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     toolbar.catalogue_index = kommon.moveIndex(toolbar.catalogue_index, -mouse.cur.scrolled.toInt(), cur_level.saved_states.items.len, .clamp);
                     try cur_level.loadState(cur_level.saved_states.items[toolbar.catalogue_index], &self.pool_boardstate);
                 },
-                else => {
+                else => if (toolbar.zoom == .free) {
                     cur_level.camera = cur_level.camera.zoom(mouse.cur.position, switch (mouse.cur.scrolled) {
                         .none => unreachable,
                         .down => 1.1,
@@ -919,7 +996,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // always available: move camera
-        if (self.is_editor) {
+        if (toolbar.zoom.allowsMove()) {
             for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
                 &.{ .KeyD, .ArrowRight },
                 &.{ .KeyS, .ArrowDown },
@@ -935,7 +1012,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // always available: drag view
-        if (self.is_editor) {
+        if (toolbar.zoom.allowsMove()) {
             if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
                 platform.setCursor(.grabbing);
                 cur_level.camera = cur_level.camera.move(mouse.deltaPos().neg());
@@ -974,7 +1051,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
-        if (true) {
+        if (toolbar.zoom != .bounds_lit) {
             var cell_texts = self.canvas.textBatch(0);
             // TODO: instancing!!
             defer cell_texts.draw(camera);

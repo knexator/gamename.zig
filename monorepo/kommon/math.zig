@@ -511,6 +511,13 @@ pub const Vec2 = extern struct {
         try expectApproxEqAbs(.new(4, 2), Vec2.new(4, 3).withAspectRatio(2, .shrink), 0.0001);
     }
 
+    pub fn maxEach(a: Vec2, b: Vec2) Vec2 {
+        return .new(
+            @max(a.x, b.x),
+            @max(a.y, b.y),
+        );
+    }
+
     pub fn expectApproxEqRel(expected: Vec2, actual: Vec2, tolerance: anytype) !void {
         try std.testing.expectApproxEqRel(expected.x, actual.x, tolerance);
         try std.testing.expectApproxEqRel(expected.y, actual.y, tolerance);
@@ -874,6 +881,13 @@ pub const IBounds = struct {
     pub fn bottomRight(self: IBounds) IVec2 {
         return self.top_left.addUnsigned(self.inner_size);
     }
+
+    pub fn plusMargin(original: IBounds, v: isize) IBounds {
+        return .{
+            .top_left = original.top_left.sub(.both(v)),
+            .inner_size = original.inner_size.addSigned(.both(v * 2)),
+        };
+    }
 };
 
 pub const Rect = extern struct {
@@ -1084,6 +1098,10 @@ pub const Rect = extern struct {
     pub fn zoom(original: Rect, fixed_world_pos: Vec2, s: f32) Rect {
         const new_size = original.size.scale(s);
         return .fromPivotAndSize(fixed_world_pos, original.localFromWorldPosition(fixed_world_pos), new_size);
+    }
+
+    pub fn withSize(original: Rect, size: Vec2, keep: MeasureKind) Rect {
+        return .fromPivotAndSize(original.get(keep), keep.asPivot(), size);
     }
 
     pub fn with2(original: Rect, change_kind: MeasureKind, change_value: Vec2, keep: MeasureKind) Rect {
