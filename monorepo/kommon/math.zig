@@ -515,6 +515,13 @@ pub const Vec2 = extern struct {
         try expectApproxEqAbs(.new(4, 2), Vec2.new(4, 3).withAspectRatio(2, .shrink), 0.0001);
     }
 
+    pub fn minEach(a: Vec2, b: Vec2) Vec2 {
+        return .new(
+            @min(a.x, b.x),
+            @min(a.y, b.y),
+        );
+    }
+
     pub fn maxEach(a: Vec2, b: Vec2) Vec2 {
         return .new(
             @max(a.x, b.x),
@@ -1107,6 +1114,14 @@ pub const Rect = extern struct {
     pub fn zoom(original: Rect, fixed_world_pos: Vec2, s: f32) Rect {
         const new_size = original.size.scale(s);
         return .fromPivotAndSize(fixed_world_pos, original.localFromWorldPosition(fixed_world_pos), new_size);
+    }
+
+    pub fn setMaxSize(original: Rect, max_size: Vec2, keep: MeasureKind) Rect {
+        return .fromPivotAndSize(original.get(keep), keep.asPivot(), .minEach(original.size, max_size));
+    }
+
+    pub fn setMinSize(original: Rect, min_size: Vec2, keep: MeasureKind) Rect {
+        return .fromPivotAndSize(original.get(keep), keep.asPivot(), .maxEach(original.size, min_size));
     }
 
     pub fn withSize(original: Rect, size: Vec2, keep: MeasureKind) Rect {

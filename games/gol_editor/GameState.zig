@@ -515,11 +515,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .elements = false,
             }).plusMargin(1).asRect(),
         };
-        target_camera = target_camera.withSize(.maxEach(target_camera.size, .both(15)), .center);
+        target_camera = target_camera.setMinSize(.both(15), .center);
         target_camera = target_camera.withAspectRatio(1.0, .grow, .center);
         std.log.debug("original target camera {any}", .{target_camera});
         std.log.debug("bounds {any}", .{cur_level.board.userBounds().asRect()});
         if (!self.is_editor) {
+            target_camera = target_camera.setMaxSize(cur_level.board.userBounds().asRect().size, .center);
             target_camera = target_camera.moveToBeInsideRect(cur_level.board.userBounds().asRect());
         }
         std.log.debug("new target camera {any}", .{target_camera});
