@@ -58,7 +58,7 @@ const CellType = enum {
     /// this gets added to the cell's vertical pos
     pub fn verticalCorrection(self: CellType) f32 {
         return switch (self) {
-            .@"*" => 0.35,
+            .@"*" => 0.3,
             .o => -0.125,
             .@"-" => -0.15,
             else => 0,
@@ -68,7 +68,7 @@ const CellType = enum {
     /// text size gets mutliplied by this
     pub fn sizeCorrection(self: CellType) f32 {
         return switch (self) {
-            .@"*" => 1.6,
+            .@"*" => 1.3,
             .@"-" => 1.5,
             .@"?", .@"&" => 1.0,
             else => 1.3,
