@@ -191,7 +191,6 @@ const BoardState = struct {
 
     pub fn userBounds(self: BoardState) math.IBounds {
         return self.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(10);
-        // return self.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(20);
     }
 
     pub fn boundingRectV2(self: BoardState, include: struct {
@@ -517,13 +516,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         };
         target_camera = target_camera.setMinSize(.both(15), .center);
         target_camera = target_camera.withAspectRatio(1.0, .grow, .center);
-        std.log.debug("original target camera {any}", .{target_camera});
-        std.log.debug("bounds {any}", .{cur_level.board.userBounds().asRect()});
         if (!self.is_editor) {
-            target_camera = target_camera.setMaxSize(cur_level.board.userBounds().asRect().size, .center);
-            target_camera = target_camera.moveToBeInsideRect(cur_level.board.userBounds().asRect());
+            target_camera = target_camera.setMaxSize(cur_level.board.userBounds().plusMargin(1).asRect().size, .center);
+            target_camera = target_camera.moveToBeInsideRect(cur_level.board.userBounds().plusMargin(1).asRect());
         }
-        std.log.debug("new target camera {any}", .{target_camera});
         cur_level.camera = .lerp(cur_level.camera, target_camera, 0.2);
     }
 
