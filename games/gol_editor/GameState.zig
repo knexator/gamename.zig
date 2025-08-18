@@ -19,7 +19,7 @@ pub const stuff = .{
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
 const COLORS = struct {
-    bg: FColor = .gray(0.5),
+    grid: FColor = .fromHex("#545454"),
 }{};
 
 const CellState = enum {
@@ -1012,13 +1012,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             {
                 var x = @floor(camera.top_left.x);
                 while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
-                    try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = .black });
+                    try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = COLORS.grid });
                 }
             }
             {
                 var y = @floor(camera.top_left.y);
                 while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
-                    try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = .black });
+                    try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = COLORS.grid });
                 }
             }
 
