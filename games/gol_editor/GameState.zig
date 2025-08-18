@@ -54,6 +54,26 @@ const CellType = enum {
             inline else => |x| @tagName(x),
         };
     }
+
+    /// this gets added to the cell's vertical pos
+    pub fn verticalCorrection(self: CellType) f32 {
+        return switch (self) {
+            .@"*" => 0.35,
+            .o => -0.125,
+            .@"-" => -0.15,
+            else => 0,
+        };
+    }
+
+    /// text size gets mutliplied by this
+    pub fn sizeCorrection(self: CellType) f32 {
+        return switch (self) {
+            .@"*" => 1.6,
+            .@"-" => 1.5,
+            .@"?", .@"&" => 1.0,
+            else => 1.3,
+        };
+    }
 };
 
 const Toolbar = struct {
@@ -956,8 +976,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (kv.value_ptr.* == .empty) continue;
                 try cell_texts.addText(
                     kv.value_ptr.*.text(),
-                    .centeredAt(kv.key_ptr.*.tof32().add(.half)),
-                    1.0,
+                    .centeredAt(kv.key_ptr.*.tof32().add(.half).addY(kv.value_ptr.verticalCorrection())),
+                    kv.value_ptr.sizeCorrection(),
                     if ((visible_board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
                         .white
                     else
@@ -1183,8 +1203,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
                     try cell_texts.addText(
                         kv.value_ptr.*.text(),
-                        .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).scale(scale))),
-                        scale * button.pos.size.y,
+                        .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).addY(kv.value_ptr.verticalCorrection()).scale(scale))),
+                        scale * kv.value_ptr.sizeCorrection() * button.pos.size.y,
                         if ((button.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
                             .white
                         else
