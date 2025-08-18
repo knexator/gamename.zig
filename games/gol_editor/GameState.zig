@@ -549,7 +549,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // panning mode
-        if (true) {
+        if (self.is_editor) {
             const button: Rect = (Rect{ .top_left = .new(6, 0), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
@@ -919,23 +919,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // always available: move camera
-        for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
-            &.{ .KeyD, .ArrowRight },
-            &.{ .KeyS, .ArrowDown },
-            &.{ .KeyA, .ArrowLeft },
-            &.{ .KeyW, .ArrowUp },
-        }) |d, ks| {
-            for (ks) |k| {
-                if (platform.keyboard.cur.isDown(k)) {
-                    cur_level.camera = cur_level.camera.move(d.scale(platform.delta_seconds * 0.8 * cur_level.camera.size.y));
+        if (self.is_editor) {
+            for (Vec2.cardinal_directions, &[4][]const KeyboardButton{
+                &.{ .KeyD, .ArrowRight },
+                &.{ .KeyS, .ArrowDown },
+                &.{ .KeyA, .ArrowLeft },
+                &.{ .KeyW, .ArrowUp },
+            }) |d, ks| {
+                for (ks) |k| {
+                    if (platform.keyboard.cur.isDown(k)) {
+                        cur_level.camera = cur_level.camera.move(d.scale(platform.delta_seconds * 0.8 * cur_level.camera.size.y));
+                    }
                 }
             }
         }
 
         // always available: drag view
-        if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
-            platform.setCursor(.grabbing);
-            cur_level.camera = cur_level.camera.move(mouse.deltaPos().neg());
+        if (self.is_editor) {
+            if (mouse.cur.isDown(.middle) or platform.keyboard.cur.isDown(.KeyG)) {
+                platform.setCursor(.grabbing);
+                cur_level.camera = cur_level.camera.move(mouse.deltaPos().neg());
+            }
         }
 
         // always available: exit to level select
