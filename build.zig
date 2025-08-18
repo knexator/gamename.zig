@@ -149,35 +149,26 @@ fn build_for_desktop(
         steps.unit_test.dependOn(&run_kommon_unit_tests.step);
     }
 
-    // TODO: remove 'game_module' and use this instead
-    const game_module_asdf = b.createModule(.{
+    const game_module = b.createModule(.{
         .root_source_file = b.path("games/" ++ game_folder ++ "/GameState.zig"),
     });
-    game_module_asdf.addImport("kommon", kommon_module);
+    game_module.addImport("kommon", kommon_module);
     // TODO: better
     inline for (fonts) |font_name| {
-        game_module_asdf.addAnonymousImport("fonts/" ++ font_name ++ ".json", .{
+        game_module.addAnonymousImport("fonts/" ++ font_name ++ ".json", .{
             .root_source_file = b.path("fonts/compiled/" ++ font_name ++ ".json"),
         });
     }
 
     const build_options = b.addOptions();
     if (options.hot_reloadable != .no) {
-        game_module_asdf.pic = true;
-        game_module_asdf.resolved_target = options.target;
-        game_module_asdf.optimize = options.optimize;
+        game_module.pic = true;
+        game_module.resolved_target = options.target;
+        game_module.optimize = options.optimize;
 
-        // const game_module = b.createModule(.{
-        //     .root_source_file = b.path("monorepo/game.zig"),
-        //     .target = options.target,
-        //     .optimize = options.optimize,
-        //     .pic = true,
-        // });
-        // game_module.addImport("kommon", kommon_module);
-        // game_module.addImport("GameState", game_module_asdf);
         const game_lib = b.addLibrary(.{
             .name = "game",
-            .root_module = game_module_asdf,
+            .root_module = game_module,
             .linkage = .dynamic,
             // TODO(zig): uncomment this line after solving https://github.com/ziglang/zig/issues/23442
             // .use_llvm = false,
@@ -194,7 +185,7 @@ fn build_for_desktop(
 
         {
             const game_unit_tests = b.addTest(.{
-                .root_module = game_module_asdf,
+                .root_module = game_module,
             });
             const run_game_unit_tests = b.addRunArtifact(game_unit_tests);
             steps.unit_test.dependOn(&run_game_unit_tests.step);
@@ -203,7 +194,7 @@ fn build_for_desktop(
             // TODO(zig): delete game_check after solving https://github.com/ziglang/zig/issues/18877
             const game_check = b.addLibrary(.{
                 .name = "game",
-                .root_module = game_module_asdf,
+                .root_module = game_module,
                 .linkage = .dynamic,
             });
             steps.check.dependOn(&game_check.step);
@@ -225,7 +216,7 @@ fn build_for_desktop(
     exe_module.linkLibrary(sdl_lib);
     exe_module.addImport("zstbi", b.dependency("zstbi", .{}).module("root"));
     exe_module.addImport("kommon", kommon_module);
-    exe_module.addImport("GameState", game_module_asdf);
+    exe_module.addImport("GameState", game_module);
 
     if (try existingFolder(b, b.pathJoin(&.{ "games", game_folder, "assets" }))) |assets_folder| {
         const assets_module = assetpack.pack(b, b.path(assets_folder), .{});
