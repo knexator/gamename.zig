@@ -18,6 +18,7 @@ const JsReader = struct {
     }
 
     pub fn reader(self: *JsReader) std.io.Reader(*JsReader, Error, read) {
+        log_for_load_save_bug.debug("getting reader for self with index {d}", .{self.file_index});
         return .{ .context = self };
     }
 };
@@ -430,6 +431,8 @@ const GameState = @import("GameState");
 const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 const stuff = GameState.stuff;
 
+const log_for_load_save_bug = std.log.scoped(.load_save_bug);
+
 comptime {
     std.testing.refAllDeclsRecursive(GameState);
 }
@@ -479,7 +482,7 @@ var web_platform: PlatformGives = .{
             // assert(user_uploaded_file == null or user_uploaded_file.?.isNull());
             const index = js.storage.askUserForFile();
             user_uploaded_file = .{ .file_index = index };
-            std.log.debug("in web_platform.askUserForFile, index was set to {d} / {d}", .{ user_uploaded_file.?.file_index, index });
+            log_for_load_save_bug.debug("in web_platform.askUserForFile, index was set to {d} / {d}", .{ user_uploaded_file.?.file_index, index });
 
             // hack since we miss any events that happened while the user was picking the file
             // TODO: make robust by querying JS for the whole state, maybe
@@ -494,12 +497,15 @@ var web_platform: PlatformGives = .{
     .userUploadedFile = struct {
         fn anon() ?std.io.AnyReader {
             if (user_uploaded_file == null) return null;
-            std.log.debug("in web_platform.userUploadedFile, index is {d}", .{user_uploaded_file.?.file_index});
+            log_for_load_save_bug.debug("in web_platform.userUploadedFile, index is {d}", .{user_uploaded_file.?.file_index});
             if (!user_uploaded_file.?.isReady()) return null;
             // TODO(zig): removing the log causes a bug!
-            const reader = user_uploaded_file.?.reader().any();
-            std.log.err("reader is: {any}", .{reader});
-            return reader;
+            log_for_load_save_bug.debug("second log: index is {d}", .{user_uploaded_file.?.file_index});
+            const reader = user_uploaded_file.?.reader();
+            log_for_load_save_bug.info("reader is: {any}", .{reader});
+            const reader_any = reader.any();
+            log_for_load_save_bug.debug("anyreader is: {any}", .{reader_any});
+            return reader_any;
         }
     }.anon,
     .forgetUserUploadedFile = struct {
@@ -1026,6 +1032,7 @@ fn keychanged(key: KeyCode, is_pressed: bool) void {
 pub const std_options = std.Options{
     // wasm-freestanding has no stderr, so we have to override this function
     .logFn = myLogFn,
+    .log_scope_levels = &.{.{ .scope = .load_save_bug, .level = .info }},
 };
 fn myLogFn(
     comptime message_level: std.log.Level,
