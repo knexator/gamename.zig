@@ -190,7 +190,7 @@ const BoardState = struct {
     }
 
     pub fn userBounds(self: BoardState) math.IBounds {
-        return self.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(10);
+        return self.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(20);
     }
 
     pub fn boundingRectV2(self: BoardState, include: struct {
