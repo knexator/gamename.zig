@@ -141,6 +141,14 @@ fn build_for_desktop(
         .optimize = options.optimize,
     });
 
+    {
+        const kommon_unit_tests = b.addTest(.{
+            .root_module = kommon_module,
+        });
+        const run_kommon_unit_tests = b.addRunArtifact(kommon_unit_tests);
+        steps.unit_test.dependOn(&run_kommon_unit_tests.step);
+    }
+
     // TODO: remove 'game_module' and use this instead
     const game_module_asdf = b.createModule(.{
         .root_source_file = b.path("games/" ++ game_folder ++ "/GameState.zig"),

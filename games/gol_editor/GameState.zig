@@ -189,6 +189,11 @@ const BoardState = struct {
         return true;
     }
 
+    pub fn userBounds(self: BoardState) math.IBounds {
+        return self.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(10);
+        // return self.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(20);
+    }
+
     pub fn boundingRectV2(self: BoardState, include: struct {
         lit: bool = false,
         elements: bool = false,
@@ -512,6 +517,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         };
         target_camera = target_camera.withSize(.maxEach(target_camera.size, .both(15)), .center);
         target_camera = target_camera.withAspectRatio(1.0, .grow, .center);
+        std.log.debug("original target camera {any}", .{target_camera});
+        std.log.debug("bounds {any}", .{cur_level.board.userBounds().asRect()});
+        if (!self.is_editor) {
+            target_camera = target_camera.moveToBeInsideRect(cur_level.board.userBounds().asRect());
+        }
+        std.log.debug("new target camera {any}", .{target_camera});
         cur_level.camera = .lerp(cur_level.camera, target_camera, 0.2);
     }
 
@@ -884,7 +895,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
                         } else {
-                            if (cur_level.board.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(20).contains(cell_under_mouse)) {
+                            if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
                                 try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
                             }
                         }

@@ -389,6 +389,10 @@ pub const Vec2 = extern struct {
         return new(-v.y, v.x);
     }
 
+    pub fn rotNegQuarter(v: Self) Self {
+        return new(-v.y, v.x);
+    }
+
     test "rotate quarter" {
         try Vec2.expectApproxEqAbs(Vec2.e2, Vec2.e1.rotPosQuarter(), 0.001);
         try Vec2.expectApproxEqAbs(Vec2.e1.neg(), Vec2.e2.rotPosQuarter(), 0.001);
@@ -396,16 +400,16 @@ pub const Vec2 = extern struct {
 
     pub fn rotQuarters(v: Self, k: isize) Self {
         var res = v;
-        for (0..@abs(k)) |_| {
+        for (0..@as(usize, @intCast(@mod(k, 4)))) |_| {
             res = rotPosQuarter(res);
         }
-        if (k < 0) res = res.neg();
         return res;
     }
 
     test "rotate quarters" {
         try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e1.rotQuarters(4), 0.001);
         try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e1.rotQuarters(-4), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e2, Vec2.e1.rotQuarters(1), 0.001);
         try Vec2.expectApproxEqAbs(Vec2.e2.neg(), Vec2.e1.rotQuarters(-1), 0.001);
     }
 
@@ -913,6 +917,22 @@ pub const Rect = extern struct {
         return self.top_left.add(self.size.scale(0.5));
     }
 
+    pub const Side = enum {
+        right,
+        bottom,
+        left,
+        top,
+
+        pub const all: [4]Side = .{ .right, .bottom, .left, .top };
+
+        pub fn sign(self: Side) f32 {
+            return switch (self) {
+                .right, .bottom => -1,
+                .left, .top => 1,
+            };
+        }
+    };
+
     pub const MeasureKind = enum {
         top_left,
         top_center,
@@ -1025,6 +1045,10 @@ pub const Rect = extern struct {
 
     pub fn fromPivotAndSize(pos: Vec2, pivot: Vec2, size: Vec2) Rect {
         return .{ .top_left = pos.sub(size.mul(pivot)), .size = size };
+    }
+
+    pub fn fromMeasureAndSizeV2(measure_kind: MeasureKind, measure_value: Vec2, size: Vec2) Rect {
+        return .fromPivotAndSize(measure_value, measure_kind.asPivot(), size);
     }
 
     pub fn fromMeasureAndSize(measure: Measure, size: Vec2) Rect {
@@ -1203,6 +1227,49 @@ pub const Rect = extern struct {
     test "withAspectRatio" {
         try expectApproxEqRel(Rect.fromCenterAndSize(.half, .new(2, 1)), Rect.unit.withAspectRatio(2, .grow, .center), 0.0001);
         try expectApproxEqRel(Rect.fromCenterAndSize(.half, .new(1, 0.5)), Rect.unit.withAspectRatio(2, .shrink, .center), 0.0001);
+    }
+
+    pub fn moveToBeInsideRect(original: Rect, bounds: Rect) Rect {
+        assert(original.size.x <= bounds.size.x and
+            original.size.y <= bounds.size.y);
+
+        var result = original;
+        inline for ([2]Side{ .left, .top }) |s| {
+            if (original.getSide(s) < bounds.getSide(s)) {
+                result = result.withSide(s, bounds.getSide(s));
+            }
+        }
+        inline for ([2]Side{ .right, .bottom }) |s| {
+            if (original.getSide(s) > bounds.getSide(s)) {
+                result = result.withSide(s, bounds.getSide(s));
+            }
+        }
+        return result;
+    }
+
+    test "moveToBeInsideRect" {
+        const bounds: Rect = .fromCenterAndSize(.zero, .both(10));
+        const movable: Rect = .fromCenterAndSize(.zero, .both(5));
+
+        try Rect.expectApproxEqAbs(movable, movable.moveToBeInsideRect(bounds), 0.001);
+    }
+
+    pub fn getSide(self: Rect, side: Side) f32 {
+        return switch (side) {
+            .left => self.top_left.x,
+            .right => self.top_left.x + self.size.x,
+            .top => self.top_left.y,
+            .bottom => self.top_left.y + self.size.y,
+        };
+    }
+
+    pub fn withSide(original: Rect, which: Side, v: f32) Rect {
+        return switch (which) {
+            .left => .fromMeasureAndSizeV2(.top_left, .new(v, original.getSide(.top)), original.size),
+            .right => .fromMeasureAndSizeV2(.top_right, .new(v, original.getSide(.top)), original.size),
+            .top => .fromMeasureAndSizeV2(.top_left, .new(original.getSide(.left), v), original.size),
+            .bottom => .fromMeasureAndSizeV2(.bottom_left, .new(original.getSide(.left), v), original.size),
+        };
     }
 
     pub fn expectApproxEqRel(expected: Rect, actual: Rect, tolerance: anytype) !void {

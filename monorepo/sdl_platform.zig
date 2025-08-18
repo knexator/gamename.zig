@@ -15,7 +15,6 @@ const Gl = kommon.Gl;
 
 comptime {
     std.testing.refAllDecls(GameState);
-    std.testing.refAllDecls(Vec2);
 }
 
 const hot_reloading = @import("build_options").game_dynlib_path != null;

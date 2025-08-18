@@ -183,7 +183,7 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             };
         }
 
-        pub fn mapWithCtx(self: Self, allocator: std.mem.Allocator, comptime NewType: type, ctx: anytype, comptime map_fn: fn (v: T, ctx: @TypeOf(ctx)) NewType) !Grid2D(NewType) {
+        pub fn mapWithCtx(self: Self, allocator: std.mem.Allocator, comptime NewType: type, ctx: anytype, comptime map_fn: fn (v: T, ctx: @TypeOf(ctx)) NewType) !Grid2D_Deprecated(NewType) {
             const new_data = try allocator.alloc(NewType, self.data.len);
             for (0..self.size.y) |j| {
                 for (0..self.size.x) |i| {
@@ -260,7 +260,7 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             return result.?;
         }
 
-        pub fn filterValues(self: Self, allocator: std.mem.Allocator, values: []const T) !Grid2D(bool) {
+        pub fn filterValues(self: Self, allocator: std.mem.Allocator, values: []const T) !Grid2D_Deprecated(bool) {
             return try self.mapWithCtx(allocator, bool, values, struct {
                 pub fn anon(v: T, vs: []const T) bool {
                     return std.mem.indexOfScalar(T, vs, v) != null;
