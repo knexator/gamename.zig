@@ -352,7 +352,7 @@ const LevelState = struct {
 
 all_levels: std.ArrayList(*LevelState),
 cur_level: ?*LevelState = null,
-is_editor: bool = true,
+is_editor: bool = false,
 levelselect_view_offset: f32 = 0,
 
 pool_boardstate: std.heap.MemoryPool(BoardState),
