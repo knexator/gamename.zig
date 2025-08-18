@@ -720,7 +720,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // save to file button
-        if (self.is_editor) {
+        if (true) {
             const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 1)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
@@ -741,7 +741,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // load from file button
-        if (self.is_editor) {
+        if (true) {
             const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
@@ -1177,7 +1177,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // save world to file button
-        if (self.is_editor) {
+        if (true) {
             const button: Rect = (Rect{ .top_left = .zero, .size = .new(0.5, 0.25) }).plusMargin(-0.025);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
@@ -1199,7 +1199,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // load world from file button
-        if (self.is_editor) {
+        if (true) {
             const button: Rect = (Rect{ .top_left = .new(0, 0.25), .size = .new(0.5, 0.25) }).plusMargin(-0.025);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
