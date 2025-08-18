@@ -7,7 +7,7 @@ pub const stuff = .{
     .metadata = .{
         .name = "gol_editor",
         .author = "knexator",
-        .desired_aspect_ratio = 1.0,
+        .desired_aspect_ratio = 4.0 / 3.0,
     },
     .sounds = .{},
     .loops = .{},
@@ -20,6 +20,7 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 const COLORS = struct {
     grid: FColor = .fromHex("#545454"),
+    ui_bg: FColor = CellState.black.color(),
 }{};
 
 const CellState = enum {
@@ -313,7 +314,7 @@ const BoardState = struct {
 
 const LevelState = struct {
     toolbar: Toolbar = .{ .active_tool = .paint_state },
-    camera: Rect = .{ .top_left = .new(-12, -10), .size = Vec2.new(4, 3).scale(8) },
+    camera: Rect = .{ .top_left = .both(-6), .size = .both(15) },
     saved_states: std.ArrayList(*const BoardState),
     board: *BoardState,
     initial_board: *const BoardState,
@@ -448,13 +449,13 @@ fn addEmptyLevel(self: *GameState) !void {
             const res = try self.pool_boardstate.create();
             try res.init(self.mem.gpa);
 
-            try res.cells_states.put(.new(1, 1), .gray);
-            try res.cells_states.put(.new(1, 2), .white);
-            try res.cells_types.put(.new(2, 0), .@"+");
-            try res.cells_types.put(.new(2, 1), .@"*");
-            try res.cells_types.put(.new(2, 2), .o);
-            try res.cells_types.put(.new(3, 0), .@"=");
-            try res.cells_types.put(.new(3, 1), .@"-");
+            try res.cells_states.put(.new(0, 1), .gray);
+            try res.cells_states.put(.new(0, 2), .white);
+            try res.cells_types.put(.new(1, 0), .@"+");
+            try res.cells_types.put(.new(1, 1), .@"*");
+            try res.cells_types.put(.new(1, 2), .o);
+            try res.cells_types.put(.new(2, 0), .@"=");
+            try res.cells_types.put(.new(2, 1), .@"-");
 
             break :blk res;
         },
@@ -510,17 +511,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }).plusMargin(1).asRect(),
         };
         target_camera = target_camera.withSize(.maxEach(target_camera.size, .both(15)), .center);
+        target_camera = target_camera.withAspectRatio(1.0, .grow, .center);
         cur_level.camera = .lerp(cur_level.camera, target_camera, 0.2);
     }
 
     const camera: Rect = if (self.cur_level) |cur_level|
-        cur_level.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left)
+        cur_level.camera.withAspectRatio(platform.aspect_ratio, .grow, .center)
     else
         (Rect{ .top_left = .new(0, self.levelselect_view_offset), .size = .new(4, 3) })
             .withAspectRatio(platform.aspect_ratio, .grow, .top_left);
     const mouse = platform.getMouse(camera);
 
-    const ui_cam: Rect = if (self.cur_level == null) camera else .{ .top_left = .zero, .size = Vec2.new(platform.aspect_ratio, 1).scale(15) };
+    const ui_cam: Rect = if (self.cur_level == null) camera else (Rect{ .top_left = .zero, .size = .new(16, 12) })
+        .withAspectRatio(platform.aspect_ratio, .grow, .center);
     const ui_mouse = platform.getMouse(ui_cam);
     var ui_buttons: std.ArrayList(struct {
         pos: Rect,
@@ -550,7 +553,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // paint cell states
         for ([3]CellState{ .black, .gray, .white }, 0..) |c, k| {
-            const button: Rect = (Rect{ .top_left = .new(tof32(k), 0), .size = .one }).plusMargin(-0.1);
+            const button: Rect = (Rect{ .top_left = Vec2.zero.add(.new(0, tof32(k))), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = c.color(),
@@ -570,7 +573,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // paint cell types
         if (self.is_editor) {
             for (CellType.all, 0..) |t, k| {
-                const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 3)), tof32(1 + @divFloor(k, 3))), .size = .one }).plusMargin(-0.1);
+                const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4))), .size = .one }).plusMargin(-0.1);
                 try ui_buttons.append(.{
                     .pos = button,
                     .color = null,
@@ -590,7 +593,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // rect select/move mode
         if (self.is_editor) {
-            const button: Rect = (Rect{ .top_left = .new(4, 1), .size = .one }).plusMargin(-0.1);
+            const button: Rect = (Rect{ .top_left = .new(0, 3), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
@@ -607,7 +610,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // panning mode
         if (self.is_editor or toolbar.zoom.allowsMove()) {
-            const button: Rect = (Rect{ .top_left = .new(6, 0), .size = .one }).plusMargin(-0.1);
+            const button: Rect = (Rect{ .top_left = .new(1, 3), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
@@ -622,9 +625,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
+        const bottom_left_buttons: [4]Rect = blk: {
+            const base = (Rect.fromPivotAndSize(ui_cam.get(.bottom_left), Rect.MeasureKind.bottom_left.asPivot(), .one));
+            break :blk .{
+                base,
+                base.move(.new(1, 0)),
+                base.move(.new(0, -1)),
+                base.move(.new(1, -1)),
+            };
+        };
+
         if (true) {
             for (Toolbar.Zoom.levels(self.is_editor), 0..) |t, k| {
-                const button: Rect = (Rect{ .top_left = .new(8 + tof32(@mod(k, 2)), tof32(@divFloor(k, 2))), .size = .one }).plusMargin(-0.1);
+                const button: Rect = bottom_left_buttons[k].plusMargin(-0.1);
                 const hot = button.contains(ui_mouse.cur.position);
                 try ui_buttons.append(.{
                     .pos = button,
@@ -642,15 +655,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
+        const top_right_button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .one));
+
         // overwrite initial state
         if (self.is_editor) {
-            const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .new(3, 1) }).plusMargin(-0.1);
+            // const button: Rect = (Rect{ .top_left = .new(5, 1), .size = .new(3, 1) }).plusMargin(-0.1);
+
+            const button: Rect = top_right_button.move(.new(0, 1)).withSize(.new(2, 1), .top_right).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
-                .text = "set as initial",
-                .text_scale = 0.75,
+                .text = "set initial",
+                .text_scale = 0.6,
                 .radio_selected = hot,
             });
             if (hot) {
@@ -663,7 +680,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // toggle catalogue
         if (true) {
-            const button: Rect = (Rect{ .top_left = .new(4, 0), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_right_button.plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -699,7 +716,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // save to catalogue button
         if (true) {
-            const button: Rect = (Rect{ .top_left = .new(5, 0), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_right_button.move(.new(-1, 0)).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -719,9 +736,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             try cur_level.saveState(&self.pool_boardstate);
         }
 
+        const bottom_right_buttons: [4]Rect = blk: {
+            const base = (Rect.fromPivotAndSize(ui_cam.get(.bottom_right), Rect.MeasureKind.bottom_right.asPivot(), .new(2, 1)));
+            break :blk .{
+                base.move(.new(0, -2)),
+                base.move(.new(0, -3)),
+                base,
+                base.move(.new(0, -1)),
+            };
+        };
+
         // save to file button
         if (true) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 1)).plusMargin(-0.1);
+            const button: Rect = bottom_right_buttons[0].plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -742,7 +769,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // load from file button
         if (true) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.e2).plusMargin(-0.1);
+            const button: Rect = bottom_right_buttons[1].plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -760,7 +787,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // exit to menu button
         if (true) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).plusMargin(-0.1);
+            const button: Rect = bottom_right_buttons[2].plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -778,7 +805,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // reset level state button
         if (true) {
-            const button: Rect = (Rect.fromPivotAndSize(ui_cam.get(.top_right), Rect.MeasureKind.top_right.asPivot(), .new(2, 1))).move(.new(-2, 0)).plusMargin(-0.1);
+            const button: Rect = bottom_right_buttons[3].plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
@@ -1039,7 +1066,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             // TODO: instancing!!
             defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
-            const cam_bounds: math.IBounds = .fromRect(camera.plusMargin(1.1));
+            const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
             var it = visible_board.cells_states.iterator();
             while (it.next()) |kv| {
                 if (kv.value_ptr.* == .black) continue;
@@ -1056,7 +1083,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             // TODO: instancing!!
             defer cell_texts.draw(camera);
 
-            const cam_bounds: math.IBounds = .fromRect(camera.plusMargin(1.1));
+            const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
             var it = visible_board.cells_types.iterator();
             while (it.next()) |kv| {
                 if (kv.value_ptr.* == .empty) continue;
@@ -1135,6 +1162,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (toolbar.active_tool == .rect) {
             const rect = toolbar.selectedRect().asRect();
             self.canvas.strokeRect(camera, rect, 0.1, .cyan);
+        }
+
+        if (true) {
+            self.canvas.fillRect(
+                .{ .top_left = .zero, .size = .new(4, 3) },
+                .{ .top_left = .zero, .size = .new(0.5, 3) },
+                COLORS.ui_bg,
+            );
+            self.canvas.fillRect(
+                .{ .top_left = .zero, .size = .new(4, 3) },
+                .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
+                COLORS.ui_bg,
+            );
         }
     } else {
         var level_to_destroy: ?usize = null;

@@ -1027,6 +1027,21 @@ pub const Rect = extern struct {
         return .{ .top_left = pos.sub(size.mul(pivot)), .size = size };
     }
 
+    pub fn fromMeasureAndSize(measure: Measure, size: Vec2) Rect {
+        return switch (measure) {
+            .top_left => |v| .fromPivotAndSize(v, MeasureKind.top_left.asPivot(), size),
+            .top_center => |v| .fromPivotAndSize(v, MeasureKind.top_center.asPivot(), size),
+            .top_right => |v| .fromPivotAndSize(v, MeasureKind.top_right.asPivot(), size),
+            .center_left => |v| .fromPivotAndSize(v, MeasureKind.center_left.asPivot(), size),
+            .center => |v| .fromPivotAndSize(v, MeasureKind.center.asPivot(), size),
+            .center_right => |v| .fromPivotAndSize(v, MeasureKind.center_right.asPivot(), size),
+            .bottom_left => |v| .fromPivotAndSize(v, MeasureKind.bottom_left.asPivot(), size),
+            .bottom_center => |v| .fromPivotAndSize(v, MeasureKind.bottom_center.asPivot(), size),
+            .bottom_right => |v| .fromPivotAndSize(v, MeasureKind.bottom_right.asPivot(), size),
+            .size => unreachable,
+        };
+    }
+
     pub fn fromV3(measure1_kind: MeasureKind, measure1_value: Vec2, measure2_kind: MeasureKind, measure2_value: Vec2) Rect {
         if (measure1_kind == .size or measure2_kind == .size) {
             if (measure1_kind == .size and measure2_kind == .size) @panic("bad params (2 sizes)");
@@ -1049,48 +1064,18 @@ pub const Rect = extern struct {
     }
 
     pub fn from(measures: [2]Measure) Rect {
-        switch (measures[0]) {
-            else => std.debug.panic("TODO: measure[0] {s}", .{@tagName(measures[0])}),
-            .center => |center| {
-                switch (measures[1]) {
-                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
-                    .size => |size| {
-                        return .{ .size = size, .top_left = center.sub(size.scale(0.5)) };
-                    },
-                }
-            },
-            .top_left => |top_left| {
-                switch (measures[1]) {
-                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
-                    .size => |size| return .{ .top_left = top_left, .size = size },
-                    .bottom_right => |bottom_right| {
-                        return .{ .size = bottom_right.sub(top_left), .top_left = top_left };
-                    },
-                }
-            },
-            .top_center => |top_center| {
-                switch (measures[1]) {
-                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
-                    .size => |size| {
-                        return .{ .size = size, .top_left = top_center.sub(size.mul(.new(0.5, 0))) };
-                    },
-                }
-            },
-            .bottom_center => |bottom_center| {
-                switch (measures[1]) {
-                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
-                    .size => |size| {
-                        return .{ .size = size, .top_left = bottom_center.sub(size.mul(.new(0.5, 1))) };
-                    },
-                }
-            },
-            .bottom_left => |bottom_left| {
-                switch (measures[1]) {
-                    else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
-                    .size => |size| {
-                        return .{ .size = size, .top_left = bottom_left.sub(size.mul(.new(0, 1))) };
-                    },
-                }
+        switch (measures[1]) {
+            .size => |size| return .fromMeasureAndSize(measures[0], size),
+            else => switch (measures[0]) {
+                else => std.debug.panic("TODO: measure[0] {s}", .{@tagName(measures[0])}),
+                .top_left => |top_left| {
+                    switch (measures[1]) {
+                        else => |x| std.debug.panic("TODO: from {s}", .{@tagName(x)}),
+                        .bottom_right => |bottom_right| {
+                            return .{ .size = bottom_right.sub(top_left), .top_left = top_left };
+                        },
+                    }
+                },
             },
         }
     }
