@@ -847,6 +847,18 @@ pub const IBounds = struct {
         };
     }
 
+    pub fn fromRect(rect: Rect) IBounds {
+        const top_left: IVec2 = .new(
+            @intFromFloat(@floor(rect.top_left.x)),
+            @intFromFloat(@floor(rect.top_left.y)),
+        );
+        const bottom_right: IVec2 = .new(
+            @intFromFloat(@ceil(rect.top_left.x + rect.size.x)),
+            @intFromFloat(@ceil(rect.top_left.y + rect.size.y)),
+        );
+        return .fromCorners(top_left, bottom_right);
+    }
+
     pub fn contains(self: IBounds, p: IVec2) bool {
         return inRange(p.x, self.top_left.x, self.top_left.x + self.inner_size.cast(isize).x) and
             inRange(p.y, self.top_left.y, self.top_left.y + self.inner_size.cast(isize).y);

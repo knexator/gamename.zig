@@ -955,11 +955,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (true) {
             var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+            // TODO: instancing!!
             defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
+            const cam_bounds: math.IBounds = .fromRect(camera.plusMargin(1.1));
             var it = visible_board.cells_states.iterator();
             while (it.next()) |kv| {
                 if (kv.value_ptr.* == .black) continue;
+                if (!cam_bounds.contains(kv.key_ptr.*)) continue;
                 try cell_bgs.append(.{
                     .point = .{ .pos = kv.key_ptr.*.tof32() },
                     .color = kv.value_ptr.*.color(),
@@ -969,11 +972,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (true) {
             var cell_texts = self.canvas.textBatch(0);
+            // TODO: instancing!!
             defer cell_texts.draw(camera);
 
+            const cam_bounds: math.IBounds = .fromRect(camera.plusMargin(1.1));
             var it = visible_board.cells_types.iterator();
             while (it.next()) |kv| {
                 if (kv.value_ptr.* == .empty) continue;
+                if (!cam_bounds.contains(kv.key_ptr.*)) continue;
                 try cell_texts.addText(
                     kv.value_ptr.*.text(),
                     .centeredAt(kv.key_ptr.*.tof32().add(.half).addY(kv.value_ptr.verticalCorrection())),
