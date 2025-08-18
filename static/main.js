@@ -315,20 +315,34 @@ async function getWasm() {
       generateMipmap: (target) => gl.generateMipmap(target),
 
       // storage
-      downloadAsFile: (filename_ptr, filename_len, mime_ptr, mime_len, contents_ptr, contents_len) => {
-        const blob = new Blob(
-          [getString(contents_ptr, contents_len)],
-          { type: getString(mime_ptr, mime_len) },
-        );
-        const url = URL.createObjectURL(blob);
+      downloadAsFile: async (filename_ptr, filename_len, mime_ptr, mime_len, contents_ptr, contents_len) => {
+        if (window.showSaveFilePicker) {
+          const contents = getString(contents_ptr, contents_len);
+          const handle = await window.showSaveFilePicker({
+            // TODO: let gamename.zig choose the id
+            id: "gamename_zig",
+            startIn: "downloads",
+            suggestedName: getString(filename_ptr, filename_len),
+          });
+          const writable = await handle.createWritable();
+          await writable.write(contents);
+          await writable.close();
+          return;
+        } else {
+          const blob = new Blob(
+            [getString(contents_ptr, contents_len)],
+            { type: getString(mime_ptr, mime_len) },
+          );
+          const url = URL.createObjectURL(blob);
 
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = getString(filename_ptr, filename_len);
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = getString(filename_ptr, filename_len);
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
       },
       askUserForFile: () => {
         const js_reader = new JsReader();
