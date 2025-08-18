@@ -884,7 +884,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
                         } else {
-                            try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
+                            if (cur_level.board.boundingRectV2(.{ .lit = false, .elements = true }).plusMargin(20).contains(cell_under_mouse)) {
+                                try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
+                            }
                         }
                     } else {
                         if (mouse.wasPressed(.left)) {
