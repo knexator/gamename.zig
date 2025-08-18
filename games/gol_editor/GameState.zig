@@ -1024,8 +1024,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (visible_type != .empty) {
                     try cell_texts.addText(
                         visible_type.text(),
-                        .centeredAt(pos.tof32().add(.half)),
-                        1.0,
+                        .centeredAt(pos.tof32().add(.half).addY(visible_type.verticalCorrection())),
+                        visible_type.sizeCorrection(),
                         if (visible_state == .black) .white else .black,
                     );
                 }
