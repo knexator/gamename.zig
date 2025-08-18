@@ -37,7 +37,7 @@ jobs:
         uses: mlugg/setup-zig@v2.0.5
         with:
           version: 0.14.1
-      - run: zig build install -p . -Dghpages -Doptimize=ReleaseFast
+      - run: zig build install -p . -Dghpages -Doptimize=ReleaseSafe
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
