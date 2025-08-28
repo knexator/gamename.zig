@@ -489,6 +489,7 @@ pub fn afterHotReload(self: *GameState) !void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     _ = self.mem.frame.reset(.retain_capacity);
     _ = self.mem.scratch.reset(.retain_capacity);
+    _ = self.canvas.frame_arena.reset(.retain_capacity);
     self.smooth.last_delta_seconds = platform.delta_seconds;
     // self.lazy_state.frameStart();
 
