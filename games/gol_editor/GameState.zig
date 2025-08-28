@@ -40,14 +40,14 @@ const CellState = enum {
 const CellType = enum {
     empty,
     @"+",
+    @"-",
+    @"~",
     @"*",
     o,
     @"=",
-    @"-",
-    @"&",
     @"?",
 
-    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{ .@"+", .@"*", .o, .@"=", .@"-", .@"&", .@"?", .empty };
+    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{ .@"+", .@"-", .@"~", .@"*", .o, .@"=", .@"?", .empty };
 
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
@@ -71,7 +71,7 @@ const CellType = enum {
         return switch (self) {
             .@"*" => 1.3,
             .@"-" => 1.5,
-            .@"?", .@"&" => 1.0,
+            .@"?", .@"~" => 1.0,
             else => 1.3,
         };
     }
