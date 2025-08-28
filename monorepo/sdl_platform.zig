@@ -435,6 +435,7 @@ pub fn main() !void {
 
             gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
                 u16 => gl.UNSIGNED_SHORT,
+                u32 => gl.UNSIGNED_INT,
                 else => @compileError("not implemented"),
             }, 0);
         }
@@ -611,6 +612,7 @@ pub fn main() !void {
 
             gl.DrawElementsInstanced(gl.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
                 u16 => gl.UNSIGNED_SHORT,
+                u32 => gl.UNSIGNED_INT,
                 else => @compileError("not implemented"),
             }, null, @intCast(instance_count));
         }

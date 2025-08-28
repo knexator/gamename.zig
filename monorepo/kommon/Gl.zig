@@ -246,8 +246,8 @@ pub const UniformInfo = struct {
     };
 };
 
-// TODO
-pub const IndexType = u16;
+// TODO: configurable
+pub const IndexType = u32;
 
 pub const Renderable = struct {
     program: enum(c_uint) { null = 0, _ },

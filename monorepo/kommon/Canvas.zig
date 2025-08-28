@@ -1213,7 +1213,7 @@ pub const TextBatch = struct {
     }
 
     pub fn draw(self: *TextBatch, camera: Rect) void {
-        for (self.quads.items) |q| self.text_renderer.drawQuad(self.canvas.gl, camera, q);
+        self.text_renderer.drawQuads(self.canvas.gl, camera, self.quads.items, self.canvas.frame_arena.allocator());
         self.quads.clearAndFree();
     }
 };
@@ -1343,25 +1343,12 @@ pub const TextRenderer = struct {
                 .{},
             ),
             .renderable = try gl.buildRenderable(
-                \\precision highp float;
-                \\in vec2 a_position;
-                \\in vec2 a_texcoord;
-                \\
-                \\out vec2 v_texcoord;
-                \\
-                \\// 0,0 => -1,1 (top left)
-                \\// 1,0 => 1,1 (top right)
-                \\vec2 clipFromCam(vec2 p) {
-                \\  return (p * 2.0 - 1.0) * vec2(1, -1);
-                \\}
-                \\
-                \\void main() {
-                \\  v_texcoord = a_texcoord;
-                \\  gl_Position = vec4(clipFromCam(a_position), 0, 1);
-                \\}
-            ,
+                sprite_renderable_vertex_src,
                 \\precision highp float;
                 \\out vec4 out_color;
+                \\in vec2 v_texcoord;
+                \\in vec4 v_color;
+                \\uniform sampler2D u_texture;
                 \\
                 \\// for some reason, on desktop, the fwidth value is half of what it should.
                 \\#ifdef GL_ES // WebGL2
@@ -1369,10 +1356,6 @@ pub const TextRenderer = struct {
                 \\#else // Desktop
                 \\  #define FWIDTH(x) (2.0 * fwidth(x))
                 \\#endif
-                \\
-                \\in vec2 v_texcoord;
-                \\uniform sampler2D u_texture;
-                \\uniform vec4 u_color;
                 \\
                 \\float median(float r, float g, float b) {
                 \\  return max(min(r, g), min(max(r, g), b));
@@ -1397,15 +1380,16 @@ pub const TextRenderer = struct {
                 \\  float transition_pixels = 1.0;
                 \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
                 \\  // TODO: premultiply alpha?
-                \\  out_color = mix(vec4(u_color.rgb, 0), u_color, alpha);
+                \\  out_color = mix(vec4(v_color.rgb, 0), v_color, alpha);
                 \\}
             ,
                 .{ .attribs = &.{
                     .{ .name = "a_position", .kind = .Vec2 },
                     .{ .name = "a_texcoord", .kind = .Vec2 },
+                    .{ .name = "a_color", .kind = .FColor },
                 } },
                 &.{
-                    .{ .name = "u_color", .kind = .FColor },
+                    .{ .name = "u_camera", .kind = .Rect },
                 },
             ),
         };
@@ -1488,7 +1472,6 @@ pub const TextRenderer = struct {
     }
 
     // TODO: validate kerning
-    // TODO: single draw call, maybe
     pub fn drawLine(
         self: TextRenderer,
         gl: Gl,
@@ -1504,7 +1487,7 @@ pub const TextRenderer = struct {
         if (quads.len == 0) return;
         const bounds = Rect.boundingOOP(Quad, quads, "pos");
         const delta = bounds.deltaToAchieve(pos);
-        for (quads) |q| self.drawQuad(gl, camera.move(delta.neg()), q);
+        self.drawQuads(gl, camera.move(delta.neg()), quads, scratch);
     }
 
     pub const Align = enum { left, right, center };
@@ -1538,7 +1521,7 @@ pub const TextRenderer = struct {
         }
 
         const delta = Rect.boundingOOP(Quad, all_quads.items, "pos").deltaToAchieve(pos);
-        for (all_quads.items) |q| self.drawQuad(gl, camera.move(delta.neg()), q);
+        self.drawQuads(gl, camera.move(delta.neg()), all_quads.items, scratch);
     }
 
     // TODO: kerning
@@ -1580,33 +1563,31 @@ pub const TextRenderer = struct {
         }
     };
 
-    pub fn drawQuad(self: TextRenderer, gl: Gl, camera: Rect, quad: Quad) void {
+    pub fn drawQuads(self: TextRenderer, gl: Gl, camera: Rect, sprites: []const Quad, frame_arena: std.mem.Allocator) void {
         // TODO: use a better api
-        const VertexData = extern struct { position: Vec2, texcoord: Vec2 };
+        const VertexData = SpriteVertex;
+        const vertices = frame_arena.alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
+        const triangles = frame_arena.alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
+        for (sprites, 0..) |sprite, i| {
+            for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+                vertices[i * 4 + k] = .{
+                    .a_position = sprite.pos.applyToLocalPosition(vertex),
+                    .a_texcoord = sprite.tex.applyToLocalPosition(vertex),
+                    .a_color = sprite.color,
+                };
+            }
+            const k: Gl.IndexType = @intCast(4 * i);
+            triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
+            triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+        }
+
         gl.useRenderable(
             self.renderable,
-            &[4]VertexData{
-                .{
-                    .position = camera.localFromWorldPosition(quad.pos.get(.bottom_left)),
-                    .texcoord = quad.tex.get(.bottom_left),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(quad.pos.get(.bottom_right)),
-                    .texcoord = quad.tex.get(.bottom_right),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(quad.pos.get(.top_left)),
-                    .texcoord = quad.tex.get(.top_left),
-                },
-                .{
-                    .position = camera.localFromWorldPosition(quad.pos.get(.top_right)),
-                    .texcoord = quad.tex.get(.top_right),
-                },
-            },
-            4 * @sizeOf(VertexData),
-            &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
+            vertices.ptr,
+            vertices.len * @sizeOf(VertexData),
+            triangles,
             &.{
-                .{ .name = "u_color", .value = .{ .FColor = quad.color } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
             },
             self.atlas_texture,
         );

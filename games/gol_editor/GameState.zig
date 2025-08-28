@@ -1090,7 +1090,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (toolbar.zoom != .bounds_lit) {
             var cell_texts = self.canvas.textBatch(0);
-            // TODO: instancing!!
             defer cell_texts.draw(camera);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));

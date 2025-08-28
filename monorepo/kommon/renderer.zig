@@ -11,7 +11,7 @@ pub const RenderableInfo = struct {
 };
 
 pub const PrecomputedShape = struct {
-    pub const IndexType = u16;
+    pub const IndexType = Gl.IndexType;
 
     local_points: []const Vec2,
     triangles: []const [3]IndexType,
@@ -35,3 +35,4 @@ pub const PrecomputedShape = struct {
 const std = @import("std");
 const Vec2 = @import("math.zig").Vec2;
 const Triangulator = @import("triangulator.zig").Triangulator;
+const Gl = @import("Gl.zig");

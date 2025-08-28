@@ -713,6 +713,7 @@ const web_gl = struct {
 
         js.webgl2.drawElements(.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
             u16 => .UNSIGNED_SHORT,
+            u32 => .UNSIGNED_INT,
             else => @compileError("not implemented"),
         }, 0);
     }
@@ -874,6 +875,7 @@ const web_gl = struct {
 
         js.webgl2.drawElementsInstanced(.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
             u16 => .UNSIGNED_SHORT,
+            u32 => .UNSIGNED_INT,
             else => @compileError("not implemented"),
         }, 0, @intCast(instance_count));
     }
