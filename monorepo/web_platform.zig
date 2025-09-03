@@ -26,6 +26,10 @@ const JsReader = struct {
 const js = struct {
     extern fn setCursor(cursor: Mouse.Cursor) void;
 
+    pub const tweak = struct {
+        extern fn addTweakableFColor(index: usize, name_ptr: [*]const u8, name_len: usize, starting_r: f32, starting_g: f32, starting_b: f32) void;
+    };
+
     pub const debug = struct {
         extern fn logInt(arg: u32) void;
         extern fn logFloat(arg: f32) void;
@@ -538,6 +542,8 @@ var images_pointers: std.EnumArray(GameState.Images, *const anyopaque) = .initUn
 
 var other_images: std.SegmentedList(usize, 16) = .{};
 
+var tweakable_fcolors: std.ArrayList(*FColor) = undefined;
+
 const web_gl = struct {
     pub const vtable: Gl = .{
         .clear = clear,
@@ -919,7 +925,30 @@ export fn init(random_seed: u32) void {
     js.webgl2.enable(.BLEND);
     js.webgl2.blendFunc(.SRC_ALPHA, .ONE_MINUS_SRC_ALPHA);
 
-    my_game.init(gpa, web_platform.gl, images_pointers, @intCast(random_seed)) catch unreachable;
+    tweakable_fcolors = .init(web_platform.gpa);
+
+    switch (@typeInfo(@TypeOf(GameState.init)).@"fn".params.len) {
+        5 => my_game.init(
+            gpa,
+            web_platform.gl,
+            images_pointers,
+            @intCast(random_seed),
+        ) catch unreachable,
+        6 => my_game.init(
+            gpa,
+            web_platform.gl,
+            images_pointers,
+            @intCast(random_seed),
+            struct {
+                pub fn anon(name: []const u8, color: *FColor) void {
+                    const index = tweakable_fcolors.items.len;
+                    tweakable_fcolors.append(color) catch std.debug.panic("OoM", .{});
+                    js.tweak.addTweakableFColor(index, name.ptr, name.len, color.r, color.g, color.b);
+                }
+            }.anon,
+        ) catch unreachable,
+        else => comptime unreachable,
+    }
 }
 
 export fn update(delta_seconds: f32) void {
@@ -1029,6 +1058,12 @@ fn keychanged(key: KeyCode, is_pressed: bool) void {
             @field(keyboard.last_change_at, @tagName(x)) = web_platform.global_seconds;
         },
     }
+}
+
+export fn setTweakableFColor(index: usize, r: f32, g: f32, b: f32) void {
+    tweakable_fcolors.items[index].r = r;
+    tweakable_fcolors.items[index].g = g;
+    tweakable_fcolors.items[index].b = b;
 }
 
 pub const std_options = std.Options{

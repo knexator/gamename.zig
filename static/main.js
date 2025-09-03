@@ -1,5 +1,12 @@
 import { keys } from "./keycodes.js";
 
+import GUI from './lil-gui.esm.min.js';
+
+const gui = new GUI();
+const TWEAKABLE = {};
+let params = new URLSearchParams(document.location.search);
+if (params.size == 0) gui.hide();
+
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
 const gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
@@ -189,6 +196,15 @@ async function getWasm() {
       setCursor: (k) => {
         const cursors = ["default", "grab", "grabbing", "pointer"];
         document.body.style.cursor = cursors[k];
+      },
+
+      // tweak
+      addTweakableFColor: (index, name_ptr, name_len, starting_r, starting_g, starting_b) => {
+        const name = getString(name_ptr, name_len);
+        TWEAKABLE[name] = [starting_r, starting_g, starting_b];
+        gui.addColor(TWEAKABLE, name).onChange(value => {
+          wasm_exports.setTweakableFColor(index, value[0], value[1], value[2]);
+        });
       },
 
       // debug
@@ -464,17 +480,17 @@ document.addEventListener("keyup", (ev) => {
 requestAnimationFrame(every_frame);
 
 if (false) {
-// at 48000Hz, each 128-sample block is 0.00026[6] seconds long
-// at 60fps, each frame needs 6.25 blocks
-// To be safe, we put room for 512 blocks, around 1 second.
-const sharedAudioBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * 128 * 512);
-(new Float32Array(sharedAudioBuffer)).fill(0);
+  // at 48000Hz, each 128-sample block is 0.00026[6] seconds long
+  // at 60fps, each frame needs 6.25 blocks
+  // To be safe, we put room for 512 blocks, around 1 second.
+  const sharedAudioBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * 128 * 512);
+  (new Float32Array(sharedAudioBuffer)).fill(0);
 
-// see https://github.com/ringtailsoftware/zig-wasm-audio-framebuffer/blob/1f7fc03b94f5692139aa1c404ba6841c92f5b065/src/pcm-processor.js
-const sharedAudioInfoBuffer = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * 2);
-const audio_write_ptr = new Uint32Array(sharedAudioInfoBuffer, 0, 1);
-const audio_read_ptr = new Uint32Array(sharedAudioInfoBuffer, 4, 1);
-var sample_rate = 48000;
+  // see https://github.com/ringtailsoftware/zig-wasm-audio-framebuffer/blob/1f7fc03b94f5692139aa1c404ba6841c92f5b065/src/pcm-processor.js
+  const sharedAudioInfoBuffer = new SharedArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * 2);
+  const audio_write_ptr = new Uint32Array(sharedAudioInfoBuffer, 0, 1);
+  const audio_read_ptr = new Uint32Array(sharedAudioInfoBuffer, 4, 1);
+  var sample_rate = 48000;
 }
 
 if (false) document.addEventListener('click', async _ => {

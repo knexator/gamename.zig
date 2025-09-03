@@ -18,10 +18,20 @@ pub const stuff = .{
 };
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-const COLORS = struct {
+var COLORS: struct {
+    cell: struct {
+        black: FColor = .fromHex("#444444"),
+        gray: FColor = .fromHex("#999999"),
+        white: FColor = .white,
+    } = .{},
+    cell_text: struct {
+        on_black: FColor = .white,
+        on_gray: FColor = .black,
+        on_white: FColor = .black,
+    } = .{},
     grid: FColor = .fromHex("#545454"),
-    ui_bg: FColor = CellState.black.color(),
-}{};
+    rect_selection_border: FColor = .cyan,
+} = .{};
 
 const CellState = enum {
     black,
@@ -30,9 +40,17 @@ const CellState = enum {
 
     pub fn color(self: CellState) FColor {
         return switch (self) {
-            .black => .fromHex("#444444"),
-            .gray => .fromHex("#999999"),
-            .white => .white,
+            .black => COLORS.cell.black,
+            .gray => COLORS.cell.gray,
+            .white => COLORS.cell.white,
+        };
+    }
+
+    pub fn textColorOver(self: CellState) FColor {
+        return switch (self) {
+            .black => COLORS.cell_text.on_black,
+            .gray => COLORS.cell_text.on_gray,
+            .white => COLORS.cell_text.on_white,
         };
     }
 };
@@ -375,6 +393,7 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
     random_seed: u64,
+    tweakable: fn (name: []const u8, color: *FColor) void,
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
     dst.mem = .init(gpa);
@@ -388,6 +407,17 @@ pub fn init(
 
     dst.all_levels = .init(gpa);
     try dst.addEmptyLevel();
+
+    tweakable("Off", &COLORS.cell.black);
+    tweakable("Dim", &COLORS.cell.gray);
+    tweakable("Bright", &COLORS.cell.white);
+
+    tweakable("grid", &COLORS.grid);
+    tweakable("rect border", &COLORS.rect_selection_border);
+
+    tweakable("text over Off", &COLORS.cell_text.on_black);
+    tweakable("text over Dim", &COLORS.cell_text.on_gray);
+    tweakable("text over Bright", &COLORS.cell_text.on_white);
 }
 
 test "tokenize two spaces" {
@@ -1074,7 +1104,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (true) {
             var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-            // TODO: instancing!!
             defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
@@ -1102,10 +1131,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     kv.value_ptr.*.text(),
                     .centeredAt(kv.key_ptr.*.tof32().add(.half).addY(kv.value_ptr.verticalCorrection())),
                     kv.value_ptr.sizeCorrection(),
-                    if ((visible_board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
-                        .white
-                    else
-                        .black,
+                    @as(CellState, visible_board.cells_states.get(kv.key_ptr.*) orelse .black).textColorOver(),
                 );
             }
         }
@@ -1144,7 +1170,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         visible_type.text(),
                         .centeredAt(pos.tof32().add(.half).addY(visible_type.verticalCorrection())),
                         visible_type.sizeCorrection(),
-                        if (visible_state == .black) .white else .black,
+                        visible_state.textColorOver(),
                     );
                 }
             }
@@ -1171,19 +1197,20 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (toolbar.active_tool == .rect) {
             const rect = toolbar.selectedRect().asRect();
-            self.canvas.strokeRect(camera, rect, 0.1, .cyan);
+            self.canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
         }
 
+        // hide non-square part of the board
         if (true) {
             self.canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .{ .top_left = .zero, .size = .new(0.5, 3) },
-                COLORS.ui_bg,
+                CellState.black.color(),
             );
             self.canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
-                COLORS.ui_bg,
+                CellState.black.color(),
             );
         }
     } else {
@@ -1301,7 +1328,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         for (ui_buttons.items) |button| {
             self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
             self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse CellState.gray.color());
-            if (button.text) |text| try ui_texts.addText(text, .centeredAt(button.pos.getCenter()), 0.75 * (button.text_scale orelse 1), .black);
+            if (button.text) |text| try ui_texts.addText(
+                text,
+                .centeredAt(button.pos.getCenter()),
+                0.75 * (button.text_scale orelse 1),
+                if (button.color == null) CellState.textColorOver(.gray) else .black,
+            );
         }
     }
 
@@ -1342,10 +1374,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         kv.value_ptr.*.text(),
                         .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).addY(kv.value_ptr.verticalCorrection()).scale(scale))),
                         scale * kv.value_ptr.sizeCorrection() * button.pos.size.y,
-                        if ((button.board.cells_states.get(kv.key_ptr.*) orelse .black) == .black)
-                            .white
-                        else
-                            .black,
+                        @as(CellState, button.board.cells_states.get(kv.key_ptr.*) orelse .black).textColorOver(),
                     );
                 }
                 cell_texts.draw(ui_cam);
