@@ -206,6 +206,14 @@ async function getWasm() {
           wasm_exports.setTweakableFColor(index, value[0], value[1], value[2]);
         });
       },
+      addTweakableFloat: (index, name_ptr, name_len, starting, min, max) => {
+        const name = getString(name_ptr, name_len);
+        TWEAKABLE[name] = starting;
+        gui.add(TWEAKABLE, name, min, max).onChange(value => {
+          wasm_exports.setTweakableFloat(index, value);
+        });
+      },
+
 
       // debug
       logInt: (x) => console.log(x),

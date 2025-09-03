@@ -33,6 +33,10 @@ var COLORS: struct {
     rect_selection_border: FColor = .cyan,
 } = .{};
 
+var CONFIG: struct {
+    grid_width: f32 = 0.05,
+} = .{};
+
 const CellState = enum {
     black,
     gray,
@@ -393,7 +397,10 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
     random_seed: u64,
-    tweakable: fn (name: []const u8, color: *FColor) void,
+    tweakable: type,
+    // tweakable: struct {
+    //     fcolor: fn (name: []const u8, value: *FColor) void,
+    // },
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
     dst.mem = .init(gpa);
@@ -408,16 +415,18 @@ pub fn init(
     dst.all_levels = .init(gpa);
     try dst.addEmptyLevel();
 
-    tweakable("Off", &COLORS.cell.black);
-    tweakable("Dim", &COLORS.cell.gray);
-    tweakable("Bright", &COLORS.cell.white);
+    tweakable.fcolor("Off", &COLORS.cell.black);
+    tweakable.fcolor("Dim", &COLORS.cell.gray);
+    tweakable.fcolor("Bright", &COLORS.cell.white);
 
-    tweakable("grid", &COLORS.grid);
-    tweakable("rect border", &COLORS.rect_selection_border);
+    tweakable.fcolor("grid", &COLORS.grid);
+    tweakable.fcolor("rect border", &COLORS.rect_selection_border);
 
-    tweakable("text over Off", &COLORS.cell_text.on_black);
-    tweakable("text over Dim", &COLORS.cell_text.on_gray);
-    tweakable("text over Bright", &COLORS.cell_text.on_white);
+    tweakable.fcolor("text over Off", &COLORS.cell_text.on_black);
+    tweakable.fcolor("text over Dim", &COLORS.cell_text.on_gray);
+    tweakable.fcolor("text over Bright", &COLORS.cell_text.on_white);
+
+    tweakable.float("grid width", &CONFIG.grid_width, 0.0, 0.2);
 }
 
 test "tokenize two spaces" {
@@ -1192,7 +1201,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             }
 
-            self.canvas.instancedSegments(camera, segments.items, 0.05);
+            self.canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
         }
 
         if (toolbar.active_tool == .rect) {
