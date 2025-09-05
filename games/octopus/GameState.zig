@@ -194,9 +194,7 @@ const starting_edges_local: [8]EdgePos = .{
     .{ .pos = .zero, .dir = .ne1 },
 };
 
-canvas: Canvas,
-mem: Mem,
-smooth: LazyState,
+usual: kommon.Usual,
 
 state: union(enum) {
     menu: MenuState,
@@ -231,28 +229,29 @@ const MenuState = struct {
     const level_positions: []const Vec2 = &.{ .new(1, 1), .new(2, 1), .new(3, 1) };
 
     pub fn update(game: *GameState, platform: PlatformGives, loading_t: ?f32) !bool {
+        const canvas = &game.usual.canvas;
         const camera = (Rect{ .top_left = .new(0, (loading_t orelse 0) * -5), .size = .both(4) }).withAspectRatio(platform.aspect_ratio, .grow, .top_center);
-        game.canvas.fillRect(camera, .{ .top_left = .zero, .size = camera.size }, bg_color);
+        canvas.fillRect(camera, .{ .top_left = .zero, .size = camera.size }, bg_color);
         const mouse = platform.getMouse(camera);
         for (level_positions, 0..) |level_pos, level_index| {
             const level_radius = 0.3;
             const hovered = (mouse.cur.position.sub(level_pos).magSq() < level_radius * level_radius) and loading_t == null;
 
-            if (try game.old_states[level_index].solved(game.mem.scratch.allocator())) {
-                game.canvas.strokeCircle(128, camera, level_pos, level_radius + 0.05, 0.03, .black);
+            if (try game.old_states[level_index].solved(game.usual.mem.scratch.allocator())) {
+                canvas.strokeCircle(128, camera, level_pos, level_radius + 0.05, 0.03, .black);
             }
 
-            game.canvas.fillCircle(camera, level_pos, level_radius, try game.smooth.fcolor(
+            canvas.fillCircle(camera, level_pos, level_radius, try game.usual.smooth.fcolor(
                 .fromFormat("bg {d}", .{level_index}),
                 if (hovered) .white else .black,
             ));
-            try game.canvas.drawTextLine(
+            try canvas.drawTextLine(
                 0,
                 camera,
                 .{ .center = level_pos },
-                try std.fmt.allocPrint(game.mem.frame.allocator(), "{d}", .{level_index}),
+                try std.fmt.allocPrint(game.usual.mem.frame.allocator(), "{d}", .{level_index}),
                 level_radius * 1.5,
-                try game.smooth.fcolor(
+                try game.usual.smooth.fcolor(
                     .fromFormat("text {d}", .{level_index}),
                     if (hovered) .black else .white,
                 ),
@@ -272,10 +271,10 @@ const MenuState = struct {
         //     }
         // }
         const all_solved = blk: for (game.old_states) |s| {
-            if (!try s.solved(game.mem.scratch.allocator())) break :blk false;
+            if (!try s.solved(game.usual.mem.scratch.allocator())) break :blk false;
         } else true;
         if (all_solved) {
-            try game.canvas.drawTextLines(
+            try canvas.drawTextLines(
                 0,
                 camera,
                 .center,
@@ -313,7 +312,7 @@ const LoadingState = struct {
         const board_rect: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
         const camera = board_rect.withAspectRatio(3.0 / 4.0, .grow, .top_center).withAspectRatio(platform.aspect_ratio, .grow, .top_center);
         const t = math.easings.easeInOutCubic(self.t);
-        game.canvas.fillRect(camera, camera.move(.new(0, tof32(board_size.y) * t)), bg_color);
+        game.usual.canvas.fillRect(camera, camera.move(.new(0, tof32(board_size.y) * t)), bg_color);
         _ = try MenuState.update(game, platform, t);
 
         if (self.loading) {
@@ -375,15 +374,13 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
-    _: u64,
+    random_seed: u64,
 ) !void {
-    dst.mem = .init(gpa);
+    dst.usual.init(gpa, random_seed, try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
     for (level_infos, &dst.old_states) |info, *state| {
-        try state.init(info, &dst.mem);
+        try state.init(info, &dst.usual.mem);
     }
     dst.admire_solved_level_remaining_time = @splat(0.5);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
-    dst.smooth = .init(gpa);
     // dst.visual_tentacles = undefined;
     // for (&dst.visual_tentacles, starting_edges_local) |*t, s| {
     //     t.* = try .initCapacity(dst.mem.level.allocator(), 20 * VISUAL_POINTS_PER_SEGMENT);
@@ -411,8 +408,8 @@ pub fn init(
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
-    self.canvas.deinit(undefined, gpa);
-    // self.mem.deinit();
+    _ = gpa;
+    self.usual.deinit(undefined);
 }
 
 pub fn beforeHotReload(self: *GameState) !void {
@@ -425,8 +422,7 @@ pub fn afterHotReload(self: *GameState) !void {
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    _ = self.mem.frame.reset(.retain_capacity);
-    _ = self.mem.scratch.reset(.retain_capacity);
+    self.usual.frameStarted(platform);
     return switch (self.state) {
         .menu => MenuState.update(self, platform, null),
         .loading => |*l| l.update(self, platform),
@@ -435,6 +431,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 }
 
 fn updateGame(self: *GameState, platform: PlatformGives) !bool {
+    const mem = &self.usual.mem;
+    const canvas = &self.usual.canvas;
+
     const board_size = self.level_state.board_size;
 
     const board_rect: Rect = .{ .top_left = .zero, .size = board_size.tof32() };
@@ -461,11 +460,11 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         edges.set(s.translate(octopus_pos), true);
     }
     const blocked = self.level_state.blocked;
-    const info = try infoFromEdges(edges.*, blocked, board_size, octopus_pos, self.mem.frame.allocator());
+    const info = try infoFromEdges(edges.*, blocked, board_size, octopus_pos, mem.frame.allocator());
     const tentacles = info.all_tentacles[0..8];
     const tentacle_at = info.tentacle_at;
 
-    const board: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), board_size);
+    const board: kommon.Grid2D(void) = try .initUndefined(mem.frame.allocator(), board_size);
     var it = board.iterator();
     while (it.next()) |pos| {
         const key: Key = .fromFormat("tile {d} {d}", .{ pos.x, pos.y });
@@ -478,19 +477,19 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             .tentacle_tip => |k| kommon.last(tentacles[k]).?.nextPos().equals(pos),
         };
         const is_hot = mouse_over and (self.focus == .none or is_active);
-        const hot_t = try self.smooth.float(
+        const hot_t = try self.usual.smooth.float(
             .fromFormat("hot {d}", .{key}),
             if (is_hot) 1.0 else 0.0,
         );
-        const active_t = try self.smooth.float(
+        const active_t = try self.usual.smooth.float(
             .fromFormat("active {d}", .{key}),
             if (is_active) 1.0 else 0.0,
         );
-        self.canvas.fillRect(camera, rect, if (pos.isEven()) grid_color_1 else grid_color_2);
-        self.canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
+        canvas.fillRect(camera, rect, if (pos.isEven()) grid_color_1 else grid_color_2);
+        canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
 
         if (blocked.at2(pos) and !isBody(octopus_pos, pos)) {
-            self.canvas.fillRectWithRoundCorners(camera, rect.plusMargin(-0.1), 0.1, .gray(0.5));
+            canvas.fillRectWithRoundCorners(camera, rect.plusMargin(-0.1), 0.1, .gray(0.5));
         }
     }
 
@@ -635,7 +634,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
 
                                 edge_ptr.* = false;
                                 defer edge_ptr.* = true;
-                                var edges_to_remove: std.ArrayList(EdgePos) = .init(self.mem.frame.allocator());
+                                var edges_to_remove: std.ArrayList(EdgePos) = .init(mem.frame.allocator());
 
                                 inline for (&.{ l.tile, new_tile }) |p| {
                                     var local_edges = activeEdgesAround(edges.*, p);
@@ -662,13 +661,13 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     }
 
     // for (0..board_size.x + 1) |k| {
-    //     self.canvas.line(camera, &.{ .new(tof32(k), 0), .new(tof32(k), board_size.y) }, 0.02, .black);
+    //     canvas.line(camera, &.{ .new(tof32(k), 0), .new(tof32(k), board_size.y) }, 0.02, .black);
     // }
     // for (0..board_size.y + 1) |k| {
-    //     self.canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
+    //     canvas.line(camera, &.{ .new(0, tof32(k)), .new(board_size.y, tof32(k)) }, 0.02, .black);
     // }
 
-    var all_lost_tentacles: std.ArrayList(Canvas.Segment) = .init(self.mem.scratch.allocator());
+    var all_lost_tentacles: std.ArrayList(Canvas.Segment) = .init(mem.scratch.allocator());
     for (info.all_tentacles[8..]) |tentacle| {
         for (tentacle) |edge| {
             const color = octopus_color;
@@ -678,11 +677,11 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                 .color = color,
             });
             // TODO
-            // self.canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
-            // self.canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
+            // canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
+            // canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
         }
     }
-    self.canvas.instancedSegments(camera, all_lost_tentacles.items, 0.3);
+    canvas.instancedSegments(camera, all_lost_tentacles.items, 0.3);
 
     for (&self.visual_tentacles_distance, tentacles, 0..) |*visual_tentacle_distance, real_tentacle, k| {
         math.towards(visual_tentacle_distance, tof32(real_tentacle.len), @abs(visual_tentacle_distance.* - tof32(real_tentacle.len)) - 2);
@@ -748,9 +747,9 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     //     }
     // }
 
-    // self.canvas.fillInstancedCircles(camera: Rect, points: []const Vec2)
-    var all_segments: std.ArrayList(Canvas.Segment) = .init(self.mem.scratch.allocator());
-    var all_spots: std.ArrayList(Vec2) = .init(self.mem.scratch.allocator());
+    // canvas.fillInstancedCircles(camera: Rect, points: []const Vec2)
+    var all_segments: std.ArrayList(Canvas.Segment) = .init(mem.scratch.allocator());
+    var all_spots: std.ArrayList(Vec2) = .init(mem.scratch.allocator());
     for (tentacles, 0..) |real_tentacle, tentacle_index| {
         const SPACING = 0.1;
         var a = @min(tof32(real_tentacle.len), self.visual_tentacles_distance[tentacle_index]);
@@ -774,10 +773,10 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             const next_is_even = @mod(@as(isize, @intFromFloat(@floor(dist_to_tip + SPACING))), 2) == 0;
             const color: FColor = if (is_even) octopus_color_2 else octopus_color;
             try all_segments.append(.{ .a = a_pos, .b = b_pos, .color = color });
-            // self.canvas.instancedSegments(camera, &.{.{ .a = a_pos, .b = b_pos, .color = color }}, 0.3);
+            // canvas.instancedSegments(camera, &.{.{ .a = a_pos, .b = b_pos, .color = color }}, 0.3);
             // TODO: round edges
             if (false and is_even != next_is_even) {
-                self.canvas.fillCircle(camera, b_pos, 0.15, if (next_is_even) octopus_color_2 else octopus_color);
+                canvas.fillCircle(camera, b_pos, 0.15, if (next_is_even) octopus_color_2 else octopus_color);
             }
 
             if (@abs(@mod(dist_to_tip, 3) - 2.25) < SPACING / 2.0) {
@@ -786,18 +785,18 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         }
         // p.pos = tentaclePosAt(real_tentacle, p.dist_to_base);
     }
-    self.canvas.instancedSegments(camera, all_segments.items, 0.3);
-    for (all_spots.items) |p| self.canvas.fillCircle(camera, p, 0.15, spot_color);
+    canvas.instancedSegments(camera, all_segments.items, 0.3);
+    for (all_spots.items) |p| canvas.fillCircle(camera, p, 0.15, spot_color);
 
     // for (self.visual_tentacles) |visual_tentacle| {
     //     for (visual_tentacle.items[0 .. visual_tentacle.items.len - 1], visual_tentacle.items[1..], 0..) |a, b, k| {
     //         // const color: FColor = octopus_color;
     //         const color: FColor = (if (@mod(@as(isize, @intFromFloat(@floor(tof32(k) / VISUAL_POINTS_PER_SEGMENT - 0.001))), 2) == 0) octopus_color_2 else octopus_color);
     //         // const color: FColor = (if (@mod(k, 2) == 0) octopus_color_2 else octopus_color);
-    //         self.canvas.line(camera, &.{ a.pos, b.pos }, 0.3, color);
-    //         // self.canvas.line(camera, &.{ a, b }, 0.3, color);
-    //         self.canvas.fillCircle(camera, a.pos, 0.15, color);
-    //         self.canvas.fillCircle(camera, b.pos, 0.15, color);
+    //         canvas.line(camera, &.{ a.pos, b.pos }, 0.3, color);
+    //         // canvas.line(camera, &.{ a, b }, 0.3, color);
+    //         canvas.fillCircle(camera, a.pos, 0.15, color);
+    //         canvas.fillCircle(camera, b.pos, 0.15, color);
     //     }
     // }
 
@@ -819,7 +818,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                     .lerp(start, end, 0.8),
                     0.5,
                 );
-                self.canvas.line(camera, &.{
+                canvas.line(camera, &.{
                     start.add(.half),
                     middle_1.add(.half),
                     middle_2.add(.half),
@@ -827,28 +826,28 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                 }, 0.3, color);
                 spot_pos = .lerp(middle_2, end, 0.3);
             } else {
-                self.canvas.line(camera, &.{
+                canvas.line(camera, &.{
                     edge.pos.tof32().add(.half),
                     edge.pos.addSigned(edge.dir).tof32().add(.half),
                 }, 0.3, color);
-                self.canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
+                canvas.fillCircle(camera, edge.pos.tof32().add(.half), 0.15, color);
             }
-            self.canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
+            canvas.fillCircle(camera, edge.nextPos().tof32().add(.half), 0.15, color);
             switch (@mod(dist_to_tip, 3)) {
                 1 => {},
                 2 => {},
-                0 => self.canvas.fillCircle(camera, spot_pos.add(.half), 0.15, spot_color),
+                0 => canvas.fillCircle(camera, spot_pos.add(.half), 0.15, spot_color),
                 else => unreachable,
             }
         }
     };
 
-    // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
-    // self.canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
-    // self.canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
-    self.canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.15), 0.2, octopus_color_body);
-    const solved = try self.level_state.solved(self.mem.scratch.allocator());
-    // self.canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one), .add, &.{
+    // canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
+    // canvas.fillCircle(camera, octopus_pos.add(.one).tof32(), 0.7, octopus_color_body);
+    // canvas.fillRect(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.1), octopus_color_body);
+    canvas.fillRectWithRoundCorners(camera, (Rect{ .top_left = octopus_pos.tof32(), .size = .both(2) }).plusMargin(-0.15), 0.2, octopus_color_body);
+    const solved = try self.level_state.solved(mem.scratch.allocator());
+    // canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one), .add, &.{
     //     .new(-0.2, 0.6),
     //     .new(-0.15, 0.65),
     //     .new(-0.1, 0.68),
@@ -861,7 +860,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     // }), 0.05, octopus_color);
     for ([2]Vec2{ .new(-0.3, 0.4), .new(0.35, 0.4) }) |p| {
         if (solved) {
-            self.canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one).add(p), .add, &funk.map(struct {
+            canvas.line(camera, &funk.mapOOP(octopus_pos.tof32().add(.one).add(p), .add, &funk.map(struct {
                 fn anon(t: f32) Vec2 {
                     return .fromPolar(0.2, t);
                 }
@@ -870,14 +869,14 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
             const eye_center = octopus_pos.add(.one).tof32().add(p);
             const r1 = 0.22;
             const r2 = 0.15;
-            self.canvas.fillCircle(camera, eye_center, r1, .white);
-            self.canvas.fillCircle(camera, eye_center.towardsPure(mouse.cur.position, r1 - r2), r2, .black);
+            canvas.fillCircle(camera, eye_center, r1, .white);
+            canvas.fillCircle(camera, eye_center.towardsPure(mouse.cur.position, r1 - r2), r2, .black);
         }
     }
 
     // for (tentacles, 0..) |tentacle, k| {
-    //     const len = try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{tentacle.items.len});
-    //     try self.canvas.drawTextLine(
+    //     const len = try std.fmt.allocPrint(mem.frame.allocator(), "{d}", .{tentacle.items.len});
+    //     try canvas.drawTextLine(
     //         0,
     //         camera,
     //         .{ .center = octopus_pos.add(.one).tof32().add(Vec2.fromTurns((5.5 + tof32(k)) / 8.0).scale(0.75)) },
@@ -901,7 +900,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                     else
                         pos.tof32().add(.half);
                     const scale: f32 = if (is_start) 0.6 else 0.9;
-                    self.canvas.fillCircle(
+                    canvas.fillCircle(
                         camera,
                         global_center,
                         scale / 2.0,
@@ -910,14 +909,14 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                     switch (c) {
                         .even => @panic("TODO"),
                         .odd => for (0..3) |k| {
-                            self.canvas.fillCircle(camera, global_center.add(.fromPolar(0.25 * scale, 1.0 / 12.0 + tof32(k) / 3.0)), 0.1, text_color);
+                            canvas.fillCircle(camera, global_center.add(.fromPolar(0.25 * scale, 1.0 / 12.0 + tof32(k) / 3.0)), 0.1, text_color);
                         },
-                        else => try self.canvas.drawTextLine(
+                        else => try canvas.drawTextLine(
                             0,
                             camera,
                             .{ .center = global_center },
                             switch (c) {
-                                .exact => |v| try std.fmt.allocPrint(self.mem.frame.allocator(), "{d}", .{v}),
+                                .exact => |v| try std.fmt.allocPrint(mem.frame.allocator(), "{d}", .{v}),
                                 .odd, .even => unreachable,
                                 .idk => "?",
                             },
@@ -938,9 +937,9 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         if (self.level_state.clues_tiles.at2(pos)) |clue| {
             switch (clue) {
                 .starts_here_with_len, .ends_here_with_len => |c| {
-                    // const text = std.fmt.allocPrint(self.mem.frame.allocator(), "with odd length", args: anytype)
+                    // const text = std.fmt.allocPrint(mem.frame.allocator(), "with odd length", args: anytype)
                     const len_text = switch (c) {
-                        .exact => |v| try std.fmt.allocPrint(self.mem.frame.allocator(), "of length {d}", .{v}),
+                        .exact => |v| try std.fmt.allocPrint(mem.frame.allocator(), "of length {d}", .{v}),
                         .odd => "with odd length",
                         .even => "with even length",
                         .idk => "with unknown length",
@@ -951,7 +950,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
                             .ends_here_with_len => "ends here.",
                         },
                     };
-                    try self.canvas.drawTextLines(
+                    try canvas.drawTextLines(
                         0,
                         camera,
                         .center,
@@ -972,17 +971,17 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (self.level_index == 0) {
-        try self.canvas.drawTextLine(
+        try canvas.drawTextLine(
             0,
             camera,
             .{ .center = extra_panel_rect.get(.center) },
             "Visit every tile.",
             0.6,
-            if (try self.level_state.allTilesVisited(self.mem.scratch.allocator())) clue_solved_color else .fromHex("#700029"),
+            if (try self.level_state.allTilesVisited(mem.scratch.allocator())) clue_solved_color else .fromHex("#700029"),
         );
 
-        if (try self.level_state.allTilesVisited(self.mem.scratch.allocator()) and info.all_tentacles.len == 8) {
-            try self.canvas.drawTextLine(
+        if (try self.level_state.allTilesVisited(mem.scratch.allocator()) and info.all_tentacles.len == 8) {
+            try canvas.drawTextLine(
                 0,
                 camera,
                 .{ .center = extra_panel_rect.get(.center).addY(1.0) },
@@ -995,8 +994,8 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
 
     // if (solved) {
     //     const button: Rect = extra_panel_rect.with(.{ .size = .new(1.75, 1) }, .bottom_center).plusMargin(-0.15);
-    //     self.canvas.fillRect(camera, button, .white);
-    //     try self.canvas.drawTextLine(0, camera, .{ .center = button.get(.center) }, "Back", 0.5, .black);
+    //     canvas.fillRect(camera, button, .white);
+    //     try canvas.drawTextLine(0, camera, .{ .center = button.get(.center) }, "Back", 0.5, .black);
     //     if (button.contains(mouse.cur.position) and mouse.wasPressed(.left)) {
     //         self.state = .{ .loading = .toMenu() };
     //     }
@@ -1010,7 +1009,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         var edge_it = self.edges.iterator();
         while (edge_it.next()) |edge| {
             if (self.edges.at(edge)) {
-                self.canvas.line(camera, &.{
+                canvas.line(camera, &.{
                     edge.pos.tof32().add(.half),
                     edge.pos.addSigned(edge.dir).tof32().add(.half),
                 }, 0.2, .black);

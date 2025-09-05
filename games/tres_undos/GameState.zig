@@ -40,10 +40,7 @@ const turn_duration = 0.111;
 const transition_duration = turn_duration * 5;
 const key_retrigger_time = 0.2;
 
-canvas: Canvas,
-mem: Mem,
-
-smooth: kommon.LazyState,
+usual: kommon.Usual,
 
 textures: struct {
     tiles: Gl.Texture,
@@ -535,29 +532,27 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
-    _: u64,
+    random_seed: u64,
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
 
-    dst.mem = .init(gpa);
+    dst.usual.init(gpa, random_seed, try .init(
+        gl,
+        gpa,
+        &.{@embedFile("fonts/Arial.json")},
+        &.{loaded_images.get(.arial_atlas)},
+    ));
 
     dst.textures = .{
         .tiles = gl.buildTexture2D(loaded_images.get(.tiles), true),
         .player = gl.buildTexture2D(loaded_images.get(.player), true),
         .walls = gl.buildTexture2D(loaded_images.get(.walls), true),
     };
-    dst.canvas = try .init(
-        gl,
-        gpa,
-        &.{@embedFile("fonts/Arial.json")},
-        &.{loaded_images.get(.arial_atlas)},
-    );
-    dst.smooth = .init(dst.mem.forever.allocator());
 
     assert(dst.cur_level_index == 0);
-    try dst.cur_level.init(&dst.mem, levels_raw[0]);
+    try dst.cur_level.init(&dst.usual.mem, levels_raw[0]);
 
-    dst.renderables.wobbly = try .init(&dst.canvas);
+    dst.renderables.wobbly = try .init(&dst.usual.canvas);
     // try gl.buildRenderable(
     //     Canvas.sprite_renderable_vertex_src,
     //     \\precision highp float;
@@ -586,8 +581,8 @@ pub fn init(
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
-    self.canvas.deinit(undefined, gpa);
-    self.mem.deinit();
+    _ = gpa;
+    self.usual.deinit(undefined);
 }
 
 pub fn beforeHotReload(self: *GameState) !void {
@@ -600,20 +595,23 @@ pub fn afterHotReload(self: *GameState) !void {
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    _ = self.mem.frame.reset(.retain_capacity);
-    self.smooth.last_delta_seconds = platform.delta_seconds;
+    self.usual.frameStarted(platform);
+
+    const mem = &self.usual.mem;
+    const smooth = &self.usual.smooth;
+    const canvas = &self.usual.canvas;
 
     if (platform.keyboard.wasPressed(.Escape)) self.in_menu = !self.in_menu;
 
     if (self.cur_transition) |*transition| {
         math.towards(&transition.t, 1, platform.delta_seconds * 2.0 / transition_duration);
         if (!transition.done and transition.t >= 0) {
-            try self.cur_level.init(&self.mem, levels_raw[transition.target_index]);
+            try self.cur_level.init(mem, levels_raw[transition.target_index]);
             self.cur_level_index = transition.target_index;
             transition.done = true;
             self.anim_t = 0;
             self.in_menu = false;
-            try self.smooth.set(f32, .fromString("menu_t"), 0.0);
+            try smooth.set(f32, .fromString("menu_t"), 0.0);
             self.pressed_undos_in_a_row = 0;
         }
         if (transition.done and transition.t >= 1) {
@@ -623,7 +621,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     try self.drawGame(platform);
 
-    const menu_t = try self.smooth.floatLinear(.fromString("menu_t"), if (self.in_menu) 1.0 else 0.0, 0.15);
+    const menu_t = try smooth.floatLinear(.fromString("menu_t"), if (self.in_menu) 1.0 else 0.0, 0.15);
     if (menu_t > 0) {
         const ui_cam: Rect = Rect.fromCenterAndSize(.zero, Vec2.new(6, 3).scale(1.75)).withAspectRatio(platform.aspect_ratio, .grow, .center);
         const menu_panel: Rect = .lerp(
@@ -631,8 +629,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .fromCenterAndSize(.zero, .new(6, 3)),
             math.easings.easeInOutCubic(menu_t),
         );
-        const asdf: kommon.Grid2D(void) = try .initUndefined(self.mem.frame.allocator(), .new(6, 3));
-        var buttons: std.ArrayList(Rect) = .init(self.mem.frame.allocator());
+        const asdf: kommon.Grid2D(void) = try .initUndefined(mem.frame.allocator(), .new(6, 3));
+        var buttons: std.ArrayList(Rect) = .init(mem.frame.allocator());
         var it = asdf.iterator();
         while (it.next()) |p| {
             try buttons.append(asdf.getTileRect(menu_panel, p).plusMargin(-0.05));
@@ -643,9 +641,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (r.contains(mouse.cur.position)) break :blk k;
         } else null;
 
-        self.canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.lerp(0, 0.5, menu_t)));
+        canvas.fillRect(.unit, .unit, FColor.black.withAlpha(math.lerp(0, 0.5, menu_t)));
 
-        self.canvas.fillRect(
+        canvas.fillRect(
             ui_cam,
             menu_panel.plusMargin(0.05),
             .fromHex("#383F69"),
@@ -653,19 +651,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         for (buttons.items, 0..) |r, k| {
             const is_hovered = k == hovered;
             const is_active = k == self.cur_level_index;
-            defer self.canvas.borderRect(ui_cam, r, 0.025, .inner, .fromHex("#565EA1"));
-            defer if (is_active) self.canvas.borderRect(ui_cam, r, 0.15, .inner, .fromHex("#7988C0"));
-            self.canvas.fillRect(ui_cam, r, try self.smooth.fcolor(
+            defer canvas.borderRect(ui_cam, r, 0.025, .inner, .fromHex("#565EA1"));
+            defer if (is_active) canvas.borderRect(ui_cam, r, 0.15, .inner, .fromHex("#7988C0"));
+            canvas.fillRect(ui_cam, r, try smooth.fcolor(
                 .fromFormat("bg {d}", .{k}),
                 if (is_hovered) .fromHex("#7988C0") else .fromHex("#4F69BA"),
             ));
-            try self.canvas.drawTextLine(
+            try canvas.drawTextLine(
                 0,
                 ui_cam,
                 .{ .center = r.getCenter() },
                 (kommon.safeAt(LevelData, levels_raw, k) orelse std.mem.zeroInit(LevelData, .{ .label = "???" })).label,
                 0.3,
-                try self.smooth.fcolor(.fromFormat("text {d}", .{k}), if (is_hovered) .white else .black),
+                try smooth.fcolor(.fromFormat("text {d}", .{k}), if (is_hovered) .white else .black),
             );
         }
 
@@ -680,14 +678,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const dir = levels_raw[transition.target_index].in_dir;
         if (transition.t <= 0) {
             const t = math.remapClamped(transition.t, -1, 0, 0, 1);
-            self.canvas.fillRect(
+            canvas.fillRect(
                 .fromCenterAndSize(.zero, .one),
                 .fromCenterAndSize(dir.tof32().neg().scale(1 - t), .one),
                 .fromHex("#383D68"),
             );
         } else {
             const t = math.remap(transition.t, 0, 1, 0, 1);
-            self.canvas.fillRect(
+            canvas.fillRect(
                 .fromCenterAndSize(.zero, .one),
                 .fromCenterAndSize(dir.tof32().scale(t), .one),
                 .fromHex("#383D68"),
@@ -731,7 +729,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !void {
 
     if (self.anim_t == 1) {
         if (self.input_queue.popFirst()) |input| {
-            switch (try self.cur_level.doTurn(&self.mem, input)) {
+            switch (try self.cur_level.doTurn(&self.usual.mem, input)) {
                 .usual => {
                     platform.sound_queue.insert(.step);
                     self.anim_t = 0;
@@ -763,14 +761,14 @@ fn drawGame(self: *GameState, platform: PlatformGives) !void {
     );
     // const mouse = platform.getMouse(camera);
     platform.gl.clear(.fromHex("#4E4E4E"));
-    self.cur_level.draw(self.anim_t, &self.mem, camera, &self.canvas, self.textures, self.renderables, platform.global_seconds);
+    self.cur_level.draw(self.anim_t, &self.usual.mem, camera, &self.usual.canvas, self.textures, self.renderables, platform.global_seconds);
 
     if (self.cur_level_index == 0) {
         // TODO: multiline
-        try self.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 7) }, "WASD / Arrow", 0.5, .fromHex("#7988C0"));
-        try self.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 7.5) }, "Keys to Move", 0.5, .fromHex("#7988C0"));
+        try self.usual.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 7) }, "WASD / Arrow", 0.5, .fromHex("#7988C0"));
+        try self.usual.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 7.5) }, "Keys to Move", 0.5, .fromHex("#7988C0"));
 
-        try self.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 8.2) }, "Z to Undo", 0.5, .fromHex("#7988C0"));
+        try self.usual.canvas.drawTextLine(0, camera, .{ .center = .new(11.5, 8.2) }, "Z to Undo", 0.5, .fromHex("#7988C0"));
     }
 }
 

@@ -21,29 +21,13 @@ pub const stuff = .{
 
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
-canvas: Canvas,
-mem: struct {
-    frame: std.heap.ArenaAllocator,
-
-    pub fn init(gpa: std.mem.Allocator) @This() {
-        return .{ .frame = .init(gpa) };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.frame.deinit();
-    }
-
-    pub fn onFrameBegin(self: *@This()) void {
-        _ = self.frame.reset(.retain_capacity);
-    }
-},
+usual: kommon.Usual,
 
 focus: union(enum) {
     none,
     placing_light: Key,
     painting: enum { none, cross },
 } = .none,
-smooth: LazyState,
 
 board: kommon.Grid2D(TileState),
 const TileState = union(enum) {
@@ -73,29 +57,25 @@ pub fn init(
     gpa: std.mem.Allocator,
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
-    _: u64,
+    random_seed: u64,
 ) !void {
-    dst.* = .{
-        .canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
-        .mem = .init(gpa),
-        .smooth = .init(gpa),
-        .board = try .fromAsciiAndMap(gpa, raw_puzzle, struct {
-            pub fn anon(c: u8) TileState {
-                return switch (c) {
-                    '.' => .{ .gap = .{} },
-                    '0'...'4' => |n| .{ .block = n - '0' },
-                    'X' => .{ .block = null },
-                    else => panic("bad char: {d}", .{c}),
-                };
-            }
-        }.anon),
-    };
+    dst.usual.init(gpa, random_seed, try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
+    dst.board = try .fromAsciiAndMap(gpa, raw_puzzle, struct {
+        pub fn anon(c: u8) TileState {
+            return switch (c) {
+                '.' => .{ .gap = .{} },
+                '0'...'4' => |n| .{ .block = n - '0' },
+                'X' => .{ .block = null },
+                else => panic("bad char: {d}", .{c}),
+            };
+        }
+    }.anon);
 }
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
-    self.canvas.deinit(undefined, gpa);
-    self.board.deinit(gpa);
+    _ = gpa;
+    self.usual.deinit(undefined);
 }
 
 pub fn beforeHotReload(self: *GameState) !void {
@@ -172,7 +152,11 @@ const Tile = struct {
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    self.mem.onFrameBegin();
+    self.usual.frameStarted(platform);
+    const mem = &self.usual.mem;
+    const smooth = &self.usual.smooth;
+    const canvas = &self.usual.canvas;
+
     const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
     const mouse = platform.getMouse(camera);
     platform.gl.clear(.gray(0.5));
@@ -184,9 +168,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const tile: *TileState = self.board.getPtr(pos);
         switch (tile.*) {
             .block => |b| {
-                self.canvas.fillRect(camera, rect, .black);
+                canvas.fillRect(camera, rect, .black);
                 if (b) |v|
-                    try self.canvas.text_renderers[0].drawLine(
+                    try canvas.text_renderers[0].drawLine(
                         platform.gl,
                         camera,
                         .{ .center = rect.get(.center) },
@@ -200,26 +184,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         },
                         rect.size.y,
                         .white,
-                        self.mem.frame.allocator(),
+                        mem.frame.allocator(),
                     );
             },
             .gap => |*g| {
                 const mouse_over = rect.contains(mouse.cur.position);
-                self.canvas.fillRect(camera, rect, try self.smooth.fcolor(
+                canvas.fillRect(camera, rect, try smooth.fcolor(
                     .fromFormat("bg {d}", .{key}),
                     if (g.lighted) .fromHex("#BBFF87") else .white,
                 ));
                 const is_active = std.meta.eql(self.focus, .{ .placing_light = key }) or (mouse_over and std.meta.activeTag(self.focus) == .painting);
-                const hot_t = try self.smooth.float(
+                const hot_t = try smooth.float(
                     .fromFormat("hot {d}", .{key}),
                     if (mouse_over and (self.focus == .none or is_active)) 1.0 else 0.0,
                 );
-                const active_t = try self.smooth.float(
+                const active_t = try smooth.float(
                     .fromFormat("active {d}", .{key}),
                     if (mouse_over and is_active) 1.0 else 0.0,
                 );
                 if (g.mark != .none) {
-                    try self.canvas.text_renderers[0].drawLine(
+                    try canvas.text_renderers[0].drawLine(
                         platform.gl,
                         camera,
                         .{ .center = rect.get(.center) },
@@ -234,10 +218,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             .lamp => .fromHex("#007F61"),
                             .cross => .fromHex("#00A11B"),
                         },
-                        self.mem.frame.allocator(),
+                        mem.frame.allocator(),
                     );
                 }
-                self.canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
+                canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
 
                 switch (self.focus) {
                     .none => {
@@ -291,7 +275,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 }
 
 fn updateLighted(self: *GameState) !void {
-    var lamp_positions: std.ArrayList(UVec2) = try .initCapacity(self.mem.frame.allocator(), self.board.size.x * 4);
+    var lamp_positions: std.ArrayList(UVec2) = try .initCapacity(self.usual.mem.frame.allocator(), self.board.size.x * 4);
 
     // set all tiles to off, and store lamp positions
     {

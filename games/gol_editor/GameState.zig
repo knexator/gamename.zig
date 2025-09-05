@@ -385,11 +385,7 @@ levelselect_view_offset: f32 = 0,
 pool_boardstate: std.heap.MemoryPool(BoardState),
 pool_levelstate: std.heap.MemoryPool(LevelState),
 
-random: std.Random.DefaultPrng,
-canvas: Canvas,
-mem: Mem,
-smooth: kommon.LazyState,
-// lazy_state: LocalDecisions,
+usual: kommon.Usual,
 
 pub fn init(
     dst: *GameState,
@@ -403,11 +399,12 @@ pub fn init(
     // },
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
-    dst.mem = .init(gpa);
-    dst.canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)});
-    dst.smooth = .init(dst.mem.forever.allocator());
-    // dst.lazy_state = .init(gpa);
-    dst.random = .init(random_seed);
+
+    dst.usual.init(
+        gpa,
+        random_seed,
+        try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
+    );
 
     dst.pool_levelstate = .init(gpa);
     dst.pool_boardstate = .init(gpa);
@@ -461,7 +458,7 @@ fn loadWorld(self: *GameState, in: std.io.AnyReader) !void {
 
     try nextReadIs(in, "W1\n");
 
-    const contents = try in.readAllAlloc(self.mem.scratch.allocator(), std.math.maxInt(usize));
+    const contents = try in.readAllAlloc(self.usual.mem.scratch.allocator(), std.math.maxInt(usize));
     var it = std.mem.tokenizeSequence(u8, contents, "\n\n");
     while (it.next()) |c| {
         try self.addLevelFromText(c);
@@ -473,12 +470,12 @@ fn addLevelFromText(self: *GameState, text: []const u8) !void {
     level.* = .{
         .initial_board = blk: {
             const res = try self.pool_boardstate.create();
-            try res.init(self.mem.gpa);
-            try res.fromText(self.mem.scratch.allocator(), text);
+            try res.init(self.usual.mem.gpa);
+            try res.fromText(self.usual.mem.scratch.allocator(), text);
             break :blk res;
         },
         .board = undefined,
-        .saved_states = .init(self.mem.gpa),
+        .saved_states = .init(self.usual.mem.gpa),
     };
     level.board = try level.initial_board.cloneAndGetPtr(&self.pool_boardstate);
     try level.saved_states.append(try level.board.cloneAndGetPtr(&self.pool_boardstate));
@@ -490,7 +487,7 @@ fn addEmptyLevel(self: *GameState) !void {
     level.* = .{
         .initial_board = blk: {
             const res = try self.pool_boardstate.create();
-            try res.init(self.mem.gpa);
+            try res.init(self.usual.mem.gpa);
 
             try res.cells_states.put(.new(0, 1), .gray);
             try res.cells_states.put(.new(0, 2), .white);
@@ -503,7 +500,7 @@ fn addEmptyLevel(self: *GameState) !void {
             break :blk res;
         },
         .board = undefined,
-        .saved_states = .init(self.mem.gpa),
+        .saved_states = .init(self.usual.mem.gpa),
     };
     level.board = try level.initial_board.cloneAndGetPtr(&self.pool_boardstate);
     try level.saved_states.append(try level.board.cloneAndGetPtr(&self.pool_boardstate));
@@ -512,8 +509,8 @@ fn addEmptyLevel(self: *GameState) !void {
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
-    self.canvas.deinit(undefined, gpa);
-    // self.mem.deinit();
+    _ = gpa;
+    self.usual.deinit(undefined);
 }
 
 pub fn beforeHotReload(self: *GameState) !void {
@@ -526,19 +523,17 @@ pub fn afterHotReload(self: *GameState) !void {
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
-    _ = self.mem.frame.reset(.retain_capacity);
-    _ = self.mem.scratch.reset(.retain_capacity);
-    _ = self.canvas.frame_arena.reset(.retain_capacity);
-    self.smooth.last_delta_seconds = platform.delta_seconds;
-    // self.lazy_state.frameStart();
+    self.usual.frameStarted(platform);
+    const mem = &self.usual.mem;
+    const canvas = &self.usual.canvas;
 
     if (platform.userUploadedFile()) |reader| {
         defer platform.forgetUserUploadedFile();
 
         if (self.cur_level) |cur_level| {
-            const text = try reader.readAllAlloc(self.mem.frame.allocator(), std.math.maxInt(usize));
-            defer self.mem.frame.allocator().free(text);
-            try cur_level.board.fromText(self.mem.frame.allocator(), text);
+            const text = try reader.readAllAlloc(mem.frame.allocator(), std.math.maxInt(usize));
+            defer mem.frame.allocator().free(text);
+            try cur_level.board.fromText(mem.frame.allocator(), text);
         } else {
             try self.loadWorld(reader);
         }
@@ -579,13 +574,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         text: ?[]const u8,
         text_scale: ?f32 = null,
         radio_selected: bool,
-    }) = .init(self.mem.frame.allocator());
+    }) = .init(mem.frame.allocator());
     var catalogue_buttons: std.ArrayList(struct {
         pos: Rect,
         radio_selected: bool,
         board: *const BoardState,
         hot: bool,
-    }) = .init(self.mem.frame.allocator());
+    }) = .init(mem.frame.allocator());
 
     // always available: toggle editor
     if (platform.keyboard.wasPressed(.KeyE)) {
@@ -807,7 +802,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (hot) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
+                    var buf: std.ArrayList(u8) = .init(mem.frame.allocator());
                     defer buf.deinit();
                     try cur_level.board.toText(buf.writer().any());
                     platform.downloadAsFile("gol_level.txt", buf.items);
@@ -969,13 +964,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                 platform.setCursor(.could_grab);
                                 if (mouse.wasPressed(.left)) {
                                     toolbar.rect_tool_state = .{ .moving = try cur_level.board.getSubrect(
-                                        self.mem.gpa,
+                                        mem.gpa,
                                         toolbar.selectedRect(),
                                     ) };
                                     try cur_level.board.clearSubrect(toolbar.selectedRect());
                                 } else if (mouse.wasPressed(.right)) {
                                     toolbar.rect_tool_state = .{ .moving = try cur_level.board.getSubrect(
-                                        self.mem.gpa,
+                                        mem.gpa,
                                         toolbar.selectedRect(),
                                     ) };
                                 }
@@ -1004,7 +999,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                                 toolbar.moveSelectedRect(mouse_cell_delta);
                             } else {
                                 try cur_level.board.setSubrect(toolbar.rect_tool_state.moving, toolbar.selectedRect(), toolbar.rect_tool_moving_include_blank);
-                                toolbar.rect_tool_state.moving.deinit(self.mem.gpa);
+                                toolbar.rect_tool_state.moving.deinit(mem.gpa);
                                 toolbar.rect_tool_state = .none;
                             }
                         },
@@ -1061,8 +1056,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         r.mirrorHorizontally();
                     }
                     if (platform.keyboard.wasPressed(.KeyQ)) {
-                        const new_r = try r.rotatedPositive(self.mem.gpa);
-                        r.deinit(self.mem.gpa);
+                        const new_r = try r.rotatedPositive(mem.gpa);
+                        r.deinit(mem.gpa);
                         r.* = new_r;
                         toolbar.selected_rect_inner_corner1 = cell_under_mouse.add(toolbar.selected_rect_inner_corner1.sub(cell_under_mouse).rotateOnce());
                         toolbar.selected_rect_inner_corner2 = cell_under_mouse.add(toolbar.selected_rect_inner_corner2.sub(cell_under_mouse).rotateOnce());
@@ -1112,8 +1107,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const visible_board = ghost_board orelse cur_level.board;
 
         if (true) {
-            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-            defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
+            defer canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
             var it = visible_board.cells_states.iterator();
@@ -1128,7 +1123,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         if (toolbar.zoom != .bounds_lit) {
-            var cell_texts = self.canvas.textBatch(0);
+            var cell_texts = canvas.textBatch(0);
             defer cell_texts.draw(camera);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
@@ -1148,11 +1143,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (std.meta.activeTag(toolbar.rect_tool_state) == .moving) {
             const values = toolbar.rect_tool_state.moving;
 
-            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
-            var cell_texts = self.canvas.textBatch(0);
+            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
+            var cell_texts = canvas.textBatch(0);
 
             defer cell_texts.draw(camera);
-            defer self.canvas.fillShapesInstanced(camera, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+            defer canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
             var it = values.iteratorSigned();
             while (it.next()) |p| {
@@ -1187,7 +1182,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // board lines
         if (true) {
-            var segments: std.ArrayList(Canvas.Segment) = .init(self.mem.frame.allocator());
+            var segments: std.ArrayList(Canvas.Segment) = .init(mem.frame.allocator());
             {
                 var x = @floor(camera.top_left.x);
                 while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
@@ -1201,22 +1196,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             }
 
-            self.canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
+            canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
         }
 
         if (toolbar.active_tool == .rect) {
             const rect = toolbar.selectedRect().asRect();
-            self.canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
+            canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
         }
 
         // hide non-square part of the board
         if (true) {
-            self.canvas.fillRect(
+            canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .{ .top_left = .zero, .size = .new(0.5, 3) },
                 CellState.black.color(),
             );
-            self.canvas.fillRect(
+            canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
                 CellState.black.color(),
@@ -1276,7 +1271,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (hot) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    var buf: std.ArrayList(u8) = .init(self.mem.frame.allocator());
+                    var buf: std.ArrayList(u8) = .init(mem.frame.allocator());
                     defer buf.deinit();
                     try saveWorld(self.all_levels.items, buf.writer().any());
                     platform.downloadAsFile("gol_world.txt", buf.items);
@@ -1324,7 +1319,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // draw
 
         if (true) {
-            var logo_text = self.canvas.textBatch(0);
+            var logo_text = canvas.textBatch(0);
             try logo_text.addText("GoL", .centeredAt(.new(2, 0.5)), 0.5, .white);
             logo_text.draw(camera);
         }
@@ -1332,11 +1327,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     // ui buttons
     if (true) {
-        var ui_texts = self.canvas.textBatch(0);
+        var ui_texts = canvas.textBatch(0);
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
-            self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
-            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse CellState.gray.color());
+            canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
+            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse CellState.gray.color());
             if (button.text) |text| try ui_texts.addText(
                 text,
                 .centeredAt(button.pos.getCenter()),
@@ -1352,15 +1347,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             // only draw if actually visible
             if (ui_cam.intersect(button.pos) == null) continue;
 
-            self.canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
-            self.canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), CellState.black.color());
+            canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
+            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), CellState.black.color());
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
             const offset = bounds.top_left;
             const scale = 1.0 / bounds.size.y;
 
             {
-                var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(self.mem.frame.allocator());
+                var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
                 var it = button.board.cells_states.iterator();
                 while (it.next()) |kv| {
                     if (kv.value_ptr.* == .black) continue;
@@ -1370,11 +1365,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         .color = kv.value_ptr.*.color(),
                     });
                 }
-                self.canvas.fillShapesInstanced(ui_cam, self.canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+                canvas.fillShapesInstanced(ui_cam, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
             }
 
             {
-                var cell_texts = self.canvas.textBatch(0);
+                var cell_texts = canvas.textBatch(0);
                 var it = button.board.cells_types.iterator();
                 while (it.next()) |kv| {
                     if (kv.value_ptr.* == .empty) continue;
