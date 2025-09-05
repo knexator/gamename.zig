@@ -59,11 +59,8 @@ renderables: struct {
             u_camera: Rect,
             u_time: f32,
         },
-        .{
-            .vertices_per_sprite = 4,
-            .triangles_per_sprite = 2,
-            .sprite_triangles = undefined,
-        },
+        Canvas.sprite_triangulation,
+        Canvas.Sprite.verticesFromSprite,
         Canvas.sprite_renderable_vertex_src,
         \\precision highp float;
         \\out vec4 out_color;

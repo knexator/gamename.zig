@@ -493,6 +493,19 @@ pub const Sprite = struct {
     unit_scale_is: enum { hor, ver } = .ver,
     texcoord: Rect,
     tint: FColor = .white,
+
+    pub fn verticesFromSprite(sprite: Sprite) [4]SpriteVertex {
+        var vertices: [4]SpriteVertex = undefined;
+        for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
+            if (sprite.pivot != .top_left) @panic("TODO: other pivots");
+            vertices[k] = .{
+                .a_position = sprite.point.applyToLocalPosition(vertex),
+                .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
+                .a_color = sprite.tint,
+            };
+        }
+        return vertices;
+    }
 };
 
 pub const SpriteVertex = extern struct { a_position: Vec2, a_texcoord: Vec2, a_color: FColor };
@@ -663,11 +676,21 @@ pub const DrawableTriangulation = struct {
     // TODO: from triangles
 };
 
+pub const sprite_triangulation: DrawableTriangulation = .{
+    .vertices_per_sprite = 4,
+    .triangles_per_sprite = 2,
+    .sprite_triangles = &.{
+        .{ 0, 1, 2 },
+        .{ 3, 2, 1 },
+    },
+};
+
 pub fn Drawable(
     VertexData: type,
     SpriteData: type,
     UniformData: type,
     triangulation: DrawableTriangulation,
+    verticesFromSprite: fn (sprite: SpriteData) [triangulation.vertices_per_sprite]VertexData,
     vertex_src: [:0]const u8,
     fragment_src: [:0]const u8,
 ) type {
@@ -675,7 +698,7 @@ pub fn Drawable(
         const Self = @This();
 
         pub const Batch = struct {
-            drawable: Self,
+            drawable: *const Self,
             sprites: std.ArrayListUnmanaged(SpriteData),
 
             pub fn add(self: *Batch, sprite: SpriteData) void {
@@ -688,11 +711,10 @@ pub fn Drawable(
             }
         };
 
-        // TODO: maybe remove ref
         canvas: *Canvas,
         renderable: Gl.Renderable,
 
-        pub fn batch(self: Self) Batch {
+        pub fn batch(self: *const Self) Batch {
             return .{
                 .drawable = self,
                 .sprites = .empty,
@@ -733,20 +755,16 @@ pub fn Drawable(
             const vertices = scratch.alloc(VertexData, triangulation.vertices_per_sprite * sprites.len) catch @panic("OoM");
             const triangles = scratch.alloc([3]Gl.IndexType, triangulation.triangles_per_sprite * sprites.len) catch @panic("OoM");
             for (sprites, 0..) |sprite, i| {
-                // TODO: generalize
-                assert(triangulation.vertices_per_sprite == 4);
-                assert(triangulation.triangles_per_sprite == 2);
-                for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
-                    if (sprite.pivot != .top_left) @panic("TODO: other pivots");
-                    vertices[i * 4 + k] = .{
-                        .a_position = sprite.point.applyToLocalPosition(vertex),
-                        .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
-                        .a_color = sprite.tint,
-                    };
+                const local_vertices = verticesFromSprite(sprite);
+                const N = triangulation.vertices_per_sprite;
+                for (local_vertices, vertices[i * N ..][0..N]) |v, *dst| {
+                    dst.* = v;
                 }
-                const k: Gl.IndexType = @intCast(4 * i);
-                triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
-                triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
+                const base: Gl.IndexType = @intCast(i * N);
+                const K = triangulation.triangles_per_sprite;
+                for (triangulation.sprite_triangles, triangles[i * K ..][0..K]) |t, *dst| {
+                    dst.* = .{ base + t[0], base + t[1], base + t[2] };
+                }
             }
 
             const uniform_info = @typeInfo(UniformData).@"struct";
