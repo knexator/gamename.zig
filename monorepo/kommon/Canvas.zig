@@ -1542,33 +1542,6 @@ pub const TextRenderer = struct {
         self.drawQuads(gl, camera.move(delta.neg()), all_quads.items, scratch);
     }
 
-    // TODO: kerning
-    // TODO: single draw call, maybe
-    /// deprecated, call drawLine
-    pub fn drawText(
-        self: TextRenderer,
-        gl: Gl,
-        camera: Rect,
-        bottom_left: Vec2,
-        text: []const u8,
-        em: f32,
-        color: FColor,
-    ) void {
-        std.log.debug("calling a deprecated function", .{});
-        // self.drawText(gl, camera, .{.bottom_left = bottom_left}, text, em, color)
-        var cursor: Vec2 = bottom_left;
-        for (text) |char| {
-            cursor = self.drawLetter(
-                gl,
-                camera,
-                cursor,
-                char,
-                em,
-                color,
-            );
-        }
-    }
-
     pub const Quad = struct {
         pos: Rect,
         tex: Rect,
@@ -1652,20 +1625,6 @@ pub const TextRenderer = struct {
         } else null;
 
         return .{ bottom_left.addX(em * glyph_info.advance), quad };
-    }
-
-    pub fn drawLetter(
-        self: TextRenderer,
-        gl: Gl,
-        camera: Rect,
-        bottom_left: Vec2,
-        letter: u8,
-        em: f32,
-        color: FColor,
-    ) Vec2 {
-        const new_cursor, const quad = self.addLetter(bottom_left, letter, em, color);
-        if (quad) |q| self.drawQuad(gl, camera, q);
-        return new_cursor;
     }
 };
 
