@@ -862,18 +862,18 @@ pub const ProgramInfo = struct {
 
 const Sound = struct {
     // Taken from apple.wav
-    // const spec: c.SDL_AudioSpec = .{
-    //     .format = c.SDL_AUDIO_U8,
-    //     .channels = 1,
-    //     .freq = 44100,
-    // };
-
-    // Taken from chesstory
     const spec: c.SDL_AudioSpec = .{
-        .format = c.SDL_AUDIO_S16LE,
-        .channels = 2,
+        .format = c.SDL_AUDIO_U8,
+        .channels = 1,
         .freq = 44100,
     };
+
+    // Taken from chesstory
+    // const spec: c.SDL_AudioSpec = .{
+    //     .format = c.SDL_AUDIO_S16LE,
+    //     .channels = 2,
+    //     .freq = 44100,
+    // };
 
     data: []u8,
 

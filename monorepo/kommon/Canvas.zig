@@ -418,6 +418,7 @@ pub fn fillShapeWithVertexColors(
 }
 
 // TODO: multiple shapes in one draw call
+// maybe by having this hidden behind a batch API
 pub fn fillShape(
     self: Canvas,
     camera: Rect,
@@ -1236,6 +1237,13 @@ pub const TextBatch = struct {
     }
 };
 
+/// prefer .textBatch
+pub fn drawText(self: *Canvas, font_index: usize, camera: Rect, text: []const u8, pos: TextRenderer.TextPosition, em: f32, color: FColor) !void {
+    var batch = self.textBatch(font_index);
+    try batch.addText(text, pos, em, color);
+    batch.draw(camera);
+}
+
 pub fn textBatch(self: *Canvas, font_index: usize) TextBatch {
     return .{
         .canvas = self,
@@ -1697,5 +1705,5 @@ const IVec2 = math.IVec2;
 const funk = @import("funktional.zig");
 const Gl = @import("Gl.zig");
 const renderer = @import("renderer.zig");
-const PrecomputedShape = renderer.PrecomputedShape;
-const RenderableInfo = renderer.RenderableInfo;
+pub const PrecomputedShape = renderer.PrecomputedShape;
+pub const RenderableInfo = renderer.RenderableInfo;

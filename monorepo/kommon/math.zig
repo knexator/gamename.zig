@@ -1874,6 +1874,14 @@ pub const Random = struct {
             this.rnd.int(u8),
         );
     }
+
+    pub fn fcolor(this: Random) FColor {
+        return FColor.new(
+            this.rnd.float(f32),
+            this.rnd.float(f32),
+            this.rnd.float(f32),
+        );
+    }
 };
 
 // https://easings.net/

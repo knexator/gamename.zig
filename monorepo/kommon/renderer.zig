@@ -16,6 +16,16 @@ pub const PrecomputedShape = struct {
     local_points: []const Vec2,
     triangles: []const [3]IndexType,
 
+    /// takes ownership of points
+    pub fn fromOwnedPoints(gpa: std.mem.Allocator, points: []const Vec2) !PrecomputedShape {
+        std.debug.assert(points.len >= 3);
+        const triangles = try Triangulator.triangulate(IndexType, gpa, points, null);
+        return .{
+            .local_points = points,
+            .triangles = triangles,
+        };
+    }
+
     pub fn fromPoints(gpa: std.mem.Allocator, points: []const Vec2) !PrecomputedShape {
         std.debug.assert(points.len >= 3);
         const triangles = try Triangulator.triangulate(IndexType, gpa, points, null);
