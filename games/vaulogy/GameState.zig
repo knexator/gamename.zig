@@ -29,6 +29,9 @@ usual: kommon.Usual,
 
 drawer: Drawer,
 camera: Rect = .fromCenterAndSize(.zero, .new(16, 9)),
+core_mem: core.VeryPermamentGameStuff,
+scoring_run: core.ScoringRun,
+execution_thread: core.ExecutionThread,
 
 pub fn init(
     dst: *GameState,
@@ -52,6 +55,26 @@ pub fn init(
     // tweakable.fcolor("bg", &COLORS.bg);
 
     dst.drawer = try .init(&dst.usual);
+
+    dst.core_mem = .init(gpa);
+    dst.scoring_run = try .init(
+        \\ peanoSum {
+        \\     (@a . nil) -> @a;
+        \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
+        \\ }
+        \\
+        \\ peanoMul {
+        \\     (@a . nil) -> nil;
+        \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
+        \\         @ab -> peanoSum: (@ab . @a);
+        \\     }
+        \\ }
+    , &dst.core_mem);
+    dst.execution_thread = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
+
+    // std.log.debug("{any}", .{
+    //     try dst.execution_thread.getFinalResult(&dst.scoring_run),
+    // });
 }
 
 // TODO: take gl parameter
