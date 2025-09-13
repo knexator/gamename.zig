@@ -78,8 +78,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const mouse = platform.getMouse(camera);
 
     platform.gl.clear(COLORS.bg);
+
     try self.drawer.drawSexpr(camera, .{
-        .is_pattern = 0,
+        .is_pattern = try self.usual.smooth.float(.fromString("asdf"), if (mouse.cur.isDown(.left)) 1.0 else 0.0),
         .pos = .{ .pos = mouse.cur.position },
         .value = &.{ .pair = .{
             .left = &.{ .atom_lit = .{ .value = "Hermes" } },
