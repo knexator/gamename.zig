@@ -229,9 +229,8 @@ fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: 
             try drawer.drawTemplateAtom(camera, point, visuals);
         },
         .atom_var => |v| {
-            _ = v;
-            @panic("TODO");
-            // try drawVariable(camera, point, v.value);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
+            try drawer.drawTemplateVariable(camera, point, visuals);
         },
         .pair => |pair| {
             try drawer.drawTemplatePairHolder(camera, point);
@@ -249,9 +248,8 @@ fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: P
             try drawer.drawPatternAtom(camera, point, visuals);
         },
         .atom_var => |v| {
-            _ = v;
-            @panic("TODO");
-            // try drawPatternVariable(camera, point, v.value);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
+            try drawer.drawPatternVariable(camera, point, visuals);
         },
         .pair => |pair| {
             try drawer.drawPatternPairHolder(camera, point);
@@ -331,6 +329,20 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
     }
 }
 
+fn drawTemplateVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
+    const local_positions =
+        funk.fromCount(32, struct {
+            pub fn anon(k: usize) Vec2 {
+                return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
+            }
+        }.anon) ++ funk.fromCount(32, struct {
+            pub fn anon(k: usize) Vec2 {
+                return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(0.5);
+            }
+        }.anon);
+    try drawer.drawShapeV2(camera, point, &local_positions, .black, visuals.color);
+}
+
 fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point) !void {
     const local_positions =
         funk.fromCount(32, struct {
@@ -373,6 +385,20 @@ fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVis
         const p = point.applyToLocalPosition(.new(-0.25, 0));
         try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .black);
     }
+}
+
+fn drawPatternVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
+    const local_positions =
+        funk.fromCount(32, struct {
+            pub fn anon(k: usize) Vec2 {
+                return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
+            }
+        }.anon) ++ funk.fromCount(32, struct {
+            pub fn anon(k: usize) Vec2 {
+                return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(-0.5);
+            }
+        }.anon);
+    try drawer.drawShapeV2(camera, point, &local_positions, .black, visuals.color);
 }
 
 const std = @import("std");

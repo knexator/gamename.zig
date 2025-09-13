@@ -85,7 +85,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .value = &.{ .pair = .{
             .left = &.{ .atom_lit = .{ .value = "Hermes" } },
             .right = &.{ .pair = .{
-                .left = &.{ .atom_lit = .{ .value = "Ares" } },
+                .left = &.{ .atom_var = .{ .value = "Ares" } },
                 .right = Sexpr.builtin.nil,
             } },
         } },
