@@ -264,14 +264,19 @@ pub const Vec2 = extern struct {
     pub const ne1 = new(-1, 0);
     pub const ne2 = new(0, -1);
 
+    pub const xpos = new(1, 0);
+    pub const ypos = new(0, 1);
+    pub const xneg = new(-1, 0);
+    pub const yneg = new(0, -1);
+
     pub const Coord = enum { x, y };
     pub const coords: [2]Coord = .{ .x, .y };
 
     pub const cardinal_directions = [4]Self{
-        .new(1, 0),
-        .new(0, 1),
-        .new(-1, 0),
-        .new(0, -1),
+        .xpos,
+        .ypos,
+        .xneg,
+        .yneg,
     };
 
     pub fn new(x: Scalar, y: Scalar) Self {

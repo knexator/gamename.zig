@@ -167,6 +167,24 @@ pub const KeyboardButton = enum(u8) {
         };
     }
 
+    pub const directional_keys: [4]struct {
+        dir: Vec2,
+        keys: []const KeyboardButton,
+    } = .{
+        .{ .dir = .xpos, .keys = &.{
+            .ArrowRight, .KeyD,
+        } },
+        .{ .dir = .ypos, .keys = &.{
+            .ArrowDown, .KeyS,
+        } },
+        .{ .dir = .xneg, .keys = &.{
+            .ArrowLeft, .KeyA,
+        } },
+        .{ .dir = .yneg, .keys = &.{
+            .ArrowUp, .KeyW,
+        } },
+    };
+
     Escape,
     Digit1,
     Digit2,

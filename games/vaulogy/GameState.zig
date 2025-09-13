@@ -28,6 +28,7 @@ var COLORS: struct {
 usual: kommon.Usual,
 
 drawer: Drawer,
+camera: Rect = .fromCenterAndSize(.zero, .new(16, 9)),
 
 pub fn init(
     dst: *GameState,
@@ -73,15 +74,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     // const mem = &self.usual.mem;
     // const canvas = &self.usual.canvas;
 
-    const camera = (Rect{ .top_left = .zero, .size = .new(16, 9) })
-        .withAspectRatio(platform.aspect_ratio, .grow, .top_left);
+    const camera = self.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left);
     const mouse = platform.getMouse(camera);
+    defer self.camera = moveCamera(self.camera, platform.delta_seconds, platform.keyboard, mouse);
 
     platform.gl.clear(COLORS.bg);
 
     try self.drawer.drawSexpr(camera, .{
         .is_pattern = try self.usual.smooth.float(.fromString("asdf"), if (mouse.cur.isDown(.left)) 1.0 else 0.0),
-        .pos = .{ .pos = mouse.cur.position },
+        .pos = .{ .pos = .zero },
         .value = &.{ .pair = .{
             .left = &.{ .atom_lit = .{ .value = "Hermes" } },
             .right = &.{ .pair = .{
@@ -94,6 +95,31 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     });
 
     return false;
+}
+
+fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse) Rect {
+    var result = camera;
+    const mouse_pos = mouse.cur.position;
+
+    result = result.zoom(mouse_pos, switch (mouse.cur.scrolled) {
+        .none => 1.0,
+        .down => 1.1,
+        .up => 0.9,
+    });
+
+    inline for (KeyboardButton.directional_keys) |kv| {
+        for (kv.keys) |key| {
+            if (keyboard.cur.isDown(key)) {
+                result.top_left.addInPlace(kv.dir.scale(delta_seconds * camera.size.y));
+            }
+        }
+    }
+
+    if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
+        result.top_left.addInPlace(mouse.deltaPos());
+    }
+
+    return result;
 }
 
 const std = @import("std");
