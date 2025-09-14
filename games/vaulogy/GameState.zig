@@ -148,7 +148,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (platform.keyboard.cur.isDown(.KeyQ)) {
         self.progress_t -= platform.delta_seconds;
     }
-    self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len - 1)));
+    self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len)) - 0.01);
     const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
     const anim_t = @mod(self.progress_t, 1.0);
 
@@ -185,18 +185,26 @@ fn drawCase(
             bindings,
         );
 
-        if (invoking_next) |next| {
-            try drawer.drawHoldedFnk(camera, pattern_point.applyToLocalPoint(.{ .pos = .new(0, -3 * next.t) }).applyToLocalPoint(.{
+        if (invoking_next) |invoking| {
+            try drawer.drawHoldedFnk(camera, pattern_point.applyToLocalPoint(.{ .pos = .new(0, -3 * invoking.t) }).applyToLocalPoint(.{
                 .pos = .new(5, 0),
                 .turns = -0.25,
                 .scale = 0.5,
-            }).applyToLocalPoint(.{ .scale = 1.0 - math.remapTo01Clamped(next.t, 0.5, 1.0) }), 0, case.fnk_name);
+            }).applyToLocalPoint(.{ .scale = 1.0 - math.remapTo01Clamped(invoking.t, 0.5, 1.0) }), 0, case.fnk_name);
 
-            const offset = (1.0 - next.t) + 2.0 * math.smoothstepEased(next.t, 0.4, 0.0, .linear);
-            for (next.cases, 0..) |next_case, k| {
+            const offset = (1.0 - invoking.t) + 2.0 * math.smoothstepEased(invoking.t, 0.4, 0.0, .linear);
+            for (invoking.cases, 0..) |next_case, k| {
                 try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
                     .{ .pos = .new(6, 3 * (offset + tof32(k))) },
                 ), next_case, .none, if (k == 0) 1 else 0, null);
+            }
+
+            if (case.next) |next| {
+                for (next.items, 0..) |next_case, k| {
+                    try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                        .{ .pos = .new(8 + 5 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 3 * tof32(k)) },
+                    ), next_case, bindings, if (k == 0) 1 else 0, null);
+                }
             }
         } else {
             try drawer.drawHoldedFnk(camera, pattern_point.applyToLocalPoint(.{
@@ -204,11 +212,15 @@ fn drawCase(
                 .turns = -0.25,
                 .scale = 0.5,
             }), 0, case.fnk_name);
+
+            if (case.next) |next| {
+                for (next.items, 0..) |next_case, k| {
+                    try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                        .{ .pos = .new(8, 3 * tof32(k)) },
+                    ), next_case, bindings, if (k == 0) 1 else 0, null);
+                }
+            }
         }
-        // if (case.next) |next| {
-        //     drawCases(drawer, camera, pattern_point: Point, cases: []const core.MatchCaseDefinition, bindings: BindingsState)
-        // }
-        // try drawCases(drawer, camera, template_point.applyToLocalPoint(.{ .pos = .new(2, 0) }), &.{}, bindings);
     }
 }
 
@@ -299,15 +311,39 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
                 .anim_t = t_bindings,
                 .new = matched.new_bindings,
                 .old = matched.old_bindings,
-            }, 1, if (matched.added_new_fnk_to_stack) .{ .t = t_bindings orelse 0, .cases = it.next().?.cur_cases } else null);
+            }, 1, if (matched.added_new_fnk_to_stack) .{ .t = math.remapTo01Clamped(anim_t, 0.2, 1.0), .cases = it.next().?.cur_cases } else null);
 
-            if (matched.added_new_fnk_to_stack) {
-                // const active_stack: core.StackThing = it.next().?;
-                // TODO: draw fnk getting bigger
-                // try drawCases(drawer, camera, pattern_point.applyToLocalPoint(.{
-                //     .pos = .new(8, 0),
-                // }), active_stack.cur_cases, .none);
+            // std.log.debug("{any}", .{matched.tail_optimized});
+            if (matched.tail_optimized) {
+                if (it.next()) |active_stack| {
+                    // const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
+                    for (active_stack.cur_cases, 0..) |case, k| {
+                        // try drawCase(drawer, camera, template_point.applyToLocalPoint(.{
+                        //     .pos = .new(4, (tof32(k) + offset) * 3),
+                        // }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
+
+                        if (!matched.added_new_fnk_to_stack) {
+                            try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                                .{ .pos = .new(7 - 1 * math.smoothstepEased(anim_t, 0.0, 0.4, .easeInOutCubic), 3 * tof32(k)) },
+                            ), case, .{
+                                .new = &.{},
+                                .old = active_stack.cur_bindings.items,
+                                .anim_t = null,
+                            }, if (k == 0) 1 else 0, null);
+                        } else {
+                            std.log.err("TODO", .{});
+                        }
+                    }
+                }
             }
+
+            // if (matched.added_new_fnk_to_stack) {
+            // const active_stack: core.StackThing = it.next().?;
+            // TODO: draw fnk getting bigger
+            // try drawCases(drawer, camera, pattern_point.applyToLocalPoint(.{
+            //     .pos = .new(8, 0),
+            // }), active_stack.cur_cases, .none);
+            // }
             // const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
             // _ = matched;
             // const active_stack: core.StackThing = it.next().?;
@@ -315,8 +351,8 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
             //     try drawCase(&self.drawer, camera, .{ .pos = .new(4, tof32(k) * 3) }, case, if (k == 0) 1 else 0);
             // }
         },
-        else => {},
-        // inline else => |_, t| std.log.debug("unhandled: {s}", .{@tagName(t)}),
+        // else => {},
+        inline else => |_, t| std.log.debug("unhandled: {s}", .{@tagName(t)}),
     }
 
     // try self.drawer.drawSexpr(camera, .{
