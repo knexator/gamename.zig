@@ -33,10 +33,12 @@ core_mem: core.VeryPermamentGameStuff,
 scoring_run: core.ScoringRun,
 // execution_thread: core.ExecutionThread,
 // anim_t: f32 = 0.99,
-result: ?core.ExecutionThread.Result = null,
+// result: ?core.ExecutionThread.Result = null,
 
+snapshots: []const core.ExecutionThread,
 progress_t: f32 = 0.0,
-thread_initial_params: struct {
+
+const ThreadInitialParams = struct {
     value: *const Sexpr,
     fn_name: *const Sexpr,
 
@@ -62,7 +64,7 @@ thread_initial_params: struct {
         }
         return thread;
     }
-},
+};
 
 pub fn init(
     dst: *GameState,
@@ -102,7 +104,16 @@ pub fn init(
         \\ }
     , &dst.core_mem);
     // dst.execution_thread = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
-    dst.thread_initial_params = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
+    const thread_initial_params: ThreadInitialParams = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
+
+    var snaps: std.ArrayList(core.ExecutionThread) = .init(gpa);
+    var asdf = try thread_initial_params.toThread(&dst.scoring_run);
+    var k: usize = 1;
+    while (try asdf.advanceTinyStep(&dst.scoring_run) == null) {
+        try snaps.append(try thread_initial_params.startThreadAndRunItToStep(&dst.scoring_run, k));
+        k += 1;
+    }
+    dst.snapshots = try snaps.toOwnedSlice();
 }
 
 // TODO: take gl parameter
@@ -136,9 +147,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     if (platform.keyboard.cur.isDown(.KeyQ)) {
         self.progress_t -= platform.delta_seconds;
-        self.progress_t = @max(0, self.progress_t);
     }
-    const execution_thread = try self.thread_initial_params.startThreadAndRunItToStep(&self.scoring_run, @intFromFloat(@floor(1 + self.progress_t)));
+    self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len - 1)));
+    const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
     const anim_t = @mod(self.progress_t, 1.0);
 
     try drawThread(&self.drawer, camera, execution_thread, anim_t);
