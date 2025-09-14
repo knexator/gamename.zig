@@ -28,7 +28,7 @@ pub fn remapClamped(value: f32, old_min: f32, old_max: f32, new_min: f32, new_ma
 }
 
 /// same as lerp
-pub fn remap01(value: f32, new_min: f32, new_max: f32) f32 {
+pub fn remapFrom01(value: f32, new_min: f32, new_max: f32) f32 {
     assert(in01(value));
     return lerp(new_min, new_max, value);
 }

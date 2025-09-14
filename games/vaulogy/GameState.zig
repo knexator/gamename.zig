@@ -181,9 +181,10 @@ fn drawCase(
                 .scale = 0.5,
             }).applyToLocalPoint(.{ .scale = 1.0 - math.remapTo01Clamped(next.t, 0.5, 1.0) }), 0, case.fnk_name);
 
+            const offset = (1.0 - next.t) + 2.0 * math.smoothstepEased(next.t, 0.4, 0.0, .linear);
             for (next.cases, 0..) |next_case, k| {
                 try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
-                    .{ .pos = .new(6, 3 * (1 - next.t + tof32(k))) },
+                    .{ .pos = .new(6, 3 * (offset + tof32(k))) },
                 ), next_case, .none, if (k == 0) 1 else 0, null);
             }
         } else {
@@ -215,7 +216,26 @@ fn drawCase(
 // }
 
 fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThread, anim_t: f32) !void {
-    const template_point: Point = .{};
+    var template_point: Point = .{};
+    const old_matches = switch (execution_thread.last_visual_state) {
+        .matched => execution_thread.prev_matches.items[0..execution_thread.prev_matches.items.len -| 1],
+        else => execution_thread.prev_matches.items,
+    };
+    for (old_matches) |match| {
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 0,
+            .value = match.value,
+            .pos = template_point,
+        });
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 1,
+            .value = match.pattern,
+            .pos = template_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+        });
+
+        template_point = template_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
+    }
+
     var it = std.mem.reverseIterator(execution_thread.stack.items);
     switch (execution_thread.last_visual_state) {
         .failed_to_match => |discarded_case| {
@@ -224,7 +244,7 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
             try drawer.drawSexpr(camera, .{
                 .is_pattern = 0,
                 .value = execution_thread.active_value,
-                .pos = .{},
+                .pos = template_point,
             });
 
             const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
@@ -237,7 +257,7 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
 
             const fly_away = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
             const pattern_point_floating_away = template_point.applyToLocalPoint(Point.lerp(
-                .{ .pos = .new(math.remap01(match_dist, 3, 4), 0) },
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
                 .{ .pos = .new(8, -8), .scale = 0, .turns = -0.65 },
                 fly_away,
             ));
@@ -245,23 +265,23 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
 
             const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
             for (active_stack.cur_cases, 0..) |case, k| {
-                try drawCase(drawer, camera, .{
+                try drawCase(drawer, camera, template_point.applyToLocalPoint(.{
                     .pos = .new(4, (tof32(k) + offset) * 3),
-                }, case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
+                }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
             }
         },
         .matched => |matched| {
             try drawer.drawSexpr(camera, .{
                 .is_pattern = 0,
                 .value = matched.old_active_value,
-                .pos = .{},
+                .pos = template_point,
             });
 
             const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
             const t_bindings: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
 
             const pattern_point = template_point.applyToLocalPoint(
-                .{ .pos = .new(math.remap01(match_dist, 3, 4), 0) },
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
             );
 
             try drawCase(drawer, camera, pattern_point, matched.case, .{

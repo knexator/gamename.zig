@@ -529,6 +529,11 @@ pub const ExecutionThread = struct {
 
     // TODO: remove at comptime in cli app
     last_visual_state: VisualState = .just_started,
+    prev_matches: std.ArrayList(struct {
+        value: *const Sexpr,
+        pattern: *const Sexpr,
+        // bindings: Bindings, // TODO: include?
+    }),
     pub const VisualState = union(enum) {
         just_started,
         ran_out_of_cases,
@@ -577,6 +582,7 @@ pub const ExecutionThread = struct {
                     .successful_matches = 0,
                     .max_stack = 0,
                 },
+                .prev_matches = .init(scoring_run.mem.allocator_for_stack),
             },
             .stack_thing => |first| {
                 try stack.append(first);
@@ -587,6 +593,7 @@ pub const ExecutionThread = struct {
                         .successful_matches = 0,
                         .max_stack = 1,
                     },
+                    .prev_matches = .init(scoring_run.mem.allocator_for_stack),
                 };
             },
         }
@@ -633,6 +640,7 @@ pub const ExecutionThread = struct {
                 this.last_visual_state = .{ .failed_to_match = case };
                 return null;
             }
+            try this.prev_matches.append(.{ .value = this.active_value, .pattern = case.pattern });
             const old_bindings = try permanent_stuff.gpa.dupe(Binding, last_stack_ptr.cur_bindings.items);
             try last_stack_ptr.cur_bindings.appendSlice(new_bindings.items);
 
@@ -770,6 +778,7 @@ pub const ExecutionThread = struct {
 
     pub fn deinit(this: *ExecutionThread) void {
         this.stack.deinit();
+        this.prev_matches.deinit();
     }
 };
 
