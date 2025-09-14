@@ -33,6 +33,10 @@ pub fn remap01(value: f32, new_min: f32, new_max: f32) f32 {
     return lerp(new_min, new_max, value);
 }
 
+pub fn remapTo01Clamped(value: f32, old_min: f32, old_max: f32) f32 {
+    return remapClamped(value, old_min, old_max, 0, 1);
+}
+
 pub fn towards(v: *f32, goal: f32, max_delta: f32) void {
     if (max_delta <= 0) return;
     if (@abs(v.* - goal) <= max_delta) {

@@ -413,6 +413,144 @@ fn drawPatternVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: Ato
     try drawer.drawShapeV2(camera, point, &local_positions, .black, visuals.color);
 }
 
+pub fn drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Point, sexpr: *const Sexpr, bindings: BindingsState) !void {
+    var out_particles: std.ArrayList(BindingParticle) = .init(drawer.canvas.frame_arena.allocator());
+    try _drawTemplateSexprWithBindings(drawer, camera, world_point, sexpr, bindings, &out_particles);
+    for (out_particles.items) |particle| {
+        const visuals = try drawer.atom_visuals_cache.getAtomVisuals(particle.name);
+        drawer.canvas.strokeRect(
+            camera,
+            .fromCenterAndSize(
+                particle.point.applyToLocalPosition(.new(1, 0)),
+                .both(lerp(7.5, 2.5, particle.t) * particle.point.scale),
+            ),
+            pixelWidth(camera),
+            visuals.color.lighter().lighter(),
+        );
+    }
+}
+
+fn _drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Point, sexpr: *const Sexpr, bindings: BindingsState, out_particles: *std.ArrayList(BindingParticle)) !void {
+    switch (sexpr.*) {
+        .atom_lit => |lit| {
+            try drawer.drawTemplateAtom(camera, world_point, try drawer.atom_visuals_cache.getAtomVisuals(lit.value));
+        },
+        .pair => |pair| {
+            try _drawTemplateSexprWithBindings(drawer, camera, world_point.applyToLocalPoint(.{
+                .pos = .new(0.5, -0.5),
+                .scale = 0.5,
+            }), pair.left, bindings, out_particles);
+            try _drawTemplateSexprWithBindings(drawer, camera, world_point.applyToLocalPoint(.{
+                .pos = .new(0.5, 0.5),
+                .scale = 0.5,
+            }), pair.right, bindings, out_particles);
+            try drawer.drawTemplatePairHolder(camera, world_point);
+            try drawer.drawTemplateWildcardLinesNonRecursive(camera, pair.left, pair.right, world_point, bindings);
+        },
+        .atom_var => |x| {
+            // TODO: check that compiler skips the loop if anim_t is null
+            for (bindings.new) |binding| {
+                if (bindings.anim_t) |anim_t| {
+                    if (std.mem.eql(u8, binding.name, x.value)) {
+                        drawer.clipAtomRegion(camera, world_point);
+                        const t = math.smoothstep(anim_t, 0, 0.4);
+                        try drawer.drawTemplateSexpr(camera, binding.value, world_point.applyToLocalPoint(.{ .pos = .new(remap(t, 0, 1, -2.3, 0), 0) }));
+                        drawer.endClip();
+
+                        drawer.setTransparency(1 - anim_t);
+                        try drawer.drawTemplateVariable(camera, world_point, try drawer.atom_visuals_cache.getAtomVisuals(x.value));
+                        drawer.setTransparency(1);
+
+                        if (anim_t < 0.5) {
+                            try out_particles.append(.{ .point = world_point, .t = t, .name = binding.name });
+                        }
+
+                        break;
+                    }
+                }
+            } else for (bindings.old) |binding| {
+                if (std.mem.eql(u8, binding.name, x.value)) {
+                    try drawer.drawTemplateSexpr(camera, binding.value, world_point);
+                    break;
+                }
+            } else {
+                try drawer.drawTemplateVariable(camera, world_point, try drawer.atom_visuals_cache.getAtomVisuals(x.value));
+            }
+        },
+    }
+}
+
+fn clipAtomRegion(drawer: *Drawer, camera: Rect, world_point: Point) void {
+    // TODO
+    _ = drawer;
+    _ = camera;
+    _ = world_point;
+}
+
+fn endClip(drawer: *Drawer) void {
+    // TODO
+    _ = drawer;
+}
+
+fn setTransparency(drawer: *Drawer, alpha: f32) void {
+    // TODO
+    _ = drawer;
+    _ = alpha;
+}
+
+fn drawTemplateWildcardLinesNonRecursive(
+    drawer: *Drawer,
+    camera: Rect,
+    left: *const Sexpr,
+    right: *const Sexpr,
+    point: Point,
+    bindings: BindingsState,
+) !void {
+    var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    try left.getAllVarNames(&left_names);
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNames(&left_names, bindings.new);
+    };
+    try removeBoundNames(&left_names, bindings.old);
+
+    var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    defer right_names.deinit();
+    try right.getAllVarNames(&right_names);
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNames(&right_names, bindings.new);
+    };
+    try removeBoundNames(&right_names, bindings.old);
+
+    {
+        // TODO: these numbers are not exact, issues when zooming in
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 + 0.25 / 2.0, 0.75, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, 0.25)));
+            }
+        }.anon, point)), left_names.items);
+
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 - 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, -0.25)));
+            }
+        }.anon, point)), right_names.items);
+    }
+}
+
+fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8) !void {
+    var visuals: std.ArrayList(AtomVisuals) = try .initCapacity(drawer.canvas.frame_arena.allocator(), names.len);
+    for (names) |name| {
+        visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name));
+    }
+    for (visuals.items) |v| {
+        drawer.canvas.line(camera, points, pixelWidth(camera), v.color);
+    }
+}
+
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -449,3 +587,58 @@ const parsing = @import("parsing.zig");
 
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
+const BindingsState = @import("physical.zig").BindingsState;
+
+const BindingParticle = struct {
+    point: Point,
+    t: f32,
+    name: []const u8,
+};
+
+// TODO: clean these up
+
+fn appendUniqueNames(list: *std.ArrayList([]const u8), names: []const []const u8) !void {
+    for (names) |name| {
+        if (funk.indexOfString(list.items, name) == null) {
+            try list.append(name);
+        }
+    }
+}
+
+fn removeNames(list: *std.ArrayList([]const u8), names: []const []const u8) !void {
+    for (names) |name_to_remove| {
+        while (funk.indexOfString(list.items, name_to_remove)) |i| {
+            std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
+        }
+    }
+}
+
+fn removeBoundNames(list: *std.ArrayList([]const u8), bindings: []const core.Binding) !void {
+    for (bindings) |binding| {
+        const name_to_remove = binding.name;
+        while (funk.indexOfString(list.items, name_to_remove)) |i| {
+            std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
+        }
+    }
+}
+
+// TODO: most callers of this function are causing leaks
+fn removeBoundNamesV2(gpa: std.mem.Allocator, list: []const []const u8, bindings: BindingsState) ![]const []const u8 {
+    var incoming: std.ArrayList([]const u8) = .init(gpa);
+    try incoming.appendSlice(list);
+    try removeBoundNamesV3(&incoming, bindings);
+    return try incoming.toOwnedSlice();
+}
+
+fn removeBoundNamesV3(list: *std.ArrayList([]const u8), bindings: BindingsState) !void {
+    try removeBoundNames(list, bindings.old);
+    if (if (bindings.anim_t) |t| t > 0.4 else false) {
+        try removeBoundNames(list, bindings.new);
+    }
+}
+
+fn allTrue(arr: []const bool) bool {
+    for (arr) |v| {
+        if (!v) return false;
+    } else return true;
+}

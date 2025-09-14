@@ -31,9 +31,38 @@ drawer: Drawer,
 camera: Rect = .fromCenterAndSize(.zero, .new(16, 9)),
 core_mem: core.VeryPermamentGameStuff,
 scoring_run: core.ScoringRun,
-execution_thread: core.ExecutionThread,
-anim_t: f32 = 0.99,
+// execution_thread: core.ExecutionThread,
+// anim_t: f32 = 0.99,
 result: ?core.ExecutionThread.Result = null,
+
+progress_t: f32 = 0.0,
+thread_initial_params: struct {
+    value: *const Sexpr,
+    fn_name: *const Sexpr,
+
+    pub fn initFromText(
+        input_raw: []const u8,
+        fn_name_raw: []const u8,
+        scoring_run: *core.ScoringRun,
+    ) !@This() {
+        var permanent_stuff = scoring_run.mem;
+        const fn_name = try parsing.parseSingleSexpr(fn_name_raw, &permanent_stuff.pool_for_sexprs);
+        const input = try parsing.parseSingleSexpr(input_raw, &permanent_stuff.pool_for_sexprs);
+        return .{ .value = input, .fn_name = fn_name };
+    }
+
+    pub fn toThread(self: @This(), scoring_run: *core.ScoringRun) !core.ExecutionThread {
+        return try .init(self.value, self.fn_name, scoring_run);
+    }
+
+    pub fn startThreadAndRunItToStep(self: @This(), scoring_run: *core.ScoringRun, step: usize) !core.ExecutionThread {
+        var thread = try self.toThread(scoring_run);
+        for (0..step) |_| {
+            std.debug.assert(null == try thread.advanceTinyStep(scoring_run));
+        }
+        return thread;
+    }
+},
 
 pub fn init(
     dst: *GameState,
@@ -72,7 +101,8 @@ pub fn init(
         \\     }
         \\ }
     , &dst.core_mem);
-    dst.execution_thread = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
+    // dst.execution_thread = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
+    dst.thread_initial_params = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
 }
 
 // TODO: take gl parameter
@@ -102,81 +132,151 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     platform.gl.clear(COLORS.bg);
 
     if (platform.keyboard.cur.isDown(.KeyE)) {
-        self.anim_t += platform.delta_seconds;
+        self.progress_t += platform.delta_seconds;
     }
     if (platform.keyboard.cur.isDown(.KeyQ)) {
-        self.anim_t -= platform.delta_seconds;
+        self.progress_t -= platform.delta_seconds;
+        self.progress_t = @max(0, self.progress_t);
     }
-    self.anim_t = math.clamp01(self.anim_t);
+    const execution_thread = try self.thread_initial_params.startThreadAndRunItToStep(&self.scoring_run, @intFromFloat(@floor(1 + self.progress_t)));
+    const anim_t = @mod(self.progress_t, 1.0);
 
-    while (self.anim_t >= 1 and self.result == null) {
-        self.anim_t -= 1;
-        self.result = try self.execution_thread.advanceTinyStep(&self.scoring_run);
-    }
-
-    try self.draw(camera);
+    try drawThread(&self.drawer, camera, execution_thread, anim_t);
 
     return false;
 }
 
-fn drawCase(drawer: *Drawer, camera: Rect, template_point: Point, case: core.MatchCaseDefinition, unfolded: f32) !void {
+fn drawCase(
+    drawer: *Drawer,
+    camera: Rect,
+    pattern_point: Point,
+    case: core.MatchCaseDefinition,
+    bindings: BindingsState,
+    unfolded: f32,
+    invoking_next: ?struct {
+        t: f32,
+        cases: []const core.MatchCaseDefinition,
+    },
+) !void {
     assert(math.in01(unfolded));
 
     try drawer.drawSexpr(camera, .{
         .is_pattern = 1,
         .value = case.pattern,
-        .pos = template_point,
+        .pos = pattern_point,
     });
 
     if (unfolded > 0) {
-        try drawer.drawSexpr(camera, .{
-            .is_pattern = 0,
-            .value = case.template,
-            .pos = template_point.applyToLocalPoint(.{ .pos = .new(2, 0) }),
-        });
+        try drawer.drawTemplateSexprWithBindings(
+            camera,
+            pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) }),
+            case.template,
+            bindings,
+        );
+
+        if (invoking_next) |next| {
+            try drawer.drawHoldedFnk(camera, pattern_point.applyToLocalPoint(.{ .pos = .new(0, -3 * next.t) }).applyToLocalPoint(.{
+                .pos = .new(5, 0),
+                .turns = -0.25,
+                .scale = 0.5,
+            }).applyToLocalPoint(.{ .scale = 1.0 - math.remapTo01Clamped(next.t, 0.5, 1.0) }), 0, case.fnk_name);
+
+            for (next.cases, 0..) |next_case, k| {
+                try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                    .{ .pos = .new(6, 3 * (1 - next.t + tof32(k))) },
+                ), next_case, .none, if (k == 0) 1 else 0, null);
+            }
+        } else {
+            try drawer.drawHoldedFnk(camera, pattern_point.applyToLocalPoint(.{
+                .pos = .new(5, 0),
+                .turns = -0.25,
+                .scale = 0.5,
+            }), 0, case.fnk_name);
+        }
+        // if (case.next) |next| {
+        //     drawCases(drawer, camera, pattern_point: Point, cases: []const core.MatchCaseDefinition, bindings: BindingsState)
+        // }
+        // try drawCases(drawer, camera, template_point.applyToLocalPoint(.{ .pos = .new(2, 0) }), &.{}, bindings);
     }
 }
 
-fn draw(self: *GameState, camera: Rect) !void {
-    if (self.result != null) return;
+// fn drawCases(
+//     drawer: *Drawer,
+//     camera: Rect,
+//     pattern_point_of_first: Point,
+//     cases: []const core.MatchCaseDefinition,
+//     bindings: BindingsState,
+// ) !void {
+//     for (cases, 0..) |case, k| {
+//         try drawCase(drawer, camera, pattern_point_of_first.applyToLocalPoint(
+//             .{ .pos = .new(0, tof32(k) * 3) },
+//         ), case, bindings, if (k > 0) 0 else 1, null);
+//     }
+// }
 
+fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThread, anim_t: f32) !void {
     const template_point: Point = .{};
-    var it = std.mem.reverseIterator(self.execution_thread.stack.items);
-    switch (self.execution_thread.last_visual_state) {
+    var it = std.mem.reverseIterator(execution_thread.stack.items);
+    switch (execution_thread.last_visual_state) {
         .failed_to_match => |discarded_case| {
-            try self.drawer.drawSexpr(camera, .{
+            const active_stack: core.StackThing = it.next().?;
+
+            try drawer.drawSexpr(camera, .{
                 .is_pattern = 0,
-                .value = self.execution_thread.active_value,
+                .value = execution_thread.active_value,
                 .pos = .{},
             });
 
-            const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
 
-            const fly_away = math.remapClamped(self.anim_t, 0.2, 0.8, 0, 1);
+            const old_bindings: BindingsState = .{
+                .anim_t = null,
+                .new = &.{},
+                .old = active_stack.cur_bindings.items,
+            };
+
+            const fly_away = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
             const pattern_point_floating_away = template_point.applyToLocalPoint(Point.lerp(
                 .{ .pos = .new(math.remap01(match_dist, 3, 4), 0) },
                 .{ .pos = .new(8, -8), .scale = 0, .turns = -0.65 },
                 fly_away,
             ));
-            try drawCase(&self.drawer, camera, pattern_point_floating_away, discarded_case, 1);
+            try drawCase(drawer, camera, pattern_point_floating_away, discarded_case, old_bindings, 1, null);
 
-            const offset = math.remapClamped(self.anim_t, 0.2, 1, 1, 0);
-            const active_stack: core.StackThing = it.next().?;
+            const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
             for (active_stack.cur_cases, 0..) |case, k| {
-                try drawCase(&self.drawer, camera, .{ .pos = .new(4, (tof32(k) + offset) * 3) }, case, if (k > 0) 0 else 1.0 - offset);
+                try drawCase(drawer, camera, .{
+                    .pos = .new(4, (tof32(k) + offset) * 3),
+                }, case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
             }
         },
         .matched => |matched| {
-            try self.drawer.drawSexpr(camera, .{
+            try drawer.drawSexpr(camera, .{
                 .is_pattern = 0,
                 .value = matched.old_active_value,
                 .pos = .{},
             });
 
-            const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
-            try drawCase(&self.drawer, camera, template_point.applyToLocalPoint(
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const t_bindings: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+
+            const pattern_point = template_point.applyToLocalPoint(
                 .{ .pos = .new(math.remap01(match_dist, 3, 4), 0) },
-            ), matched.case, 1);
+            );
+
+            try drawCase(drawer, camera, pattern_point, matched.case, .{
+                .anim_t = t_bindings,
+                .new = matched.new_bindings,
+                .old = matched.old_bindings,
+            }, 1, if (matched.added_new_fnk_to_stack) .{ .t = t_bindings orelse 0, .cases = it.next().?.cur_cases } else null);
+
+            if (matched.added_new_fnk_to_stack) {
+                // const active_stack: core.StackThing = it.next().?;
+                // TODO: draw fnk getting bigger
+                // try drawCases(drawer, camera, pattern_point.applyToLocalPoint(.{
+                //     .pos = .new(8, 0),
+                // }), active_stack.cur_cases, .none);
+            }
             // const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
             // _ = matched;
             // const active_stack: core.StackThing = it.next().?;
@@ -296,3 +396,4 @@ const parsing = @import("parsing.zig");
 
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
+const BindingsState = @import("physical.zig").BindingsState;

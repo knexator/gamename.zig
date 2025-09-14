@@ -149,6 +149,13 @@ pub const ViewHelper = struct {
     pub const OFFSET_PATTERN_PAIR_RIGHT: Point = .{ .pos = .new(-1, 0.5), .scale = 0.5 };
 };
 
+pub const BindingsState = struct {
+    new: []const core.Binding,
+    old: []const core.Binding,
+    anim_t: ?f32,
+    pub const none: BindingsState = .{ .anim_t = null, .new = &.{}, .old = &.{} };
+};
+
 const std = @import("std");
 const assert = std.debug.assert;
 
