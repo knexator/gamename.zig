@@ -222,6 +222,18 @@ pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr) !void {
     }
 }
 
+pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f32, value: *const Sexpr) !void {
+    _ = is_main;
+    // drawFnkHolderForFnkAt(camera, fnk_point, is_main);
+    if (!value.equals(Sexpr.builtin.identity)) {
+        try drawer.drawTemplateSexpr(
+            camera,
+            value,
+            fnk_point,
+        );
+    }
+}
+
 fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
     switch (sexpr.*) {
         .atom_lit => |lit| {

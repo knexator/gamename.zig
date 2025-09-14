@@ -32,6 +32,8 @@ camera: Rect = .fromCenterAndSize(.zero, .new(16, 9)),
 core_mem: core.VeryPermamentGameStuff,
 scoring_run: core.ScoringRun,
 execution_thread: core.ExecutionThread,
+anim_t: f32 = 0.99,
+result: ?core.ExecutionThread.Result = null,
 
 pub fn init(
     dst: *GameState,
@@ -71,10 +73,6 @@ pub fn init(
         \\ }
     , &dst.core_mem);
     dst.execution_thread = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
-
-    // std.log.debug("{any}", .{
-    //     try dst.execution_thread.getFinalResult(&dst.scoring_run),
-    // });
 }
 
 // TODO: take gl parameter
@@ -103,21 +101,130 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     platform.gl.clear(COLORS.bg);
 
-    try self.drawer.drawSexpr(camera, .{
-        .is_pattern = try self.usual.smooth.float(.fromString("asdf"), if (mouse.cur.isDown(.left)) 1.0 else 0.0),
-        .pos = .{ .pos = .zero },
-        .value = &.{ .pair = .{
-            .left = &.{ .atom_lit = .{ .value = "Hermes" } },
-            .right = &.{ .pair = .{
-                .left = &.{ .atom_var = .{ .value = "Ares" } },
-                .right = Sexpr.builtin.nil,
-            } },
-        } },
-        // .value = &.{ .atom_lit = .{ .value = "Hermes" } },
-        // .value = Sexpr.builtin.nil,
-    });
+    if (platform.keyboard.cur.isDown(.KeyE)) {
+        self.anim_t += platform.delta_seconds;
+    }
+    if (platform.keyboard.cur.isDown(.KeyQ)) {
+        self.anim_t -= platform.delta_seconds;
+    }
+    self.anim_t = math.clamp01(self.anim_t);
+
+    while (self.anim_t >= 1 and self.result == null) {
+        self.anim_t -= 1;
+        self.result = try self.execution_thread.advanceTinyStep(&self.scoring_run);
+    }
+
+    try self.draw(camera);
 
     return false;
+}
+
+fn drawCase(drawer: *Drawer, camera: Rect, template_point: Point, case: core.MatchCaseDefinition, unfolded: f32) !void {
+    assert(math.in01(unfolded));
+
+    try drawer.drawSexpr(camera, .{
+        .is_pattern = 1,
+        .value = case.pattern,
+        .pos = template_point,
+    });
+
+    if (unfolded > 0) {
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 0,
+            .value = case.template,
+            .pos = template_point.applyToLocalPoint(.{ .pos = .new(2, 0) }),
+        });
+    }
+}
+
+fn draw(self: *GameState, camera: Rect) !void {
+    if (self.result != null) return;
+
+    const template_point: Point = .{};
+    var it = std.mem.reverseIterator(self.execution_thread.stack.items);
+    switch (self.execution_thread.last_visual_state) {
+        .failed_to_match => |discarded_case| {
+            try self.drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .value = self.execution_thread.active_value,
+                .pos = .{},
+            });
+
+            const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
+
+            const fly_away = math.remapClamped(self.anim_t, 0.2, 0.8, 0, 1);
+            const pattern_point_floating_away = template_point.applyToLocalPoint(Point.lerp(
+                .{ .pos = .new(math.remap01(match_dist, 3, 4), 0) },
+                .{ .pos = .new(8, -8), .scale = 0, .turns = -0.65 },
+                fly_away,
+            ));
+            try drawCase(&self.drawer, camera, pattern_point_floating_away, discarded_case, 1);
+
+            const offset = math.remapClamped(self.anim_t, 0.2, 1, 1, 0);
+            const active_stack: core.StackThing = it.next().?;
+            for (active_stack.cur_cases, 0..) |case, k| {
+                try drawCase(&self.drawer, camera, .{ .pos = .new(4, (tof32(k) + offset) * 3) }, case, if (k > 0) 0 else 1.0 - offset);
+            }
+        },
+        .matched => |matched| {
+            try self.drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .value = matched.old_active_value,
+                .pos = .{},
+            });
+
+            const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
+            try drawCase(&self.drawer, camera, template_point.applyToLocalPoint(
+                .{ .pos = .new(math.remap01(match_dist, 3, 4), 0) },
+            ), matched.case, 1);
+            // const match_dist = math.remapClamped(self.anim_t, 0, 0.2, 1, 0);
+            // _ = matched;
+            // const active_stack: core.StackThing = it.next().?;
+            // for (active_stack.cur_cases, 0..) |case, k| {
+            //     try drawCase(&self.drawer, camera, .{ .pos = .new(4, tof32(k) * 3) }, case, if (k == 0) 1 else 0);
+            // }
+        },
+        else => {},
+        // inline else => |_, t| std.log.debug("unhandled: {s}", .{@tagName(t)}),
+    }
+
+    // try self.drawer.drawSexpr(camera, .{
+    //     .is_pattern = 0,
+    //     .value = self.execution_thread.active_value,
+    //     .pos = .{},
+    // });
+    // const asdf = self.execution_thread.stack.getLast();
+    // for (asdf.cur_cases, 0..) |case, k| {
+    //     try self.drawer.drawSexpr(camera, .{
+    //         .is_pattern = 1,
+    //         .value = case.pattern,
+    //         .pos = .{ .pos = .new(4, tof32(k * 3)) },
+    //     });
+
+    //     try self.drawer.drawSexpr(camera, .{
+    //         .is_pattern = 0,
+    //         .value = case.template,
+    //         .pos = .{ .pos = .new(6, tof32(k * 3)) },
+    //     });
+
+    //     if (k == 1) {
+    //         if (case.next) |next| {
+    //             for (next.items) |case2| {
+    //                 try self.drawer.drawSexpr(camera, .{
+    //                     .is_pattern = 1,
+    //                     .value = case2.pattern,
+    //                     .pos = .{ .pos = .new(10, tof32(k * 3)) },
+    //                 });
+
+    //                 try self.drawer.drawSexpr(camera, .{
+    //                     .is_pattern = 0,
+    //                     .value = case2.template,
+    //                     .pos = .{ .pos = .new(12, tof32(k * 3)) },
+    //                 });
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse) Rect {

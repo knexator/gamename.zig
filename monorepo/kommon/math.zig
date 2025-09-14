@@ -27,6 +27,12 @@ pub fn remapClamped(value: f32, old_min: f32, old_max: f32, new_min: f32, new_ma
     return lerp(new_min, new_max, clamp01(inverse_lerp(old_min, old_max, value)));
 }
 
+/// same as lerp
+pub fn remap01(value: f32, new_min: f32, new_max: f32) f32 {
+    assert(in01(value));
+    return lerp(new_min, new_max, value);
+}
+
 pub fn towards(v: *f32, goal: f32, max_delta: f32) void {
     if (max_delta <= 0) return;
     if (@abs(v.* - goal) <= max_delta) {
