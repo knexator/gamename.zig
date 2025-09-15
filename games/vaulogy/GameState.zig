@@ -143,10 +143,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     platform.gl.clear(COLORS.bg);
 
     if (platform.keyboard.cur.isDown(.KeyE)) {
-        self.progress_t += platform.delta_seconds;
+        self.progress_t += platform.delta_seconds * 2;
     }
     if (platform.keyboard.cur.isDown(.KeyQ)) {
-        self.progress_t -= platform.delta_seconds;
+        self.progress_t -= platform.delta_seconds * 2;
     }
     self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len)) - 0.01);
     const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
@@ -167,6 +167,7 @@ fn drawCase(
     invoking_next: ?struct {
         t: f32,
         cases: []const core.MatchCaseDefinition,
+        next_cases_pattern_point_ptr: *Point,
     },
 ) !void {
     assert(math.in01(unfolded));
@@ -177,7 +178,7 @@ fn drawCase(
         .pos = pattern_point,
     });
 
-    if (unfolded > 0) {
+    if (unfolded > 0.1) {
         try drawer.drawTemplateSexprWithBindings(
             camera,
             pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) }),
@@ -194,18 +195,49 @@ fn drawCase(
 
             const offset = (1.0 - invoking.t) + 2.0 * math.smoothstepEased(invoking.t, 0.4, 0.0, .linear);
             for (invoking.cases, 0..) |next_case, k| {
-                try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                _ = try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
                     .{ .pos = .new(6, 3 * (offset + tof32(k))) },
                 ), next_case, .none, if (k == 0) 1 else 0, null);
             }
 
             if (case.next) |next| {
-                for (next.items, 0..) |next_case, k| {
-                    try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
-                        .{ .pos = .new(8 + 5 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 3 * tof32(k)) },
-                    ), next_case, bindings, if (k == 0) 1 else 0, null);
-                }
+                assert(next.items.len > 0);
+                try drawer.drawSexpr(camera, .{
+                    .is_pattern = 1,
+                    .value = next.items[0].pattern,
+                    .pos = pattern_point.applyToLocalPoint(
+                        .{ .pos = .new(8 + 10 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 0) },
+                    ),
+                });
+
+                invoking.next_cases_pattern_point_ptr.* = invoking.next_cases_pattern_point_ptr.*.applyToLocalPoint(
+                    .{ .pos = .new(10 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 0) },
+                );
+
+                // if (next.items.len > 0) {
+                //     try drawer.drawSexpr(camera, .{
+                //         .is_pattern = 1,
+                //         .value = next.items[0].pattern,
+                //         .pos = invoking.next_cases_pattern_point_ptr.*,
+                //     });
+                // }
+            } else {
+                invoking.next_cases_pattern_point_ptr.* = invoking.next_cases_pattern_point_ptr.*.applyToLocalPoint(
+                    .{ .pos = .new(5 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 0) },
+                );
             }
+
+            // return pattern_point.applyToLocalPoint(
+            //     .{ .pos = .new(8 + 5 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 0) },
+            // );
+
+            // if (case.next) |next| {
+            //     for (next.items, 0..) |next_case, k| {
+            //         try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+            //             .{ .pos = .new(8 + 5 * math.smoothstepEased(invoking.t, 0.0, 0.5, .easeInOutCubic), 3 * tof32(k)) },
+            //         ), next_case, bindings, if (k == 0) 1 else 0, null);
+            //     }
+            // }
         } else {
             try drawer.drawHoldedFnk(camera, pattern_point.applyToLocalPoint(.{
                 .pos = .new(5, 0),
@@ -214,11 +246,18 @@ fn drawCase(
             }), 0, case.fnk_name);
 
             if (case.next) |next| {
-                for (next.items, 0..) |next_case, k| {
-                    try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
-                        .{ .pos = .new(8, 3 * tof32(k)) },
-                    ), next_case, bindings, if (k == 0) 1 else 0, null);
+                if (next.items.len > 0) {
+                    try drawer.drawSexpr(camera, .{
+                        .is_pattern = 1,
+                        .value = next.items[0].pattern,
+                        .pos = pattern_point.applyToLocalPoint(.{ .pos = .new(8, 0) }),
+                    });
                 }
+                // for (next.items, 0..) |next_case, k| {
+                //     try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                //         .{ .pos = .new(8, 3 * tof32(k)) },
+                //     ), next_case, bindings, if (k == 0) 1 else 0, null);
+                // }
             }
         }
     }
@@ -259,6 +298,7 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
         template_point = template_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
     }
 
+    var next_cases_pattern_point = template_point.applyToLocalPoint(.{ .pos = .new(16, 0) });
     var it = std.mem.reverseIterator(execution_thread.stack.items);
     switch (execution_thread.last_visual_state) {
         .failed_to_match => |discarded_case| {
@@ -311,27 +351,49 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
                 .anim_t = t_bindings,
                 .new = matched.new_bindings,
                 .old = matched.old_bindings,
-            }, 1, if (matched.added_new_fnk_to_stack) .{ .t = math.remapTo01Clamped(anim_t, 0.2, 1.0), .cases = it.next().?.cur_cases } else null);
+            }, 1, if (matched.added_new_fnk_to_stack) .{
+                .t = math.remapTo01Clamped(anim_t, 0.2, 1.0),
+                .cases = it.next().?.cur_cases,
+                .next_cases_pattern_point_ptr = &next_cases_pattern_point,
+                // .next_cases_pattern_point_ptr = undefined,
+            } else null);
+
+            if (matched.added_new_fnk_to_stack and !matched.tail_optimized) {
+                _ = it.next();
+                // std.log.debug("added? {any}, tail? {any}", .{ matched.added_new_fnk_to_stack, matched.tail_optimized });
+            }
 
             // std.log.debug("{any}", .{matched.tail_optimized});
-            if (matched.tail_optimized) {
+            if (matched.tail_optimized and !matched.added_new_fnk_to_stack) {
                 if (it.next()) |active_stack| {
                     // const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
+                    if (!matched.added_new_fnk_to_stack) {
+                        next_cases_pattern_point = next_cases_pattern_point.applyToLocalPoint(
+                            .{ .pos = .new(5, 0) },
+                            // .{ .pos = .new(5 + -5 * anim_t, 0) },
+                        );
+                    }
                     for (active_stack.cur_cases, 0..) |case, k| {
                         // try drawCase(drawer, camera, template_point.applyToLocalPoint(.{
                         //     .pos = .new(4, (tof32(k) + offset) * 3),
                         // }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
 
                         if (!matched.added_new_fnk_to_stack) {
-                            try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
-                                .{ .pos = .new(7 - 1 * math.smoothstepEased(anim_t, 0.0, 0.4, .easeInOutCubic), 3 * tof32(k)) },
+                            try drawCase(drawer, camera, next_cases_pattern_point.applyToLocalPoint(
+                                .{ .pos = .new(-5 - 7 * math.smoothstepEased(anim_t, 0.0, 0.4, .easeInOutCubic), 3 * tof32(k)) },
+                                // .{ .pos = .new(-5 - 2 * math.smoothstepEased(anim_t, 0.0, 0.4, .easeInOutCubic), 3 * tof32(k)) },
                             ), case, .{
                                 .new = &.{},
                                 .old = active_stack.cur_bindings.items,
                                 .anim_t = null,
-                            }, if (k == 0) 1 else 0, null);
-                        } else {
-                            std.log.err("TODO", .{});
+                            }, if (k == 0) anim_t else 0, null);
+                            // try drawCase(drawer, camera, pattern_point.applyToLocalPoint(
+                            //     .{ .pos = .new(7 - 1 * math.smoothstepEased(anim_t, 0.0, 0.4, .easeInOutCubic), 3 * tof32(k)) },
+                            // ), case, .{
+                            //     .new = &.{},
+                            //     .old = active_stack.cur_bindings.items,
+                            //     .anim_t = null,
+                            // }, if (k == 0) 1 else 0, null);
                         }
                     }
                 }
@@ -355,43 +417,52 @@ fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThr
         inline else => |_, t| std.log.debug("unhandled: {s}", .{@tagName(t)}),
     }
 
-    // try self.drawer.drawSexpr(camera, .{
-    //     .is_pattern = 0,
-    //     .value = self.execution_thread.active_value,
-    //     .pos = .{},
+    // try drawer.drawSexpr(camera, .{
+    //     .is_pattern = 1,
+    //     .pos = next_cases_pattern_point,
+    //     .value = Sexpr.builtin.true,
     // });
-    // const asdf = self.execution_thread.stack.getLast();
-    // for (asdf.cur_cases, 0..) |case, k| {
-    //     try self.drawer.drawSexpr(camera, .{
-    //         .is_pattern = 1,
-    //         .value = case.pattern,
-    //         .pos = .{ .pos = .new(4, tof32(k * 3)) },
-    //     });
 
-    //     try self.drawer.drawSexpr(camera, .{
-    //         .is_pattern = 0,
-    //         .value = case.template,
-    //         .pos = .{ .pos = .new(6, tof32(k * 3)) },
-    //     });
+    // std.log.debug("len: {d}", .{kommon.itertools.iteratorLen(it)});
 
-    //     if (k == 1) {
-    //         if (case.next) |next| {
-    //             for (next.items) |case2| {
-    //                 try self.drawer.drawSexpr(camera, .{
-    //                     .is_pattern = 1,
-    //                     .value = case2.pattern,
-    //                     .pos = .{ .pos = .new(10, tof32(k * 3)) },
-    //                 });
+    // next_cases_pattern_point = next_cases_pattern_point.applyToLocalPoint(.{ .pos = .new(4, 0) });
+    while (it.next()) |asdf| {
+        // template_point = template_point.applyToLocalPoint(.{ .pos = .new(12, 0) });
+        defer next_cases_pattern_point = next_cases_pattern_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
+        const x: core.StackThing = asdf;
+        // std.log.debug("{any}", .{x.cur_cases});
+        // const pattern_point = next_cases_pattern_point.applyToLocalPoint(
+        //     .{ .pos = .new(4, 0) },
+        // );
+        assert(x.cur_cases.len > 0);
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 1,
+            .pos = next_cases_pattern_point,
+            .value = x.cur_cases[0].pattern,
+        });
+        for (x.cur_cases, 0..) |case, k| {
+            _ = k;
+            _ = case;
+            // try drawer.drawSexpr(camera, .{
+            //     .is_pattern = 1,
+            //     .pos = next_cases_pattern_point,
+            //     .value = case.pattern,
+            // });
+            // try drawCase(drawer, camera, next_cases_pattern_point.applyToLocalPoint(
+            //     .{ .pos = .new(0, 3 * tof32(k)) },
+            // ), case, .{
+            //     .new = &.{},
+            //     .old = x.cur_bindings.items,
+            //     .anim_t = null,
+            // }, if (k == 0) 1 else 0, null);
+        }
+    }
 
-    //                 try self.drawer.drawSexpr(camera, .{
-    //                     .is_pattern = 0,
-    //                     .value = case2.template,
-    //                     .pos = .{ .pos = .new(12, tof32(k * 3)) },
-    //                 });
-    //             }
-    //         }
-    //     }
-    // }
+    // try drawer.drawSexpr(camera, .{
+    //     .is_pattern = 1,
+    //     .pos = next_cases_pattern_point,
+    //     .value = Sexpr.builtin.false,
+    // });
 }
 
 fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse) Rect {
