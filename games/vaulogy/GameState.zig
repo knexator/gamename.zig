@@ -35,6 +35,7 @@ scoring_run: core.ScoringRun,
 // anim_t: f32 = 0.99,
 // result: ?core.ExecutionThread.Result = null,
 
+tree: ExecutionTree,
 snapshots: []const core.ExecutionThread,
 progress_t: f32 = 0.0,
 
@@ -63,6 +64,165 @@ const ThreadInitialParams = struct {
             std.debug.assert(null == try thread.advanceTinyStep(scoring_run));
         }
         return thread;
+    }
+};
+
+const ExecutionTree = struct {
+    incoming_bindings: []const core.Binding,
+    all_bindings: []const core.Binding,
+    input: *const Sexpr,
+    matched: ?struct {
+        pattern: *const Sexpr,
+        raw_template: *const Sexpr,
+        filled_template: *const Sexpr,
+        funk_tangent: ?struct {
+            fn_name: *const Sexpr,
+            tree: *const ExecutionTree,
+        },
+        next: ?*const ExecutionTree,
+    },
+
+    fn getLast(self: ExecutionTree) *const Sexpr {
+        if (self.matched) |matched| {
+            if (matched.next) |next| {
+                return next.getLast();
+            } else if (matched.funk_tangent) |fnk| {
+                return fnk.tree.getLast();
+            } else return matched.filled_template;
+        } else return self.input;
+    }
+
+    pub fn buildNewStack(scoring_run: *core.ScoringRun, fn_name: *const Sexpr, input: *const Sexpr) error{
+        OutOfMemory,
+        BAD_INPUT,
+        FnkNotFound,
+        NoMatchingCase,
+        InvalidMetaFnk,
+        UsedUndefinedVariable,
+    }!ExecutionTree {
+        const func = try scoring_run.findFunktion(fn_name);
+        const result: ExecutionTree = try .buildExtending(scoring_run, func.cases.items, input, &.{});
+        std.log.debug("in buildNewStack, for fn_name {any} and input {any}, got last {any}", .{
+            fn_name,
+            input,
+            result.getLast(),
+        });
+        return result;
+    }
+
+    pub fn buildExtending(scoring_run: *core.ScoringRun, cases: []const core.MatchCaseDefinition, input: *const Sexpr, incoming_bindings: []const core.Binding) !ExecutionTree {
+        for (cases) |case| {
+            var new_bindings: std.ArrayList(core.Binding) = .init(scoring_run.mem.gpa);
+            if (try core.generateBindings(case.pattern, input, &new_bindings)) {
+                try new_bindings.appendSlice(incoming_bindings);
+                const bindings = try new_bindings.toOwnedSlice();
+                const argument = try core.fillTemplateV2(case.template, bindings, &scoring_run.mem.pool_for_sexprs);
+
+                const funk_tangent: ?ExecutionTree = if (case.fnk_name.equals(Sexpr.builtin.identity))
+                    null
+                else
+                    try .buildNewStack(scoring_run, case.fnk_name, argument);
+
+                const next_input = if (funk_tangent) |t| t.getLast() else argument;
+
+                const next_tree: ?ExecutionTree = if (case.next) |next|
+                    try .buildExtending(scoring_run, next.items, next_input, bindings)
+                else
+                    null;
+
+                return .{
+                    .all_bindings = bindings,
+                    .incoming_bindings = incoming_bindings,
+                    .input = input,
+                    // .matched = if (funk_tangent == null and next_tree == null) null else .{
+                    .matched = .{
+                        .pattern = case.pattern,
+                        .raw_template = case.template,
+                        .filled_template = argument,
+                        .funk_tangent = if (funk_tangent) |t| blk: {
+                            const ptr = try scoring_run.mem.gpa.create(ExecutionTree);
+                            ptr.* = t;
+                            break :blk .{
+                                .fn_name = case.fnk_name,
+                                .tree = ptr,
+                            };
+                        } else null,
+                        .next = if (next_tree) |t| blk: {
+                            const ptr = try scoring_run.mem.gpa.create(ExecutionTree);
+                            ptr.* = t;
+                            break :blk ptr;
+                        } else null,
+                    },
+                };
+            } else {
+                new_bindings.deinit();
+            }
+        } else @panic("nope"); // else return .{ .all_bindings = incoming_bindings, .incoming_bindings = incoming_bindings, .input = input, .matched = null };
+    }
+
+    pub fn buildFromText(scoring_run: *core.ScoringRun, fn_name_raw: []const u8, input_raw: []const u8) !ExecutionTree {
+        var permanent_stuff = scoring_run.mem;
+        const fn_name = try parsing.parseSingleSexpr(fn_name_raw, &permanent_stuff.pool_for_sexprs);
+        const input = try parsing.parseSingleSexpr(input_raw, &permanent_stuff.pool_for_sexprs);
+        return try .buildNewStack(scoring_run, fn_name, input);
+    }
+
+    pub fn draw(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point) !void {
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 0,
+            .pos = input_point,
+            .value = self.input,
+        });
+
+        if (self.matched) |matched| {
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 1,
+                .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+                .value = matched.pattern,
+            });
+
+            // try drawer.drawSexpr(camera, .{
+            //     .is_pattern = 0,
+            //     .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
+            //     .value = matched.template,
+            // });
+            if (matched.funk_tangent) |funk_tangent| {
+                // try drawer.drawHoldedFnk(camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }), 0, funk_tangent.fn_name);
+                // if (matched.next == null) {
+                //     try drawer.drawSexpr(camera, .{
+                //         .is_pattern = 0,
+                //         .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }),
+                //         .value = funk_tangent.tree.getLast(),
+                //     });
+                // }
+                // if (matched.next) |next| {
+                try funk_tangent.tree.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 1), .turns = 0.1 }));
+                // try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
+                // } else {
+                //     try funk_tangent.tree.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0), .turns = -0.1 }));
+                // }
+                // } else {
+                // if (matched.next) |next| {
+                //     try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
+                // }
+            }
+            if (matched.next) |next| {
+                try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
+            }
+
+            try drawer.drawTemplateSexprWithBindings(
+                camera,
+                input_point.applyToLocalPoint(.{ .pos = .new(5, 1), .turns = 0.1 }),
+                matched.raw_template,
+                .{
+                    .anim_t = 0.5,
+                    .old = &.{},
+                    // .new = &.{},
+                    .new = self.all_bindings,
+                    // .old = self.bindings,
+                },
+            );
+        }
     }
 };
 
@@ -114,6 +274,8 @@ pub fn init(
         k += 1;
     }
     dst.snapshots = try snaps.toOwnedSlice();
+
+    dst.tree = try .buildFromText(&dst.scoring_run, "peanoMul", "((true . (true . nil)) . (true . (true . nil)))");
 }
 
 // TODO: take gl parameter
@@ -149,10 +311,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.progress_t -= platform.delta_seconds * 2;
     }
     self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len)) - 0.01);
-    const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
-    const anim_t = @mod(self.progress_t, 1.0);
 
-    try drawThread(&self.drawer, camera, execution_thread, anim_t);
+    if (true) {
+        const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
+        const anim_t = @mod(self.progress_t, 1.0);
+        try drawThread(&self.drawer, camera, execution_thread, anim_t);
+    }
+
+    if (true) {
+        try self.tree.draw(&self.drawer, camera, .{ .pos = .new(0, -8), .turns = -0.1 });
+    }
 
     return false;
 }

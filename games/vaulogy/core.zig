@@ -647,7 +647,7 @@ pub const ExecutionThread = struct {
             const old_fnk_name = last_stack_ptr.cur_fnk_name;
             const old_active_value = this.active_value;
             const argument = blk: {
-                const x = try partiallyFillTemplate(case.template, last_stack_ptr.cur_bindings, &permanent_stuff.pool_for_sexprs);
+                const x = try partiallyFillTemplateV2(case.template, last_stack_ptr.cur_bindings.items, &permanent_stuff.pool_for_sexprs);
                 if (!x.complete) {
                     this.last_visual_state = .{ .undefined_variable = .{
                         .case = case,
@@ -1279,7 +1279,7 @@ fn expectEqualSexprs(expected: *const Sexpr, actual: *const Sexpr) !void {
     }
 }
 
-fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *Bindings) error{ BAD_INPUT, OutOfMemory }!bool {
+pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *Bindings) error{ BAD_INPUT, OutOfMemory }!bool {
     if (DEBUG) {
         const stderr = std.io.getStdErr().writer();
         stderr.print("\nGenerating bindings for pattern {any} and value {any}\n", .{ pattern, value }) catch unreachable;
@@ -1324,14 +1324,18 @@ fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *Bindi
     }
 }
 
-fn partiallyFillTemplate(template: *const Sexpr, bindings: Bindings, pool: *MemoryPool(Sexpr)) OoM!struct {
+fn fillTemplate(template: *const Sexpr, bindings: Bindings, pool: *MemoryPool(Sexpr)) !*const Sexpr {
+    return fillTemplateV2(template, bindings.items, pool);
+}
+
+fn partiallyFillTemplateV2(template: *const Sexpr, bindings: []const Binding, pool: *MemoryPool(Sexpr)) OoM!struct {
     result: *const Sexpr,
     complete: bool,
 } {
     switch (template.*) {
         .atom_var => |templ| {
-            for (0..bindings.items.len) |k| {
-                const bind = bindings.items[bindings.items.len - k - 1];
+            for (0..bindings.len) |k| {
+                const bind = bindings[bindings.len - k - 1];
                 if (std.mem.eql(u8, bind.name, templ.value)) {
                     return .{ .result = bind.value, .complete = true };
                 }
@@ -1340,8 +1344,8 @@ fn partiallyFillTemplate(template: *const Sexpr, bindings: Bindings, pool: *Memo
         },
         .atom_lit => return .{ .result = template, .complete = true },
         .pair => |templ| {
-            const left = try partiallyFillTemplate(templ.left, bindings, pool);
-            const right = try partiallyFillTemplate(templ.right, bindings, pool);
+            const left = try partiallyFillTemplateV2(templ.left, bindings, pool);
+            const right = try partiallyFillTemplateV2(templ.right, bindings, pool);
             const result: *Sexpr = try pool.create();
             result.* = Sexpr{ .pair = Pair{ .left = left.result, .right = right.result } };
             return .{ .result = result, .complete = left.complete and right.complete };
@@ -1349,8 +1353,8 @@ fn partiallyFillTemplate(template: *const Sexpr, bindings: Bindings, pool: *Memo
     }
 }
 
-fn fillTemplate(template: *const Sexpr, bindings: Bindings, pool: *MemoryPool(Sexpr)) !*const Sexpr {
-    const x = try partiallyFillTemplate(template, bindings, pool);
+pub fn fillTemplateV2(template: *const Sexpr, bindings: []const Binding, pool: *MemoryPool(Sexpr)) !*const Sexpr {
+    const x = try partiallyFillTemplateV2(template, bindings, pool);
     if (!x.complete) return error.UsedUndefinedVariable;
     return x.result;
 }
