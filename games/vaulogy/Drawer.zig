@@ -167,7 +167,7 @@ const AtomVisualCache = struct {
 
         const profile = try cache.arena.alloc(Vec2, rnd.rnd.intRangeLessThan(usize, 2, 15));
         for (profile) |*p| {
-            p.* = Vec2.new(rnd.between(0, 1), rnd.around0(0.2));
+            p.* = Vec2.new(rnd.between(0.01, 0.99), rnd.around0(0.2));
         }
         std.mem.sortUnstable(Vec2, profile, {}, struct {
             pub fn lessThanFn(context: void, lhs: Vec2, rhs: Vec2) bool {

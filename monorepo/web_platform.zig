@@ -1079,6 +1079,13 @@ export fn setTweakableFloat(index: usize, v: f32) void {
     tweakable_floats.items[index].* = v;
 }
 
+pub const panic = std.debug.FullPanic(struct {
+    fn panic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+        js_better.debug.logString(msg);
+        std.debug.defaultPanic(msg, first_trace_addr);
+    }
+}.panic);
+
 pub const std_options = std.Options{
     // wasm-freestanding has no stderr, so we have to override this function
     .logFn = myLogFn,

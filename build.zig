@@ -440,6 +440,7 @@ fn build_all_games_html(b: *std.Build) !void {
     try html_index_contents.appendSlice("<ul>\n");
 
     inline for (.{
+        "vaulogy",
         "gol_editor",
         // TODO: audio stuff
         // "loopmouse",
