@@ -939,6 +939,19 @@ pub const Rect = extern struct {
         return self.top_left.add(self.size.scale(0.5));
     }
 
+    pub fn fromCorners(top_left: Vec2, bottom_right: Vec2) Rect {
+        return .{ .top_left = top_left, .size = bottom_right.sub(top_left) };
+    }
+
+    pub fn fromRanges(x_range: [2]f32, y_range: [2]f32) Rect {
+        assert(x_range[0] <= x_range[1]);
+        assert(y_range[0] <= y_range[1]);
+        return .fromCorners(
+            .new(x_range[0], y_range[0]),
+            .new(x_range[1], y_range[1]),
+        );
+    }
+
     pub const Side = enum {
         right,
         bottom,

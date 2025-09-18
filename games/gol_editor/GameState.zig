@@ -61,39 +61,68 @@ const CellState = enum {
 
 const CellType = enum {
     empty,
-    @"+",
-    @"-",
-    @"~",
-    @"*",
-    o,
-    @"=",
-    @"?",
+    fire,
+    water,
+    air,
+    earth,
+    sulfur,
+    quicksilver,
+    salt,
 
-    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{ .@"+", .@"-", .@"~", .@"*", .o, .@"=", .@"?", .empty };
+    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{
+        .fire,
+        .water,
+        .air,
+        .earth,
+        .salt,
+        .sulfur,
+        .quicksilver,
+        .empty,
+    };
 
+    // TODO: delete
     pub fn text(self: CellType) []const u8 {
         return switch (self) {
             .empty => "",
-            inline else => |x| @tagName(x),
+            inline else => |x| &.{comptime x.toChar()},
         };
+    }
+
+    pub fn toChar(self: CellType) u8 {
+        return switch (self) {
+            .empty => ' ',
+            .fire => '+',
+            .water => '-',
+            .air => '=',
+            .earth => '~',
+            .sulfur => 'o',
+            .quicksilver => '?',
+            .salt => '*',
+        };
+    }
+
+    pub fn fromChar(char: u8) ?CellType {
+        inline for (all) |c| {
+            if (char == c.toChar()) return c;
+        } else return null;
     }
 
     /// this gets added to the cell's vertical pos
     pub fn verticalCorrection(self: CellType) f32 {
-        return switch (self) {
-            .@"*" => 0.3,
-            .o => -0.125,
-            .@"-" => -0.15,
+        return switch (self.toChar()) {
+            '*' => 0.3,
+            'o' => -0.125,
+            '-' => -0.15,
             else => 0,
         };
     }
 
     /// text size gets mutliplied by this
     pub fn sizeCorrection(self: CellType) f32 {
-        return switch (self) {
-            .@"*" => 1.3,
-            .@"-" => 1.5,
-            .@"?", .@"~" => 1.0,
+        return switch (self.toChar()) {
+            '*' => 1.3,
+            '-' => 1.5,
+            '?', '~' => 1.0,
             else => 1.3,
         };
     }
@@ -102,7 +131,7 @@ const CellType = enum {
 const Toolbar = struct {
     painting: bool = false,
     active_state: CellState = .white,
-    active_type: CellType = .@"+",
+    active_type: CellType = .fire,
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
     rect_tool_state: union(enum) {
@@ -295,15 +324,7 @@ const BoardState = struct {
                 ':' => .white,
                 else => return error.BadText,
             };
-            const cell_type: CellType = switch (t[1]) {
-                '.' => .empty,
-                '+' => .@"+",
-                '*' => .@"*",
-                'o' => .o,
-                '=' => .@"=",
-                '-' => .@"-",
-                else => return error.BadText,
-            };
+            const cell_type = CellType.fromChar(t[1]) orelse return error.BadText;
             if (cell_state != .black) try dst.cells_states.put(p, cell_state);
             if (cell_type != .empty) try dst.cells_types.put(p, cell_type);
         }
@@ -491,11 +512,11 @@ fn addEmptyLevel(self: *GameState) !void {
 
             try res.cells_states.put(.new(0, 1), .gray);
             try res.cells_states.put(.new(0, 2), .white);
-            try res.cells_types.put(.new(1, 0), .@"+");
-            try res.cells_types.put(.new(1, 1), .@"*");
-            try res.cells_types.put(.new(1, 2), .o);
-            try res.cells_types.put(.new(2, 0), .@"=");
-            try res.cells_types.put(.new(2, 1), .@"-");
+            try res.cells_types.put(.new(1, 0), .fire);
+            try res.cells_types.put(.new(1, 1), .salt);
+            try res.cells_types.put(.new(1, 2), .sulfur);
+            try res.cells_types.put(.new(2, 0), .air);
+            try res.cells_types.put(.new(2, 1), .water);
 
             break :blk res;
         },
