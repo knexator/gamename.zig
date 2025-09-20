@@ -113,11 +113,7 @@ const Cell = struct {
     };
 
     pub fn equals(this: Cell, other: Cell) bool {
-        if (this.state != other.state) return false;
-        for (MoteType.all) |t| {
-            if (this.motes.get(t) != other.motes.get(t)) return false;
-        }
-        return true;
+        return std.meta.eql(this, other);
     }
 
     pub fn fromStateAndMote(state: State, maybe_mote: ?MoteType) Cell {
@@ -133,6 +129,13 @@ const Cell = struct {
             res += cell.motes.get(t);
         }
         return res;
+    }
+
+    pub fn hasNonQuicksilverMotes(cell: Cell) bool {
+        inline for (MoteType.all) |t| {
+            if (t == .quicksilver) continue;
+            if (cell.motes.get(t) != 0) return true;
+        } else return false;
     }
 
     pub fn setSingleMote(cell: *Cell, mote: ?MoteType) void {
@@ -169,6 +172,168 @@ const Cell = struct {
         }
     };
 };
+
+const Shape = std.AutoArrayHashMap(IVec2, void);
+
+const Signals = struct {
+    values: std.AutoArrayHashMap(IVec2, Signal),
+
+    pub fn init(scratch: std.mem.Allocator) Signals {
+        return .{ .values = .init(scratch) };
+    }
+
+    pub fn clone(source: Signals) !Signals {
+        return .{ .values = try .clone(source.values) };
+    }
+
+    pub fn getPtr(signals: *Signals, p: IVec2) !*Signal {
+        const gop = try signals.values.getOrPut(p);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        return gop.value_ptr;
+    }
+
+    pub fn at(signals: Signals, p: IVec2) Signal {
+        return signals.values.get(p) orelse .empty;
+    }
+
+    pub fn equals(self: Signals, other: Signals) bool {
+        return self.isSubsetOf(other) and other.isSubsetOf(self);
+    }
+
+    fn isSubsetOf(self: Signals, other: Signals) bool {
+        var it = self.values.iterator();
+        while (it.next()) |kv| {
+            if (!other.at(kv.key_ptr.*).equals(kv.value_ptr.*)) return false;
+        }
+        return true;
+    }
+};
+
+/// all the signals arriving on a given cell
+const Signal = struct {
+    fire: i32,
+    water: i32,
+    earth: i32,
+    sulfur: i32,
+
+    push: IVec2,
+
+    /// the vector-summed offsets from the origin
+    /// of each *on* signal to the destination cell
+    on_offset: IVec2,
+    /// the vector-summed offsets from the origin
+    /// of each *off* signal to the destination cell
+    off_offset: IVec2,
+
+    pub const empty: Signal = .{
+        .fire = 0,
+        .water = 0,
+        .earth = 0,
+        .sulfur = 0,
+        .push = .zero,
+        .on_offset = .zero,
+        .off_offset = .zero,
+    };
+
+    pub fn send(signals: *Signals, signal: Signal, source: IVec2, destination: IVec2) !void {
+        const target = try signals.getPtr(destination);
+
+        target.fire += signal.fire;
+        target.earth += signal.earth;
+        target.sulfur += signal.sulfur;
+        target.water += signal.water;
+
+        const delta = destination.sub(source);
+        target.on_offset.addInPlace(delta.scale(signal.fire + signal.sulfur + signal.earth));
+        target.off_offset.addInPlace(delta.scale(signal.water));
+        target.push.addInPlace(signal.push);
+    }
+
+    pub fn equals(this: Signal, other: Signal) bool {
+        return std.meta.eql(this, other);
+    }
+};
+
+const SaltPositions = std.ArrayList(struct {
+    pos: IVec2,
+    salt: i32,
+});
+
+fn sendSulfurSignals(board: BoardState, signals: *Signals, sulfur_shape: *Shape, source: IVec2, scratch: std.mem.Allocator) !void {
+    if (sulfur_shape.get(source) != null) return;
+    var positions: std.ArrayList(IVec2) = .init(scratch);
+    try positions.append(source);
+    try sulfur_shape.put(source, {});
+
+    var cursor: usize = 0;
+    var bounds: math.IBounds = .empty;
+    while (cursor < positions.items.len) : (cursor += 1) {
+        const p = positions.items[cursor];
+        bounds.plusTile(p);
+        for (IVec2.cardinal_directions) |d| {
+            try visitBrightSulfur(board, sulfur_shape, &positions, p.add(d));
+        }
+    }
+
+    for (positions.items) |p| {
+        const signal: Signal = .{
+            .fire = 0,
+            .water = 0,
+            .earth = 0,
+            .sulfur = board.cellAt(p).motes.get(.sulfur),
+            .push = .zero,
+            .on_offset = .zero,
+            .off_offset = .zero,
+        };
+        // TODO NOW: add one?
+        const size = bounds.inner_size; // .add(.one);
+        for (IVec2.eight_directions) |d| {
+            try Signal.send(signals, signal, p, p.add(d.mul(size.cast(isize))));
+        }
+    }
+}
+
+fn visitBrightSulfur(board: BoardState, sulfur_shape: *Shape, positions: *std.ArrayList(IVec2), p: IVec2) !void {
+    if (sulfur_shape.get(p) == null and
+        board.cellAt(p).state == .bright and
+        board.cellAt(p).motes.get(.sulfur) > 0)
+    {
+        try positions.append(p);
+        try sulfur_shape.put(p, {});
+    }
+}
+
+fn collectSalts(board: BoardState, scratch: std.mem.Allocator) !SaltPositions {
+    var result: SaltPositions = .init(scratch);
+    var it = board.cells.iterator();
+    while (it.next()) |kv| {
+        const pos = kv.key_ptr.*;
+        const cell = kv.value_ptr.*;
+        if (cell.motes.get(.salt) == 0) continue;
+        try result.append(.{ .pos = pos, .salt = cell.motes.get(.salt) });
+    }
+    return result;
+}
+
+fn lightOneSulfur(board: *BoardState, pre_light: BoardState, stack: *std.ArrayList(IVec2), pos: IVec2) !void {
+    if (board.cellAt(pos).state == .off and
+        pre_light.cellAt(pos).state == .off and
+        board.cellAt(pos).motes.get(.sulfur) > 0)
+    {
+        try stack.append(pos);
+        try board.setStateAt(pos, .bright);
+    }
+}
+
+fn lightConnectedSulfur(board: *BoardState, pre_light: BoardState, initial_position: IVec2, scratch: std.mem.Allocator) !void {
+    var stack: std.ArrayList(IVec2) = .init(scratch);
+    try stack.append(initial_position);
+    while (stack.pop()) |p| {
+        for (IVec2.cardinal_directions) |d| {
+            try lightOneSulfur(board, pre_light, &stack, p.add(d));
+        }
+    }
+}
 
 const Toolbar = struct {
     painting: bool = false,
@@ -243,6 +408,250 @@ const BoardState = struct {
 
     pub fn deinit(self: *BoardState) void {
         self.cells.deinit();
+    }
+
+    pub fn next(board: *BoardState, scratch: std.mem.Allocator) !void {
+        var signals: Signals = .init(scratch);
+        var sulfur_shape: Shape = .init(scratch);
+        var cell_it = board.cells.iterator();
+
+        // step 1: send signals for bright cells.  the signals arriving at each cell
+        // are recorded to be applied in later steps.
+        while (cell_it.next()) |kv| {
+            const pos = kv.key_ptr.*;
+            const cell = kv.value_ptr.*;
+            if (cell.state != .bright) continue;
+            if (cell.motes.get(.fire) != 0 or cell.motes.get(.water) != 0 or cell.motes.get(.earth) != 0) {
+                for (IVec2.cardinal_directions) |delta| {
+                    try Signal.send(&signals, .{
+                        .fire = cell.motes.get(.fire),
+                        .water = cell.motes.get(.water),
+                        .earth = cell.motes.get(.earth),
+                        .sulfur = 0,
+                        .push = delta.scale(cell.motes.get(.earth)),
+                        .on_offset = .zero,
+                        .off_offset = .zero,
+                    }, pos, pos.add(delta));
+                }
+            }
+            if (cell.motes.get(.sulfur) != 0) {
+                try sendSulfurSignals(board.*, &signals, &sulfur_shape, pos, scratch);
+            }
+        }
+
+        // step 2a: air motes extend the reach of all signals they receive.
+        // this step repeats until a steady state is reached.
+        var air_received: Signals = .init(scratch);
+        var air_sent: Signals = try .clone(signals);
+        while (!Signals.equals(air_received, air_sent)) {
+            air_received = air_sent;
+            air_sent = .init(scratch);
+            cell_it.reset();
+            while (cell_it.next()) |kv| {
+                const pos = kv.key_ptr.*;
+                const cell = kv.value_ptr.*;
+                if (cell.motes.get(.air) == 0) continue;
+                const received = air_received.at(pos);
+                if (cell.state == .off and received.water != 0) {
+                    try Signal.send(&signals, .{
+                        .fire = 0,
+                        .water = received.water * cell.motes.get(.air),
+                        .earth = 0,
+                        .sulfur = 0,
+                        .push = .zero,
+                        .on_offset = .zero,
+                        .off_offset = .zero,
+                    }, pos.sub(received.off_offset), pos.add(received.off_offset));
+                    try Signal.send(&air_sent, .{
+                        .fire = 0,
+                        .water = received.water * cell.motes.get(.air),
+                        .earth = 0,
+                        .sulfur = 0,
+                        .push = .zero,
+                        .on_offset = .zero,
+                        .off_offset = .zero,
+                    }, pos.sub(received.off_offset), pos.add(received.off_offset));
+                } else if (cell.state != .off and (received.fire != 0 or received.earth != 0 or received.sulfur != 0)) {
+                    try Signal.send(&signals, .{
+                        .fire = received.fire * cell.motes.get(.air),
+                        .water = 0,
+                        .earth = received.earth * cell.motes.get(.air),
+                        .sulfur = received.sulfur * cell.motes.get(.air),
+                        .push = received.push.scale(cell.motes.get(.air)),
+                        .on_offset = .zero,
+                        .off_offset = .zero,
+                    }, pos.sub(received.on_offset), pos.add(received.on_offset));
+                    try Signal.send(&air_sent, .{
+                        .fire = received.fire * cell.motes.get(.air),
+                        .water = 0,
+                        .earth = received.earth * cell.motes.get(.air),
+                        .sulfur = received.sulfur * cell.motes.get(.air),
+                        .push = received.push.scale(cell.motes.get(.air)),
+                        .on_offset = .zero,
+                        .off_offset = .zero,
+                    }, pos.sub(received.on_offset), pos.add(received.on_offset));
+                }
+            }
+        }
+
+        // step 2b: if a cell receives new signals in the steady state, it will
+        // receive an infinite amount.  for now, add 1000 as a reasonably big number.
+        var air_received_it = air_received.values.iterator();
+        while (air_received_it.next()) |kv| {
+            const pos = kv.key_ptr.*;
+            const received = kv.value_ptr.*;
+            if (received.fire != 0 or received.water != 0 or received.earth != 0 or received.sulfur != 0) {
+                std.log.warn("infinite signal at {any}!\n", .{pos});
+                const signal = try signals.getPtr(pos);
+                signal.fire += 1000 * received.fire;
+                signal.water += 1000 * received.water;
+                signal.earth += 1000 * received.earth;
+                signal.sulfur += 1000 * received.sulfur;
+                signal.push.addInPlace(received.push.scale(1000));
+            }
+        }
+
+        // step 3: signals arriving at salt motes are duplicated onto all the other
+        // salt motes with the same count.
+        {
+            const salt_positions = try collectSalts(board.*, scratch);
+            var i: usize = 0;
+            while (i < salt_positions.items.len) {
+                const salt = salt_positions.items[i].salt;
+                var duplicated: Signal = .empty;
+
+                var n = i;
+                while (n < salt_positions.items.len) : (n += 1) {
+                    const p = salt_positions.items[n];
+                    if (p.salt != salt) {
+                        break;
+                    }
+                    const signal = signals.at(p.pos);
+                    duplicated.fire += signal.fire;
+                    duplicated.water += signal.water;
+                    duplicated.sulfur += signal.sulfur;
+                }
+                while (i < n) : (i += 1) {
+                    const p = salt_positions.items[i];
+                    const signal = try signals.getPtr(p.pos);
+                    signal.*.fire = duplicated.fire;
+                    signal.*.water = duplicated.water;
+                    signal.*.sulfur = duplicated.sulfur;
+                }
+            }
+        }
+
+        // step 4: dim all bright cells that contain a mote.
+        cell_it.reset();
+        while (cell_it.next()) |kv| {
+            const cell = kv.value_ptr;
+            if (cell.state != .bright or cell.moteCount() == 0) continue;
+            cell.state = .dim;
+        }
+
+        // step 5: off quicksilver consumes signals, converting them to motes.
+        // these signals have no effect in later steps.
+        cell_it.reset();
+        while (cell_it.next()) |kv| {
+            const cell = kv.value_ptr;
+            if (cell.state != .off or
+                cell.motes.get(.quicksilver) == 0 or
+                cell.hasNonQuicksilverMotes())
+            {
+                continue;
+            }
+            const signal = try signals.getPtr(kv.key_ptr.*);
+            inline for ([_]MoteType{ .fire, .water, .earth, .sulfur }) |t| {
+                cell.motes.set(t, cell.motes.get(t) * @field(signal, @tagName(t)));
+            }
+            signal.* = .empty;
+        }
+
+        // step 6: cells containing a mote which receives signal transition either
+        // from off to bright or from lit to off, depending on the signal type.
+        // cells containing quicksilver which transition from lit to off reset the
+        // cell to just one quicksilver.
+        const pre_light: BoardState = try .cloneWithAllocator(board.*, scratch);
+        cell_it.reset();
+        while (cell_it.next()) |kv| {
+            const cell = kv.value_ptr;
+            if (cell.moteCount() == 0) continue;
+            const signal = signals.at(kv.key_ptr.*);
+            if (cell.state == .off and (signal.fire != 0 or signal.sulfur != 0)) {
+                cell.state = .bright;
+            } else if (cell.state != .off and signal.water != 0) {
+                cell.state = .off;
+                if (cell.motes.get(.quicksilver) != 0) {
+                    cell.motes = .initFill(0);
+                    cell.motes.set(.quicksilver, 1);
+                }
+            }
+        }
+
+        // step 7: bright cells within a sulfur shape that's turned off are extended
+        // to fill the entire connected shape.  if a cell was just turned off in
+        // step 6, it is not included in the shape for the purposes of this step.
+        cell_it.reset();
+        while (cell_it.next()) |kv| {
+            const pos = kv.key_ptr.*;
+            const cell = kv.value_ptr.*;
+            if (cell.state != .bright or cell.motes.get(.sulfur) == 0) continue;
+            try lightConnectedSulfur(board, pre_light, pos, scratch);
+        }
+
+        // step 8: motes are pushed according to the accumulated push signal.
+        // quicksilver motes and lit air motes are not pushed.
+        const pre_push = try board.cloneWithAllocator(scratch);
+        var signals_it = signals.values.iterator();
+        while (signals_it.next()) |kv| {
+            const pos = kv.key_ptr.*;
+            const signal = kv.value_ptr.*;
+            if (signal.push.equals(.zero)) continue;
+            const cell = pre_push.cellAt(pos);
+            if (!cell.hasNonQuicksilverMotes()) continue;
+            const dest_pos = pos.add(signal.push);
+            const b = try board.cellPtrAt(pos);
+            const d = try board.cellPtrAt(dest_pos);
+            inline for ([_]MoteType{ .fire, .water, .earth, .sulfur, .salt }) |t| {
+                b.motes.getPtr(t).* -= cell.motes.get(t);
+                d.motes.getPtr(t).* += cell.motes.get(t);
+            }
+            if (cell.state == .off) {
+                b.motes.getPtr(.air).* -= cell.motes.get(.air);
+                d.motes.getPtr(.air).* += cell.motes.get(.air);
+            }
+        }
+
+        // step 9: if there is a conflict between lit states among salt motes with
+        // the same count, the salt motes are removed.
+        {
+            const salt_positions = try collectSalts(board.*, scratch);
+            var i: usize = 0;
+            while (i < salt_positions.items.len) {
+                const salt = salt_positions.items[i].salt;
+                const state = board.cellAt(salt_positions.items[i].pos).state;
+                var conflict = false;
+                var n = i;
+                while (n < salt_positions.items.len) : (n += 1) {
+                    const p = salt_positions.items[n];
+                    if (p.salt != salt) break;
+                    if (board.cellAt(p.pos).state != state) {
+                        conflict = true;
+                    }
+                }
+                if (conflict) {
+                    while (i < n) : (i += 1) {
+                        (try board.cellPtrAt(salt_positions.items[i].pos)).motes.set(.salt, 0);
+                    }
+                } else {
+                    i = n;
+                }
+            }
+        }
+    }
+
+    fn cloneWithAllocator(self: BoardState, allocator: std.mem.Allocator) !BoardState {
+        return .{ .cells = try self.cells.cloneWithAllocator(allocator) };
     }
 
     fn clone(self: BoardState) !BoardState {
@@ -821,6 +1230,28 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (platform.keyboard.wasPressed(.KeyX)) {
             try cur_level.saveState(&self.pool_boardstate);
+        }
+
+        // advace state button
+        if (true) {
+            const button: Rect = top_right_button.move(.new(0, 2)).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "V",
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    try cur_level.board.next(mem.scratch.allocator());
+                }
+            }
+        }
+
+        if (platform.keyboard.wasPressed(.KeyV)) {
+            try cur_level.board.next(mem.scratch.allocator());
         }
 
         const bottom_right_buttons: [4]Rect = blk: {

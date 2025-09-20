@@ -132,6 +132,15 @@ pub fn ZVec2(T: type) type {
             .new(0, -1),
         };
 
+        pub const diagonal_directions = [4]IVec2{
+            .new(1, 1),
+            .new(-1, 1),
+            .new(-1, -1),
+            .new(1, -1),
+        };
+
+        pub const eight_directions = cardinal_directions ++ diagonal_directions;
+
         pub fn isCardinalDirection(v: Self) bool {
             return (v.x == 0 and @abs(v.y) == 1) or
                 (v.y == 0 and @abs(v.x) == 1);
