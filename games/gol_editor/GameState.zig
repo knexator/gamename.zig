@@ -20,14 +20,14 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 var COLORS: struct {
     cell: struct {
-        black: FColor = .fromHex("#444444"),
-        gray: FColor = .fromHex("#999999"),
-        white: FColor = .white,
+        off: FColor = .fromHex("#444444"),
+        dim: FColor = .fromHex("#999999"),
+        bright: FColor = .white,
     } = .{},
     cell_text: struct {
-        on_black: FColor = .white,
-        on_gray: FColor = .black,
-        on_white: FColor = .black,
+        on_off: FColor = .white,
+        on_dim: FColor = .black,
+        on_bright: FColor = .black,
     } = .{},
     grid: FColor = .fromHex("#545454"),
     rect_selection_border: FColor = .cyan,
@@ -108,7 +108,7 @@ const Cell = struct {
     motes: std.EnumArray(MoteType, i32),
 
     pub const empty: Cell = .{
-        .state = .black,
+        .state = .off,
         .motes = .initFill(0),
     };
 
@@ -148,23 +148,23 @@ const Cell = struct {
     }
 
     pub const State = enum {
-        black,
-        gray,
-        white,
+        off,
+        dim,
+        bright,
 
         pub fn color(self: State) FColor {
             return switch (self) {
-                .black => COLORS.cell.black,
-                .gray => COLORS.cell.gray,
-                .white => COLORS.cell.white,
+                .off => COLORS.cell.off,
+                .dim => COLORS.cell.dim,
+                .bright => COLORS.cell.bright,
             };
         }
 
         pub fn textColorOver(self: State) FColor {
             return switch (self) {
-                .black => COLORS.cell_text.on_black,
-                .gray => COLORS.cell_text.on_gray,
-                .white => COLORS.cell_text.on_white,
+                .off => COLORS.cell_text.on_off,
+                .dim => COLORS.cell_text.on_dim,
+                .bright => COLORS.cell_text.on_bright,
             };
         }
     };
@@ -172,7 +172,7 @@ const Cell = struct {
 
 const Toolbar = struct {
     painting: bool = false,
-    active_state: Cell.State = .white,
+    active_state: Cell.State = .bright,
     active_type: ?MoteType = .fire,
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
@@ -281,7 +281,7 @@ const BoardState = struct {
         while (it.next()) |kv| {
             const cell = kv.value_ptr.*;
             const pos = kv.key_ptr.*;
-            if (include.lit and cell.state != .black) {
+            if (include.lit and cell.state != .off) {
                 result.plusTile(pos);
             }
             if (include.elements and cell.moteCount() > 0) {
@@ -322,9 +322,9 @@ const BoardState = struct {
                 const p = bounds.top_left.addUnsigned(.new(di, dj));
                 const cell = self.cellAt(p);
                 try out.writeAll(switch (cell.state) {
-                    .black => " ",
-                    .gray => ".",
-                    .white => ":",
+                    .off => " ",
+                    .dim => ".",
+                    .bright => ":",
                 });
                 if (cell.moteCount() > 1) std.log.warn("Cell has multiple motes; information will be lost.", .{});
                 try out.writeAll(for (MoteType.all) |t| {
@@ -345,9 +345,9 @@ const BoardState = struct {
         while (it.next()) |p| {
             const t = raw_ascii.atSigned(p);
             const cell_state: Cell.State = switch (t[0]) {
-                ' ' => .black,
-                '.' => .gray,
-                ':' => .white,
+                ' ' => .off,
+                '.' => .dim,
+                ':' => .bright,
                 else => return error.BadText,
             };
             const cell_mote = try MoteType.fromChar(t[1]);
@@ -456,16 +456,16 @@ pub fn init(
     dst.all_levels = .init(gpa);
     try dst.addEmptyLevel();
 
-    tweakable.fcolor("Off", &COLORS.cell.black);
-    tweakable.fcolor("Dim", &COLORS.cell.gray);
-    tweakable.fcolor("Bright", &COLORS.cell.white);
+    tweakable.fcolor("Off", &COLORS.cell.off);
+    tweakable.fcolor("Dim", &COLORS.cell.dim);
+    tweakable.fcolor("Bright", &COLORS.cell.bright);
 
     tweakable.fcolor("grid", &COLORS.grid);
     tweakable.fcolor("rect border", &COLORS.rect_selection_border);
 
-    tweakable.fcolor("text over Off", &COLORS.cell_text.on_black);
-    tweakable.fcolor("text over Dim", &COLORS.cell_text.on_gray);
-    tweakable.fcolor("text over Bright", &COLORS.cell_text.on_white);
+    tweakable.fcolor("text over Off", &COLORS.cell_text.on_off);
+    tweakable.fcolor("text over Dim", &COLORS.cell_text.on_dim);
+    tweakable.fcolor("text over Bright", &COLORS.cell_text.on_bright);
 
     tweakable.float("grid width", &CONFIG.grid_width, 0.0, 0.2);
 }
@@ -533,8 +533,8 @@ fn addEmptyLevel(self: *GameState) !void {
             const res: *BoardState = try self.pool_boardstate.create();
             try res.init(self.usual.mem.gpa);
 
-            try res.setStateAt(.new(0, 1), .gray);
-            try res.setStateAt(.new(0, 2), .white);
+            try res.setStateAt(.new(0, 1), .dim);
+            try res.setStateAt(.new(0, 2), .bright);
             try res.setSingleMoteAt(.new(1, 0), .fire);
             try res.setSingleMoteAt(.new(1, 1), .salt);
             try res.setSingleMoteAt(.new(1, 2), .sulfur);
@@ -633,13 +633,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     var mouse_over_ui = false;
 
-    platform.gl.clear(Cell.State.black.color());
+    platform.gl.clear(Cell.State.off.color());
     if (self.cur_level) |cur_level| {
         var toolbar = &cur_level.toolbar;
         const cell_under_mouse = mouse.cur.position.toInt(isize);
 
         // paint cell states
-        for ([3]Cell.State{ .black, .gray, .white }, 0..) |c, k| {
+        for ([3]Cell.State{ .off, .dim, .bright }, 0..) |c, k| {
             const button: Rect = (Rect{ .top_left = Vec2.zero.add(.new(0, tof32(k))), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
@@ -1071,7 +1071,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // tool keyboard interactions
         switch (toolbar.active_tool) {
             .paint_state => {
-                for (&[_]Cell.State{ .black, .gray, .white }, 0..) |t, k| {
+                for (&[_]Cell.State{ .off, .dim, .bright }, 0..) |t, k| {
                     if (platform.keyboard.wasPressed(.digit(k + 1))) {
                         toolbar.active_state = t;
                     }
@@ -1163,7 +1163,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 const pos = kv.key_ptr.*;
                 const cell = kv.value_ptr.*;
                 if (!cam_bounds.contains(pos)) continue;
-                if (cell.state != .black) {
+                if (cell.state != .off) {
                     try cell_bgs.append(.{
                         .point = .{ .pos = pos.tof32() },
                         .color = cell.state.color(),
@@ -1198,7 +1198,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 const cell = values.atSigned(p);
                 const pos = p.add(toolbar.selectedRect().top_left);
 
-                const visible_state = if (!toolbar.rect_tool_moving_include_blank and cell.state == .black)
+                const visible_state = if (!toolbar.rect_tool_moving_include_blank and cell.state == .off)
                     cur_level.board.cellAt(pos).state
                 else
                     cell.state;
@@ -1255,12 +1255,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .{ .top_left = .zero, .size = .new(0.5, 3) },
-                Cell.State.black.color(),
+                Cell.State.off.color(),
             );
             canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
-                Cell.State.black.color(),
+                Cell.State.off.color(),
             );
         }
     } else {
@@ -1377,12 +1377,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
             canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
-            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse Cell.State.gray.color());
+            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse Cell.State.dim.color());
             if (button.text) |text| try ui_texts.addText(
                 text,
                 .centeredAt(button.pos.getCenter()),
                 0.75 * (button.text_scale orelse 1),
-                if (button.color == null) Cell.State.textColorOver(.gray) else .black,
+                if (button.color == null) Cell.State.textColorOver(.dim) else .black,
             );
         }
     }
@@ -1394,7 +1394,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (ui_cam.intersect(button.pos) == null) continue;
 
             canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
-            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), Cell.State.black.color());
+            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), Cell.State.off.color());
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
             const offset = bounds.top_left;
@@ -1411,7 +1411,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 while (it.next()) |kv| {
                     const pos = kv.key_ptr.*;
                     const cell = kv.value_ptr.*;
-                    if (cell.state != .black) {
+                    if (cell.state != .off) {
                         try cell_bgs.append(.{
                             .point = .{ .pos = button.pos.applyToLocalPosition(pos.tof32().sub(offset).scale(scale)), .scale = scale * button.pos.size.y },
                             .color = cell.state.color(),
