@@ -37,30 +37,7 @@ var CONFIG: struct {
     grid_width: f32 = 0.05,
 } = .{};
 
-const CellState = enum {
-    black,
-    gray,
-    white,
-
-    pub fn color(self: CellState) FColor {
-        return switch (self) {
-            .black => COLORS.cell.black,
-            .gray => COLORS.cell.gray,
-            .white => COLORS.cell.white,
-        };
-    }
-
-    pub fn textColorOver(self: CellState) FColor {
-        return switch (self) {
-            .black => COLORS.cell_text.on_black,
-            .gray => COLORS.cell_text.on_gray,
-            .white => COLORS.cell_text.on_white,
-        };
-    }
-};
-
-const CellType = enum {
-    empty,
+const MoteType = enum {
     fire,
     water,
     air,
@@ -69,7 +46,7 @@ const CellType = enum {
     quicksilver,
     salt,
 
-    pub const all: [@typeInfo(CellType).@"enum".fields.len]CellType = .{
+    pub const all: [@typeInfo(MoteType).@"enum".fields.len]MoteType = .{
         .fire,
         .water,
         .air,
@@ -77,20 +54,17 @@ const CellType = enum {
         .salt,
         .sulfur,
         .quicksilver,
-        .empty,
     };
 
     // TODO: delete
-    pub fn text(self: CellType) []const u8 {
+    pub fn text(self: MoteType) []const u8 {
         return switch (self) {
-            .empty => "",
             inline else => |x| &.{comptime x.toChar()},
         };
     }
 
-    pub fn toChar(self: CellType) u8 {
+    pub fn toChar(self: MoteType) u8 {
         return switch (self) {
-            .empty => ' ',
             .fire => '+',
             .water => '-',
             .air => '=',
@@ -101,14 +75,15 @@ const CellType = enum {
         };
     }
 
-    pub fn fromChar(char: u8) ?CellType {
+    pub fn fromChar(char: u8) !?MoteType {
+        if (char == '.') return null;
         inline for (all) |c| {
             if (char == c.toChar()) return c;
-        } else return null;
+        } else return error.BadText;
     }
 
     /// this gets added to the cell's vertical pos
-    pub fn verticalCorrection(self: CellType) f32 {
+    pub fn verticalCorrection(self: MoteType) f32 {
         return switch (self.toChar()) {
             '*' => 0.3,
             'o' => -0.125,
@@ -118,7 +93,7 @@ const CellType = enum {
     }
 
     /// text size gets mutliplied by this
-    pub fn sizeCorrection(self: CellType) f32 {
+    pub fn sizeCorrection(self: MoteType) f32 {
         return switch (self.toChar()) {
             '*' => 1.3,
             '-' => 1.5,
@@ -128,16 +103,83 @@ const CellType = enum {
     }
 };
 
+const Cell = struct {
+    state: State,
+    motes: std.EnumArray(MoteType, i32),
+
+    pub const empty: Cell = .{
+        .state = .black,
+        .motes = .initFill(0),
+    };
+
+    pub fn equals(this: Cell, other: Cell) bool {
+        if (this.state != other.state) return false;
+        for (MoteType.all) |t| {
+            if (this.motes.get(t) != other.motes.get(t)) return false;
+        }
+        return true;
+    }
+
+    pub fn fromStateAndMote(state: State, maybe_mote: ?MoteType) Cell {
+        var result: Cell = .empty;
+        result.state = state;
+        if (maybe_mote) |mote| result.motes.set(mote, 1);
+        return result;
+    }
+
+    pub fn moteCount(cell: Cell) i32 {
+        var res: i32 = 0;
+        inline for (MoteType.all) |t| {
+            res += cell.motes.get(t);
+        }
+        return res;
+    }
+
+    pub fn setSingleMote(cell: *Cell, mote: ?MoteType) void {
+        cell.motes = .initFill(0);
+        if (mote) |m| cell.motes.set(m, 1);
+    }
+
+    pub fn getSingleMote(cell: Cell) ?MoteType {
+        if (cell.moteCount() > 1) std.log.warn("losing info!", .{});
+        inline for (MoteType.all) |m| {
+            if (cell.motes.get(m) > 0) return m;
+        } else return null;
+    }
+
+    pub const State = enum {
+        black,
+        gray,
+        white,
+
+        pub fn color(self: State) FColor {
+            return switch (self) {
+                .black => COLORS.cell.black,
+                .gray => COLORS.cell.gray,
+                .white => COLORS.cell.white,
+            };
+        }
+
+        pub fn textColorOver(self: State) FColor {
+            return switch (self) {
+                .black => COLORS.cell_text.on_black,
+                .gray => COLORS.cell_text.on_gray,
+                .white => COLORS.cell_text.on_white,
+            };
+        }
+    };
+};
+
 const Toolbar = struct {
     painting: bool = false,
-    active_state: CellState = .white,
-    active_type: CellType = .fire,
+    active_state: Cell.State = .white,
+    active_type: ?MoteType = .fire,
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
     rect_tool_state: union(enum) {
         none,
         selecting,
-        moving: kommon.Grid2D(BoardState.FullCell),
+        moving: kommon.Grid2D(Cell),
     } = .none,
     rect_tool_moving_include_blank: bool = true,
     catalogue_index: usize = 0,
@@ -192,26 +234,19 @@ const Toolbar = struct {
 };
 
 const BoardState = struct {
-    cells_states: std.AutoArrayHashMap(IVec2, CellState),
-    cells_types: std.AutoArrayHashMap(IVec2, CellType),
-
-    const FullCell = struct { cell_state: CellState, cell_type: CellType };
+    // TODO: use grids
+    cells: std.AutoArrayHashMap(IVec2, Cell),
 
     pub fn init(dst: *BoardState, gpa: std.mem.Allocator) !void {
-        dst.cells_states = .init(gpa);
-        dst.cells_types = .init(gpa);
+        dst.cells = .init(gpa);
     }
 
     pub fn deinit(self: *BoardState) void {
-        self.cells_states.deinit();
-        self.cells_types.deinit();
+        self.cells.deinit();
     }
 
     fn clone(self: BoardState) !BoardState {
-        return .{
-            .cells_states = try self.cells_states.clone(),
-            .cells_types = try self.cells_types.clone(),
-        };
+        return .{ .cells = try self.cells.clone() };
     }
 
     pub fn cloneAndGetPtr(self: BoardState, pool_boardstate: *std.heap.MemoryPool(BoardState)) !*BoardState {
@@ -225,17 +260,9 @@ const BoardState = struct {
     }
 
     fn isSubsetOf(self: BoardState, other: BoardState) bool {
-        {
-            var it = self.cells_states.iterator();
-            while (it.next()) |kv| {
-                if (other.stateAt(kv.key_ptr.*) != kv.value_ptr.*) return false;
-            }
-        }
-        {
-            var it = self.cells_types.iterator();
-            while (it.next()) |kv| {
-                if (other.typeAt(kv.key_ptr.*) != kv.value_ptr.*) return false;
-            }
+        var it = self.cells.iterator();
+        while (it.next()) |kv| {
+            if (!other.cellAt(kv.key_ptr.*).equals(kv.value_ptr.*)) return false;
         }
         return true;
     }
@@ -250,19 +277,15 @@ const BoardState = struct {
     }) math.IBounds {
         var result: math.IBounds = .empty;
 
-        if (include.lit) {
-            var it_states = self.cells_states.iterator();
-            while (it_states.next()) |kv| {
-                if (kv.value_ptr.* == .black) continue;
-                result.plusTile(kv.key_ptr.*);
+        var it = self.cells.iterator();
+        while (it.next()) |kv| {
+            const cell = kv.value_ptr.*;
+            const pos = kv.key_ptr.*;
+            if (include.lit and cell.state != .black) {
+                result.plusTile(pos);
             }
-        }
-
-        if (include.elements) {
-            var it_types = self.cells_types.iterator();
-            while (it_types.next()) |kv| {
-                if (kv.value_ptr.* == .empty) continue;
-                result.plusTile(kv.key_ptr.*);
+            if (include.elements and cell.moteCount() > 0) {
+                result.plusTile(pos);
             }
         }
 
@@ -273,19 +296,22 @@ const BoardState = struct {
         return self.boundingRectV2(.{ .lit = true, .elements = true });
     }
 
-    pub fn stateAt(self: BoardState, pos: IVec2) CellState {
-        return self.cells_states.get(pos) orelse .black;
+    pub fn cellAt(self: BoardState, pos: IVec2) Cell {
+        return self.cells.get(pos) orelse .empty;
     }
 
-    pub fn typeAt(self: BoardState, pos: IVec2) CellType {
-        return self.cells_types.get(pos) orelse .empty;
+    pub fn cellPtrAt(self: *BoardState, pos: IVec2) !*Cell {
+        const gop = try self.cells.getOrPut(pos);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        return gop.value_ptr;
     }
 
-    pub fn fullAt(self: BoardState, pos: IVec2) FullCell {
-        return .{
-            .cell_state = self.stateAt(pos),
-            .cell_type = self.typeAt(pos),
-        };
+    pub fn setStateAt(self: *BoardState, pos: IVec2, state: Cell.State) !void {
+        (try self.cellPtrAt(pos)).state = state;
+    }
+
+    pub fn setSingleMoteAt(self: *BoardState, pos: IVec2, mote: ?MoteType) !void {
+        (try self.cellPtrAt(pos)).setSingleMote(mote);
     }
 
     pub fn toText(self: BoardState, out: std.io.AnyWriter) !void {
@@ -294,23 +320,23 @@ const BoardState = struct {
         for (0..bounds.inner_size.y) |dj| {
             for (0..bounds.inner_size.x) |di| {
                 const p = bounds.top_left.addUnsigned(.new(di, dj));
-                try out.writeAll(switch (self.stateAt(p)) {
+                const cell = self.cellAt(p);
+                try out.writeAll(switch (cell.state) {
                     .black => " ",
                     .gray => ".",
                     .white => ":",
                 });
-                try out.writeAll(switch (self.typeAt(p)) {
-                    .empty => ".",
-                    else => |t| t.text(),
-                });
+                if (cell.moteCount() > 1) std.log.warn("Cell has multiple motes; information will be lost.", .{});
+                try out.writeAll(for (MoteType.all) |t| {
+                    if (cell.motes.get(t) > 0) break t.text();
+                } else ".");
             }
             try out.writeAll("\n");
         }
     }
 
     pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, text: []const u8) !void {
-        dst.cells_states.clearRetainingCapacity();
-        dst.cells_types.clearRetainingCapacity();
+        dst.cells.clearRetainingCapacity();
         const contents = std.mem.trim(u8, text, &std.ascii.whitespace);
         assert(std.mem.startsWith(u8, contents, "V1\n"));
         const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
@@ -318,43 +344,40 @@ const BoardState = struct {
         var it = raw_ascii.iteratorSigned();
         while (it.next()) |p| {
             const t = raw_ascii.atSigned(p);
-            const cell_state: CellState = switch (t[0]) {
+            const cell_state: Cell.State = switch (t[0]) {
                 ' ' => .black,
                 '.' => .gray,
                 ':' => .white,
                 else => return error.BadText,
             };
-            const cell_type = CellType.fromChar(t[1]) orelse return error.BadText;
-            if (cell_state != .black) try dst.cells_states.put(p, cell_state);
-            if (cell_type != .empty) try dst.cells_types.put(p, cell_type);
+            const cell_mote = try MoteType.fromChar(t[1]);
+            const cell: Cell = .fromStateAndMote(cell_state, cell_mote);
+            if (!cell.equals(.empty)) try dst.cells.put(p, cell);
         }
     }
 
-    pub fn getSubrect(self: BoardState, alloc: std.mem.Allocator, bounds: math.IBounds) !kommon.Grid2D(FullCell) {
-        const result: kommon.Grid2D(FullCell) = try .initUndefined(alloc, bounds.inner_size);
+    pub fn getSubrect(self: BoardState, alloc: std.mem.Allocator, bounds: math.IBounds) !kommon.Grid2D(Cell) {
+        const result: kommon.Grid2D(Cell) = try .initUndefined(alloc, bounds.inner_size);
         var it = result.iteratorSigned();
         while (it.next()) |p| {
-            result.setSigned(p, self.fullAt(p.add(bounds.top_left)));
+            result.setSigned(p, self.cellAt(p.add(bounds.top_left)));
         }
         return result;
     }
 
     pub fn clearSubrect(self: *BoardState, bounds: math.IBounds) !void {
-        // TODO: could be optimized, by removing instead of adding elements
         var it = kommon.itertools.inIBounds(bounds);
         while (it.next()) |p| {
-            try self.cells_states.put(p, .black);
-            try self.cells_types.put(p, .empty);
+            _ = self.cells.swapRemove(p);
         }
     }
 
-    pub fn setSubrect(self: *BoardState, values: kommon.Grid2D(FullCell), bounds: math.IBounds, include_blanks: bool) !void {
+    pub fn setSubrect(self: *BoardState, values: kommon.Grid2D(Cell), bounds: math.IBounds, include_blanks: bool) !void {
         assert(bounds.inner_size.equals(values.size));
         var it = values.iteratorSigned();
         while (it.next()) |p| {
             const cell = values.atSigned(p);
-            if (include_blanks or cell.cell_state != .black) try self.cells_states.put(p.add(bounds.top_left), cell.cell_state);
-            if (include_blanks or cell.cell_type != .empty) try self.cells_types.put(p.add(bounds.top_left), cell.cell_type);
+            if (include_blanks or !cell.equals(.empty)) try self.cells.put(p.add(bounds.top_left), cell);
         }
     }
 };
@@ -507,16 +530,16 @@ fn addEmptyLevel(self: *GameState) !void {
     const level = try self.pool_levelstate.create();
     level.* = .{
         .initial_board = blk: {
-            const res = try self.pool_boardstate.create();
+            const res: *BoardState = try self.pool_boardstate.create();
             try res.init(self.usual.mem.gpa);
 
-            try res.cells_states.put(.new(0, 1), .gray);
-            try res.cells_states.put(.new(0, 2), .white);
-            try res.cells_types.put(.new(1, 0), .fire);
-            try res.cells_types.put(.new(1, 1), .salt);
-            try res.cells_types.put(.new(1, 2), .sulfur);
-            try res.cells_types.put(.new(2, 0), .air);
-            try res.cells_types.put(.new(2, 1), .water);
+            try res.setStateAt(.new(0, 1), .gray);
+            try res.setStateAt(.new(0, 2), .white);
+            try res.setSingleMoteAt(.new(1, 0), .fire);
+            try res.setSingleMoteAt(.new(1, 1), .salt);
+            try res.setSingleMoteAt(.new(1, 2), .sulfur);
+            try res.setSingleMoteAt(.new(2, 0), .air);
+            try res.setSingleMoteAt(.new(2, 1), .water);
 
             break :blk res;
         },
@@ -610,13 +633,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     var mouse_over_ui = false;
 
-    platform.gl.clear(CellState.black.color());
+    platform.gl.clear(Cell.State.black.color());
     if (self.cur_level) |cur_level| {
         var toolbar = &cur_level.toolbar;
         const cell_under_mouse = mouse.cur.position.toInt(isize);
 
         // paint cell states
-        for ([3]CellState{ .black, .gray, .white }, 0..) |c, k| {
+        for ([3]Cell.State{ .black, .gray, .white }, 0..) |c, k| {
             const button: Rect = (Rect{ .top_left = Vec2.zero.add(.new(0, tof32(k))), .size = .one }).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
@@ -636,7 +659,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // paint cell types
         if (self.is_editor) {
-            for (CellType.all, 0..) |t, k| {
+            for (MoteType.all, 0..) |t, k| {
                 const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4))), .size = .one }).plusMargin(-0.1);
                 try ui_buttons.append(.{
                     .pos = button,
@@ -949,7 +972,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             toolbar.painting = false;
                         } else {
                             if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
-                                try cur_level.board.cells_states.put(cell_under_mouse, toolbar.active_state);
+                                try cur_level.board.setStateAt(cell_under_mouse, toolbar.active_state);
                             }
                         }
                     } else {
@@ -957,7 +980,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                             toolbar.painting = true;
                         }
                         if (mouse.wasPressed(.right)) {
-                            toolbar.active_state = cur_level.board.cells_states.get(cell_under_mouse) orelse .black;
+                            toolbar.active_state = cur_level.board.cellAt(cell_under_mouse).state;
                         }
                     }
                 },
@@ -966,14 +989,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
                         } else {
-                            try cur_level.board.cells_types.put(cell_under_mouse, toolbar.active_type);
+                            try cur_level.board.setSingleMoteAt(cell_under_mouse, toolbar.active_type);
                         }
                     } else {
                         if (mouse.wasPressed(.left)) {
                             toolbar.painting = true;
                         }
                         if (mouse.wasPressed(.right)) {
-                            toolbar.active_type = cur_level.board.cells_types.get(cell_under_mouse) orelse .empty;
+                            toolbar.active_type = cur_level.board.cellAt(cell_under_mouse).getSingleMote();
                         }
                     }
                 },
@@ -1048,7 +1071,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // tool keyboard interactions
         switch (toolbar.active_tool) {
             .paint_state => {
-                for (&[_]CellState{ .black, .gray, .white }, 0..) |t, k| {
+                for (&[_]Cell.State{ .black, .gray, .white }, 0..) |t, k| {
                     if (platform.keyboard.wasPressed(.digit(k + 1))) {
                         toolbar.active_state = t;
                     }
@@ -1058,7 +1081,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             },
             .paint_type => {
-                for (&CellType.all, 0..) |t, k| {
+                for (&MoteType.all, 0..) |t, k| {
                     if (platform.keyboard.wasPressed(.digit(k + 1))) {
                         toolbar.active_type = t;
                     }
@@ -1129,35 +1152,35 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (true) {
             var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
+            var cell_texts = canvas.textBatch(0);
+
+            defer cell_texts.draw(camera);
             defer canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
-            var it = visible_board.cells_states.iterator();
+            var it = visible_board.cells.iterator();
             while (it.next()) |kv| {
-                if (kv.value_ptr.* == .black) continue;
-                if (!cam_bounds.contains(kv.key_ptr.*)) continue;
-                try cell_bgs.append(.{
-                    .point = .{ .pos = kv.key_ptr.*.tof32() },
-                    .color = kv.value_ptr.*.color(),
-                });
-            }
-        }
-
-        if (toolbar.zoom != .bounds_lit) {
-            var cell_texts = canvas.textBatch(0);
-            defer cell_texts.draw(camera);
-
-            const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
-            var it = visible_board.cells_types.iterator();
-            while (it.next()) |kv| {
-                if (kv.value_ptr.* == .empty) continue;
-                if (!cam_bounds.contains(kv.key_ptr.*)) continue;
-                try cell_texts.addText(
-                    kv.value_ptr.*.text(),
-                    .centeredAt(kv.key_ptr.*.tof32().add(.half).addY(kv.value_ptr.verticalCorrection())),
-                    kv.value_ptr.sizeCorrection(),
-                    @as(CellState, visible_board.cells_states.get(kv.key_ptr.*) orelse .black).textColorOver(),
-                );
+                const pos = kv.key_ptr.*;
+                const cell = kv.value_ptr.*;
+                if (!cam_bounds.contains(pos)) continue;
+                if (cell.state != .black) {
+                    try cell_bgs.append(.{
+                        .point = .{ .pos = pos.tof32() },
+                        .color = cell.state.color(),
+                    });
+                }
+                if (toolbar.zoom != .bounds_lit) {
+                    inline for (MoteType.all) |t| {
+                        if (cell.motes.get(t) > 0) {
+                            try cell_texts.addText(
+                                t.text(),
+                                .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
+                                t.sizeCorrection(),
+                                cell.state.textColorOver(),
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -1175,28 +1198,30 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 const cell = values.atSigned(p);
                 const pos = p.add(toolbar.selectedRect().top_left);
 
-                const visible_state = if (!toolbar.rect_tool_moving_include_blank and cell.cell_state == .black)
-                    cur_level.board.stateAt(pos)
+                const visible_state = if (!toolbar.rect_tool_moving_include_blank and cell.state == .black)
+                    cur_level.board.cellAt(pos).state
                 else
-                    cell.cell_state;
+                    cell.state;
 
-                const visible_type = if (!toolbar.rect_tool_moving_include_blank and cell.cell_type == .empty)
-                    cur_level.board.typeAt(pos)
+                const visible_motes = if (!toolbar.rect_tool_moving_include_blank and cell.moteCount() == 0)
+                    cur_level.board.cellAt(pos).motes
                 else
-                    cell.cell_type;
+                    cell.motes;
 
                 try cell_bgs.append(.{
                     .point = .{ .pos = pos.tof32() },
                     .color = visible_state.color(),
                 });
 
-                if (visible_type != .empty) {
-                    try cell_texts.addText(
-                        visible_type.text(),
-                        .centeredAt(pos.tof32().add(.half).addY(visible_type.verticalCorrection())),
-                        visible_type.sizeCorrection(),
-                        visible_state.textColorOver(),
-                    );
+                inline for (MoteType.all) |t| {
+                    if (visible_motes.get(t) > 0) {
+                        try cell_texts.addText(
+                            t.text(),
+                            .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
+                            t.sizeCorrection(),
+                            visible_state.textColorOver(),
+                        );
+                    }
                 }
             }
         }
@@ -1230,12 +1255,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .{ .top_left = .zero, .size = .new(0.5, 3) },
-                CellState.black.color(),
+                Cell.State.black.color(),
             );
             canvas.fillRect(
                 .{ .top_left = .zero, .size = .new(4, 3) },
                 .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
-                CellState.black.color(),
+                Cell.State.black.color(),
             );
         }
     } else {
@@ -1352,12 +1377,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
             canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
-            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse CellState.gray.color());
+            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), button.color orelse Cell.State.gray.color());
             if (button.text) |text| try ui_texts.addText(
                 text,
                 .centeredAt(button.pos.getCenter()),
                 0.75 * (button.text_scale orelse 1),
-                if (button.color == null) CellState.textColorOver(.gray) else .black,
+                if (button.color == null) Cell.State.textColorOver(.gray) else .black,
             );
         }
     }
@@ -1369,7 +1394,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (ui_cam.intersect(button.pos) == null) continue;
 
             canvas.fillRect(ui_cam, button.pos, if (button.radio_selected or button.hot) .cyan else .red);
-            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), CellState.black.color());
+            canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), Cell.State.black.color());
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
             const offset = bounds.top_left;
@@ -1377,32 +1402,32 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             {
                 var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
-                var it = button.board.cells_states.iterator();
-                while (it.next()) |kv| {
-                    if (kv.value_ptr.* == .black) continue;
-
-                    try cell_bgs.append(.{
-                        .point = .{ .pos = button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).scale(scale)), .scale = scale * button.pos.size.y },
-                        .color = kv.value_ptr.*.color(),
-                    });
-                }
-                canvas.fillShapesInstanced(ui_cam, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
-            }
-
-            {
                 var cell_texts = canvas.textBatch(0);
-                var it = button.board.cells_types.iterator();
-                while (it.next()) |kv| {
-                    if (kv.value_ptr.* == .empty) continue;
 
-                    try cell_texts.addText(
-                        kv.value_ptr.*.text(),
-                        .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).addY(kv.value_ptr.verticalCorrection()).scale(scale))),
-                        scale * kv.value_ptr.sizeCorrection() * button.pos.size.y,
-                        @as(CellState, button.board.cells_states.get(kv.key_ptr.*) orelse .black).textColorOver(),
-                    );
+                defer cell_texts.draw(ui_cam);
+                defer canvas.fillShapesInstanced(ui_cam, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+
+                var it = button.board.cells.iterator();
+                while (it.next()) |kv| {
+                    const pos = kv.key_ptr.*;
+                    const cell = kv.value_ptr.*;
+                    if (cell.state != .black) {
+                        try cell_bgs.append(.{
+                            .point = .{ .pos = button.pos.applyToLocalPosition(pos.tof32().sub(offset).scale(scale)), .scale = scale * button.pos.size.y },
+                            .color = cell.state.color(),
+                        });
+                    }
+                    inline for (MoteType.all) |t| {
+                        if (cell.motes.get(t) > 0) {
+                            try cell_texts.addText(
+                                t.text(),
+                                .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).addY(t.verticalCorrection()).scale(scale))),
+                                scale * t.sizeCorrection() * button.pos.size.y,
+                                cell.state.textColorOver(),
+                            );
+                        }
+                    }
                 }
-                cell_texts.draw(ui_cam);
             }
         }
     }
