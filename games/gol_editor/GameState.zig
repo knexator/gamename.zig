@@ -56,6 +56,18 @@ const MoteType = enum {
         .quicksilver,
     };
 
+    // a bit hacky :(
+    pub const all_and_empty: [1 + @typeInfo(MoteType).@"enum".fields.len]?MoteType = .{
+        .fire,
+        .water,
+        .air,
+        .earth,
+        .salt,
+        .sulfur,
+        .quicksilver,
+        null,
+    };
+
     // TODO: delete
     pub fn text(self: MoteType) []const u8 {
         return switch (self) {
@@ -1068,12 +1080,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // paint cell types
         if (self.is_editor) {
-            for (MoteType.all, 0..) |t, k| {
+            for (MoteType.all_and_empty, 0..) |t, k| {
                 const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4))), .size = .one }).plusMargin(-0.1);
                 try ui_buttons.append(.{
                     .pos = button,
                     .color = null,
-                    .text = t.text(),
+                    .text = if (t) |tt| tt.text() else "",
                     .radio_selected = toolbar.active_tool == .paint_type and (t == toolbar.active_type),
                 });
                 if (button.contains(ui_mouse.cur.position)) {
