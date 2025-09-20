@@ -4,36 +4,136 @@ canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 
 pub fn init(usual: *kommon.Usual) !Drawer {
+    try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator());
     return .{
         .canvas = &usual.canvas,
         .atom_visuals_cache = try .init(usual.mem.forever.allocator()),
     };
 }
 
-// TODO: also have the border
 pub const AtomVisuals = struct {
     profile: []const Vec2,
     color: FColor,
     display: ?[]const u8 = null,
-    shape: Canvas.PrecomputedShape,
+    geometry: Geometry,
 
-    fn computeShape(mem: std.mem.Allocator, profile: []const Vec2) !Canvas.PrecomputedShape {
-        const skeleton_positions = [1]Vec2{.new(2, -1)} ++
-            funk.fromCount(32, struct {
+    fn build(mem: std.mem.Allocator, params: struct {
+        profile: []const Vec2,
+        color: FColor,
+        display: ?[]const u8 = null,
+    }) !AtomVisuals {
+        return .{
+            .profile = params.profile,
+            .color = params.color,
+            .display = params.display,
+            .geometry = try .fromProfile(mem, params.profile),
+        };
+    }
+
+    pub const Geometry = struct {
+        template: Canvas.PrecomputedShape,
+        pattern: Canvas.PrecomputedShape,
+
+        var template_variable: Canvas.PrecomputedShape = undefined;
+        var pattern_variable: Canvas.PrecomputedShape = undefined;
+        var template_pair_holder: Canvas.PrecomputedShape = undefined;
+        var pattern_pair_holder: Canvas.PrecomputedShape = undefined;
+
+        pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2) !Geometry {
+            const template: Canvas.PrecomputedShape = blk: {
+                const skeleton_positions = [1]Vec2{.new(2, -1)} ++
+                    funk.fromCount(32, struct {
+                        pub fn anon(k: usize) Vec2 {
+                            return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
+                        }
+                    }.anon) ++ [1]Vec2{.new(2, 1)};
+                var local_positions: []Vec2 = try mem.alloc(Vec2, skeleton_positions.len + profile.len * 2);
+                for (skeleton_positions, 0..) |pos, i| {
+                    local_positions[i] = pos;
+                }
+                for (profile, 0..) |pos, i| {
+                    local_positions[skeleton_positions.len + i] = Vec2.new(2.0 - pos.y, 1.0 - pos.x);
+                    local_positions[skeleton_positions.len + profile.len * 2 - i - 1] = Vec2.new(2.0 + pos.y, -1.0 + pos.x);
+                }
+                break :blk try .fromOwnedPoints(mem, local_positions);
+            };
+
+            const pattern: Canvas.PrecomputedShape = blk: {
+                const skeleton_positions =
+                    [1]Vec2{.new(-1, -1)} ++
+                    funk.fromCount(32, struct {
+                        pub fn anon(k: usize) Vec2 {
+                            return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
+                        }
+                    }.anon) ++ [1]Vec2{.new(-1, 1)};
+                var local_positions: []Vec2 = try mem.alloc(Vec2, skeleton_positions.len + profile.len * 2);
+                for (skeleton_positions, 0..) |pos, i| {
+                    local_positions[i] = pos;
+                }
+                for (profile, 0..) |pos, i| {
+                    local_positions[skeleton_positions.len + i] = Vec2.new(-1.0 - pos.y, 1.0 - pos.x);
+                    local_positions[skeleton_positions.len + profile.len * 2 - i - 1] = Vec2.new(-1.0 + pos.y, -1.0 + pos.x);
+                }
+
+                break :blk try .fromOwnedPoints(mem, local_positions);
+            };
+
+            return .{
+                .template = template,
+                .pattern = pattern,
+            };
+        }
+
+        pub fn initFixed(mem: std.mem.Allocator) !void {
+            Geometry.template_variable = try .fromPoints(mem, &(funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
                 }
-            }.anon) ++ [1]Vec2{.new(2, 1)};
-        var local_positions: []Vec2 = try mem.alloc(Vec2, skeleton_positions.len + profile.len * 2);
-        for (skeleton_positions, 0..) |pos, i| {
-            local_positions[i] = pos;
+            }.anon) ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(0.5);
+                }
+            }.anon)));
+
+            Geometry.pattern_variable = try .fromPoints(mem, &(funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
+                }
+            }.anon) ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(-0.5);
+                }
+            }.anon)));
+
+            Geometry.template_pair_holder = try .fromPoints(mem, &(funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
+                }
+            }.anon) ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).scale(0.5).add(.new(0.75, 0.5));
+                }
+            }.anon) ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).scale(0.5).add(.new(0.75, -0.5));
+                }
+            }.anon)));
+
+            Geometry.pattern_pair_holder = try .fromPoints(mem, &(funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
+                }
+            }.anon) ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, 0.5));
+                }
+            }.anon) ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, -0.5));
+                }
+            }.anon)));
         }
-        for (profile, 0..) |pos, i| {
-            local_positions[skeleton_positions.len + i] = Vec2.new(2.0 - pos.y, 1.0 - pos.x);
-            local_positions[skeleton_positions.len + profile.len * 2 - i - 1] = Vec2.new(2.0 + pos.y, -1.0 + pos.x);
-        }
-        return try .fromOwnedPoints(mem, local_positions);
-    }
+    };
 };
 
 const AtomVisualCache = struct {
@@ -147,13 +247,11 @@ const AtomVisualCache = struct {
         inline for (std.meta.fields(@TypeOf(hardcoded_visuals))) |field| {
             const atom_name = field.name;
             const input = @field(hardcoded_visuals, field.name);
-            const profile = input.profile orelse try res.newAtomProfile(atom_name);
-            const atom_visuals: AtomVisuals = .{
+            const atom_visuals: AtomVisuals = try .build(arena, .{
                 .color = input.color,
-                .profile = profile,
+                .profile = input.profile orelse try res.newAtomProfile(atom_name),
                 .display = input.display,
-                .shape = try AtomVisuals.computeShape(arena, profile),
-            };
+            });
             try res.visuals_cache.put(atom_name, atom_visuals);
         }
 
@@ -189,13 +287,10 @@ const AtomVisualCache = struct {
     pub fn getAtomVisuals(cache: *AtomVisualCache, name: []const u8) !AtomVisuals {
         const v = try cache.visuals_cache.getOrPut(name);
         if (!v.found_existing) {
-            const profile = try cache.newAtomProfile(name);
-            const res = AtomVisuals{
+            v.value_ptr.* = try .build(cache.arena, .{
                 .color = newAtomColor(name),
-                .profile = profile,
-                .shape = try AtomVisuals.computeShape(cache.arena, profile),
-            };
-            v.value_ptr.* = res;
+                .profile = try cache.newAtomProfile(name),
+            });
         }
         return v.value_ptr.*;
     }
@@ -278,20 +373,20 @@ fn pixelWidth(camera: Rect) f32 {
 }
 
 // TODO: remove
-fn drawShapeV2(self: *Drawer, camera: Rect, parent_world_point: Point, local_points: []const Vec2, stroke: ?FColor, fill: ?FColor) !void {
+fn drawShapeV3(self: *Drawer, camera: Rect, parent_world_point: Point, shape: Canvas.PrecomputedShape, stroke: ?FColor, fill: ?FColor) !void {
     if (fill) |col| {
         self.canvas.fillShape(
             camera,
             parent_world_point,
-            try self.canvas.tmpShape(local_points),
+            shape,
             col,
         );
     }
 
     if (stroke) |col| {
         // TODO: wouldnt be needed if Rect had rotation
-        const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, local_points.len + 1);
-        for (local_points, world_points[1..]) |p, *dst| {
+        const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
+        for (shape.local_points, world_points[1..]) |p, *dst| {
             dst.* = parent_world_point.applyToLocalPosition(p);
         }
         world_points[0] = world_points[world_points.len - 1];
@@ -300,28 +395,14 @@ fn drawShapeV2(self: *Drawer, camera: Rect, parent_world_point: Point, local_poi
 }
 
 fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point) !void {
-    const local_positions = funk.fromCount(32, struct {
-        pub fn anon(k: usize) Vec2 {
-            return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
-        }
-    }.anon) ++ funk.fromCount(32, struct {
-        pub fn anon(k: usize) Vec2 {
-            return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).scale(0.5).add(.new(0.75, 0.5));
-        }
-    }.anon) ++ funk.fromCount(32, struct {
-        pub fn anon(k: usize) Vec2 {
-            return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).scale(0.5).add(.new(0.75, -0.5));
-        }
-    }.anon);
-
-    try drawShapeV2(drawer, camera, point, &local_positions, .black, .gray(3.0 / 8.0));
+    try drawShapeV3(drawer, camera, point, AtomVisuals.Geometry.template_pair_holder, .black, .gray(3.0 / 8.0));
 }
 
 fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
     // TODO: no alloc, precompute this
-    var screen_positions: []Vec2 = try drawer.canvas.frame_arena.allocator().alloc(Vec2, visuals.shape.local_points.len + 1);
+    var screen_positions: []Vec2 = try drawer.canvas.frame_arena.allocator().alloc(Vec2, visuals.geometry.template.local_points.len + 1);
 
-    for (screen_positions[0 .. screen_positions.len - 1], visuals.shape.local_points) |*dst, p| {
+    for (screen_positions[0 .. screen_positions.len - 1], visuals.geometry.template.local_points) |*dst, p| {
         dst.* = point.applyToLocalPosition(p);
     }
     screen_positions[screen_positions.len - 1] = screen_positions[0];
@@ -329,7 +410,7 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
     drawer.canvas.fillShape(
         camera,
         point,
-        visuals.shape,
+        visuals.geometry.template,
         visuals.color,
     );
 
@@ -342,56 +423,15 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
 }
 
 fn drawTemplateVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
-    const local_positions =
-        funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
-            }
-        }.anon) ++ funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(0.5);
-            }
-        }.anon);
-    try drawer.drawShapeV2(camera, point, &local_positions, .black, visuals.color);
+    try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.template_variable, .black, visuals.color);
 }
 
 fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point) !void {
-    const local_positions =
-        funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
-            }
-        }.anon) ++ funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, 0.5));
-            }
-        }.anon) ++ funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, -0.5));
-            }
-        }.anon);
-    try drawer.drawShapeV2(camera, world_point, &local_positions, .black, .gray(3.0 / 8.0));
+    try drawer.drawShapeV3(camera, world_point, AtomVisuals.Geometry.pattern_pair_holder, .black, .gray(3.0 / 8.0));
 }
 
 fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
-    const profile = visuals.profile;
-    const skeleton_positions =
-        [1]Vec2{.new(-1, -1)} ++
-        funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
-            }
-        }.anon) ++ [1]Vec2{.new(-1, 1)};
-    // TODO: no allocations
-    var local_positions: []Vec2 = drawer.canvas.frame_arena.allocator().alloc(Vec2, skeleton_positions.len + profile.len * 2) catch @panic("TODO");
-    for (skeleton_positions, 0..) |pos, i| {
-        local_positions[i] = pos;
-    }
-    for (profile, 0..) |pos, i| {
-        local_positions[skeleton_positions.len + i] = Vec2.new(-1.0 - pos.y, 1.0 - pos.x);
-        local_positions[skeleton_positions.len + profile.len * 2 - i - 1] = Vec2.new(-1.0 + pos.y, -1.0 + pos.x);
-    }
-    try drawer.drawShapeV2(camera, point, local_positions, .black, visuals.color);
+    try drawer.drawShapeV3(camera, point, visuals.geometry.pattern, .black, visuals.color);
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(-0.25, 0));
@@ -400,17 +440,7 @@ fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVis
 }
 
 fn drawPatternVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
-    const local_positions =
-        funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
-            }
-        }.anon) ++ funk.fromCount(32, struct {
-            pub fn anon(k: usize) Vec2 {
-                return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(-0.5);
-            }
-        }.anon);
-    try drawer.drawShapeV2(camera, point, &local_positions, .black, visuals.color);
+    try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.pattern_variable, .black, visuals.color);
 }
 
 pub fn drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Point, sexpr: *const Sexpr, bindings: BindingsState) !void {

@@ -289,7 +289,7 @@ pub fn beforeHotReload(self: *GameState) !void {
 }
 
 pub fn afterHotReload(self: *GameState) !void {
-    _ = self;
+    try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator());
 }
 
 /// returns true if should quit
