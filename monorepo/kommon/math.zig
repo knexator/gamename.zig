@@ -1626,6 +1626,13 @@ pub const Point = extern struct {
         lerp_towards_float(&self.scale, goal.scale, ratio, delta_seconds);
     }
 
+    pub fn rotateAroundLocalPosition(point: Point, local_center: Vec2, turns: f32) Point {
+        return point
+            .applyToLocalPoint(.{ .pos = local_center })
+            .applyToLocalPoint(.{ .turns = turns })
+            .applyToLocalPoint(.{ .pos = local_center.neg() });
+    }
+
     pub fn applyToLocalPosition(parent: Point, local: Vec2) Vec2 {
         return local.scale(parent.scale).rotate(parent.turns).add(parent.pos);
     }
