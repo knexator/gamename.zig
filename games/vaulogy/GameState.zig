@@ -219,6 +219,59 @@ const ExecutionTree = struct {
             );
         }
     }
+
+    fn depth(self: ExecutionTree) usize {
+        if (self.matched) |matched| {
+            const a = if (matched.funk_tangent) |f| f.tree.depth() else 0;
+            const b = if (matched.next) |n| n.depth() else 0;
+            return 1 + a + b;
+        } else return 1;
+    }
+
+    pub fn drawAsThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !void {
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 0,
+            .pos = input_point,
+            .value = self.input,
+        });
+
+        if (self.matched) |matched| {
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 1,
+                .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+                .value = matched.pattern,
+            });
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
+                .value = matched.filled_template,
+            });
+
+            var next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
+
+            if (matched.funk_tangent) |funk_tangent| {
+                try drawer.drawHoldedFnk(
+                    camera,
+                    input_point.applyToLocalPoint(.{
+                        .pos = .new(7, -1),
+                        .turns = -0.25,
+                        .scale = 0.5,
+                    }),
+                    0,
+                    funk_tangent.fn_name,
+                );
+
+                try funk_tangent.tree.drawAsThread(drawer, camera, next_input_pos, t);
+
+                next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5 + 5 * tof32(funk_tangent.tree.depth()), 0) });
+            }
+
+            if (matched.next) |next| {
+                try next.drawAsThread(drawer, camera, next_input_pos, t);
+            }
+        }
+    }
 };
 
 pub fn init(
@@ -311,7 +364,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
         const anim_t = @mod(self.progress_t, 1.0);
         try drawThread(&self.drawer, camera, execution_thread, anim_t, .{});
-        try drawThreadWithFolding(&self.drawer, camera, execution_thread, anim_t, .{ .pos = .new(0, 12) });
+        try drawThreadWithFolding(&self.drawer, camera, execution_thread, anim_t, .{ .pos = .new(0, 16) });
+    }
+
+    if (true) {
+        try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
     }
 
     if (true) {
