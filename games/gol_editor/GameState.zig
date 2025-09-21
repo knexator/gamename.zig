@@ -574,7 +574,7 @@ const BoardState = struct {
             }
             const signal = try signals.getPtr(kv.key_ptr.*);
             inline for ([_]MoteType{ .fire, .water, .earth, .sulfur }) |t| {
-                cell.motes.set(t, cell.motes.get(t) * @field(signal, @tagName(t)));
+                cell.motes.getPtr(t).* += cell.motes.get(.quicksilver) * @field(signal, @tagName(t));
             }
             signal.* = .empty;
         }
