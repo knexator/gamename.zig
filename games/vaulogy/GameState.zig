@@ -102,11 +102,6 @@ const ExecutionTree = struct {
     }!ExecutionTree {
         const func = try scoring_run.findFunktion(fn_name);
         const result: ExecutionTree = try .buildExtending(scoring_run, func.cases.items, input, &.{});
-        std.log.debug("in buildNewStack, for fn_name {any} and input {any}, got last {any}", .{
-            fn_name,
-            input,
-            result.getLast(),
-        });
         return result;
     }
 
@@ -315,11 +310,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (true) {
         const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
         const anim_t = @mod(self.progress_t, 1.0);
-        try drawThread(&self.drawer, camera, execution_thread, anim_t);
+        try drawThread(&self.drawer, camera, execution_thread, anim_t, .{});
     }
 
     if (true) {
-        try self.tree.draw(&self.drawer, camera, .{ .pos = .new(0, -8), .turns = -0.1 });
+        try self.tree.draw(&self.drawer, camera, .{ .pos = .new(0, -12), .turns = -0.1 });
     }
 
     return false;
@@ -431,22 +426,8 @@ fn drawCase(
     }
 }
 
-// fn drawCases(
-//     drawer: *Drawer,
-//     camera: Rect,
-//     pattern_point_of_first: Point,
-//     cases: []const core.MatchCaseDefinition,
-//     bindings: BindingsState,
-// ) !void {
-//     for (cases, 0..) |case, k| {
-//         try drawCase(drawer, camera, pattern_point_of_first.applyToLocalPoint(
-//             .{ .pos = .new(0, tof32(k) * 3) },
-//         ), case, bindings, if (k > 0) 0 else 1, null);
-//     }
-// }
-
-fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThread, anim_t: f32) !void {
-    var template_point: Point = .{};
+fn drawThread(drawer: *Drawer, camera: Rect, execution_thread: core.ExecutionThread, anim_t: f32, starting_point: Point) !void {
+    var template_point: Point = starting_point;
     const old_matches = switch (execution_thread.last_visual_state) {
         .matched => execution_thread.prev_matches.items[0..execution_thread.prev_matches.items.len -| 1],
         else => execution_thread.prev_matches.items,
