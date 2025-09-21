@@ -67,6 +67,20 @@ const ThreadInitialParams = struct {
     }
 };
 
+const ExecutionTreeV2 = struct {
+    input: *const Sexpr,
+    // output: *const Sexpr, ?
+    stuff: struct {
+        pattern: *const Sexpr,
+        template: *const Sexpr,
+        next: *const @This(),
+        fnk_tangent: ?struct {
+            name: *const Sexpr,
+            tree: *const ExecutionTreeV2,
+        },
+    },
+};
+
 const ExecutionTree = struct {
     incoming_bindings: []const core.Binding,
     all_bindings: []const core.Binding,
