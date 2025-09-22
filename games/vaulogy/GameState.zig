@@ -69,10 +69,11 @@ const ThreadInitialParams = struct {
 
 const ExecutionTree = struct {
     incoming_bindings: []const core.Binding,
+    new_bindings: []const core.Binding,
     all_bindings: []const core.Binding,
     input: *const Sexpr,
-    failed: []const core.MatchCaseDefinition,
-    discarded: []const core.MatchCaseDefinition,
+    cases: []const core.MatchCaseDefinition,
+    matched_index: usize,
     matched: struct {
         pattern: *const Sexpr,
         raw_template: *const Sexpr,
@@ -110,8 +111,9 @@ const ExecutionTree = struct {
         for (cases, 0..) |case, case_index| {
             var new_bindings: std.ArrayList(core.Binding) = .init(scoring_run.mem.gpa);
             if (try core.generateBindings(case.pattern, input, &new_bindings)) {
-                try new_bindings.appendSlice(incoming_bindings);
-                const bindings = try new_bindings.toOwnedSlice();
+                const bindings = try scoring_run.mem.gpa.alloc(core.Binding, incoming_bindings.len + new_bindings.items.len);
+                @memcpy(bindings[0..incoming_bindings.len], incoming_bindings);
+                @memcpy(bindings[incoming_bindings.len..], new_bindings.items);
                 const argument = try core.fillTemplateV2(case.template, bindings, &scoring_run.mem.pool_for_sexprs);
 
                 const funk_tangent: ?ExecutionTree = if (case.fnk_name.equals(Sexpr.builtin.identity))
@@ -129,9 +131,10 @@ const ExecutionTree = struct {
                 return .{
                     .all_bindings = bindings,
                     .incoming_bindings = incoming_bindings,
+                    .new_bindings = try new_bindings.toOwnedSlice(),
                     .input = input,
-                    .failed = cases[0..case_index],
-                    .discarded = cases[case_index + 1 ..],
+                    .cases = cases,
+                    .matched_index = case_index,
                     // .matched = if (funk_tangent == null and next_tree == null) null else .{
                     .matched = .{
                         .pattern = case.pattern,
@@ -235,6 +238,67 @@ const ExecutionTree = struct {
             .pos = input_point,
             .value = self.input,
         });
+
+        const step_n: usize = @intFromFloat(@floor(t));
+        const anim_t: f32 = @mod(t, 1);
+        if (step_n < self.matched_index) {
+            const discarded_case = self.cases[step_n];
+
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const old_bindings: BindingsState = .{
+                .anim_t = null,
+                .new = &.{},
+                .old = self.incoming_bindings,
+            };
+
+            const template_point = input_point;
+
+            const fly_away = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+            const pattern_point_floating_away = template_point.applyToLocalPoint(Point.lerp(
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+                .{ .pos = .new(8, -8), .scale = 0, .turns = -0.65 },
+                fly_away,
+            ));
+            try drawCase(drawer, camera, pattern_point_floating_away, discarded_case, old_bindings, 1, null);
+
+            const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
+            for (self.cases[step_n + 1 ..], 0..) |case, k| {
+                try drawCase(drawer, camera, template_point.applyToLocalPoint(.{
+                    .pos = .new(4, (tof32(k) + offset) * 3),
+                }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
+            }
+
+            return;
+        } else if (step_n == self.matched_index) {
+            const matched_case = self.cases[step_n];
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .value = self.input,
+                .pos = input_point,
+            });
+
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const t_bindings: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+
+            const pattern_point = input_point.applyToLocalPoint(
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+            );
+
+            var next_cases_pattern_point = input_point.applyToLocalPoint(.{ .pos = .new(16, 0) });
+            try drawCase(drawer, camera, pattern_point, matched_case, .{
+                .anim_t = t_bindings,
+                .new = self.new_bindings,
+                .old = self.incoming_bindings,
+            }, 1, if (self.matched.funk_tangent) |funk_tangent| .{
+                .t = math.remapTo01Clamped(anim_t, 0.2, 1.0),
+                .cases = funk_tangent.tree.cases,
+                .next_cases_pattern_point_ptr = &next_cases_pattern_point,
+                // .next_cases_pattern_point_ptr = undefined,
+            } else null);
+
+            return;
+        } else {}
 
         const matched = self.matched;
 
