@@ -378,7 +378,7 @@ const ExecutionTree = struct {
                 }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
             }
 
-            return .{ .remaining_t = 0, .next_input_pos = undefined };
+            return .{ .remaining_t = 0, .next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(6, 0) }) };
         } else if (step_n == self.matched_index) {
             const matched_case = self.cases[step_n];
 
@@ -407,7 +407,7 @@ const ExecutionTree = struct {
                 // .next_cases_pattern_point_ptr = undefined,
             } else null);
 
-            return .{ .remaining_t = 0, .next_input_pos = undefined };
+            return .{ .remaining_t = 0, .next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(6, 0) }) };
         } else {
             const matched = self.matched;
 
@@ -429,6 +429,17 @@ const ExecutionTree = struct {
                 const asdf = try funk_tangent.tree.drawAsThreadWithFolding(drawer, camera, next_input_pos, t - tof32(self.matched_index) - 1);
                 remaining_t = asdf.remaining_t;
                 next_input_pos = asdf.next_input_pos;
+                if (self.cases[self.matched_index].next) |next| {
+                    try drawCaseForFolding(
+                        drawer,
+                        camera,
+                        next_input_pos.rotateAroundLocalPosition(.new(-0.5, -1.5), -0.4),
+                        next.items[0],
+                        .{ .anim_t = 1, .new = &.{}, .old = self.all_bindings },
+                        1,
+                        null,
+                    );
+                }
             }
 
             if (remaining_t > 0) {
