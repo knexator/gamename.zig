@@ -71,6 +71,8 @@ const ExecutionTree = struct {
     incoming_bindings: []const core.Binding,
     all_bindings: []const core.Binding,
     input: *const Sexpr,
+    failed: []const core.MatchCaseDefinition,
+    discarded: []const core.MatchCaseDefinition,
     matched: struct {
         pattern: *const Sexpr,
         raw_template: *const Sexpr,
@@ -105,7 +107,7 @@ const ExecutionTree = struct {
     }
 
     pub fn buildExtending(scoring_run: *core.ScoringRun, cases: []const core.MatchCaseDefinition, input: *const Sexpr, incoming_bindings: []const core.Binding) !ExecutionTree {
-        for (cases) |case| {
+        for (cases, 0..) |case, case_index| {
             var new_bindings: std.ArrayList(core.Binding) = .init(scoring_run.mem.gpa);
             if (try core.generateBindings(case.pattern, input, &new_bindings)) {
                 try new_bindings.appendSlice(incoming_bindings);
@@ -128,6 +130,8 @@ const ExecutionTree = struct {
                     .all_bindings = bindings,
                     .incoming_bindings = incoming_bindings,
                     .input = input,
+                    .failed = cases[0..case_index],
+                    .discarded = cases[case_index + 1 ..],
                     // .matched = if (funk_tangent == null and next_tree == null) null else .{
                     .matched = .{
                         .pattern = case.pattern,
