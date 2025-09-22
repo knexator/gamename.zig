@@ -337,6 +337,111 @@ const ExecutionTree = struct {
             try next.drawAsThread(drawer, camera, next_input_pos, t);
         }
     }
+
+    pub fn drawAsThreadWithFolding(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !struct {
+        remaining_t: f32,
+        next_input_pos: Point,
+        // consumed_turns: usize,
+    } {
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 0,
+            .pos = input_point,
+            .value = self.input,
+        });
+
+        const step_n: usize = @intFromFloat(@floor(t));
+        const anim_t: f32 = @mod(t, 1);
+        if (step_n < self.matched_index) {
+            const discarded_case = self.cases[step_n];
+
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const old_bindings: BindingsState = .{
+                .anim_t = null,
+                .new = &.{},
+                .old = self.incoming_bindings,
+            };
+
+            const template_point = input_point;
+
+            const fly_away = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+            const pattern_point_floating_away = template_point.applyToLocalPoint(Point.lerp(
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+                .{ .pos = .new(8, -8), .scale = 0, .turns = -0.65 },
+                fly_away,
+            ));
+            try drawCaseForFolding(drawer, camera, pattern_point_floating_away, discarded_case, old_bindings, 1, null);
+
+            const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
+            for (self.cases[step_n + 1 ..], 0..) |case, k| {
+                try drawCaseForFolding(drawer, camera, template_point.applyToLocalPoint(.{
+                    .pos = .new(4, (tof32(k) + offset) * 3),
+                }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
+            }
+
+            return .{ .remaining_t = 0, .next_input_pos = undefined };
+        } else if (step_n == self.matched_index) {
+            const matched_case = self.cases[step_n];
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .value = self.input,
+                .pos = input_point,
+            });
+
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const t_bindings: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+
+            const pattern_point = input_point.applyToLocalPoint(
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+            );
+
+            var next_cases_pattern_point = input_point.applyToLocalPoint(.{ .pos = .new(16, 0) });
+            try drawCaseForFolding(drawer, camera, pattern_point, matched_case, .{
+                .anim_t = t_bindings,
+                .new = self.new_bindings,
+                .old = self.incoming_bindings,
+            }, 1, if (self.matched.funk_tangent) |funk_tangent| .{
+                .t = math.remapTo01Clamped(anim_t, 0.2, 1.0),
+                .cases = funk_tangent.tree.cases,
+                .next_cases_pattern_point_ptr = &next_cases_pattern_point,
+                // .next_cases_pattern_point_ptr = undefined,
+            } else null);
+
+            return .{ .remaining_t = 0, .next_input_pos = undefined };
+        } else {
+            const matched = self.matched;
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 1,
+                .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+                .value = matched.pattern,
+            });
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
+                .value = matched.filled_template,
+            });
+
+            var remaining_t = t;
+            var next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
+            if (self.matched.funk_tangent) |funk_tangent| {
+                const asdf = try funk_tangent.tree.drawAsThreadWithFolding(drawer, camera, next_input_pos, t - tof32(self.matched_index) - 1);
+                remaining_t = asdf.remaining_t;
+                next_input_pos = asdf.next_input_pos;
+            }
+
+            if (remaining_t > 0) {
+                if (self.matched.next) |next| {
+                    const asdf = try next.drawAsThreadWithFolding(drawer, camera, next_input_pos, remaining_t);
+                    remaining_t = asdf.remaining_t;
+                    next_input_pos = asdf.next_input_pos;
+                }
+            }
+
+            return .{ .remaining_t = remaining_t, .next_input_pos = next_input_pos };
+        }
+    }
 };
 
 pub fn init(
@@ -434,6 +539,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
+        _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 32) }, self.progress_t);
     }
 
     if (true) {
