@@ -67,25 +67,11 @@ const ThreadInitialParams = struct {
     }
 };
 
-const ExecutionTreeV2 = struct {
-    input: *const Sexpr,
-    // output: *const Sexpr, ?
-    stuff: struct {
-        pattern: *const Sexpr,
-        template: *const Sexpr,
-        next: *const @This(),
-        fnk_tangent: ?struct {
-            name: *const Sexpr,
-            tree: *const ExecutionTreeV2,
-        },
-    },
-};
-
 const ExecutionTree = struct {
     incoming_bindings: []const core.Binding,
     all_bindings: []const core.Binding,
     input: *const Sexpr,
-    matched: ?struct {
+    matched: struct {
         pattern: *const Sexpr,
         raw_template: *const Sexpr,
         filled_template: *const Sexpr,
@@ -97,13 +83,12 @@ const ExecutionTree = struct {
     },
 
     fn getLast(self: ExecutionTree) *const Sexpr {
-        if (self.matched) |matched| {
-            if (matched.next) |next| {
-                return next.getLast();
-            } else if (matched.funk_tangent) |fnk| {
-                return fnk.tree.getLast();
-            } else return matched.filled_template;
-        } else return self.input;
+        const matched = self.matched;
+        if (matched.next) |next| {
+            return next.getLast();
+        } else if (matched.funk_tangent) |fnk| {
+            return fnk.tree.getLast();
+        } else return matched.filled_template;
     }
 
     pub fn buildNewStack(scoring_run: *core.ScoringRun, fn_name: *const Sexpr, input: *const Sexpr) error{
@@ -183,63 +168,61 @@ const ExecutionTree = struct {
             .value = self.input,
         });
 
-        if (self.matched) |matched| {
-            try drawer.drawSexpr(camera, .{
-                .is_pattern = 1,
-                .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
-                .value = matched.pattern,
-            });
+        const matched = self.matched;
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 1,
+            .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+            .value = matched.pattern,
+        });
 
-            // try drawer.drawSexpr(camera, .{
-            //     .is_pattern = 0,
-            //     .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
-            //     .value = matched.template,
-            // });
-            if (matched.funk_tangent) |funk_tangent| {
-                // try drawer.drawHoldedFnk(camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }), 0, funk_tangent.fn_name);
-                // if (matched.next == null) {
-                //     try drawer.drawSexpr(camera, .{
-                //         .is_pattern = 0,
-                //         .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }),
-                //         .value = funk_tangent.tree.getLast(),
-                //     });
-                // }
-                // if (matched.next) |next| {
-                try funk_tangent.tree.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 1), .turns = 0.1 }));
-                // try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
-                // } else {
-                //     try funk_tangent.tree.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0), .turns = -0.1 }));
-                // }
-                // } else {
-                // if (matched.next) |next| {
-                //     try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
-                // }
-            }
-            if (matched.next) |next| {
-                try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
-            }
-
-            try drawer.drawTemplateSexprWithBindings(
-                camera,
-                input_point.applyToLocalPoint(.{ .pos = .new(5, 1), .turns = 0.1 }),
-                matched.raw_template,
-                .{
-                    .anim_t = 0.5,
-                    .old = &.{},
-                    // .new = &.{},
-                    .new = self.all_bindings,
-                    // .old = self.bindings,
-                },
-            );
+        // try drawer.drawSexpr(camera, .{
+        //     .is_pattern = 0,
+        //     .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
+        //     .value = matched.template,
+        // });
+        if (matched.funk_tangent) |funk_tangent| {
+            // try drawer.drawHoldedFnk(camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }), 0, funk_tangent.fn_name);
+            // if (matched.next == null) {
+            //     try drawer.drawSexpr(camera, .{
+            //         .is_pattern = 0,
+            //         .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }),
+            //         .value = funk_tangent.tree.getLast(),
+            //     });
+            // }
+            // if (matched.next) |next| {
+            try funk_tangent.tree.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 1), .turns = 0.1 }));
+            // try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
+            // } else {
+            //     try funk_tangent.tree.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0), .turns = -0.1 }));
+            // }
+            // } else {
+            // if (matched.next) |next| {
+            //     try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
+            // }
         }
+        if (matched.next) |next| {
+            try next.draw(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, -1), .turns = -1.0 / 6.0 }));
+        }
+
+        try drawer.drawTemplateSexprWithBindings(
+            camera,
+            input_point.applyToLocalPoint(.{ .pos = .new(5, 1), .turns = 0.1 }),
+            matched.raw_template,
+            .{
+                .anim_t = 0.5,
+                .old = &.{},
+                // .new = &.{},
+                .new = self.all_bindings,
+                // .old = self.bindings,
+            },
+        );
     }
 
     fn depth(self: ExecutionTree) usize {
-        if (self.matched) |matched| {
-            const a = if (matched.funk_tangent) |f| f.tree.depth() else 0;
-            const b = if (matched.next) |n| n.depth() else 0;
-            return 1 + a + b;
-        } else return 1;
+        const matched = self.matched;
+        const a = if (matched.funk_tangent) |f| f.tree.depth() else 0;
+        const b = if (matched.next) |n| n.depth() else 0;
+        return 1 + a + b;
     }
 
     pub fn drawAsThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !void {
@@ -249,41 +232,41 @@ const ExecutionTree = struct {
             .value = self.input,
         });
 
-        if (self.matched) |matched| {
-            try drawer.drawSexpr(camera, .{
-                .is_pattern = 1,
-                .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
-                .value = matched.pattern,
-            });
+        const matched = self.matched;
 
-            try drawer.drawSexpr(camera, .{
-                .is_pattern = 0,
-                .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
-                .value = matched.filled_template,
-            });
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 1,
+            .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+            .value = matched.pattern,
+        });
 
-            var next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
+        try drawer.drawSexpr(camera, .{
+            .is_pattern = 0,
+            .pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
+            .value = matched.filled_template,
+        });
 
-            if (matched.funk_tangent) |funk_tangent| {
-                try drawer.drawHoldedFnk(
-                    camera,
-                    input_point.applyToLocalPoint(.{
-                        .pos = .new(7, -1),
-                        .turns = -0.25,
-                        .scale = 0.5,
-                    }),
-                    0,
-                    funk_tangent.fn_name,
-                );
+        var next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
 
-                try funk_tangent.tree.drawAsThread(drawer, camera, next_input_pos, t);
+        if (matched.funk_tangent) |funk_tangent| {
+            try drawer.drawHoldedFnk(
+                camera,
+                input_point.applyToLocalPoint(.{
+                    .pos = .new(7, -1),
+                    .turns = -0.25,
+                    .scale = 0.5,
+                }),
+                0,
+                funk_tangent.fn_name,
+            );
 
-                next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5 + 5 * tof32(funk_tangent.tree.depth()), 0) });
-            }
+            try funk_tangent.tree.drawAsThread(drawer, camera, next_input_pos, t);
 
-            if (matched.next) |next| {
-                try next.drawAsThread(drawer, camera, next_input_pos, t);
-            }
+            next_input_pos = input_point.applyToLocalPoint(.{ .pos = .new(5 + 5 * tof32(funk_tangent.tree.depth()), 0) });
+        }
+
+        if (matched.next) |next| {
+            try next.drawAsThread(drawer, camera, next_input_pos, t);
         }
     }
 };
