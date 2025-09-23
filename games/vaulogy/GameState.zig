@@ -347,6 +347,7 @@ const ExecutionTree = struct {
     }
 
     pub fn drawAsExecutingThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !struct {
+        queued_nexts: f32,
         state: union(enum) {
             fully_consumed,
             right_before_exiting: f32,
@@ -391,7 +392,7 @@ const ExecutionTree = struct {
                 }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
             }
 
-            return .{ .state = .fully_consumed };
+            return .{ .state = .fully_consumed, .queued_nexts = 0 };
         } else if (step_n == self.matched_index) {
             const matched_case = self.cases[step_n];
 
@@ -466,22 +467,25 @@ const ExecutionTree = struct {
             }
 
             if (is_last_match) {
-                return .{ .state = .{ .right_before_exiting = anim_t } };
+                return .{ .state = .{ .right_before_exiting = anim_t }, .queued_nexts = 0 };
             } else {
-                return .{ .state = .fully_consumed };
+                return .{ .state = .fully_consumed, .queued_nexts = if (self.matched.next == null) 0 else anim_t };
             }
         } else {
             const asdf: funk.WithoutError(funk.ReturnOf(drawAsExecutingThread)) = if (self.matched.funk_tangent) |funk_tangent|
                 try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point, t - tof32(self.matched_index) - 1)
             else
-                .{ .state = .{ .exited = .{ .remaining_t = t - 1 } } };
+                .{ .state = .{ .exited = .{ .remaining_t = t - 1 } }, .queued_nexts = 0 };
 
             switch (asdf.state) {
                 .fully_consumed => {
+                    // std.log.debug("hola, {d}", .{asdf.queued_nexts});
                     if (self.matched.next) |next| {
+                        // std.log.debug("qud nextss: {d}", .{asdf.queued_nexts});
                         const hiding_next_t = 1;
                         const next_pattern_point = input_point
                             .applyToLocalPoint(.{ .pos = .new(12, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(12 * asdf.queued_nexts, 0) })
                             .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, hiding_next_t * -2) })
                             .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                             0,
@@ -495,7 +499,13 @@ const ExecutionTree = struct {
                         }, 1, null);
                     }
 
-                    return .{ .state = .fully_consumed };
+                    return .{
+                        .state = .fully_consumed,
+                        // .queued_nexts = asdf.queued_nexts,
+                        // .queued_nexts = 0,
+                        .queued_nexts = asdf.queued_nexts + @as(f32, if (self.matched.next == null) 0 else 1),
+                    };
+                    // return .{ .state = .fully_consumed, .queued_nexts = 0 };
                 },
                 .right_before_exiting => |exit_t| {
                     // std.log.debug("hola, {d}, {any}", .{ exit_t, self.matched.next == null });
@@ -515,9 +525,9 @@ const ExecutionTree = struct {
                             .new = self.new_bindings,
                         }, 1, null);
 
-                        return .{ .state = .fully_consumed };
+                        return .{ .state = .fully_consumed, .queued_nexts = asdf.queued_nexts + 1 - exit_t };
                     } else {
-                        return .{ .state = .{ .right_before_exiting = exit_t } };
+                        return .{ .state = .{ .right_before_exiting = exit_t }, .queued_nexts = asdf.queued_nexts };
                     }
                 },
                 .exited => |data| {
@@ -531,12 +541,23 @@ const ExecutionTree = struct {
                         );
                         switch (asdf2.state) {
                             // .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
-                            else => return asdf2,
+                            .fully_consumed, .right_before_exiting => return .{
+                                .state = asdf2.state,
+                                // .queued_nexts = asdf.queued_nexts + asdf2.queued_nexts + 1,
+                                // .queued_nexts = 0,
+                                .queued_nexts = asdf2.queued_nexts,
+                                // .queued_nexts = asdf2.queued_nexts + 1,
+                            },
                             .exited => |data2| {
                                 // std.log.debug("line 509, data2.remainting is {d}", .{data2.remaining_t});
-                                return .{ .state = .{ .exited = .{
-                                    .remaining_t = data2.remaining_t,
-                                } } };
+                                return .{
+                                    .state = .{ .exited = .{
+                                        .remaining_t = data2.remaining_t,
+                                    } },
+                                    // .queued_nexts = 0,
+                                    // .queued_nexts = 0 * asdf.queued_nexts + asdf2.queued_nexts + 1,
+                                    .queued_nexts = asdf2.queued_nexts,
+                                };
                             },
                         }
                     } else {
@@ -546,6 +567,7 @@ const ExecutionTree = struct {
                                     .remaining_t = data.remaining_t,
                                 },
                             },
+                            .queued_nexts = asdf.queued_nexts + @as(f32, if (self.matched.next == null) 0 else 1),
                         };
                     }
                 },
@@ -785,8 +807,12 @@ pub fn init(
         \\     }
         \\ }
     , &dst.core_mem);
-    // dst.execution_thread = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
-    const thread_initial_params: ThreadInitialParams = try .initFromText("((true . (true . nil)) . (true . (true . nil)))", "peanoMul", &dst.scoring_run);
+
+    const fn_name: []const u8 = "peanoMul";
+    // const input: []const u8 = "((true . (true . (true . nil))) . (true . (true . (true . nil))))";
+    const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
+
+    const thread_initial_params: ThreadInitialParams = try .initFromText(input, fn_name, &dst.scoring_run);
 
     var snaps: std.ArrayList(core.ExecutionThread) = .init(gpa);
     var asdf = try thread_initial_params.toThread(&dst.scoring_run);
@@ -797,7 +823,7 @@ pub fn init(
     }
     dst.snapshots = try snaps.toOwnedSlice();
 
-    dst.tree = try .buildFromText(&dst.scoring_run, "peanoMul", "((true . (true . nil)) . (true . (true . nil)))");
+    dst.tree = try .buildFromText(&dst.scoring_run, fn_name, input);
 }
 
 // TODO: take gl parameter
