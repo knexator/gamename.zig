@@ -452,7 +452,7 @@ const ExecutionTree = struct {
                 if (self.matched.next) |next| {
                     const next_pattern_point = input_point
                         .applyToLocalPoint(.{ .pos = .new(12, 0) })
-                        .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, -2 * hiding_next_t) })
+                        .applyToLocalPoint(.{ .pos = .new(0, -2 * hiding_next_t) })
                         .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                         0,
                         -0.1,
@@ -485,8 +485,8 @@ const ExecutionTree = struct {
                         const hiding_next_t = 1;
                         const next_pattern_point = input_point
                             .applyToLocalPoint(.{ .pos = .new(12, 0) })
-                            .applyToLocalPoint(.{ .pos = .new(12 * asdf.queued_nexts, 0) })
-                            .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, hiding_next_t * -2) })
+                            .applyToLocalPoint(.{ .pos = .new(6 * asdf.queued_nexts, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(0, hiding_next_t * -2) })
                             .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                             0,
                             -0.1,
@@ -512,8 +512,8 @@ const ExecutionTree = struct {
                     if (self.matched.next) |next| {
                         const hiding_next_t = 1.0 - exit_t;
                         const next_pattern_point = input_point
-                            .applyToLocalPoint(.{ .pos = .new(4, 0) })
-                            .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 14, hiding_next_t * -2) })
+                            .applyToLocalPoint(.{ .pos = .new(12, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(-8 * (1 - hiding_next_t), hiding_next_t * -2) })
                             .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                             0,
                             -0.1,
