@@ -474,7 +474,7 @@ const ExecutionTree = struct {
             if (self.matched.funk_tangent) |funk_tangent| {
                 const asdf = try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point, t - tof32(self.matched_index) - 1);
                 switch (asdf.state) {
-                    .fully_consumed, .right_before_exiting => {
+                    .fully_consumed => {
                         if (self.matched.next) |next| {
                             const hiding_next_t = 1;
                             const next_pattern_point = input_point
@@ -492,7 +492,31 @@ const ExecutionTree = struct {
                             }, 1, null);
                         }
 
-                        return .{ .state = .fully_consumed };
+                        // return .{ .state = .fully_consumed };
+                        return asdf;
+                    },
+                    .right_before_exiting => |exit_t| {
+                        // std.log.debug("hola, {d}, {any}", .{ exit_t, self.matched.next == null });
+                        if (self.matched.next) |next| {
+                            const hiding_next_t = 1.0 - exit_t;
+                            const next_pattern_point = input_point
+                                .applyToLocalPoint(.{ .pos = .new(4, 0) })
+                                .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 14, hiding_next_t * -2) })
+                                .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
+                                0,
+                                -0.1,
+                                math.smoothstepEased(hiding_next_t, 0, 1, .easeInOutCubic),
+                            ));
+                            try drawCase(drawer, camera, next_pattern_point, next.cases[0], .{
+                                .anim_t = 1,
+                                .old = self.incoming_bindings,
+                                .new = self.new_bindings,
+                            }, 1, null);
+
+                            return .{ .state = .fully_consumed };
+                        } else {
+                            return asdf;
+                        }
                     },
                     .exited => |data| {
                         // std.log.debug("line 498, data.remainting is {d}, next is null? {any}", .{ data.remaining_t, self.matched.next == null });
@@ -504,7 +528,8 @@ const ExecutionTree = struct {
                                 data.remaining_t,
                             );
                             switch (asdf2.state) {
-                                .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
+                                // .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
+                                else => return asdf2,
                                 .exited => |data2| {
                                     // std.log.debug("line 509, data2.remainting is {d}", .{data2.remaining_t});
                                     return .{ .state = .{ .exited = .{
@@ -527,6 +552,7 @@ const ExecutionTree = struct {
                 }
             } else {
                 if (self.matched.next) |next| {
+                    // TODO: reduce duplication
                     const asdf2 = try next.drawAsExecutingThread(
                         drawer,
                         camera,
@@ -534,7 +560,8 @@ const ExecutionTree = struct {
                         t,
                     );
                     switch (asdf2.state) {
-                        .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
+                        // .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
+                        else => return asdf2,
                         .exited => |data2| {
                             // std.log.debug("line 538, data2.remainting is {d}", .{data2.remaining_t});
                             return .{ .state = .{ .exited = .{
