@@ -355,6 +355,7 @@ const ExecutionTree = struct {
             },
         },
     } {
+        if (t < 0) std.log.err("t was: {d}", .{t});
         const step_n: usize = @intFromFloat(@floor(t));
         const anim_t: f32 = @mod(t, 1);
         if (step_n < self.matched_index) {
@@ -471,28 +472,87 @@ const ExecutionTree = struct {
             }
         } else {
             if (self.matched.funk_tangent) |funk_tangent| {
-                // TODO
-                _ = try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point, t - tof32(self.matched_index) - 1);
-            }
+                const asdf = try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point, t - tof32(self.matched_index) - 1);
+                switch (asdf.state) {
+                    .fully_consumed, .right_before_exiting => {
+                        if (self.matched.next) |next| {
+                            const hiding_next_t = 1;
+                            const next_pattern_point = input_point
+                                .applyToLocalPoint(.{ .pos = .new(12, 0) })
+                                .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, hiding_next_t * -2) })
+                                .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
+                                0,
+                                -0.1,
+                                math.smoothstepEased(hiding_next_t, 0, 1, .easeInOutCubic),
+                            ));
+                            try drawCase(drawer, camera, next_pattern_point, next.cases[0], .{
+                                .anim_t = 1,
+                                .old = self.incoming_bindings,
+                                .new = self.new_bindings,
+                            }, 1, null);
+                        }
 
-            if (self.matched.next) |next| {
-                const hiding_next_t = 1;
-                const next_pattern_point = input_point
-                    .applyToLocalPoint(.{ .pos = .new(12, 0) })
-                    .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, hiding_next_t * -2) })
-                    .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
-                    0,
-                    -0.1,
-                    math.smoothstepEased(hiding_next_t, 0, 1, .easeInOutCubic),
-                ));
-                try drawCase(drawer, camera, next_pattern_point, next.cases[0], .{
-                    .anim_t = 1,
-                    .old = self.incoming_bindings,
-                    .new = self.new_bindings,
-                }, 1, null);
+                        return .{ .state = .fully_consumed };
+                    },
+                    .exited => |data| {
+                        // std.log.debug("line 498, data.remainting is {d}, next is null? {any}", .{ data.remaining_t, self.matched.next == null });
+                        if (self.matched.next) |next| {
+                            const asdf2 = try next.drawAsExecutingThread(
+                                drawer,
+                                camera,
+                                input_point,
+                                data.remaining_t,
+                            );
+                            switch (asdf2.state) {
+                                .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
+                                .exited => |data2| {
+                                    // std.log.debug("line 509, data2.remainting is {d}", .{data2.remaining_t});
+                                    return .{ .state = .{ .exited = .{
+                                        .remaining_t = data2.remaining_t,
+                                    } } };
+                                },
+                            }
+                        } else {
+                            return .{
+                                .state = .{
+                                    .exited = .{
+                                        .remaining_t = data.remaining_t,
+                                        // .remaining_t = data.remaining_t - 1,
+                                        // .remaining_t = data.remaining_t - tof32(self.matched_index) - 1,
+                                    },
+                                },
+                            };
+                        }
+                    },
+                }
+            } else {
+                if (self.matched.next) |next| {
+                    const asdf2 = try next.drawAsExecutingThread(
+                        drawer,
+                        camera,
+                        input_point,
+                        t,
+                    );
+                    switch (asdf2.state) {
+                        .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
+                        .exited => |data2| {
+                            // std.log.debug("line 538, data2.remainting is {d}", .{data2.remaining_t});
+                            return .{ .state = .{ .exited = .{
+                                .remaining_t = data2.remaining_t,
+                            } } };
+                        },
+                    }
+                } else {
+                    return .{
+                        .state = .{
+                            .exited = .{
+                                .remaining_t = t - 1,
+                                // .remaining_t = t - tof32(self.matched_index) - 1,
+                            },
+                        },
+                    };
+                }
             }
-
-            return .{ .state = .fully_consumed };
         }
     }
 
