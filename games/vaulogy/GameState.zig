@@ -864,13 +864,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
         const anim_t = @mod(self.progress_t, 1.0);
         try drawThread(&self.drawer, camera, execution_thread, anim_t, .{});
-        try drawThreadWithFolding(&self.drawer, camera, execution_thread, anim_t, .{ .pos = .new(0, 16) });
+        // try drawThreadWithFolding(&self.drawer, camera, execution_thread, anim_t, .{ .pos = .new(0, 16) });
     }
 
     if (true) {
-        try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
-        _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 32) }, self.progress_t);
-        _ = try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 48) }, self.progress_t);
+        // try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
+        _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
+        _ = try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 40) }, self.progress_t);
     }
 
     if (true) {
