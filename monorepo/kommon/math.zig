@@ -1633,6 +1633,12 @@ pub const Point = extern struct {
             .applyToLocalPoint(.{ .pos = local_center.neg() });
     }
 
+    pub fn scaleAroundLocalPosition(point: Point, local_center: Vec2, scale: f32) Point {
+        return point
+            .applyToLocalPoint(.{ .pos = local_center.scale(1.0 - scale) })
+            .applyToLocalPoint(.{ .scale = scale });
+    }
+
     pub fn applyToLocalPosition(parent: Point, local: Vec2) Vec2 {
         return local.scale(parent.scale).rotate(parent.turns).add(parent.pos);
     }

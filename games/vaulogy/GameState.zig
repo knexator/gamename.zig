@@ -71,6 +71,7 @@ const ExecutionTree = struct {
     incoming_bindings: []const core.Binding,
     new_bindings: []const core.Binding,
     all_bindings: []const core.Binding,
+    current_fn_name: *const Sexpr,
     input: *const Sexpr,
     cases: []const core.MatchCaseDefinition,
     matched_index: usize,
@@ -103,11 +104,17 @@ const ExecutionTree = struct {
         UsedUndefinedVariable,
     }!ExecutionTree {
         const func = try scoring_run.findFunktion(fn_name);
-        const result: ExecutionTree = try .buildExtending(scoring_run, func.cases.items, input, &.{});
+        const result: ExecutionTree = try .buildExtending(scoring_run, func.cases.items, input, &.{}, fn_name);
         return result;
     }
 
-    pub fn buildExtending(scoring_run: *core.ScoringRun, cases: []const core.MatchCaseDefinition, input: *const Sexpr, incoming_bindings: []const core.Binding) !ExecutionTree {
+    pub fn buildExtending(
+        scoring_run: *core.ScoringRun,
+        cases: []const core.MatchCaseDefinition,
+        input: *const Sexpr,
+        incoming_bindings: []const core.Binding,
+        current_fn_name: *const Sexpr,
+    ) !ExecutionTree {
         for (cases, 0..) |case, case_index| {
             var new_bindings: std.ArrayList(core.Binding) = .init(scoring_run.mem.gpa);
             if (try core.generateBindings(case.pattern, input, &new_bindings)) {
@@ -124,11 +131,12 @@ const ExecutionTree = struct {
                 const next_input = if (funk_tangent) |t| t.getLast() else argument;
 
                 const next_tree: ?ExecutionTree = if (case.next) |next|
-                    try .buildExtending(scoring_run, next.items, next_input, bindings)
+                    try .buildExtending(scoring_run, next.items, next_input, bindings, current_fn_name)
                 else
                     null;
 
                 return .{
+                    .current_fn_name = current_fn_name,
                     .all_bindings = bindings,
                     .incoming_bindings = incoming_bindings,
                     .new_bindings = try new_bindings.toOwnedSlice(),
@@ -335,6 +343,156 @@ const ExecutionTree = struct {
 
         if (matched.next) |next| {
             try next.drawAsThread(drawer, camera, next_input_pos, t);
+        }
+    }
+
+    pub fn drawAsExecutingThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !struct {
+        state: union(enum) {
+            fully_consumed,
+            right_before_exiting: f32,
+            exited: struct {
+                remaining_t: f32,
+            },
+        },
+    } {
+        const step_n: usize = @intFromFloat(@floor(t));
+        const anim_t: f32 = @mod(t, 1);
+        if (step_n < self.matched_index) {
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .pos = input_point,
+                .value = self.input,
+            });
+
+            const discarded_case = self.cases[step_n];
+
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const old_bindings: BindingsState = .{
+                .anim_t = null,
+                .new = &.{},
+                .old = self.incoming_bindings,
+            };
+
+            const template_point = input_point;
+
+            const fly_away = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+            const pattern_point_floating_away = template_point.applyToLocalPoint(Point.lerp(
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+                .{ .pos = .new(8, -8), .scale = 0, .turns = -0.65 },
+                fly_away,
+            ));
+            try drawCaseForFolding(drawer, camera, pattern_point_floating_away, discarded_case, old_bindings, 1, null);
+
+            const offset = math.remapClamped(anim_t, 0.2, 1, 1, 0);
+            for (self.cases[step_n + 1 ..], 0..) |case, k| {
+                try drawCaseForFolding(drawer, camera, template_point.applyToLocalPoint(.{
+                    .pos = .new(4, (tof32(k) + offset) * 3),
+                }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
+            }
+
+            return .{ .state = .fully_consumed };
+        } else if (step_n == self.matched_index) {
+            const matched_case = self.cases[step_n];
+
+            const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
+            const t_bindings: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+            const pattern_scale = math.remapClamped(anim_t, 0.2, 0.8, 1, 0);
+            const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
+            const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
+            const hiding_next_t = anim_t;
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .pos = input_point.scaleAroundLocalPosition(.new(1.5, 0), pattern_scale),
+                .value = self.input,
+            });
+
+            const pattern_point = input_point.applyToLocalPoint(
+                .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+            );
+
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 1,
+                .pos = pattern_point.scaleAroundLocalPosition(.new(-1.5, 0), pattern_scale),
+                .value = matched_case.pattern,
+            });
+
+            const template_point: Point = .lerp(
+                pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) }),
+                input_point,
+                template_t,
+            );
+
+            try drawer.drawTemplateSexprWithBindings(camera, template_point, matched_case.template, .{
+                .anim_t = t_bindings,
+                .old = self.incoming_bindings,
+                .new = self.new_bindings,
+            });
+
+            const is_last_match = (self.matched.funk_tangent == null and self.matched.next == null);
+
+            if (self.matched.funk_tangent) |funk_tangent| {
+                const function_point = template_point.applyToLocalPoint(.{
+                    .pos = .new(3, 0),
+                    .turns = -0.25,
+                    .scale = 0.5,
+                }).applyToLocalPoint(.{ .pos = .new(3 * invoking_t, 0), .scale = 1 - invoking_t });
+
+                try drawer.drawHoldedFnk(camera, function_point, 0, funk_tangent.fn_name);
+
+                const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
+                for (funk_tangent.tree.cases, 0..) |next_case, k| {
+                    try drawCase(drawer, camera, template_point.applyToLocalPoint(
+                        .{ .pos = .new(4, 3 * (offset + tof32(k))) },
+                    ), next_case, .none, 1, null);
+                }
+
+                if (self.matched.next) |next| {
+                    const next_pattern_point = input_point
+                        .applyToLocalPoint(.{ .pos = .new(12, 0) })
+                        .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, -2 * hiding_next_t) })
+                        .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
+                        0,
+                        -0.1,
+                        math.smoothstepEased(hiding_next_t, 0, 1, .easeInOutCubic),
+                    ));
+                    try drawCase(drawer, camera, next_pattern_point, next.cases[0], .{
+                        .anim_t = t_bindings,
+                        .old = self.incoming_bindings,
+                        .new = self.new_bindings,
+                    }, 1, null);
+                }
+            }
+
+            if (is_last_match) {
+                return .{ .state = .{ .right_before_exiting = anim_t } };
+            } else {
+                return .{ .state = .fully_consumed };
+            }
+        } else {
+            if (self.matched.funk_tangent) |funk_tangent| {
+                // TODO
+                _ = try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point, t - tof32(self.matched_index) - 1);
+            }
+
+            if (self.matched.next) |next| {
+                const hiding_next_t = 1;
+                const next_pattern_point = input_point
+                    .applyToLocalPoint(.{ .pos = .new(12, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(hiding_next_t * 6, hiding_next_t * -2) })
+                    .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
+                    0,
+                    -0.1,
+                    math.smoothstepEased(hiding_next_t, 0, 1, .easeInOutCubic),
+                ));
+                try drawCase(drawer, camera, next_pattern_point, next.cases[0], .{
+                    .anim_t = 1,
+                    .old = self.incoming_bindings,
+                    .new = self.new_bindings,
+                }, 1, null);
+            }
+
+            return .{ .state = .fully_consumed };
         }
     }
 
@@ -629,6 +787,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (true) {
         try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
         _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 32) }, self.progress_t);
+        _ = try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 48) }, self.progress_t);
     }
 
     if (true) {
