@@ -38,6 +38,10 @@ pub fn ReturnOf(map_fn: anytype) type {
     return @typeInfo(@TypeOf(map_fn)).@"fn".return_type.?;
 }
 
+pub fn WithoutError(t: type) type {
+    return @typeInfo(t).error_union.payload;
+}
+
 pub fn mapWithIndex(comptime map_fn: anytype, comptime in: []const FirstInputOf(map_fn)) [in.len]ReturnOf(map_fn) {
     std.debug.assert(@typeInfo(@TypeOf(map_fn)).@"fn".params.len == 2);
     std.debug.assert(@typeInfo(@TypeOf(map_fn)).@"fn".params[1].type.? == usize);
