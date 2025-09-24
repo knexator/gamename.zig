@@ -576,46 +576,6 @@ pub fn drawSpriteBatch(
     );
 }
 
-// TODO: instancing?
-pub fn drawSpriteBatchWithCustomRenderable(
-    self: *Canvas,
-    camera: Rect,
-    renderable: Gl.Renderable,
-    sprites: []const Sprite,
-    texture: Gl.Texture,
-) void {
-    const VertexData = SpriteVertex;
-    const vertices = self.frame_arena.allocator().alloc(VertexData, 4 * sprites.len) catch @panic("OoM");
-    const triangles = self.frame_arena.allocator().alloc([3]Gl.IndexType, 2 * sprites.len) catch @panic("OoM");
-    for (sprites, 0..) |sprite, i| {
-        for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
-            const ratio: f32 = texture.resolution.tof32().mul(sprite.texcoord.size).aspectRatio();
-            if (sprite.unit_scale_is != .ver) @panic("TODO");
-            const ratio_scaling: Vec2 = .new(ratio, 1.0);
-            const top_left_point: Point = sprite.point.applyToLocalPoint(.{ .pos = sprite.pivot.asPivot().neg().mul(ratio_scaling) });
-            vertices[i * 4 + k] = .{
-                .a_position = top_left_point.applyToLocalPosition(vertex.mul(ratio_scaling)),
-                .a_texcoord = sprite.texcoord.applyToLocalPosition(vertex),
-                .a_color = sprite.tint,
-            };
-        }
-        const k: Gl.IndexType = @intCast(4 * i);
-        triangles[i * 2 + 0] = .{ k + 0, k + 1, k + 2 };
-        triangles[i * 2 + 1] = .{ k + 3, k + 2, k + 1 };
-    }
-    self.gl.useRenderable(
-        renderable,
-        vertices.ptr,
-        vertices.len * @sizeOf(VertexData),
-        // .local_points = &.{ .zero, .e1, .e2, .one },
-        triangles,
-        &.{
-            .{ .name = "u_camera", .value = .{ .Rect = camera } },
-        },
-        texture,
-    );
-}
-
 /// assumes the cuts are at 1/3, 2/3
 pub fn sliced3x3(
     rect: Rect,
