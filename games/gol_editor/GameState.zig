@@ -36,6 +36,7 @@ var COLORS: struct {
 
 var CONFIG: struct {
     grid_width: f32 = 0.05,
+    use_motes_texture: bool = true,
 } = .{};
 
 const MoteType = enum {
@@ -182,6 +183,94 @@ const Cell = struct {
                 .dim => COLORS.cell_text.on_dim,
                 .bright => COLORS.cell_text.on_bright,
             };
+        }
+    };
+
+    pub const Batch = struct {
+        cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo),
+        text_batch: Canvas.TextBatch,
+        sprite_batch: Canvas.SpriteBatch,
+
+        pub fn init(self: *GameState) Batch {
+            const canvas = &self.usual.canvas;
+            const mem = &self.usual.mem;
+            return .{
+                .cell_bgs = .init(mem.frame.allocator()),
+                .text_batch = canvas.textBatch(0),
+                .sprite_batch = canvas.spriteBatch(self.textures.motes),
+            };
+        }
+
+        pub fn addBg(batch: *Batch, cell: Cell, pos: IVec2) !void {
+            try batch.cell_bgs.append(.{
+                .point = .{ .pos = pos.tof32() },
+                .color = cell.state.color(),
+            });
+        }
+
+        pub fn addBgV2(batch: *Batch, cell: Cell, pos: IVec2, bounds: Rect, button_pos: Rect) !void {
+            const offset = bounds.top_left;
+            const scale = 1.0 / bounds.size.y;
+            try batch.cell_bgs.append(.{
+                .point = .{
+                    .pos = button_pos.applyToLocalPosition(
+                        pos.tof32().sub(offset).scale(scale),
+                    ),
+                    .scale = scale * button_pos.size.y,
+                },
+                .color = cell.state.color(),
+            });
+        }
+
+        pub fn addMotes(batch: *Batch, cell: Cell, pos: IVec2) !void {
+            inline for (MoteType.all, 0..) |t, k| {
+                if (cell.motes.get(t) > 0) {
+                    if (CONFIG.use_motes_texture) {
+                        batch.sprite_batch.add(.{ .texcoord = .{
+                            .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
+                            .size = .both(1.0 / 3.0),
+                        }, .point = .{ .pos = pos.tof32() }, .tint = cell.state.textColorOver() });
+                    } else {
+                        try batch.text_batch.addText(
+                            t.text(),
+                            .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
+                            t.sizeCorrection(),
+                            cell.state.textColorOver(),
+                        );
+                    }
+                }
+            }
+        }
+
+        pub fn addMotesV2(batch: *Batch, cell: Cell, pos: IVec2, bounds: Rect, button_pos: Rect) !void {
+            const offset = bounds.top_left;
+            const scale = 1.0 / bounds.size.y;
+            inline for (MoteType.all, 0..) |t, k| {
+                if (cell.motes.get(t) > 0) {
+                    if (CONFIG.use_motes_texture) {
+                        batch.sprite_batch.add(.{ .texcoord = .{
+                            .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
+                            .size = .both(1.0 / 3.0),
+                        }, .point = .{
+                            .pos = button_pos.applyToLocalPosition(pos.tof32().sub(offset).scale(scale)),
+                            .scale = scale * button_pos.size.y,
+                        }, .tint = cell.state.textColorOver() });
+                    } else {
+                        try batch.text_batch.addText(
+                            t.text(),
+                            .centeredAt(button_pos.applyToLocalPosition(pos.tof32().sub(offset).add(.half).addY(t.verticalCorrection()).scale(scale))),
+                            scale * t.sizeCorrection() * button_pos.size.y,
+                            cell.state.textColorOver(),
+                        );
+                    }
+                }
+            }
+        }
+
+        pub fn draw(batch: *Batch, camera: Rect, canvas: *Canvas) void {
+            canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, batch.cell_bgs.items);
+            batch.text_batch.draw(camera);
+            batch.sprite_batch.draw(camera);
         }
     };
 };
@@ -1052,6 +1141,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         text: ?[]const u8,
         text_scale: ?f32 = null,
         radio_selected: bool,
+        mote: ?MoteType = null,
     }) = .init(mem.frame.allocator());
     var catalogue_buttons: std.ArrayList(struct {
         pos: Rect,
@@ -1098,7 +1188,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 try ui_buttons.append(.{
                     .pos = button,
                     .color = null,
-                    .text = if (t) |tt| tt.text() else "",
+                    .text = null,
+                    .mote = t,
                     .radio_selected = toolbar.active_tool == .paint_type and (t == toolbar.active_type),
                 });
                 if (button.contains(ui_mouse.cur.position)) {
@@ -1607,13 +1698,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const visible_board = ghost_board orelse cur_level.board;
 
         if (true) {
-            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
-            var cell_texts = canvas.textBatch(0);
-            var motes_sprites = canvas.spriteBatch(self.textures.motes);
-
-            defer motes_sprites.draw(camera);
-            // defer cell_texts.draw(camera);
-            defer canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+            var batch: Cell.Batch = .init(self);
+            defer batch.draw(camera, canvas);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
             var it = visible_board.cells.iterator();
@@ -1622,26 +1708,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 const cell = kv.value_ptr.*;
                 if (!cam_bounds.contains(pos)) continue;
                 if (cell.state != .off) {
-                    try cell_bgs.append(.{
-                        .point = .{ .pos = pos.tof32() },
-                        .color = cell.state.color(),
-                    });
+                    try batch.addBg(cell, pos);
                 }
                 if (toolbar.zoom != .bounds_lit) {
-                    inline for (MoteType.all, 0..) |t, k| {
-                        if (cell.motes.get(t) > 0) {
-                            motes_sprites.add(.{ .texcoord = .{
-                                .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
-                                .size = .both(1.0 / 3.0),
-                            }, .point = .{ .pos = pos.tof32() }, .tint = cell.state.textColorOver() });
-                            try cell_texts.addText(
-                                t.text(),
-                                .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
-                                t.sizeCorrection(),
-                                cell.state.textColorOver(),
-                            );
-                        }
-                    }
+                    try batch.addMotes(cell, pos);
                 }
             }
         }
@@ -1649,11 +1719,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (std.meta.activeTag(toolbar.rect_tool_state) == .moving) {
             const values = toolbar.rect_tool_state.moving;
 
-            var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
-            var cell_texts = canvas.textBatch(0);
-
-            defer cell_texts.draw(camera);
-            defer canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
+            var batch: Cell.Batch = .init(self);
+            defer batch.draw(camera, canvas);
 
             var it = values.iteratorSigned();
             while (it.next()) |p| {
@@ -1670,21 +1737,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 else
                     cell.motes;
 
-                try cell_bgs.append(.{
-                    .point = .{ .pos = pos.tof32() },
-                    .color = visible_state.color(),
-                });
-
-                inline for (MoteType.all) |t| {
-                    if (visible_motes.get(t) > 0) {
-                        try cell_texts.addText(
-                            t.text(),
-                            .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
-                            t.sizeCorrection(),
-                            visible_state.textColorOver(),
-                        );
-                    }
-                }
+                const visible_cell: Cell = .{ .motes = visible_motes, .state = visible_state };
+                try batch.addBg(visible_cell, pos);
+                try batch.addMotes(visible_cell, pos);
             }
         }
 
@@ -1836,6 +1891,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     // ui buttons
     if (true) {
         var ui_texts = canvas.textBatch(0);
+        var batch: Cell.Batch = .init(self);
+        defer batch.draw(ui_cam, canvas);
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
             canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
@@ -1845,6 +1902,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .centeredAt(button.pos.getCenter()),
                 0.75 * (button.text_scale orelse 1),
                 if (button.color == null) Cell.State.textColorOver(.dim) else .black,
+            );
+            if (button.mote) |mote| try batch.addMotesV2(
+                .fromStateAndMote(.dim, mote),
+                .zero,
+                .unit,
+                button.pos,
             );
         }
     }
@@ -1859,37 +1922,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             canvas.fillRect(ui_cam, button.pos.plusMargin(-0.005 * ui_cam.size.y), Cell.State.off.color());
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
-            const offset = bounds.top_left;
-            const scale = 1.0 / bounds.size.y;
+            var batch: Cell.Batch = .init(self);
+            defer batch.draw(ui_cam, canvas);
 
-            {
-                var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
-                var cell_texts = canvas.textBatch(0);
-
-                defer cell_texts.draw(ui_cam);
-                defer canvas.fillShapesInstanced(ui_cam, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
-
-                var it = button.board.cells.iterator();
-                while (it.next()) |kv| {
-                    const pos = kv.key_ptr.*;
-                    const cell = kv.value_ptr.*;
-                    if (cell.state != .off) {
-                        try cell_bgs.append(.{
-                            .point = .{ .pos = button.pos.applyToLocalPosition(pos.tof32().sub(offset).scale(scale)), .scale = scale * button.pos.size.y },
-                            .color = cell.state.color(),
-                        });
-                    }
-                    inline for (MoteType.all) |t| {
-                        if (cell.motes.get(t) > 0) {
-                            try cell_texts.addText(
-                                t.text(),
-                                .centeredAt(button.pos.applyToLocalPosition(kv.key_ptr.*.tof32().sub(offset).add(.half).addY(t.verticalCorrection()).scale(scale))),
-                                scale * t.sizeCorrection() * button.pos.size.y,
-                                cell.state.textColorOver(),
-                            );
-                        }
-                    }
+            var it = button.board.cells.iterator();
+            while (it.next()) |kv| {
+                const pos = kv.key_ptr.*;
+                const cell = kv.value_ptr.*;
+                if (cell.state != .off) {
+                    try batch.addBgV2(cell, pos, bounds, button.pos);
                 }
+                try batch.addMotesV2(cell, pos, bounds, button.pos);
             }
         }
     }
