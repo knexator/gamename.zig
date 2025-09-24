@@ -1509,7 +1509,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
-        // tool mouse interactions
+        // tool specific mouse interactions
         if (!mouse_over_ui) {
             platform.setCursor(.default);
             switch (toolbar.active_tool) {
@@ -1536,7 +1536,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
                         } else {
-                            try cur_level.board.setSingleMoteAt(cell_under_mouse, toolbar.active_type);
+                            if (platform.keyboard.cur.isShiftDown()) {
+                                if (toolbar.active_type) |t| {
+                                    (try cur_level.board.cellPtrAt(cell_under_mouse)).motes.getPtr(t).* += 1;
+                                    toolbar.painting = false;
+                                }
+                            } else {
+                                try cur_level.board.setSingleMoteAt(cell_under_mouse, toolbar.active_type);
+                            }
                         }
                     } else {
                         if (mouse.wasPressed(.left)) {
