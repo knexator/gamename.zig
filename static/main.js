@@ -213,6 +213,42 @@ async function getWasm() {
           wasm_exports.setTweakableFloat(index, value);
         });
       },
+      addTweakableTexture: (index, name_ptr, name_len) => {
+        // TODO: display initial texture
+        const name = getString(name_ptr, name_len);
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.addEventListener("change", async ev => {
+          const file = ev.target.files?.[0];
+          if (!file) return;
+
+          const bitmap = await createImageBitmap(file);
+
+          const tex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            bitmap
+          );
+
+          // TODO: custom sampling
+          gl.generateMipmap(gl.TEXTURE_2D);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+          wasm_exports.setTweakableTexture(index, storeGlObject(tex), bitmap.width, bitmap.height);
+        });
+
+        gui.$children.appendChild(fileInput);
+      },
 
 
       // debug

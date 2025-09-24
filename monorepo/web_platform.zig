@@ -29,6 +29,7 @@ const js = struct {
     pub const tweak = struct {
         extern fn addTweakableFColor(index: usize, name_ptr: [*]const u8, name_len: usize, starting_r: f32, starting_g: f32, starting_b: f32) void;
         extern fn addTweakableFloat(index: usize, name_ptr: [*]const u8, name_len: usize, starting_v: f32, min: f32, max: f32) void;
+        extern fn addTweakableTexture(index: usize, name_ptr: [*]const u8, name_len: usize) void;
     };
 
     pub const debug = struct {
@@ -545,6 +546,7 @@ var other_images: std.SegmentedList(usize, 16) = .{};
 
 var tweakable_fcolors: std.ArrayList(*FColor) = undefined;
 var tweakable_floats: std.ArrayList(*f32) = undefined;
+var tweakable_textures: std.ArrayList(*Gl.Texture) = undefined;
 
 const web_gl = struct {
     pub const vtable: Gl = .{
@@ -929,6 +931,7 @@ export fn init(random_seed: u32) void {
 
     tweakable_fcolors = .init(web_platform.gpa);
     tweakable_floats = .init(web_platform.gpa);
+    tweakable_textures = .init(web_platform.gpa);
 
     switch (@typeInfo(@TypeOf(GameState.init)).@"fn".params.len) {
         5 => my_game.init(
@@ -953,6 +956,12 @@ export fn init(random_seed: u32) void {
                     const index = tweakable_floats.items.len;
                     tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
                     js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
+                }
+
+                pub fn texture(name: []const u8, ptr: *Gl.Texture) void {
+                    const index = tweakable_textures.items.len;
+                    tweakable_textures.append(ptr) catch std.debug.panic("OoM", .{});
+                    js.tweak.addTweakableTexture(index, name.ptr, name.len);
                 }
             },
         ) catch unreachable,
@@ -1077,6 +1086,10 @@ export fn setTweakableFColor(index: usize, r: f32, g: f32, b: f32) void {
 
 export fn setTweakableFloat(index: usize, v: f32) void {
     tweakable_floats.items[index].* = v;
+}
+
+export fn setTweakableTexture(index: usize, gl_id: c_uint, width: usize, height: usize) void {
+    tweakable_textures.items[index].* = .{ .id = gl_id, .resolution = .new(width, height) };
 }
 
 pub const panic = std.debug.FullPanic(struct {

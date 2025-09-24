@@ -900,6 +900,8 @@ pub fn init(
             false,
         );
     }
+
+    tweakable.texture("motes", &dst.textures.motes);
 }
 
 test "tokenize two spaces" {
@@ -1607,10 +1609,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (true) {
             var cell_bgs: std.ArrayList(Canvas.InstancedShapeInfo) = .init(mem.frame.allocator());
             var cell_texts = canvas.textBatch(0);
-            // var motes_sprites = canvas.spriteBatch(self.textures.motes);
+            var motes_sprites = canvas.spriteBatch(self.textures.motes);
 
-            // defer motes_sprites.draw(camera);
-            defer cell_texts.draw(camera);
+            defer motes_sprites.draw(camera);
+            // defer cell_texts.draw(camera);
             defer canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, cell_bgs.items);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
@@ -1628,11 +1630,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (toolbar.zoom != .bounds_lit) {
                     inline for (MoteType.all, 0..) |t, k| {
                         if (cell.motes.get(t) > 0) {
-                            _ = k;
-                            // motes_sprites.add(.{ .texcoord = .{
-                            //     .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
-                            //     .size = .both(1.0 / 3.0),
-                            // }, .point = .{ .pos = pos.tof32() } });
+                            motes_sprites.add(.{ .texcoord = .{
+                                .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
+                                .size = .both(1.0 / 3.0),
+                            }, .point = .{ .pos = pos.tof32() }, .tint = cell.state.textColorOver() });
                             try cell_texts.addText(
                                 t.text(),
                                 .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
