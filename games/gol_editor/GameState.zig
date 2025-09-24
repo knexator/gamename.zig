@@ -267,10 +267,13 @@ const Cell = struct {
             }
         }
 
-        pub fn draw(batch: *Batch, camera: Rect, canvas: *Canvas) void {
+        pub fn draw(batch: *Batch, camera: Rect, self: *GameState) void {
+            const canvas = &self.usual.canvas;
             canvas.fillShapesInstanced(camera, canvas.DEFAULT_SHAPES.square, batch.cell_bgs.items);
             batch.text_batch.draw(camera);
-            batch.sprite_batch.draw(camera);
+            // batch.sprite_batch.draw(camera);
+            canvas.drawSpriteBatchWithCustomRenderable(camera, self.renderables.motes, batch.sprite_batch.sprites.items, batch.sprite_batch.texture);
+            batch.sprite_batch.sprites.clearRetainingCapacity();
         }
     };
 };
@@ -944,6 +947,9 @@ usual: kommon.Usual,
 textures: struct {
     motes: Gl.Texture,
 },
+renderables: struct {
+    motes: Gl.Renderable,
+},
 
 pub fn init(
     dst: *GameState,
@@ -991,6 +997,29 @@ pub fn init(
     }
 
     tweakable.texture("motes", &dst.textures.motes);
+
+    dst.renderables = .{
+        .motes = try gl.buildRenderable(
+            Canvas.sprite_renderable_vertex_src,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec2 v_texcoord;
+            \\in vec4 v_color;
+            \\uniform sampler2D u_texture;
+            \\void main() {
+            \\  out_color = vec4(v_color.rgb, texture(u_texture, v_texcoord).a);
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_position", .kind = .Vec2 },
+                .{ .name = "a_texcoord", .kind = .Vec2 },
+                .{ .name = "a_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
+    };
 }
 
 test "tokenize two spaces" {
@@ -1706,7 +1735,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         if (true) {
             var batch: Cell.Batch = .init(self);
-            defer batch.draw(camera, canvas);
+            defer batch.draw(camera, self);
 
             const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
             var it = visible_board.cells.iterator();
@@ -1727,7 +1756,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             const values = toolbar.rect_tool_state.moving;
 
             var batch: Cell.Batch = .init(self);
-            defer batch.draw(camera, canvas);
+            defer batch.draw(camera, self);
 
             var it = values.iteratorSigned();
             while (it.next()) |p| {
@@ -1899,7 +1928,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (true) {
         var ui_texts = canvas.textBatch(0);
         var batch: Cell.Batch = .init(self);
-        defer batch.draw(ui_cam, canvas);
+        defer batch.draw(ui_cam, self);
         defer ui_texts.draw(ui_cam);
         for (ui_buttons.items) |button| {
             canvas.fillRect(ui_cam, button.pos, if (button.radio_selected) .cyan else .red);
@@ -1930,7 +1959,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
             const bounds = button.board.boundingRect().asRect().withAspectRatio(1.0, .grow, .center);
             var batch: Cell.Batch = .init(self);
-            defer batch.draw(ui_cam, canvas);
+            defer batch.draw(ui_cam, self);
 
             var it = button.board.cells.iterator();
             while (it.next()) |kv| {
