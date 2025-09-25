@@ -348,6 +348,7 @@ const ExecutionTree = struct {
 
     pub fn drawAsExecutingThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !struct {
         queued_nexts: f32,
+        displacement: f32,
         state: union(enum) {
             fully_consumed,
             right_before_exiting: f32,
@@ -392,20 +393,19 @@ const ExecutionTree = struct {
                 }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
             }
 
-            return .{ .state = .fully_consumed, .queued_nexts = 0 };
+            return .{ .state = .fully_consumed, .queued_nexts = 0, .displacement = 0 };
         } else if (step_n == self.matched_index) {
             const matched_case = self.cases[step_n];
 
             const match_dist = math.remapClamped(anim_t, 0, 0.2, 1, 0);
             const t_bindings: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
-            const pattern_scale = math.remapClamped(anim_t, 0.2, 0.8, 1, 0);
             const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
             const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
             const hiding_next_t = anim_t;
 
             try drawer.drawSexpr(camera, .{
                 .is_pattern = 0,
-                .pos = input_point.scaleAroundLocalPosition(.new(1.5, 0), pattern_scale),
+                .pos = input_point,
                 .value = self.input,
             });
 
@@ -415,15 +415,11 @@ const ExecutionTree = struct {
 
             try drawer.drawSexpr(camera, .{
                 .is_pattern = 1,
-                .pos = pattern_point.scaleAroundLocalPosition(.new(-1.5, 0), pattern_scale),
+                .pos = pattern_point,
                 .value = matched_case.pattern,
             });
 
-            const template_point: Point = .lerp(
-                pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) }),
-                input_point,
-                template_t,
-            );
+            const template_point = pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) });
 
             try drawer.drawTemplateSexprWithBindings(camera, template_point, matched_case.template, .{
                 .anim_t = t_bindings,
@@ -450,8 +446,9 @@ const ExecutionTree = struct {
                 }
 
                 if (self.matched.next) |next| {
-                    const next_pattern_point = input_point
-                        .applyToLocalPoint(.{ .pos = .new(12, 0) })
+                    const next_pattern_point = template_point
+                        .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                        .applyToLocalPoint(.{ .pos = .new(6 * template_t, 0) })
                         .applyToLocalPoint(.{ .pos = .new(0, -2 * hiding_next_t) })
                         .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                         0,
@@ -467,15 +464,50 @@ const ExecutionTree = struct {
             }
 
             if (is_last_match) {
-                return .{ .state = .{ .right_before_exiting = anim_t }, .queued_nexts = 0 };
+                return .{ .state = .{ .right_before_exiting = anim_t }, .queued_nexts = 0, .displacement = 0 };
             } else {
-                return .{ .state = .fully_consumed, .queued_nexts = if (self.matched.next == null) 0 else anim_t };
+                return .{
+                    .state = .fully_consumed,
+                    .queued_nexts = if (self.matched.next == null) 0 else anim_t,
+                    .displacement = if (self.matched.funk_tangent == null) 0 else anim_t,
+                };
             }
         } else {
+            if (true) {
+                const matched_case = self.cases[self.matched_index];
+
+                const match_dist = 0;
+                const t_bindings: ?f32 = 1;
+
+                try drawer.drawSexpr(camera, .{
+                    .is_pattern = 0,
+                    .pos = input_point,
+                    .value = self.input,
+                });
+
+                const pattern_point = input_point.applyToLocalPoint(
+                    .{ .pos = .new(math.remapFrom01(match_dist, 3, 4), 0) },
+                );
+
+                try drawer.drawSexpr(camera, .{
+                    .is_pattern = 1,
+                    .pos = pattern_point,
+                    .value = matched_case.pattern,
+                });
+
+                const template_point = pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) });
+
+                try drawer.drawTemplateSexprWithBindings(camera, template_point, matched_case.template, .{
+                    .anim_t = t_bindings,
+                    .old = self.incoming_bindings,
+                    .new = self.new_bindings,
+                });
+            }
+
             const asdf: funk.WithoutError(funk.ReturnOf(drawAsExecutingThread)) = if (self.matched.funk_tangent) |funk_tangent|
-                try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point, t - tof32(self.matched_index) - 1)
+                try funk_tangent.tree.drawAsExecutingThread(drawer, camera, input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }), t - tof32(self.matched_index) - 1)
             else
-                .{ .state = .{ .exited = .{ .remaining_t = t - 1 } }, .queued_nexts = 0 };
+                .{ .state = .{ .exited = .{ .remaining_t = t - 1 } }, .queued_nexts = 0, .displacement = 0 };
 
             switch (asdf.state) {
                 .fully_consumed => {
@@ -484,8 +516,12 @@ const ExecutionTree = struct {
                         // std.log.debug("qud nextss: {d}", .{asdf.queued_nexts});
                         const hiding_next_t = 1;
                         const next_pattern_point = input_point
+                            .applyToLocalPoint(.{ .pos = .new(5, 0) })
                             .applyToLocalPoint(.{ .pos = .new(12, 0) })
-                            .applyToLocalPoint(.{ .pos = .new(6 * asdf.queued_nexts, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(5 * asdf.queued_nexts, 0) })
+                            // .applyToLocalPoint(.{ .pos = .new(11 * asdf.queued_nexts, 0) })
+                            // .applyToLocalPoint(.{ .pos = .new(11 * (asdf.queued_nexts + tof32(asdf.displacement)), 0) })
+                            .applyToLocalPoint(.{ .pos = .new(5 * tof32(asdf.displacement), 0) })
                             .applyToLocalPoint(.{ .pos = .new(0, hiding_next_t * -2) })
                             .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                             0,
@@ -500,6 +536,7 @@ const ExecutionTree = struct {
                     }
 
                     return .{
+                        .displacement = 1 + asdf.displacement,
                         .state = .fully_consumed,
                         // .queued_nexts = asdf.queued_nexts,
                         // .queued_nexts = 0,
@@ -512,8 +549,12 @@ const ExecutionTree = struct {
                     if (self.matched.next) |next| {
                         const hiding_next_t = 1.0 - exit_t;
                         const next_pattern_point = input_point
-                            .applyToLocalPoint(.{ .pos = .new(12, 0) })
-                            .applyToLocalPoint(.{ .pos = .new(-8 * (1 - hiding_next_t), hiding_next_t * -2) })
+                            .applyToLocalPoint(.{ .pos = .new(17, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(5 * tof32(asdf.displacement), 0) })
+                            .applyToLocalPoint(.{ .pos = .new(-3 * (1 - hiding_next_t), 0) })
+                            // .applyToLocalPoint(.{ .pos = .new(-8 * (1 - hiding_next_t), 0) })
+                            // .applyToLocalPoint(.{ .pos = .new(-3 * (1 - hiding_next_t), hiding_next_t * -2) })
+                            .applyToLocalPoint(.{ .pos = .new(0, hiding_next_t * -2) })
                             .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
                             0,
                             -0.1,
@@ -525,9 +566,17 @@ const ExecutionTree = struct {
                             .new = self.new_bindings,
                         }, 1, null);
 
-                        return .{ .state = .fully_consumed, .queued_nexts = asdf.queued_nexts + 1 - exit_t };
+                        return .{
+                            .displacement = 1 + asdf.displacement + exit_t,
+                            .state = .fully_consumed,
+                            .queued_nexts = asdf.queued_nexts + 1 - exit_t,
+                        };
                     } else {
-                        return .{ .state = .{ .right_before_exiting = exit_t }, .queued_nexts = asdf.queued_nexts };
+                        return .{
+                            .displacement = 1 + asdf.displacement,
+                            .state = .{ .right_before_exiting = exit_t },
+                            .queued_nexts = asdf.queued_nexts,
+                        };
                     }
                 },
                 .exited => |data| {
@@ -536,12 +585,15 @@ const ExecutionTree = struct {
                         const asdf2 = try next.drawAsExecutingThread(
                             drawer,
                             camera,
-                            input_point,
+                            input_point
+                                .applyToLocalPoint(.{ .pos = .new(5, 0) })
+                                .applyToLocalPoint(.{ .pos = .new(5 * tof32(asdf.displacement), 0) }),
                             data.remaining_t,
                         );
                         switch (asdf2.state) {
                             // .fully_consumed, .right_before_exiting => return .{ .state = .fully_consumed },
                             .fully_consumed, .right_before_exiting => return .{
+                                .displacement = asdf.displacement + asdf2.displacement + 1,
                                 .state = asdf2.state,
                                 // .queued_nexts = asdf.queued_nexts + asdf2.queued_nexts + 1,
                                 // .queued_nexts = 0,
@@ -551,6 +603,7 @@ const ExecutionTree = struct {
                             .exited => |data2| {
                                 // std.log.debug("line 509, data2.remainting is {d}", .{data2.remaining_t});
                                 return .{
+                                    .displacement = asdf.displacement + asdf2.displacement + 1,
                                     .state = .{ .exited = .{
                                         .remaining_t = data2.remaining_t,
                                     } },
@@ -562,6 +615,7 @@ const ExecutionTree = struct {
                         }
                     } else {
                         return .{
+                            .displacement = asdf.displacement + 1,
                             .state = .{
                                 .exited = .{
                                     .remaining_t = data.remaining_t,

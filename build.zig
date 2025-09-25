@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "gol_editor";
+const active_folder = "vaulogy";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
