@@ -390,7 +390,7 @@ const ExecutionTree = struct {
             for (self.cases[step_n + 1 ..], 0..) |case, k| {
                 try drawCaseForFolding(drawer, camera, template_point.applyToLocalPoint(.{
                     .pos = .new(4, (tof32(k) + offset) * 3),
-                }), case, old_bindings, if (k > 0) 0 else 1.0 - offset, null);
+                }), case, old_bindings, 1, null);
             }
 
             return .{ .state = .fully_consumed, .queued_nexts = 0, .displacement = 0 };
