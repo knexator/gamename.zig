@@ -37,6 +37,7 @@ var COLORS: struct {
 var CONFIG: struct {
     grid_width: f32 = 0.05,
     use_motes_texture: bool = true,
+    quantum_salt: bool = false,
 } = .{};
 
 const MoteType = enum {
@@ -615,7 +616,7 @@ const BoardState = struct {
 
         // step 3: signals arriving at salt motes are duplicated onto all the other
         // salt motes with the same count.
-        {
+        if (CONFIG.quantum_salt) {
             const salt_positions = try collectSalts(board.*, scratch);
             var i: usize = 0;
             while (i < salt_positions.items.len) {
@@ -726,7 +727,7 @@ const BoardState = struct {
 
         // step 9: if there is a conflict between lit states among salt motes with
         // the same count, the salt motes are removed.
-        {
+        if (CONFIG.quantum_salt) {
             const salt_positions = try collectSalts(board.*, scratch);
             var i: usize = 0;
             while (i < salt_positions.items.len) {
