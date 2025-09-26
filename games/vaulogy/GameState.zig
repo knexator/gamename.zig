@@ -375,9 +375,9 @@ const ExecutionTree = struct {
 
     pub fn drawAsExecutingThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !void {
         var shapes: DrawList = .init(drawer.canvas.frame_arena.allocator());
-        _ = try self.drawAsExecutingThreadInternal(input_point, t, &shapes);
+        const asdf = try self.drawAsExecutingThreadInternal(input_point, t, &shapes);
         for (shapes.items) |s| {
-            try s.draw(drawer, camera);
+            try s.draw(drawer, camera.move(.new(asdf.displacement * 5, 0)));
         }
     }
 
@@ -518,7 +518,11 @@ const ExecutionTree = struct {
             }
 
             if (is_last_match) {
-                return .{ .state = .{ .right_before_exiting = anim_t }, .queued_nexts = 0, .displacement = 0 };
+                return .{
+                    .state = .{ .right_before_exiting = anim_t },
+                    .queued_nexts = 0,
+                    .displacement = 0,
+                };
             } else {
                 return .{
                     .state = .fully_consumed,

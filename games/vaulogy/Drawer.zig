@@ -369,7 +369,7 @@ fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: P
 
 fn pixelWidth(camera: Rect) f32 {
     // const pixel_width = camera.height / window_size.y;
-    return camera.size.y / 400.0;
+    return camera.size.y / 800.0;
 }
 
 // TODO: remove
