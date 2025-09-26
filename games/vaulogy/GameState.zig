@@ -381,6 +381,31 @@ const ExecutionTree = struct {
         }
     }
 
+    test "visuals" {
+        var shapes: DrawList = .init(std.testing.allocator);
+        defer shapes.deinit();
+
+        var core_mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
+        defer core_mem.deinit();
+        var scoring_run: core.ScoringRun = try .init(
+            \\ not {
+            \\     true -> false;
+            \\     false -> true;
+            \\ }
+        , &core_mem);
+        defer scoring_run.deinit(true);
+
+        const fn_name: []const u8 = "not";
+        const input: []const u8 = "true";
+        const tree: ExecutionTree = try .buildFromText(&scoring_run, fn_name, input);
+
+        for ([_]f32{ 0, 0.5, 1 }) |t| {
+            const asdf = try tree.drawAsExecutingThreadInternal(.{}, t, &shapes);
+            try std.testing.expectEqual(t, asdf.displacement);
+            shapes.clearAndFree();
+        }
+    }
+
     pub fn drawAsExecutingThreadInternal(self: ExecutionTree, input_point: Point, t: f32, out: *DrawList) !struct {
         queued_nexts: f32,
         displacement: f32,
