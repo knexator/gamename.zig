@@ -5,6 +5,10 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 const core = @import("core.zig");
 const Drawer = @import("Drawer.zig");
 
+comptime {
+    std.testing.refAllDecls(@import("execution_tree.zig"));
+}
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -381,31 +385,6 @@ const ExecutionTree = struct {
         }
     }
 
-    test "visuals" {
-        var shapes: DrawList = .init(std.testing.allocator);
-        defer shapes.deinit();
-
-        var core_mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
-        defer core_mem.deinit();
-        var scoring_run: core.ScoringRun = try .init(
-            \\ not {
-            \\     true -> false;
-            \\     false -> true;
-            \\ }
-        , &core_mem);
-        defer scoring_run.deinit(true);
-
-        const fn_name: []const u8 = "not";
-        const input: []const u8 = "true";
-        const tree: ExecutionTree = try .buildFromText(&scoring_run, fn_name, input);
-
-        for ([_]f32{ 0, 0.5, 1 }) |t| {
-            const asdf = try tree.drawAsExecutingThreadInternal(.{}, t, &shapes);
-            try std.testing.expectEqual(t, asdf.displacement);
-            shapes.clearAndFree();
-        }
-    }
-
     pub fn drawAsExecutingThreadInternal(self: ExecutionTree, input_point: Point, t: f32, out: *DrawList) !struct {
         queued_nexts: f32,
         displacement: f32,
@@ -502,7 +481,7 @@ const ExecutionTree = struct {
                     .pos = .new(3, 0),
                     .turns = -0.25,
                     .scale = 0.5,
-                }).applyToLocalPoint(.{ .pos = .new(3 * invoking_t, 0), .scale = 1 - invoking_t });
+                }).applyToLocalPoint(.{ .pos = .new(4 * invoking_t, 0) });
 
                 try out.append(.{ .fnk_name = .{
                     .point = function_point,
@@ -588,6 +567,17 @@ const ExecutionTree = struct {
                         .old = self.incoming_bindings,
                         .new = self.new_bindings,
                     },
+                } });
+
+                const function_point = template_point.applyToLocalPoint(.{
+                    .pos = .new(3, -2),
+                    .turns = -0.25,
+                    .scale = 0.5,
+                });
+
+                try out.append(.{ .fnk_name = .{
+                    .point = function_point,
+                    .value = matched_case.fnk_name,
                 } });
             }
 
