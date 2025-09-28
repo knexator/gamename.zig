@@ -937,8 +937,28 @@ pub fn init(
         \\     }
         \\ }
     , &dst.core_mem);
+    // dst.scoring_run = try .init(
+    //     \\planetFromOlympian {
+    //     \\  Hermes -> Mercury;
+    //     \\  Aphrodite -> Venus;
+    //     \\  Ares -> Mars;
+    //     \\  Zeus -> Jupiter;
+    //     \\}
+    //     \\
+    //     \\ planetFromWrappedOlympian {
+    //     \\     @a -> planetFromOlympian: @a {
+    //     \\          @b -> wrap: @b;
+    //     \\     }
+    //     \\ }
+    //     \\
+    //     \\ wrap {
+    //     \\     @x -> ((top . @x) . bottom);
+    //     \\ }
+    // , &dst.core_mem);
 
     const fn_name: []const u8 = "peanoMul";
+    // const fn_name: []const u8 = "planetFromWrappedOlympian";
+    // const input: []const u8 = "Ares";
     // const input: []const u8 = "((true . (true . (true . nil))) . (true . (true . (true . nil))))";
     const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
 
@@ -990,7 +1010,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len)) - 0.01);
 
-    if (true) {
+    if (false) {
         const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
         const anim_t = @mod(self.progress_t, 1.0);
         try drawThread(&self.drawer, camera, execution_thread, anim_t, .{});
@@ -999,11 +1019,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         // try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
-        _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
-        try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 40) }, self.progress_t);
+        // _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
+        try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 0) }, self.progress_t);
     }
 
-    if (true) {
+    if (false) {
         try self.tree.draw(&self.drawer, camera, .{ .pos = .new(0, -12), .turns = -0.1 });
     }
 
