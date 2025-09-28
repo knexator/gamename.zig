@@ -377,6 +377,57 @@ const ExecutionTree = struct {
         }
     });
 
+    pub fn drawAsExecutingThreadNew(self: ExecutionTree, drawer: *Drawer, camera: Rect, original_input_point: Point, original_t: f32) !void {
+        var shapes: DrawList = .init(drawer.canvas.frame_arena.allocator());
+
+        var active = self;
+        var queued: std.ArrayList(*const ExecutionTree) = .init(drawer.canvas.frame_arena.allocator());
+
+        var displacement: f32 = 0;
+        var remaining_t = original_t;
+        var input_point = original_input_point;
+        // std.log.err("remaining t: {d}", .{remaining_t});
+        const any_left: bool = blk: while (@floor(remaining_t) > tof32(active.matched_index)) {
+            try shapes.append(.{ .physical = .{
+                .is_pattern = 0,
+                .pos = input_point,
+                .value = active.input,
+            } });
+            try shapes.append(.{ .physical = .{
+                .is_pattern = 1,
+                .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
+                .value = active.matched.pattern,
+            } });
+            remaining_t -= tof32(active.matched_index + 1);
+            displacement += 1;
+            input_point = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
+            // std.log.err("remaining t now: {d}", .{remaining_t});
+            if (active.matched.funk_tangent) |funk_tangent| {
+                if (active.matched.next) |next| {
+                    try queued.append(next);
+                }
+                active = funk_tangent.tree.*;
+            } else if (active.matched.next) |next| {
+                active = next.*;
+            } else if (queued.pop()) |q| {
+                active = q.*;
+            } else break :blk false;
+        } else true;
+
+        if (any_left) {
+            if (@floor(remaining_t) < tof32(active.matched_index)) {
+                // pass
+            } else {
+                assert(@floor(remaining_t) == tof32(active.matched_index));
+                displacement += @mod(remaining_t, 1);
+            }
+        }
+
+        for (shapes.items) |s| {
+            try s.draw(drawer, camera.move(.new(displacement * 5, 0)));
+        }
+    }
+
     pub fn drawAsExecutingThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !void {
         var shapes: DrawList = .init(drawer.canvas.frame_arena.allocator());
         const asdf = try self.drawAsExecutingThreadInternal(input_point, t, &shapes);
@@ -924,45 +975,45 @@ pub fn init(
     dst.drawer = try .init(&dst.usual);
 
     dst.core_mem = .init(gpa);
-    // dst.scoring_run = try .init(
-    //     \\ peanoSum {
-    //     \\     (@a . nil) -> @a;
-    //     \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
-    //     \\ }
-    //     \\
-    //     \\ peanoMul {
-    //     \\     (@a . nil) -> nil;
-    //     \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
-    //     \\         @ab -> peanoSum: (@ab . @a);
-    //     \\     }
-    //     \\ }
-    // , &dst.core_mem);
     dst.scoring_run = try .init(
-        \\planetFromOlympian {
-        \\  Hermes -> Mercury;
-        \\  Aphrodite -> Venus;
-        \\  Ares -> Mars;
-        \\  Zeus -> Jupiter;
-        \\}
+        \\ peanoSum {
+        \\     (@a . nil) -> @a;
+        \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
+        \\ }
         \\
-        \\ planetFromWrappedOlympian {
-        \\     @a -> planetFromOlympian: @a {
-        \\          @x -> ((top . @x) . bottom);
-        // \\          @b -> wrap: @b;
+        \\ peanoMul {
+        \\     (@a . nil) -> nil;
+        \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
+        \\         @ab -> peanoSum: (@ab . @a);
         \\     }
         \\ }
-        \\
-        \\ wrap {
-        \\     @x -> ((top . @x) . bottom);
-        \\ }
     , &dst.core_mem);
+    // dst.scoring_run = try .init(
+    //     \\planetFromOlympian {
+    //     \\  Hermes -> Mercury;
+    //     \\  Aphrodite -> Venus;
+    //     \\  Ares -> Mars;
+    //     \\  Zeus -> Jupiter;
+    //     \\}
+    //     \\
+    //     \\ planetFromWrappedOlympian {
+    //     \\     @a -> planetFromOlympian: @a {
+    //     \\          @x -> ((top . @x) . bottom);
+    //     // \\          @b -> wrap: @b;
+    //     \\     }
+    //     \\ }
+    //     \\
+    //     \\ wrap {
+    //     \\     @x -> ((top . @x) . bottom);
+    //     \\ }
+    // , &dst.core_mem);
 
-    // const fn_name: []const u8 = "peanoMul";
-    const fn_name: []const u8 = "planetFromWrappedOlympian";
+    const fn_name: []const u8 = "peanoMul";
+    // const fn_name: []const u8 = "planetFromWrappedOlympian";
     // const input: []const u8 = "Hermes";
-    const input: []const u8 = "Aphrodite";
+    // const input: []const u8 = "Aphrodite";
     // const input: []const u8 = "((true . (true . (true . nil))) . (true . (true . (true . nil))))";
-    // const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
+    const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
 
     const thread_initial_params: ThreadInitialParams = try .initFromText(input, fn_name, &dst.scoring_run);
 
