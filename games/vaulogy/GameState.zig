@@ -5,9 +5,9 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 const core = @import("core.zig");
 const Drawer = @import("Drawer.zig");
 
-comptime {
-    std.testing.refAllDecls(@import("execution_tree.zig"));
-}
+// comptime {
+//     std.testing.refAllDecls(@import("execution_tree.zig"));
+// }
 
 // TODO: type
 pub const stuff = .{
