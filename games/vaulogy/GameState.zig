@@ -5,9 +5,9 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 const core = @import("core.zig");
 const Drawer = @import("Drawer.zig");
 
-// comptime {
-//     std.testing.refAllDecls(@import("execution_tree.zig"));
-// }
+comptime {
+    std.testing.refAllDecls(@import("execution_tree.zig"));
+}
 
 // TODO: type
 pub const stuff = .{
@@ -584,7 +584,7 @@ const ExecutionTree = struct {
             const asdf: funk.WithoutError(funk.ReturnOf(drawAsExecutingThreadInternal)) = if (self.matched.funk_tangent) |funk_tangent|
                 try funk_tangent.tree.drawAsExecutingThreadInternal(input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }), t - tof32(self.matched_index) - 1, out)
             else
-                .{ .state = .{ .exited = .{ .remaining_t = t - 1 } }, .queued_nexts = 0, .displacement = 0 };
+                .{ .state = .{ .exited = .{ .remaining_t = t - tof32(self.matched_index) - 1 } }, .queued_nexts = 0, .displacement = 0 };
 
             switch (asdf.state) {
                 .fully_consumed => {
@@ -924,23 +924,45 @@ pub fn init(
     dst.drawer = try .init(&dst.usual);
 
     dst.core_mem = .init(gpa);
+    // dst.scoring_run = try .init(
+    //     \\ peanoSum {
+    //     \\     (@a . nil) -> @a;
+    //     \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
+    //     \\ }
+    //     \\
+    //     \\ peanoMul {
+    //     \\     (@a . nil) -> nil;
+    //     \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
+    //     \\         @ab -> peanoSum: (@ab . @a);
+    //     \\     }
+    //     \\ }
+    // , &dst.core_mem);
     dst.scoring_run = try .init(
-        \\ peanoSum {
-        \\     (@a . nil) -> @a;
-        \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
+        \\planetFromOlympian {
+        \\  Hermes -> Mercury;
+        \\  Aphrodite -> Venus;
+        \\  Ares -> Mars;
+        \\  Zeus -> Jupiter;
+        \\}
+        \\
+        \\ planetFromWrappedOlympian {
+        \\     @a -> planetFromOlympian: @a {
+        \\          @x -> ((top . @x) . bottom);
+        // \\          @b -> wrap: @b;
+        \\     }
         \\ }
         \\
-        \\ peanoMul {
-        \\     (@a . nil) -> nil;
-        \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
-        \\         @ab -> peanoSum: (@ab . @a);
-        \\     }
+        \\ wrap {
+        \\     @x -> ((top . @x) . bottom);
         \\ }
     , &dst.core_mem);
 
-    const fn_name: []const u8 = "peanoMul";
+    // const fn_name: []const u8 = "peanoMul";
+    const fn_name: []const u8 = "planetFromWrappedOlympian";
+    // const input: []const u8 = "Hermes";
+    const input: []const u8 = "Aphrodite";
     // const input: []const u8 = "((true . (true . (true . nil))) . (true . (true . (true . nil))))";
-    const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
+    // const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
 
     const thread_initial_params: ThreadInitialParams = try .initFromText(input, fn_name, &dst.scoring_run);
 
