@@ -452,7 +452,7 @@ const Toolbar = struct {
     rect_tool_moving_include_blank: bool = true,
     catalogue_index: usize = 0,
     catalogue_view_offset: f32 = 0,
-    zoom: Zoom = .@"15x15",
+    zoom: Zoom = .free,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
