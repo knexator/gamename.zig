@@ -377,50 +377,243 @@ const ExecutionTree = struct {
         }
     });
 
-    pub fn drawAsExecutingThreadNew(self: ExecutionTree, drawer: *Drawer, camera: Rect, original_input_point: Point, original_t: f32) !void {
+    pub const drawAsExecutingThread = drawAsExecutingThreadNew;
+
+    pub fn drawAsExecutingThreadNew(original_tree: ExecutionTree, drawer: *Drawer, camera: Rect, original_input_point: Point, original_t: f32) !void {
         var shapes: DrawList = .init(drawer.canvas.frame_arena.allocator());
 
-        var active = self;
-        var queued: std.ArrayList(*const ExecutionTree) = .init(drawer.canvas.frame_arena.allocator());
+        var active = original_tree;
+        var queued: std.ArrayList(struct {
+            tree: *const ExecutionTree,
+            // TODO: reduce
+            bindings_stuff: ExecutionTree,
+        }) = .init(drawer.canvas.frame_arena.allocator());
 
         var displacement: f32 = 0;
         var remaining_t = original_t;
         var input_point = original_input_point;
-        // std.log.err("remaining t: {d}", .{remaining_t});
+
+        try shapes.append(.{ .physical = .{
+            .is_pattern = 0,
+            .pos = input_point,
+            .value = active.input,
+        } });
+
         const any_left: bool = blk: while (@floor(remaining_t) > tof32(active.matched_index)) {
-            try shapes.append(.{ .physical = .{
-                .is_pattern = 0,
-                .pos = input_point,
-                .value = active.input,
-            } });
             try shapes.append(.{ .physical = .{
                 .is_pattern = 1,
                 .pos = input_point.applyToLocalPoint(.{ .pos = .new(3, 0) }),
                 .value = active.matched.pattern,
             } });
+            try shapes.append(.{ .templated = .{
+                .point = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) }),
+                .template = active.matched.raw_template,
+                .bindings = .{
+                    .anim_t = 1,
+                    .old = active.incoming_bindings,
+                    .new = active.new_bindings,
+                },
+            } });
+            // const function_point = template_point.applyToLocalPoint(.{
+            //     .pos = .new(3, 0),
+            //     .turns = -0.25,
+            //     .scale = 0.5,
+            // }).applyToLocalPoint(.{ .pos = .new(4 * invoking_t, 0) });
             remaining_t -= tof32(active.matched_index + 1);
             displacement += 1;
             input_point = input_point.applyToLocalPoint(.{ .pos = .new(5, 0) });
             // std.log.err("remaining t now: {d}", .{remaining_t});
             if (active.matched.funk_tangent) |funk_tangent| {
                 if (active.matched.next) |next| {
-                    try queued.append(next);
+                    try queued.append(.{ .tree = next, .bindings_stuff = active });
                 }
+                try shapes.append(.{ .fnk_name = .{
+                    .value = funk_tangent.fn_name,
+                    .point = input_point.applyToLocalPoint(.{
+                        .pos = .new(3, 0),
+                        .turns = -0.25,
+                        .scale = 0.5,
+                    }).applyToLocalPoint(.{ .pos = .new(4, 0) }),
+                } });
                 active = funk_tangent.tree.*;
             } else if (active.matched.next) |next| {
                 active = next.*;
             } else if (queued.pop()) |q| {
-                active = q.*;
+                active = q.tree.*;
             } else break :blk false;
         } else true;
 
+        var queued_extra_offset: f32 = 0;
+        var last_displacement: f32 = 0;
         if (any_left) {
+            const anim_t = @mod(remaining_t, 1);
+            const moving_case = active.cases[@intFromFloat(@floor(remaining_t))];
+            const rest_of_cases = active.cases[@as(usize, @intFromFloat(@floor(remaining_t))) + 1 ..];
+
             if (@floor(remaining_t) < tof32(active.matched_index)) {
-                // pass
+                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
+                const flyaway_t = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+                const offset_t = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+
+                const old_bindings: BindingsState = .{
+                    .anim_t = null,
+                    .new = &.{},
+                    .old = active.incoming_bindings,
+                };
+
+                const pattern_point_floating_away = input_point
+                    .applyToLocalPoint(Point.lerp(
+                    .{ .pos = .new(4.0 - match_t, 0) },
+                    .{ .pos = .new(10, -2), .scale = 0, .turns = -0.2 },
+                    flyaway_t,
+                ));
+                try shapes.append(.{ .case = .{
+                    .pattern_point = pattern_point_floating_away,
+                    .case = moving_case,
+                    .bindings = old_bindings,
+                } });
+
+                for (rest_of_cases, 0..) |case, k| {
+                    try shapes.append(.{ .case = .{
+                        .pattern_point = input_point.applyToLocalPoint(.{
+                            .pos = .new(4, (tof32(k + 1) - offset_t) * 3),
+                        }),
+                        .case = case,
+                        .bindings = old_bindings,
+                    } });
+                }
             } else {
                 assert(@floor(remaining_t) == tof32(active.matched_index));
-                displacement += @mod(remaining_t, 1);
+                last_displacement = math.remapClamped(anim_t, 0.2, 1, 0, 1);
+                defer displacement += last_displacement;
+
+                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
+                const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+                const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
+                const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
+                const enqueueing_t = last_displacement;
+                const discarded_t = anim_t;
+
+                const pattern_point = input_point.applyToLocalPoint(
+                    .{ .pos = .new(4.0 - match_t, 0) },
+                );
+
+                try shapes.append(.{ .physical = .{
+                    .is_pattern = 1,
+                    .pos = pattern_point,
+                    .value = moving_case.pattern,
+                } });
+
+                const template_point = pattern_point.applyToLocalPoint(.{ .pos = .new(2, 0) });
+
+                try shapes.append(.{ .templated = .{
+                    .point = template_point,
+                    .template = moving_case.template,
+                    .bindings = .{
+                        .anim_t = bindings_t,
+                        .old = active.incoming_bindings,
+                        .new = active.new_bindings,
+                    },
+                } });
+
+                const old_bindings: BindingsState = .{
+                    .anim_t = null,
+                    .new = &.{},
+                    .old = active.incoming_bindings,
+                };
+                for (rest_of_cases, 0..) |case, k| {
+                    try shapes.append(.{ .case = .{
+                        .pattern_point = input_point
+                            .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t))
+                            .applyToLocalPoint(.{
+                            .pos = .new(4, tof32(k + 1) * 3),
+                        }),
+                        .case = case,
+                        .bindings = old_bindings,
+                    } });
+                }
+
+                if (active.matched.funk_tangent) |funk_tangent| {
+                    const function_point = template_point.applyToLocalPoint(.{
+                        .pos = .new(3, 0),
+                        .turns = -0.25,
+                        .scale = 0.5,
+                    }).applyToLocalPoint(.{ .pos = .new(4 * invoking_t, 0) });
+
+                    try shapes.append(.{ .fnk_name = .{
+                        .point = function_point,
+                        .value = funk_tangent.fn_name,
+                    } });
+
+                    const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
+                    for (funk_tangent.tree.cases, 0..) |next_case, k| {
+                        try shapes.append(.{ .case = .{
+                            .pattern_point = template_point.applyToLocalPoint(
+                                .{ .pos = .new(4, 3 * (offset + tof32(k))) },
+                            ),
+                            .case = next_case,
+                            .bindings = .none,
+                        } });
+                    }
+
+                    if (active.matched.next) |next| {
+                        queued_extra_offset += enqueueing_t;
+                        const next_pattern_point = template_point
+                            .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(6 * template_t, 0) })
+                            .applyToLocalPoint(.{ .pos = .new(0, -2 * enqueueing_t) })
+                            .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
+                            0,
+                            -0.1,
+                            math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic),
+                        ));
+                        try shapes.append(.{ .case = .{
+                            .pattern_point = next_pattern_point,
+                            .case = next.cases[0],
+                            .bindings = .{
+                                .anim_t = bindings_t,
+                                .old = active.incoming_bindings,
+                                .new = active.new_bindings,
+                            },
+                        } });
+                    }
+                } else {
+                    queued_extra_offset -= enqueueing_t;
+                }
             }
+        }
+
+        for (queued.items, 0..) |next, k| {
+            const next_pattern_point = if (k == 0 and queued_extra_offset < 0)
+                input_point
+                    .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                    // .applyToLocalPoint(.{ .pos = .new(5 * last_displacement, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(-3 * math.remapClamped(queued_extra_offset, 0, -1, 0, 1), 0) })
+                    .applyToLocalPoint(.{ .pos = .new(0, -2 * math.remapClamped(queued_extra_offset, 0, -1, 1, 0)) })
+                    .rotateAroundLocalPosition(.new(-1, -1), math.lerp(
+                    0,
+                    -0.1,
+                    math.smoothstepEased(queued_extra_offset, -1, 0, .easeInOutCubic),
+                ))
+            else
+                input_point
+                    .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(5 * last_displacement, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(5 * tof32(k), 0) })
+                    .applyToLocalPoint(.{ .pos = .new(5 * queued_extra_offset, 0) })
+                    .applyToLocalPoint(.{ .pos = .new(0, -2) })
+                    .rotateAroundLocalPosition(.new(-1, -1), -0.1);
+            try shapes.append(.{ .case = .{
+                .pattern_point = next_pattern_point,
+                .case = next.tree.cases[0],
+                .bindings = .{
+                    .anim_t = 1,
+                    .old = next.bindings_stuff.incoming_bindings,
+                    .new = next.bindings_stuff.new_bindings,
+                },
+            } });
         }
 
         for (shapes.items) |s| {
@@ -428,7 +621,7 @@ const ExecutionTree = struct {
         }
     }
 
-    pub fn drawAsExecutingThread(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !void {
+    pub fn drawAsExecutingThreadOld(self: ExecutionTree, drawer: *Drawer, camera: Rect, input_point: Point, t: f32) !void {
         var shapes: DrawList = .init(drawer.canvas.frame_arena.allocator());
         const asdf = try self.drawAsExecutingThreadInternal(input_point, t, &shapes);
         for (shapes.items) |s| {
