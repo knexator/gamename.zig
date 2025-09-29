@@ -935,7 +935,7 @@ const LevelState = struct {
 
 all_levels: std.ArrayList(*LevelState),
 cur_level: ?*LevelState = null,
-is_editor: bool = false,
+is_editor: bool = true,
 levelselect_view_offset: f32 = 0,
 
 pool_boardstate: std.heap.MemoryPool(BoardState),
@@ -1056,15 +1056,6 @@ fn addEmptyLevel(self: *GameState) !void {
         .initial_board = blk: {
             const res: *BoardState = try self.pool_boardstate.create();
             try res.init(self.usual.mem.gpa);
-
-            try res.setStateAt(.new(0, 1), .dim);
-            try res.setStateAt(.new(0, 2), .bright);
-            try res.setSingleMoteAt(.new(1, 0), .fire);
-            try res.setSingleMoteAt(.new(1, 1), .salt);
-            try res.setSingleMoteAt(.new(1, 2), .sulfur);
-            try res.setSingleMoteAt(.new(2, 0), .air);
-            try res.setSingleMoteAt(.new(2, 1), .water);
-
             break :blk res;
         },
         .board = undefined,
