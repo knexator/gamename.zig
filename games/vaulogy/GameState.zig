@@ -583,7 +583,8 @@ const ExecutionTree = struct {
             }
         }
 
-        for (queued.items, 0..) |next, k| {
+        for (0..queued.items.len) |k| {
+            const next = queued.items[queued.items.len - k - 1];
             const next_pattern_point = if (k == 0 and queued_extra_offset < 0)
                 input_point
                     .applyToLocalPoint(.{ .pos = .new(6, 0) })
@@ -1168,45 +1169,56 @@ pub fn init(
     dst.drawer = try .init(&dst.usual);
 
     dst.core_mem = .init(gpa);
-    dst.scoring_run = try .init(
-        \\ peanoSum {
-        \\     (@a . nil) -> @a;
-        \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
-        \\ }
-        \\
-        \\ peanoMul {
-        \\     (@a . nil) -> nil;
-        \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
-        \\         @ab -> peanoSum: (@ab . @a);
-        \\     }
-        \\ }
-    , &dst.core_mem);
     // dst.scoring_run = try .init(
-    //     \\planetFromOlympian {
-    //     \\  Hermes -> Mercury;
-    //     \\  Aphrodite -> Venus;
-    //     \\  Ares -> Mars;
-    //     \\  Zeus -> Jupiter;
-    //     \\}
+    //     \\ peanoSum {
+    //     \\     (@a . nil) -> @a;
+    //     \\     (@a . (true . @b)) -> peanoSum: ((true . @a) . @b);
+    //     \\ }
     //     \\
-    //     \\ planetFromWrappedOlympian {
-    //     \\     @a -> planetFromOlympian: @a {
-    //     \\          @x -> ((top . @x) . bottom);
-    //     // \\          @b -> wrap: @b;
+    //     \\ peanoMul {
+    //     \\     (@a . nil) -> nil;
+    //     \\     (@a . (true . @b)) -> peanoMul: (@a . @b) {
+    //     \\         @ab -> peanoSum: (@ab . @a);
     //     \\     }
     //     \\ }
-    //     \\
-    //     \\ wrap {
-    //     \\     @x -> ((top . @x) . bottom);
-    //     \\ }
     // , &dst.core_mem);
+    dst.scoring_run = try .init(
+        \\planetFromOlympian {
+        \\  Hermes -> Mercury;
+        \\  Aphrodite -> Venus;
+        \\  Ares -> Mars;
+        \\  Zeus -> Jupiter;
+        \\}
+        \\
+        \\ planetFromWrappedOlympian {
+        \\     @a -> planetFromOlympian: @a {
+        \\          @x -> ((top . @x) . bottom);
+        \\       // @b -> wrap: @b;
+        \\     }
+        \\ }
+        \\
+        \\ wrap {
+        \\     @x -> ((top . @x) . bottom);
+        \\ }
+        \\
+        \\ mapTree {
+        \\   (@a . @b) -> mapTree: @a {
+        \\     @a2 -> mapTree: @b {
+        \\       @b2 -> (@a2 . @b2);
+        \\     }
+        \\   }
+        \\   @x -> planetFromOlympian: @x;
+        \\ }
+    , &dst.core_mem);
 
-    const fn_name: []const u8 = "peanoMul";
+    const fn_name: []const u8 = "mapTree";
+    // const fn_name: []const u8 = "peanoMul";
     // const fn_name: []const u8 = "planetFromWrappedOlympian";
     // const input: []const u8 = "Hermes";
     // const input: []const u8 = "Aphrodite";
     // const input: []const u8 = "((true . (true . (true . nil))) . (true . (true . (true . nil))))";
-    const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
+    // const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
+    const input: []const u8 = "((Hermes . Aphrodite) . (Ares . Zeus))";
 
     const thread_initial_params: ThreadInitialParams = try .initFromText(input, fn_name, &dst.scoring_run);
 

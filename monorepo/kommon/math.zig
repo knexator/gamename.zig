@@ -1704,6 +1704,13 @@ pub const Camera = struct {
     /// how many world units fit between the top and bottom of the camera view
     height: f32,
 
+    pub fn move(original: Camera, delta: Vec2) Camera {
+        return .{
+            .center = original.center.add(delta),
+            .height = original.height,
+        };
+    }
+
     pub fn fromTopleftAndHeight(top_left: Vec2, height: f32) Camera {
         return .{ .center = top_left.add(
             Vec2.new(aspect_ratio, 1).scale(height).scale(0.5),
