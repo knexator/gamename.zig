@@ -577,6 +577,24 @@ const ExecutionTree = struct {
                             },
                         } });
                     }
+                } else if (active.matched.next) |next| {
+                    const next_pattern_point = template_point
+                        .applyToLocalPoint(.{ .pos = .new(6, 0) })
+                        .applyToLocalPoint(.{ .pos = .new(-2 * template_t, 0) });
+
+                    for (next.cases, 0..) |next_case, k| {
+                        try shapes.append(.{ .case = .{
+                            .pattern_point = next_pattern_point.applyToLocalPoint(
+                                .{ .pos = .new(0, 3 * tof32(k)) },
+                            ),
+                            .case = next_case,
+                            .bindings = .{
+                                .anim_t = bindings_t,
+                                .old = active.incoming_bindings,
+                                .new = active.new_bindings,
+                            },
+                        } });
+                    }
                 } else {
                     queued_extra_offset -= enqueueing_t;
                 }
@@ -1209,16 +1227,34 @@ pub fn init(
         \\   }
         \\   @x -> planetFromOlympian: @x;
         \\ }
+        \\
+        \\ not {
+        \\  true -> false;
+        \\  false -> true;
+        \\ }
+        \\
+        \\ nextWithoutFnkTest {
+        \\   @x -> nextWithoutFnk: @x {
+        \\     @y -> not: @y;
+        \\   }
+        \\ }
+        \\ nextWithoutFnk {
+        \\   (Hermes . @b) -> @b {
+        \\      Ares -> true;
+        \\      @x -> false;
+        \\   }
+        \\ }
     , &dst.core_mem);
 
-    const fn_name: []const u8 = "mapTree";
+    const fn_name: []const u8 = "nextWithoutFnkTest";
     // const fn_name: []const u8 = "peanoMul";
     // const fn_name: []const u8 = "planetFromWrappedOlympian";
     // const input: []const u8 = "Hermes";
     // const input: []const u8 = "Aphrodite";
     // const input: []const u8 = "((true . (true . (true . nil))) . (true . (true . (true . nil))))";
     // const input: []const u8 = "((true . (true . nil)) . (true . (true . nil)))";
-    const input: []const u8 = "((Hermes . Aphrodite) . (Ares . Zeus))";
+    const input: []const u8 = "(Hermes . Ares)";
+    // const input: []const u8 = "((Hermes . Aphrodite) . (Ares . Zeus))";
 
     const thread_initial_params: ThreadInitialParams = try .initFromText(input, fn_name, &dst.scoring_run);
 
@@ -1277,7 +1313,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (true) {
         // try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
-        _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
+        // _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
         try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 40) }, self.progress_t);
     }
 
