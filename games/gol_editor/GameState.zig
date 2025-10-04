@@ -39,8 +39,8 @@ var CONFIG: struct {
     use_motes_texture: bool = true,
     quantum_salt: bool = false,
     time: struct {
-        slow: f32 = 2,
-        fast: f32 = 0.5,
+        slow: f32 = 0.6,
+        fast: f32 = 0.2,
     } = .{},
 } = .{};
 
