@@ -38,6 +38,10 @@ var CONFIG: struct {
     grid_width: f32 = 0.05,
     use_motes_texture: bool = true,
     quantum_salt: bool = false,
+    time: struct {
+        slow: f32 = 2,
+        fast: f32 = 0.5,
+    } = .{},
 } = .{};
 
 const MoteType = enum {
@@ -475,8 +479,8 @@ const Toolbar = struct {
             pub fn toTime(state: State) f32 {
                 return switch (state) {
                     .stopped => unreachable,
-                    .slow => 2,
-                    .fast => 0.5,
+                    .slow => CONFIG.time.slow,
+                    .fast => CONFIG.time.fast,
                 };
             }
         };
@@ -1005,6 +1009,9 @@ pub fn init(
     tweakable.fcolor("text over Bright", &COLORS.cell_text.on_bright);
 
     tweakable.float("grid width", &CONFIG.grid_width, 0.0, 0.2);
+
+    tweakable.float("slow tick", &CONFIG.time.slow, 0.5, 3.0);
+    tweakable.float("fast tick", &CONFIG.time.fast, 0.01, 1.0);
 
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
         @field(dst.textures, field.name) = gl.buildTexture2D(
