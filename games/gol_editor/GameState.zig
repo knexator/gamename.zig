@@ -122,9 +122,11 @@ const MoteType = enum {
     }
 };
 
+const MoteCollection = std.EnumArray(MoteType, i32);
+
 const Cell = struct {
     state: State,
-    motes: std.EnumArray(MoteType, i32),
+    motes: MoteCollection,
 
     pub const empty: Cell = .{
         .state = .off,
@@ -852,9 +854,47 @@ const BoardState = struct {
         (try self.cellPtrAt(pos)).setSingleMote(mote);
     }
 
-    pub fn toText(self: BoardState, out: std.io.AnyWriter) !void {
+    pub fn toText(self: BoardState, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        try out.writeAll("V2\n");
+
+        var motes_legend: std.AutoArrayHashMap(MoteCollection, u8) = .init(scratch);
+        {
+            const valid_legends = "ABCDEFGHIJKLMNPQRSTUVWXYZ" ++ "abcdefghijklmnpqrstuvwxyz";
+            var legend_index: u8 = 0;
+            var it = self.cells.iterator();
+            while (it.next()) |kv| {
+                const cell = kv.value_ptr.*;
+                if (cell.moteCount() > 1) {
+                    const gop = try motes_legend.getOrPut(cell.motes);
+                    if (!gop.found_existing) {
+                        gop.value_ptr.* = valid_legends[legend_index];
+                        legend_index += 1;
+
+                        try out.writeByte(gop.value_ptr.*);
+                        try out.writeAll(" is ");
+                        inline for (MoteType.all) |t| {
+                            try out.writeByteNTimes(t.toChar(), @intCast(cell.motes.get(t)));
+                        }
+                        try out.writeAll("\n");
+
+                        if (legend_index >= valid_legends.len) {
+                            std.log.err("Too many unique mote configurations; will lose information", .{});
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        inline for (MoteType.all) |t| {
+            var single_mote: MoteCollection = .initFill(0);
+            single_mote.set(t, 1);
+            try motes_legend.putNoClobber(single_mote, t.toChar());
+        }
+        try motes_legend.putNoClobber(.initFill(0), '.');
+
+        try out.writeAll("grid:\n");
         const bounds = self.boundingRect();
-        try out.writeAll("V1\n");
         for (0..bounds.inner_size.y) |dj| {
             for (0..bounds.inner_size.x) |di| {
                 const p = bounds.top_left.addUnsigned(.new(di, dj));
@@ -864,10 +904,7 @@ const BoardState = struct {
                     .dim => ".",
                     .bright => ":",
                 });
-                if (cell.moteCount() > 1) std.log.warn("Cell has multiple motes; information will be lost.", .{});
-                try out.writeAll(for (MoteType.all) |t| {
-                    if (cell.motes.get(t) > 0) break t.text();
-                } else ".");
+                try out.writeByte(motes_legend.get(cell.motes) orelse '.');
             }
             try out.writeAll("\n");
         }
@@ -876,22 +913,72 @@ const BoardState = struct {
     pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, text: []const u8) !void {
         dst.cells.clearRetainingCapacity();
         const contents = std.mem.trim(u8, text, &std.ascii.whitespace);
-        assert(std.mem.startsWith(u8, contents, "V1\n"));
-        const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
-        defer raw_ascii.deinit(scratch);
-        var it = raw_ascii.iteratorSigned();
-        while (it.next()) |p| {
-            const t = raw_ascii.atSigned(p);
-            const cell_state: Cell.State = switch (t[0]) {
-                ' ' => .off,
-                '.' => .dim,
-                ':' => .bright,
-                else => return error.BadText,
-            };
-            const cell_mote = try MoteType.fromChar(t[1]);
-            const cell: Cell = .fromStateAndMote(cell_state, cell_mote);
-            if (!cell.equals(.empty)) try dst.cells.put(p, cell);
-        }
+        if (std.mem.startsWith(u8, contents, "V1\n")) {
+            const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
+            defer raw_ascii.deinit(scratch);
+            var it = raw_ascii.iteratorSigned();
+            while (it.next()) |p| {
+                const t = raw_ascii.atSigned(p);
+                const cell_state: Cell.State = switch (t[0]) {
+                    ' ' => .off,
+                    '.' => .dim,
+                    ':' => .bright,
+                    else => return error.BadText,
+                };
+                const cell_mote = try MoteType.fromChar(t[1]);
+                const cell: Cell = .fromStateAndMote(cell_state, cell_mote);
+                if (!cell.equals(.empty)) try dst.cells.put(p, cell);
+            }
+        } else if (std.mem.startsWith(u8, contents, "V2\n")) {
+            var remaining = contents["V2\n".len..];
+            var motes_legend: std.AutoHashMap(u8, MoteCollection) = .init(scratch);
+            inline for (MoteType.all) |t| {
+                var single_mote: MoteCollection = .initFill(0);
+                single_mote.set(t, 1);
+                try motes_legend.putNoClobber(t.toChar(), single_mote);
+            }
+            try motes_legend.putNoClobber('.', .initFill(0));
+            while (true) {
+                if (std.mem.startsWith(u8, remaining, "grid:\n")) {
+                    remaining = remaining["grid:\n".len..];
+                    break;
+                } else {
+                    const cur_legend = remaining[0];
+                    remaining = remaining[1..];
+                    assert(std.mem.startsWith(u8, remaining, " is "));
+                    remaining = remaining[" is ".len..];
+                    const line_end_index = std.mem.indexOfScalar(u8, remaining, '\n') orelse return error.BadText;
+                    const cur_value_letters = remaining[0..line_end_index];
+                    std.log.debug("cur value letters: {s}, len {d}", .{ cur_value_letters, cur_value_letters.len });
+                    remaining = remaining[line_end_index + 1 ..];
+                    var cur_value: MoteCollection = .initFill(0);
+                    for (cur_value_letters) |l| {
+                        if (try MoteType.fromChar(l)) |t| {
+                            cur_value.getPtr(t).* += 1;
+                        }
+                    }
+
+                    const prev_entry = try motes_legend.fetchPut(cur_legend, cur_value);
+                    if (prev_entry != null) return error.BadText;
+                }
+            }
+
+            const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, remaining, &std.ascii.whitespace));
+            defer raw_ascii.deinit(scratch);
+            var it = raw_ascii.iteratorSigned();
+            while (it.next()) |p| {
+                const t = raw_ascii.atSigned(p);
+                const cell_state: Cell.State = switch (t[0]) {
+                    ' ' => .off,
+                    '.' => .dim,
+                    ':' => .bright,
+                    else => return error.BadText,
+                };
+                const cell_motes = motes_legend.get(t[1]) orelse return error.BadText;
+                const cell: Cell = .{ .state = cell_state, .motes = cell_motes };
+                if (!cell.equals(.empty)) try dst.cells.put(p, cell);
+            }
+        } else return error.BadText;
     }
 
     pub fn getSubrect(self: BoardState, alloc: std.mem.Allocator, bounds: math.IBounds) !kommon.Grid2D(Cell) {
@@ -1031,11 +1118,11 @@ test "tokenize two spaces" {
     try std.testing.expect(it.next() == null);
 }
 
-fn saveWorld(world: []const *LevelState, out: std.io.AnyWriter) !void {
+fn saveWorld(world: []const *LevelState, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
     try out.writeAll("W1\n");
 
     for (world) |l| {
-        try l.board.toText(out);
+        try l.board.toText(out, scratch);
         try out.writeAll("\n");
     }
 }
@@ -1438,7 +1525,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (mouse.wasPressed(.left)) {
                     var buf: std.ArrayList(u8) = .init(mem.frame.allocator());
                     defer buf.deinit();
-                    try cur_level.board.toText(buf.writer().any());
+                    try cur_level.board.toText(buf.writer().any(), mem.scratch.allocator());
                     platform.downloadAsFile("gol_level.txt", buf.items);
                 }
             }
@@ -1895,7 +1982,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (mouse.wasPressed(.left)) {
                     var buf: std.ArrayList(u8) = .init(mem.frame.allocator());
                     defer buf.deinit();
-                    try saveWorld(self.all_levels.items, buf.writer().any());
+                    try saveWorld(self.all_levels.items, buf.writer().any(), mem.scratch.allocator());
                     platform.downloadAsFile("gol_world.txt", buf.items);
                 }
             }
