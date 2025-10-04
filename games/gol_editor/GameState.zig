@@ -453,6 +453,7 @@ const Toolbar = struct {
     catalogue_index: usize = 0,
     catalogue_view_offset: f32 = 0,
     zoom: Zoom = .free,
+    clock: enum { stopped, slow, fast } = .stopped,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
@@ -1239,7 +1240,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             };
         };
 
-        if (true) {
+        if (false) {
             for (Toolbar.Zoom.levels(self.is_editor), 0..) |t, k| {
                 const button: Rect = bottom_left_buttons[k].plusMargin(-0.1);
                 const hot = button.contains(ui_mouse.cur.position);
