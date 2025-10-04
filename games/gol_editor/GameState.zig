@@ -453,13 +453,34 @@ const Toolbar = struct {
     catalogue_index: usize = 0,
     catalogue_view_offset: f32 = 0,
     zoom: Zoom = .free,
-    clock: enum { stopped, slow, fast } = .stopped,
+    clock: Clock = .stopped,
 
     active_tool: Tool,
     /// only defined when active tool is catalogue
     prev_tool: Tool = undefined,
 
     const Tool = enum { paint_state, paint_type, rect, catalogue, panning };
+
+    const Clock = struct {
+        state: State,
+        time_until_tick: f32,
+
+        pub const stopped: Clock = .{ .state = .stopped, .time_until_tick = 0 };
+
+        pub const State = enum {
+            stopped,
+            slow,
+            fast,
+
+            pub fn toTime(state: State) f32 {
+                return switch (state) {
+                    .stopped => unreachable,
+                    .slow => 2,
+                    .fast => 0.5,
+                };
+            }
+        };
+    };
 
     const Zoom = enum {
         @"15x15",
@@ -1343,24 +1364,46 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // advace state button
         if (true) {
-            const button: Rect = top_right_button.move(.new(0, 2)).plusMargin(-0.1);
+            const button: Rect = bottom_left_buttons[0].scaleNonUniform(.new(2, 1), .bottom_left).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
-                .text = "V",
+                .text = "Step",
                 .radio_selected = hot,
             });
             if (hot) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
+                    toolbar.clock = .stopped;
                     try cur_level.board.next(mem.scratch.allocator());
                 }
             }
         }
 
         if (platform.keyboard.wasPressed(.KeyV)) {
+            toolbar.clock = .stopped;
             try cur_level.board.next(mem.scratch.allocator());
+        }
+
+        // autostep controls
+        if (true) {
+            inline for (.{ 2, 3 }, [2]Toolbar.Clock.State{ .slow, .fast }, [2][]const u8{ ">", ">>" }) |index, speed, text| {
+                const button: Rect = bottom_left_buttons[index].plusMargin(-0.1);
+                const hot = button.contains(ui_mouse.cur.position);
+                try ui_buttons.append(.{
+                    .pos = button,
+                    .color = null,
+                    .text = text,
+                    .radio_selected = toolbar.clock.state == speed,
+                });
+                if (hot) {
+                    mouse_over_ui = true;
+                    if (mouse.wasPressed(.left)) {
+                        toolbar.clock = if (toolbar.clock.state == speed) .stopped else .{ .state = speed, .time_until_tick = 0 };
+                    }
+                }
+            }
         }
 
         const bottom_right_buttons: [4]Rect = blk: {
@@ -1690,6 +1733,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // always available: reset level state
         if (platform.keyboard.wasPressed(.KeyR)) {
             try cur_level.loadState(cur_level.initial_board, &self.pool_boardstate);
+        }
+
+        // advance time
+        if (toolbar.clock.state != .stopped) {
+            toolbar.clock.time_until_tick -= platform.delta_seconds;
+            while (toolbar.clock.time_until_tick <= 0) {
+                try cur_level.board.next(mem.scratch.allocator());
+                toolbar.clock.time_until_tick += toolbar.clock.state.toTime();
+            }
         }
 
         //////////////

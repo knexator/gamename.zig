@@ -1210,6 +1210,14 @@ pub const Rect = extern struct {
         return original.resizeRel(s, keep);
     }
 
+    pub fn resizeRelNonUniform(original: Rect, s: Vec2, keep: MeasureKind) Rect {
+        return original.with(.{ .size = original.size.mul(s) }, keep);
+    }
+
+    pub fn scaleNonUniform(original: Rect, s: Vec2, keep: MeasureKind) Rect {
+        return original.resizeRelNonUniform(s, keep);
+    }
+
     pub fn move(original: Rect, delta: Vec2) Rect {
         return .{
             .top_left = original.top_left.add(delta),
