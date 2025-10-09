@@ -476,6 +476,10 @@ pub const Vec2 = extern struct {
         return dot(v, v);
     }
 
+    pub fn distTo(a: Self, b: Self) Scalar {
+        return a.sub(b).mag();
+    }
+
     pub fn dot(a: Self, b: Self) Scalar {
         return a.x * b.x + a.y * b.y;
     }

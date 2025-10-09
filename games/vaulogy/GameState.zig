@@ -33,6 +33,7 @@ usual: kommon.Usual,
 
 drawer: Drawer,
 camera: Rect = .fromCenterAndSize(.zero, .new(16, 9)),
+
 core_mem: core.VeryPermamentGameStuff,
 scoring_run: core.ScoringRun,
 // execution_thread: core.ExecutionThread,
@@ -42,6 +43,108 @@ scoring_run: core.ScoringRun,
 tree: ExecutionTree,
 snapshots: []const core.ExecutionThread,
 progress_t: f32 = 0.0,
+
+workspace: Workspace,
+
+const Workspace = struct {
+    pub const Lens = struct {
+        source: Vec2,
+        target: Vec2,
+        comptime source_radius: f32 = 0.25,
+        comptime target_radius: f32 = 1,
+    };
+
+    lenses: std.ArrayList(Lens),
+    sexprs: std.ArrayList(PhysicalSexpr),
+
+    pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
+        dst.* = kommon.meta.initDefaultFields(Workspace);
+
+        dst.lenses = .init(mem.gpa);
+        try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
+            .{},
+            &.{ .right, .left },
+        ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
+
+        dst.sexprs = .init(mem.gpa);
+        var random: std.Random.DefaultPrng = .init(1);
+        try dst.sexprs.append(.{
+            .is_pattern = 0,
+            .pos = .{},
+            .value = try randomSexpr(mem, random.random(), 7),
+        });
+    }
+
+    const valid: []const *const Sexpr = &.{
+        &Sexpr.doLit("Hermes"),
+        &Sexpr.doLit("Mercury"),
+        &Sexpr.doLit("Ares"),
+        &Sexpr.doLit("Mars"),
+        &Sexpr.doLit("Zeus"),
+        &Sexpr.doLit("Jupiter"),
+        &Sexpr.doLit("Aphrodite"),
+        &Sexpr.doLit("Venus"),
+    };
+
+    fn randomSexpr(mem: *core.VeryPermamentGameStuff, random: std.Random, max_depth: usize) !*const Sexpr {
+        if (max_depth == 0 or random.float(f32) < 0.3) {
+            return valid[random.uintLessThan(usize, valid.len)];
+        } else {
+            return try mem.storeSexpr(Sexpr.doPair(
+                try randomSexpr(mem, random, max_depth - 1),
+                try randomSexpr(mem, random, max_depth - 1),
+            ));
+        }
+    }
+
+    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
+        for (workspace.sexprs.items) |s| {
+            // std.log.debug("hola", .{});
+            try drawer.drawSexpr(camera, s);
+            // std.log.debug("by", .{});
+        }
+
+        const mouse = platform.getMouse(camera);
+        for (workspace.lenses.items) |*lens| {
+            if (mouse.cur.isDown(.left) and lens.source.distTo(mouse.cur.position) < lens.source_radius) {
+                lens.source.addInPlace(mouse.deltaPos());
+            }
+            if (mouse.cur.isDown(.left) and lens.target.distTo(mouse.cur.position) < lens.target_radius) {
+                lens.target.addInPlace(mouse.deltaPos());
+            }
+        }
+
+        for (workspace.lenses.items) |lens| {
+            // TODO: don't hardcode
+            assert(workspace.sexprs.items.len == 1);
+            try drawer.drawSexpr(camera, .{
+                .is_pattern = 0,
+                .value = workspace.sexprs.items[0].value.getAt(&.{ .right, .left }).?,
+                .pos = .{ .pos = lens.target.sub(.new(1, 0)) },
+            });
+
+            drawer.canvas.line(camera, &.{
+                lens.source.towardsPure(lens.target, lens.source_radius),
+                lens.target.towardsPure(lens.source, lens.target_radius),
+            }, 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
+        }
+
+        // try game.drawer.drawSexpr(game.camera, .{
+        //     .is_pattern = 0,
+        //     .pos = .{ .pos = .new(-5, 0) },
+        //     .value = &Sexpr.doLit("Hermes"),
+        // });
+
+        // try game.drawer.drawCase(game.camera, .{}, .{
+        //     .pattern = &Sexpr.doLit("Hermes"),
+        //     .template = &Sexpr.doLit("Mercury"),
+        //     .fnk_name = Sexpr.builtin.identity,
+        //     .next = null,
+        // });
+    }
+};
 
 const ThreadInitialParams = struct {
     value: *const Sexpr,
@@ -1268,6 +1371,8 @@ pub fn init(
     dst.snapshots = try snaps.toOwnedSlice();
 
     dst.tree = try .buildFromText(&dst.scoring_run, fn_name, input);
+
+    try dst.workspace.init(&dst.core_mem);
 }
 
 // TODO: take gl parameter
@@ -1296,29 +1401,35 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     platform.gl.clear(COLORS.bg);
 
-    if (platform.keyboard.cur.isDown(.KeyE)) {
-        self.progress_t += platform.delta_seconds * 2;
-    }
-    if (platform.keyboard.cur.isDown(.KeyQ)) {
-        self.progress_t -= platform.delta_seconds * 2;
-    }
-    self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len)) - 0.01);
-
     if (true) {
-        const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
-        const anim_t = @mod(self.progress_t, 1.0);
-        try drawThread(&self.drawer, camera, execution_thread, anim_t, .{});
-        // try drawThreadWithFolding(&self.drawer, camera, execution_thread, anim_t, .{ .pos = .new(0, 16) });
+        try self.workspace.update(platform, &self.drawer, self.camera);
     }
 
-    if (true) {
-        // try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
-        // _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
-        try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 40) }, self.progress_t);
-    }
+    if (false) {
+        if (platform.keyboard.cur.isDown(.KeyE)) {
+            self.progress_t += platform.delta_seconds * 2;
+        }
+        if (platform.keyboard.cur.isDown(.KeyQ)) {
+            self.progress_t -= platform.delta_seconds * 2;
+        }
+        self.progress_t = math.clamp(self.progress_t, 0, @as(f32, @floatFromInt(self.snapshots.len)) - 0.01);
 
-    if (true) {
-        try self.tree.draw(&self.drawer, camera, .{ .pos = .new(0, -12), .turns = -0.1 });
+        if (true) {
+            const execution_thread = self.snapshots[@intFromFloat(@floor(self.progress_t))];
+            const anim_t = @mod(self.progress_t, 1.0);
+            try drawThread(&self.drawer, camera, execution_thread, anim_t, .{});
+            // try drawThreadWithFolding(&self.drawer, camera, execution_thread, anim_t, .{ .pos = .new(0, 16) });
+        }
+
+        if (true) {
+            // try self.tree.drawAsThread(&self.drawer, camera, .{ .pos = .new(0, -4) }, self.progress_t);
+            // _ = try self.tree.drawAsThreadWithFolding(&self.drawer, camera, .{ .pos = .new(0, 80) }, self.progress_t);
+            try self.tree.drawAsExecutingThread(&self.drawer, camera, .{ .pos = .new(0, 40) }, self.progress_t);
+        }
+
+        if (true) {
+            try self.tree.draw(&self.drawer, camera, .{ .pos = .new(0, -12), .turns = -0.1 });
+        }
     }
 
     return false;

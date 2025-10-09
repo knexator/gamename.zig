@@ -296,6 +296,19 @@ const AtomVisualCache = struct {
     }
 };
 
+pub fn drawCase(drawer: *Drawer, camera: Rect, center: Point, case: core.MatchCaseDefinition) !void {
+    try drawer.drawSexpr(camera, .{
+        .is_pattern = 1,
+        .value = case.pattern,
+        .pos = center.applyToLocalPoint(.{ .pos = .new(-1, 0) }),
+    });
+    try drawer.drawSexpr(camera, .{
+        .is_pattern = 0,
+        .value = case.template,
+        .pos = center.applyToLocalPoint(.{ .pos = .new(1, 0) }),
+    });
+}
+
 pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr) !void {
     assert(in01(sexpr.is_pattern));
     if (sexpr.is_pattern <= 0.5) {
