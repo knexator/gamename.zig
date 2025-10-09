@@ -13,6 +13,20 @@ pub const PhysicalSexpr = struct {
 };
 
 pub const ViewHelper = struct {
+    // TODO: correct
+    pub const Bounds = struct {
+        pub fn touchesTemplateAtom(atom_point: Point, bounds: Clip) bool {
+            // const local_center = atom_point.inverseApplyGetLocalPosition(bounds.circle.center);
+            // return inRange(local_center.y, -1, 1) and ;
+            // return overlapsPatternAtom(atom_point, bounds.circle.center, .atom);
+            return overlapsTemplateAtom(atom_point, bounds.circle.center.towardsPure(atom_point.pos, bounds.circle.radius), .atom);
+        }
+
+        pub fn pairHolderTemplateFullyContained(point: Point, bounds: Clip) bool {
+            return overlapsTemplateAtom(point, bounds.circle.center.towardsPure(point.pos, bounds.circle.radius), .pair);
+        }
+    };
+
     pub fn overlapsTemplateAtom(atom_point: Point, needle_pos: Vec2, kind: enum { atom, pair }) bool {
         const p = atom_point.inverseApplyGetLocal(.{ .pos = needle_pos }).pos;
         return inRange(p.y, -1, 1) and switch (kind) {
@@ -190,3 +204,5 @@ const FnkBody = core.FnkBody;
 const FnkCollection = core.FnkCollection;
 const VeryPermamentGameStuff = core.VeryPermamentGameStuff;
 const parsing = @import("parsing.zig");
+
+const Clip = @import("Drawer.zig").Clip;

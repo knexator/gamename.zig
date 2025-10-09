@@ -309,6 +309,45 @@ pub fn drawCase(drawer: *Drawer, camera: Rect, center: Point, case: core.MatchCa
     });
 }
 
+pub const Clip = union(enum) {
+    circle: struct {
+        center: Vec2,
+        radius: f32,
+    },
+};
+
+pub fn drawSexprClipped(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr, bounds: Clip) !void {
+    assert(in01(sexpr.is_pattern));
+    if (sexpr.is_pattern != 0) @panic("TODO");
+    try drawer.drawTemplateSexprClipped(camera, sexpr.value, sexpr.pos, bounds);
+}
+
+fn drawTemplateSexprClipped(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point, bounds: Clip) !void {
+    switch (sexpr.*) {
+        .atom_lit => |lit| {
+            if (ViewHelper.Bounds.touchesTemplateAtom(point, bounds)) {
+                const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
+                try drawer.drawTemplateAtom(camera, point, visuals);
+            }
+        },
+        .atom_var => |v| {
+            if (ViewHelper.Bounds.touchesTemplateAtom(point, bounds)) {
+                const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
+                try drawer.drawTemplateVariable(camera, point, visuals);
+            }
+        },
+        .pair => |pair| {
+            if (ViewHelper.Bounds.touchesTemplateAtom(point, bounds)) {
+                if (ViewHelper.Bounds.pairHolderTemplateFullyContained(point, bounds)) {
+                    try drawer.drawTemplatePairHolder(camera, point);
+                }
+                try drawer.drawTemplateSexprClipped(camera, pair.left, point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT), bounds);
+                try drawer.drawTemplateSexprClipped(camera, pair.right, point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT), bounds);
+            }
+        },
+    }
+}
+
 pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr) !void {
     assert(in01(sexpr.is_pattern));
     if (sexpr.is_pattern <= 0.5) {

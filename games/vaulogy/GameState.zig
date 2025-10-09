@@ -99,9 +99,7 @@ const Workspace = struct {
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
         for (workspace.sexprs.items) |s| {
-            // std.log.debug("hola", .{});
             try drawer.drawSexpr(camera, s);
-            // std.log.debug("by", .{});
         }
 
         const mouse = platform.getMouse(camera);
@@ -115,13 +113,19 @@ const Workspace = struct {
         }
 
         for (workspace.lenses.items) |lens| {
-            // TODO: don't hardcode
-            assert(workspace.sexprs.items.len == 1);
-            try drawer.drawSexpr(camera, .{
-                .is_pattern = 0,
-                .value = workspace.sexprs.items[0].value.getAt(&.{ .right, .left }).?,
-                .pos = .{ .pos = lens.target.sub(.new(1, 0)) },
-            });
+            for (workspace.sexprs.items) |s| {
+                try drawer.drawSexprClipped(camera, .{
+                    .is_pattern = s.is_pattern,
+                    .value = s.value,
+                    .pos = (Point{
+                        .pos = lens.target,
+                        .scale = lens.target_radius,
+                    }).applyToLocalPoint((Point{
+                        .pos = lens.source,
+                        .scale = lens.source_radius,
+                    }).inverseApplyGetLocal(s.pos)),
+                }, .{ .circle = .{ .center = lens.target, .radius = lens.target_radius } });
+            }
 
             drawer.canvas.line(camera, &.{
                 lens.source.towardsPure(lens.target, lens.source_radius),
