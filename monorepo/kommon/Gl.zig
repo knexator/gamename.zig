@@ -88,6 +88,10 @@ useInstancedRenderable: *const fn (
     texture: ?Texture,
 ) void,
 
+startStencil: *const fn () void,
+doneStencil: *const fn () void,
+stopStencil: *const fn () void,
+
 pub const VertexInfo = struct {
     // TODO: kind
     pub const In = struct {

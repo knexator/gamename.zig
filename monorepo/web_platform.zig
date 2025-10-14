@@ -52,9 +52,26 @@ const js = struct {
 
     // current direction: closely matching the webgl2 API
     pub const webgl2 = struct {
+        extern fn colorMask(red: GLboolean, green: GLboolean, blue: GLboolean, alpha: GLboolean) void;
         extern fn clearColor(r: f32, g: f32, b: f32, a: f32) void;
-        // TODO: clear(mask: GLbitfield) gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT | gl.STENCIL_CLEAR_VALUE
-        extern fn clear() void;
+        extern fn clearStencil(s: GLint) void;
+        extern fn clear(
+            mask: packed struct(GLenum) {
+                _pad1: u8 = 0,
+                DEPTH_BUFFER_BIT: bool = false,
+                _pad2: u1 = 0,
+                STENCIL_BUFFER_BIT: bool = false,
+                _pad3: u3 = 0,
+                COLOR_BUFFER_BIT: bool = false,
+                _pad4: u17 = 0,
+
+                comptime {
+                    assert(@as(GLbitfield, @bitCast(@as(@This(), .{ .DEPTH_BUFFER_BIT = true }))) == 0x00000100);
+                    assert(@as(GLbitfield, @bitCast(@as(@This(), .{ .STENCIL_BUFFER_BIT = true }))) == 0x00000400);
+                    assert(@as(GLbitfield, @bitCast(@as(@This(), .{ .COLOR_BUFFER_BIT = true }))) == 0x00004000);
+                }
+            },
+        ) void;
         extern fn enable(capability: Capability) void;
         extern fn disable(capability: Capability) void;
         extern fn blendFunc(sfactor: BlendFactor, dfactor: BlendFactor) void;
@@ -129,6 +146,26 @@ const js = struct {
             pixels: usize,
         ) void;
         extern fn generateMipmap(target: TextureBindPointGeneral) void;
+        extern fn stencilFunc(
+            func: enum(GLenum) {
+                // TODO
+                NEVER = 0x0200,
+                LESS = 0x0201,
+                EQUAL = 0x0202,
+                LEQUAL = 0x0203,
+                GREATER = 0x0204,
+                NOTEQUAL = 0x0205,
+                GEQUAL = 0x0206,
+                ALWAYS = 0x0207,
+            },
+            ref: GLint,
+            mask: GLuint,
+        ) void;
+        extern fn stencilOp(
+            fail: StencilOp,
+            zfail: StencilOp,
+            zpass: StencilOp,
+        ) void;
 
         pub const better = struct {
             pub fn buildShader(src: []const u8, kind: ShaderType) !Shader {
@@ -342,6 +379,17 @@ const js = struct {
             NEAREST_MIPMAP_LINEAR = 0x2702,
             LINEAR_MIPMAP_LINEAR = 0x2703,
             _,
+        };
+
+        pub const StencilOp = enum(GLenum) {
+            ZERO = 0,
+            KEEP = 0x1E00,
+            REPLACE = 0x1E01,
+            INCR = 0x1E02,
+            INCR_WRAP = 0x8507,
+            DECR = 0x1E03,
+            DECR_WRAP = 0x8508,
+            INVERT = 0x150A,
         };
     };
 
@@ -558,11 +606,33 @@ const web_gl = struct {
         .useInstancedRenderable = useInstancedRenderable,
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
         .loadTextureDataFromFilename = loadTextureDataFromFilename,
+        .startStencil = startStencil,
+        .doneStencil = doneStencil,
+        .stopStencil = stopStencil,
     };
+
+    fn startStencil() void {
+        js.webgl2.clearStencil(0);
+        js.webgl2.clear(.{ .STENCIL_BUFFER_BIT = true });
+        js.webgl2.enable(.STENCIL_TEST);
+        js.webgl2.colorMask(false, false, false, false);
+        js.webgl2.stencilFunc(.ALWAYS, 1, 0xFF);
+        js.webgl2.stencilOp(.KEEP, .KEEP, .REPLACE);
+    }
+
+    fn doneStencil() void {
+        js.webgl2.colorMask(true, true, true, true);
+        js.webgl2.stencilFunc(.EQUAL, 1, 0xFF);
+        js.webgl2.stencilOp(.KEEP, .KEEP, .KEEP);
+    }
+
+    fn stopStencil() void {
+        js.webgl2.disable(.STENCIL_TEST);
+    }
 
     pub fn clear(color: FColor) void {
         js.webgl2.clearColor(color.r, color.g, color.b, color.a);
-        js.webgl2.clear();
+        js.webgl2.clear(.{ .COLOR_BUFFER_BIT = true });
     }
 
     pub fn loadTextureDataFromFilename(path: [:0]const u8) *const anyopaque {

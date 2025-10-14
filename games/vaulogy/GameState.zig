@@ -113,18 +113,25 @@ const Workspace = struct {
         }
 
         for (workspace.lenses.items) |lens| {
-            for (workspace.sexprs.items) |s| {
-                try drawer.drawSexprClipped(camera, .{
-                    .is_pattern = s.is_pattern,
-                    .value = s.value,
-                    .pos = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(s.pos)),
-                }, .{ .circle = .{ .center = lens.target, .radius = lens.target_radius } });
+            if (true) {
+                platform.gl.startStencil();
+                drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
+                platform.gl.doneStencil();
+                defer platform.gl.stopStencil();
+
+                for (workspace.sexprs.items) |s| {
+                    try drawer.drawSexpr(camera, .{
+                        .is_pattern = s.is_pattern,
+                        .value = s.value,
+                        .pos = (Point{
+                            .pos = lens.target,
+                            .scale = lens.target_radius,
+                        }).applyToLocalPoint((Point{
+                            .pos = lens.source,
+                            .scale = lens.source_radius,
+                        }).inverseApplyGetLocal(s.pos)),
+                    });
+                }
             }
 
             drawer.canvas.line(camera, &.{

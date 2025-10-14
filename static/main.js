@@ -9,7 +9,7 @@ if (params.size == 0) gui.hide();
 
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
-const gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
+const gl = canvas.getContext("webgl2", { antialias: true, alpha: false, stencil: true });
 
 const gl_objects = [null];
 function storeGlObject(obj) {
@@ -344,12 +344,13 @@ async function getWasm() {
       bufferData_size: (target, size, usage) => gl.bufferData(target, size, usage),
       bufferData: (target, data_ptr, data_len, usage) => gl.bufferData(target, wasmMem().subarray(data_ptr, data_ptr + data_len), usage),
       enable: (capability) => gl.enable(capability),
-      disable: (capability) => gl.enable(capability),
+      disable: (capability) => gl.disable(capability),
       blendFunc: (sfactor, dfactor) => gl.blendFunc(sfactor, dfactor),
       blendFuncSeparate: (srcRGB, dstRGB, srcAlpha, dstAlpha) => gl.blendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha),
-      // TODO: clear mask
-      clear: () => gl.clear(gl.COLOR_BUFFER_BIT),
+      colorMask: (red, green, blue, alpha) => gl.colorMask(red, green, blue, alpha),
+      clear: (mask) => gl.clear(mask),
       clearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
+      clearStencil: (s) => gl.clearStencil(s),
       deleteShader: (shader) => gl.deleteShader(gl_objects[shader]),
       deleteProgram: (program) => gl.deleteProgram(gl_objects[program]),
       getAttribLocation: (program, name_ptr, name_len) => gl.getAttribLocation(gl_objects[program], getString(name_ptr, name_len)),
@@ -373,6 +374,8 @@ async function getWasm() {
       texParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
       texImage2D_basic: (target, level, internalformat, format, type, pixels) => gl.texImage2D(target, level, internalformat, format, type, images[pixels]),
       generateMipmap: (target) => gl.generateMipmap(target),
+      stencilFunc: (func, ref, mask) => gl.stencilFunc(func, ref, mask),
+      stencilOp: (fail, zfail, zpass) => gl.stencilOp(fail, zfail, zpass),
 
       // storage
       downloadAsFile: async (filename_ptr, filename_len, mime_ptr, mime_len, contents_ptr, contents_len) => {
