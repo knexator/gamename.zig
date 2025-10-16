@@ -210,14 +210,20 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
         // interaction
         const mouse = platform.getMouse(camera);
-        for (workspace.sexprs.items) |*s| {
-            const hovered = try ViewHelper.overlapsTemplateSexpr(
+        var mouse_hovered: ?struct {
+            sexpr_index: usize,
+            address: core.SexprAddress,
+        } = null;
+        for (workspace.sexprs.items, 0..) |s, k| {
+            if (try ViewHelper.overlapsTemplateSexpr(
                 drawer.canvas.frame_arena.allocator(),
                 s.value,
                 s.point,
                 mouse.cur.position,
-            );
-            s.hovered.update(hovered, platform.delta_seconds);
+            )) |address| {
+                mouse_hovered = .{ .sexpr_index = k, .address = address };
+                break;
+            }
         }
         for (workspace.lenses.items) |*lens| {
             if (mouse.cur.isDown(.left) and lens.source.distTo(mouse.cur.position) < lens.source_radius) {
@@ -229,6 +235,11 @@ const Workspace = struct {
         }
 
         // TODO: interaction through lens
+
+        for (workspace.sexprs.items, 0..) |s, k| {
+            const hovered = if (mouse_hovered != null and mouse_hovered.?.sexpr_index == k) mouse_hovered.?.address else null;
+            s.hovered.update(hovered, platform.delta_seconds);
+        }
 
         // drawing
         for (workspace.sexprs.items) |s| {
