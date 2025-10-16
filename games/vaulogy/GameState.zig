@@ -234,7 +234,30 @@ const Workspace = struct {
             }
         }
 
-        // TODO: interaction through lens
+        for (workspace.lenses.items) |lens| {
+            if (mouse_hovered == null and mouse.cur.position.distTo(lens.target) < lens.target_radius) {
+                for (workspace.sexprs.items, 0..) |s, k| {
+                    var scaled = s;
+                    scaled.point = (Point{
+                        .pos = lens.target,
+                        .scale = lens.target_radius,
+                    }).applyToLocalPoint((Point{
+                        .pos = lens.source,
+                        .scale = lens.source_radius,
+                    }).inverseApplyGetLocal(s.point));
+
+                    if (try ViewHelper.overlapsTemplateSexpr(
+                        drawer.canvas.frame_arena.allocator(),
+                        scaled.value,
+                        scaled.point,
+                        mouse.cur.position,
+                    )) |address| {
+                        mouse_hovered = .{ .sexpr_index = k, .address = address };
+                        break;
+                    }
+                }
+            }
+        }
 
         for (workspace.sexprs.items, 0..) |s, k| {
             const hovered = if (mouse_hovered != null and mouse_hovered.?.sexpr_index == k) mouse_hovered.?.address else null;
