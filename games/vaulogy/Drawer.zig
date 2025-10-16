@@ -446,7 +446,7 @@ fn drawShapeV3(self: *Drawer, camera: Rect, parent_world_point: Point, shape: Ca
     }
 }
 
-fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point) !void {
+pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point) !void {
     try drawShapeV3(drawer, camera, point, AtomVisuals.Geometry.template_pair_holder, .black, .gray(3.0 / 8.0));
 }
 

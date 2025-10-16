@@ -46,6 +46,112 @@ progress_t: f32 = 0.0,
 
 workspace: Workspace,
 
+const HoveredSexpr = union(enum) {
+    leaf: f32,
+    pair: struct {
+        value: f32,
+        left: *HoveredSexpr,
+        right: *HoveredSexpr,
+    },
+
+    pub fn get(self: HoveredSexpr) f32 {
+        return switch (self) {
+            .leaf => |l| l,
+            .pair => |p| p.value,
+        };
+    }
+
+    const Pool = std.heap.MemoryPool(HoveredSexpr);
+
+    pub fn fromSexpr(pool: *Pool, value: *const Sexpr) !*HoveredSexpr {
+        const result = try pool.create();
+        result.* = switch (value.*) {
+            .atom_lit, .atom_var => .{ .leaf = 0 },
+            .pair => |p| .{ .pair = .{
+                .value = 0,
+                .left = try fromSexpr(pool, p.left),
+                .right = try fromSexpr(pool, p.right),
+            } },
+        };
+        return result;
+    }
+
+    pub fn update(self: *HoveredSexpr, address: ?core.SexprAddress, delta_seconds: f32) void {
+        if (address) |a| {
+            if (a.len == 0) {
+                self._update(1, delta_seconds);
+                switch (self.*) {
+                    .leaf => {},
+                    .pair => |*p| {
+                        p.left.update(null, delta_seconds);
+                        p.right.update(null, delta_seconds);
+                    },
+                }
+            } else {
+                self._update(0, delta_seconds);
+                switch (self.*) {
+                    .leaf => {},
+                    .pair => |*p| {
+                        p.left.update(if (a[0] == .left) a[1..] else null, delta_seconds);
+                        p.right.update(if (a[0] == .right) a[1..] else null, delta_seconds);
+                    },
+                }
+            }
+        } else {
+            self._update(0, delta_seconds);
+            switch (self.*) {
+                .leaf => {},
+                .pair => |*p| {
+                    p.left.update(null, delta_seconds);
+                    p.right.update(null, delta_seconds);
+                },
+            }
+        }
+    }
+
+    fn _update(self: *HoveredSexpr, goal: f32, delta_seconds: f32) void {
+        switch (self.*) {
+            .leaf => |*l| math.lerp_towards(l, goal, 0.6, delta_seconds),
+            .pair => |*p| math.lerp_towards(&p.value, goal, 0.6, delta_seconds),
+        }
+    }
+};
+
+const VeryPhysicalSexpr = struct {
+    hovered: *HoveredSexpr,
+    point: Point,
+    value: *const Sexpr,
+
+    pub fn fromSexpr(pool: *HoveredSexpr.Pool, value: *const Sexpr, point: Point) !VeryPhysicalSexpr {
+        return .{
+            .hovered = try HoveredSexpr.fromSexpr(pool, value),
+            .point = point,
+            .value = value,
+        };
+    }
+
+    fn _draw(drawer: *Drawer, camera: Rect, value: *const Sexpr, hovered: *HoveredSexpr, point: Point) !void {
+        const actual_point = point.applyToLocalPoint(.{ .turns = -0.05 * hovered.get() });
+        switch (value.*) {
+            .atom_lit, .atom_var => try drawer.drawSexpr(camera, .{
+                .pos = actual_point,
+                .value = value,
+                .is_pattern = 0,
+            }),
+            .pair => |pair| {
+                try drawer.drawTemplatePairHolder(camera, actual_point);
+                // try drawTemplateWildcardLinesNonRecursive(...);
+                try _draw(drawer, camera, pair.left, hovered.pair.left, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT));
+                try _draw(drawer, camera, pair.right, hovered.pair.right, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT));
+            },
+        }
+    }
+
+    pub fn draw(sexpr: VeryPhysicalSexpr, drawer: *Drawer, camera: Rect) !void {
+        return _draw(drawer, camera, sexpr.value, sexpr.hovered, sexpr.point);
+    }
+};
+
 const Workspace = struct {
     pub const Lens = struct {
         source: Vec2,
@@ -55,10 +161,14 @@ const Workspace = struct {
     };
 
     lenses: std.ArrayList(Lens),
-    sexprs: std.ArrayList(PhysicalSexpr),
+    sexprs: std.ArrayList(VeryPhysicalSexpr),
+
+    hover_pool: HoveredSexpr.Pool,
 
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
+
+        dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
         dst.lenses = .init(mem.gpa);
         try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
@@ -68,11 +178,11 @@ const Workspace = struct {
 
         dst.sexprs = .init(mem.gpa);
         var random: std.Random.DefaultPrng = .init(1);
-        try dst.sexprs.append(.{
-            .is_pattern = 0,
-            .pos = .{},
-            .value = try randomSexpr(mem, random.random(), 7),
-        });
+        if (true) {
+            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}));
+        } else {
+            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}));
+        }
     }
 
     const valid: []const *const Sexpr = &.{
@@ -98,11 +208,17 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
-        for (workspace.sexprs.items) |s| {
-            try drawer.drawSexpr(camera, s);
-        }
-
+        // interaction
         const mouse = platform.getMouse(camera);
+        for (workspace.sexprs.items) |*s| {
+            const hovered = try ViewHelper.overlapsTemplateSexpr(
+                drawer.canvas.frame_arena.allocator(),
+                s.value,
+                s.point,
+                mouse.cur.position,
+            );
+            s.hovered.update(hovered, platform.delta_seconds);
+        }
         for (workspace.lenses.items) |*lens| {
             if (mouse.cur.isDown(.left) and lens.source.distTo(mouse.cur.position) < lens.source_radius) {
                 lens.source.addInPlace(mouse.deltaPos());
@@ -110,6 +226,13 @@ const Workspace = struct {
             if (mouse.cur.isDown(.left) and lens.target.distTo(mouse.cur.position) < lens.target_radius) {
                 lens.target.addInPlace(mouse.deltaPos());
             }
+        }
+
+        // TODO: interaction through lens
+
+        // drawing
+        for (workspace.sexprs.items) |s| {
+            try s.draw(drawer, camera);
         }
 
         for (workspace.lenses.items) |lens| {
@@ -120,17 +243,16 @@ const Workspace = struct {
                 defer platform.gl.stopStencil();
 
                 for (workspace.sexprs.items) |s| {
-                    try drawer.drawSexpr(camera, .{
-                        .is_pattern = s.is_pattern,
-                        .value = s.value,
-                        .pos = (Point{
-                            .pos = lens.target,
-                            .scale = lens.target_radius,
-                        }).applyToLocalPoint((Point{
-                            .pos = lens.source,
-                            .scale = lens.source_radius,
-                        }).inverseApplyGetLocal(s.pos)),
-                    });
+                    var scaled = s;
+                    scaled.point = (Point{
+                        .pos = lens.target,
+                        .scale = lens.target_radius,
+                    }).applyToLocalPoint((Point{
+                        .pos = lens.source,
+                        .scale = lens.source_radius,
+                    }).inverseApplyGetLocal(s.point));
+
+                    try scaled.draw(drawer, camera);
                 }
             }
 
@@ -141,19 +263,6 @@ const Workspace = struct {
             drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
             drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
         }
-
-        // try game.drawer.drawSexpr(game.camera, .{
-        //     .is_pattern = 0,
-        //     .pos = .{ .pos = .new(-5, 0) },
-        //     .value = &Sexpr.doLit("Hermes"),
-        // });
-
-        // try game.drawer.drawCase(game.camera, .{}, .{
-        //     .pattern = &Sexpr.doLit("Hermes"),
-        //     .template = &Sexpr.doLit("Mercury"),
-        //     .fnk_name = Sexpr.builtin.identity,
-        //     .next = null,
-        // });
     }
 };
 
