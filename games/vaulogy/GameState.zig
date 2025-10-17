@@ -160,6 +160,10 @@ const Workspace = struct {
         comptime target_radius: f32 = 1,
         source_hot_t: f32 = 0,
         target_hot_t: f32 = 0,
+        tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
+            original_index: usize,
+            new_point: Point,
+        }) = .empty,
         const handle_radius: f32 = 0.1;
 
         pub fn sourceHandlePos(self: Lens) Vec2 {
@@ -246,10 +250,30 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
-        // interaction
+        // set lenses data
+        for (workspace.lenses.items, 0..) |*lens, lens_index| {
+            const tmp = drawer.canvas.frame_arena.allocator();
+            lens.tmp_visible_sexprs = .empty;
+            // TODO: cull and only store visible parts
+            for (workspace.sexprs.items, 0..) |s, k| {
+                try lens.tmp_visible_sexprs.append(tmp, .{
+                    .original_index = k,
+                    .new_point = (Point{
+                        .pos = lens.target,
+                        .scale = lens.target_radius,
+                    }).applyToLocalPoint((Point{
+                        .pos = lens.source,
+                        .scale = lens.source_radius,
+                    }).inverseApplyGetLocal(s.point)),
+                });
+            }
+            _ = lens_index;
+        }
+
+        // "minor" state changes (focus, hot_t)
 
         const mouse = platform.getMouse(camera);
-        // step 1: set hovering
+        // set hovering
         workspace.focus.hovering = switch (workspace.focus.grabbing) {
             else => |x| x,
             .nothing => blk: {
@@ -264,23 +288,16 @@ const Workspace = struct {
 
                 for (workspace.lenses.items) |lens| {
                     if (mouse.cur.position.distTo(lens.target) < lens.target_radius) {
-                        for (workspace.sexprs.items, 0..) |s, k| {
-                            var scaled = s;
-                            scaled.point = (Point{
-                                .pos = lens.target,
-                                .scale = lens.target_radius,
-                            }).applyToLocalPoint((Point{
-                                .pos = lens.source,
-                                .scale = lens.source_radius,
-                            }).inverseApplyGetLocal(s.point));
-
+                        for (lens.tmp_visible_sexprs.items) |s| {
+                            const original = workspace.sexprs.items[s.original_index];
                             if (try ViewHelper.overlapsTemplateSexpr(
+                                // TODO: use a more persistent allocator
                                 drawer.canvas.frame_arena.allocator(),
-                                scaled.value,
-                                scaled.point,
+                                original.value,
+                                s.new_point,
                                 mouse.cur.position,
                             )) |address| {
-                                break :blk .{ .sexpr = .{ .sexpr_index = k, .address = address } };
+                                break :blk .{ .sexpr = .{ .sexpr_index = s.original_index, .address = address } };
                             }
                         }
                     }
@@ -301,7 +318,7 @@ const Workspace = struct {
             },
         };
 
-        // step 2: set grabbing
+        // set grabbing
         workspace.focus.grabbing = if (!mouse.cur.isDown(.left))
             .nothing
         else if (std.meta.activeTag(workspace.focus.hovering) == .lens_handle)
@@ -309,7 +326,7 @@ const Workspace = struct {
         else
             .nothing;
 
-        // step 3: update hover_t
+        // update hover_t
         for (workspace.sexprs.items, 0..) |s, k| {
             const hovered = switch (workspace.focus.hovering) {
                 else => null,
@@ -325,40 +342,23 @@ const Workspace = struct {
             lens.update(hovered, platform.delta_seconds);
         }
 
-        // step 4: apply dragging
-        switch (workspace.focus.grabbing) {
-            .lens_handle => |handle| {
-                const lens = &workspace.lenses.items[handle.lens_index];
-                switch (handle.part) {
-                    .source => lens.source.addInPlace(mouse.deltaPos()),
-                    .target => lens.target.addInPlace(mouse.deltaPos()),
-                }
-            },
-            else => {},
-        }
-
         // drawing
         for (workspace.sexprs.items) |s| {
             try s.draw(drawer, camera);
         }
 
         for (workspace.lenses.items) |lens| {
+            drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
+
             if (true) {
                 platform.gl.startStencil();
                 drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
                 platform.gl.doneStencil();
                 defer platform.gl.stopStencil();
 
-                for (workspace.sexprs.items) |s| {
-                    var scaled = s;
-                    scaled.point = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(s.point));
-
+                for (lens.tmp_visible_sexprs.items) |s| {
+                    var scaled = workspace.sexprs.items[s.original_index];
+                    scaled.point = s.new_point;
                     try scaled.draw(drawer, camera);
                 }
             }
@@ -381,6 +381,20 @@ const Workspace = struct {
                 Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
                 .black,
             );
+        }
+
+        // "major" state changes (everything except hot_t)
+
+        // apply dragging
+        switch (workspace.focus.grabbing) {
+            .lens_handle => |handle| {
+                const lens = &workspace.lenses.items[handle.lens_index];
+                switch (handle.part) {
+                    .source => lens.source.addInPlace(mouse.deltaPos()),
+                    .target => lens.target.addInPlace(mouse.deltaPos()),
+                }
+            },
+            else => {},
         }
     }
 };
