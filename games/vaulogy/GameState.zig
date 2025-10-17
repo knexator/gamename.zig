@@ -165,6 +165,20 @@ const Workspace = struct {
 
     hover_pool: HoveredSexpr.Pool,
 
+    focus: Focus = .{},
+
+    const Focus = struct {
+        hovering: Target = .nothing,
+
+        const Target = union(enum) {
+            nothing,
+            sexpr: struct {
+                sexpr_index: usize,
+                address: core.SexprAddress,
+            },
+        };
+    };
+
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
 
@@ -175,6 +189,7 @@ const Workspace = struct {
             .{},
             &.{ .right, .left },
         ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
+        // try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
 
         dst.sexprs = .init(mem.gpa);
         var random: std.Random.DefaultPrng = .init(1);
@@ -210,10 +225,9 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
         // interaction
         const mouse = platform.getMouse(camera);
-        var mouse_hovered: ?struct {
-            sexpr_index: usize,
-            address: core.SexprAddress,
-        } = null;
+
+        const mouse_hovered = &workspace.focus.hovering;
+        workspace.focus.hovering = .nothing;
         for (workspace.sexprs.items, 0..) |s, k| {
             if (try ViewHelper.overlapsTemplateSexpr(
                 drawer.canvas.frame_arena.allocator(),
@@ -221,7 +235,7 @@ const Workspace = struct {
                 s.point,
                 mouse.cur.position,
             )) |address| {
-                mouse_hovered = .{ .sexpr_index = k, .address = address };
+                mouse_hovered.* = .{ .sexpr = .{ .sexpr_index = k, .address = address } };
                 break;
             }
         }
@@ -235,7 +249,7 @@ const Workspace = struct {
         }
 
         for (workspace.lenses.items) |lens| {
-            if (mouse_hovered == null and mouse.cur.position.distTo(lens.target) < lens.target_radius) {
+            if (std.meta.activeTag(mouse_hovered.*) == .nothing and mouse.cur.position.distTo(lens.target) < lens.target_radius) {
                 for (workspace.sexprs.items, 0..) |s, k| {
                     var scaled = s;
                     scaled.point = (Point{
@@ -252,7 +266,7 @@ const Workspace = struct {
                         scaled.point,
                         mouse.cur.position,
                     )) |address| {
-                        mouse_hovered = .{ .sexpr_index = k, .address = address };
+                        mouse_hovered.* = .{ .sexpr = .{ .sexpr_index = k, .address = address } };
                         break;
                     }
                 }
@@ -260,7 +274,10 @@ const Workspace = struct {
         }
 
         for (workspace.sexprs.items, 0..) |s, k| {
-            const hovered = if (mouse_hovered != null and mouse_hovered.?.sexpr_index == k) mouse_hovered.?.address else null;
+            const hovered = switch (mouse_hovered.*) {
+                .nothing => null,
+                .sexpr => |sexpr| if (sexpr.sexpr_index == k) sexpr.address else null,
+            };
             s.hovered.update(hovered, platform.delta_seconds);
         }
 
