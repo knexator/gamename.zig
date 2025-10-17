@@ -216,7 +216,7 @@ const Workspace = struct {
             .{},
             &.{ .right, .left },
         ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
-        // try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
+        try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
 
         dst.sexprs = .init(mem.gpa);
         var random: std.Random.DefaultPrng = .init(1);
@@ -254,6 +254,7 @@ const Workspace = struct {
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
             const tmp = drawer.canvas.frame_arena.allocator();
             lens.tmp_visible_sexprs = .empty;
+
             // TODO: cull and only store visible parts
             for (workspace.sexprs.items, 0..) |s, k| {
                 try lens.tmp_visible_sexprs.append(tmp, .{
@@ -267,7 +268,23 @@ const Workspace = struct {
                     }).inverseApplyGetLocal(s.point)),
                 });
             }
-            _ = lens_index;
+
+            for (0..lens_index) |other_lens_index| {
+                const other_lens = workspace.lenses.items[other_lens_index];
+                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
+                for (other_lens.tmp_visible_sexprs.items) |s| {
+                    try lens.tmp_visible_sexprs.append(tmp, .{
+                        .original_index = s.original_index,
+                        .new_point = (Point{
+                            .pos = lens.target,
+                            .scale = lens.target_radius,
+                        }).applyToLocalPoint((Point{
+                            .pos = lens.source,
+                            .scale = lens.source_radius,
+                        }).inverseApplyGetLocal(s.new_point)),
+                    });
+                }
+            }
         }
 
         // "minor" state changes (focus, hot_t)
