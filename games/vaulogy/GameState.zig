@@ -158,6 +158,24 @@ const Workspace = struct {
         target: Vec2,
         comptime source_radius: f32 = 0.25,
         comptime target_radius: f32 = 1,
+        source_hot_t: f32 = 0,
+        target_hot_t: f32 = 0,
+        const handle_radius: f32 = 0.1;
+
+        pub fn sourceHandlePos(self: Lens) Vec2 {
+            return self.source.add(.fromPolar(self.source_radius + 0.05, 0.125));
+        }
+
+        pub fn targetHandlePos(self: Lens) Vec2 {
+            return self.target.add(.fromPolar(self.target_radius + 0.05, 0.125));
+        }
+
+        pub const Part = enum { source, target };
+
+        pub fn update(self: *Lens, part: ?Part, delta_seconds: f32) void {
+            math.lerp_towards(&self.source_hot_t, if (part != null and part.? == .source) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&self.target_hot_t, if (part != null and part.? == .target) 1 else 0, 0.6, delta_seconds);
+        }
     };
 
     lenses: std.ArrayList(Lens),
@@ -169,12 +187,17 @@ const Workspace = struct {
 
     const Focus = struct {
         hovering: Target = .nothing,
+        grabbing: Target = .nothing,
 
         const Target = union(enum) {
             nothing,
             sexpr: struct {
                 sexpr_index: usize,
                 address: core.SexprAddress,
+            },
+            lens_handle: struct {
+                lens_index: usize,
+                part: Lens.Part,
             },
         };
     };
@@ -227,7 +250,7 @@ const Workspace = struct {
         const mouse = platform.getMouse(camera);
 
         const mouse_hovered = &workspace.focus.hovering;
-        workspace.focus.hovering = .nothing;
+        mouse_hovered.* = .nothing;
         for (workspace.sexprs.items, 0..) |s, k| {
             if (try ViewHelper.overlapsTemplateSexpr(
                 drawer.canvas.frame_arena.allocator(),
@@ -239,17 +262,21 @@ const Workspace = struct {
                 break;
             }
         }
-        for (workspace.lenses.items) |*lens| {
-            if (mouse.cur.isDown(.left) and lens.source.distTo(mouse.cur.position) < lens.source_radius) {
-                lens.source.addInPlace(mouse.deltaPos());
-            }
-            if (mouse.cur.isDown(.left) and lens.target.distTo(mouse.cur.position) < lens.target_radius) {
-                lens.target.addInPlace(mouse.deltaPos());
+        if (mouse_hovered.* == .nothing) {
+            for (workspace.lenses.items, 0..) |*lens, k| {
+                if (mouse.cur.position.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
+                    mouse_hovered.* = .{ .lens_handle = .{ .lens_index = k, .part = .source } };
+                    break;
+                }
+                if (mouse.cur.position.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
+                    mouse_hovered.* = .{ .lens_handle = .{ .lens_index = k, .part = .target } };
+                    break;
+                }
             }
         }
 
         for (workspace.lenses.items) |lens| {
-            if (std.meta.activeTag(mouse_hovered.*) == .nothing and mouse.cur.position.distTo(lens.target) < lens.target_radius) {
+            if (mouse_hovered.* == .nothing and mouse.cur.position.distTo(lens.target) < lens.target_radius) {
                 for (workspace.sexprs.items, 0..) |s, k| {
                     var scaled = s;
                     scaled.point = (Point{
@@ -273,12 +300,38 @@ const Workspace = struct {
             }
         }
 
+        if (mouse.cur.isDown(.left)) {
+            if (workspace.focus.grabbing == .nothing) {
+                workspace.focus.grabbing = mouse_hovered.*;
+            }
+        } else {
+            workspace.focus.grabbing = .nothing;
+        }
+
         for (workspace.sexprs.items, 0..) |s, k| {
             const hovered = switch (mouse_hovered.*) {
-                .nothing => null,
+                else => null,
                 .sexpr => |sexpr| if (sexpr.sexpr_index == k) sexpr.address else null,
             };
             s.hovered.update(hovered, platform.delta_seconds);
+        }
+        for (workspace.lenses.items, 0..) |*lens, k| {
+            const hovered = switch (mouse_hovered.*) {
+                else => null,
+                .lens_handle => |handle| if (handle.lens_index == k) handle.part else null,
+            };
+            lens.update(hovered, platform.delta_seconds);
+        }
+
+        switch (workspace.focus.grabbing) {
+            .lens_handle => |handle| {
+                const lens = &workspace.lenses.items[handle.lens_index];
+                switch (handle.part) {
+                    .source => lens.source.addInPlace(mouse.deltaPos()),
+                    .target => lens.target.addInPlace(mouse.deltaPos()),
+                }
+            },
+            else => {},
         }
 
         // drawing
@@ -313,6 +366,18 @@ const Workspace = struct {
             }, 0.05, .black);
             drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
             drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
+            drawer.canvas.fillCircle(
+                camera,
+                lens.sourceHandlePos(),
+                Lens.handle_radius * (1.0 + 0.2 * lens.source_hot_t),
+                .black,
+            );
+            drawer.canvas.fillCircle(
+                camera,
+                lens.targetHandlePos(),
+                Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
+                .black,
+            );
         }
     }
 };
