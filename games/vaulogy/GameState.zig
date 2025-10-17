@@ -247,82 +247,85 @@ const Workspace = struct {
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
         // interaction
+
         const mouse = platform.getMouse(camera);
-
-        const mouse_hovered = &workspace.focus.hovering;
-        mouse_hovered.* = .nothing;
-        for (workspace.sexprs.items, 0..) |s, k| {
-            if (try ViewHelper.overlapsTemplateSexpr(
-                drawer.canvas.frame_arena.allocator(),
-                s.value,
-                s.point,
-                mouse.cur.position,
-            )) |address| {
-                mouse_hovered.* = .{ .sexpr = .{ .sexpr_index = k, .address = address } };
-                break;
-            }
-        }
-        if (mouse_hovered.* == .nothing) {
-            for (workspace.lenses.items, 0..) |*lens, k| {
-                if (mouse.cur.position.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
-                    mouse_hovered.* = .{ .lens_handle = .{ .lens_index = k, .part = .source } };
-                    break;
-                }
-                if (mouse.cur.position.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
-                    mouse_hovered.* = .{ .lens_handle = .{ .lens_index = k, .part = .target } };
-                    break;
-                }
-            }
-        }
-
-        for (workspace.lenses.items) |lens| {
-            if (mouse_hovered.* == .nothing and mouse.cur.position.distTo(lens.target) < lens.target_radius) {
-                for (workspace.sexprs.items, 0..) |s, k| {
-                    var scaled = s;
-                    scaled.point = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(s.point));
-
-                    if (try ViewHelper.overlapsTemplateSexpr(
-                        drawer.canvas.frame_arena.allocator(),
-                        scaled.value,
-                        scaled.point,
-                        mouse.cur.position,
-                    )) |address| {
-                        mouse_hovered.* = .{ .sexpr = .{ .sexpr_index = k, .address = address } };
-                        break;
+        // step 1: set hovering
+        workspace.focus.hovering = switch (workspace.focus.grabbing) {
+            else => |x| x,
+            .nothing => blk: {
+                for (workspace.lenses.items, 0..) |*lens, k| {
+                    if (mouse.cur.position.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
+                        break :blk .{ .lens_handle = .{ .lens_index = k, .part = .source } };
+                    }
+                    if (mouse.cur.position.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
+                        break :blk .{ .lens_handle = .{ .lens_index = k, .part = .target } };
                     }
                 }
-            }
-        }
 
-        if (mouse.cur.isDown(.left)) {
-            if (workspace.focus.grabbing == .nothing) {
-                workspace.focus.grabbing = mouse_hovered.*;
-            }
-        } else {
-            workspace.focus.grabbing = .nothing;
-        }
+                for (workspace.lenses.items) |lens| {
+                    if (mouse.cur.position.distTo(lens.target) < lens.target_radius) {
+                        for (workspace.sexprs.items, 0..) |s, k| {
+                            var scaled = s;
+                            scaled.point = (Point{
+                                .pos = lens.target,
+                                .scale = lens.target_radius,
+                            }).applyToLocalPoint((Point{
+                                .pos = lens.source,
+                                .scale = lens.source_radius,
+                            }).inverseApplyGetLocal(s.point));
 
+                            if (try ViewHelper.overlapsTemplateSexpr(
+                                drawer.canvas.frame_arena.allocator(),
+                                scaled.value,
+                                scaled.point,
+                                mouse.cur.position,
+                            )) |address| {
+                                break :blk .{ .sexpr = .{ .sexpr_index = k, .address = address } };
+                            }
+                        }
+                    }
+                }
+
+                for (workspace.sexprs.items, 0..) |s, k| {
+                    if (try ViewHelper.overlapsTemplateSexpr(
+                        drawer.canvas.frame_arena.allocator(),
+                        s.value,
+                        s.point,
+                        mouse.cur.position,
+                    )) |address| {
+                        break :blk .{ .sexpr = .{ .sexpr_index = k, .address = address } };
+                    }
+                }
+
+                break :blk .nothing;
+            },
+        };
+
+        // step 2: set grabbing
+        workspace.focus.grabbing = if (!mouse.cur.isDown(.left))
+            .nothing
+        else if (std.meta.activeTag(workspace.focus.hovering) == .lens_handle)
+            workspace.focus.hovering
+        else
+            .nothing;
+
+        // step 3: update hover_t
         for (workspace.sexprs.items, 0..) |s, k| {
-            const hovered = switch (mouse_hovered.*) {
+            const hovered = switch (workspace.focus.hovering) {
                 else => null,
                 .sexpr => |sexpr| if (sexpr.sexpr_index == k) sexpr.address else null,
             };
             s.hovered.update(hovered, platform.delta_seconds);
         }
         for (workspace.lenses.items, 0..) |*lens, k| {
-            const hovered = switch (mouse_hovered.*) {
+            const hovered = switch (workspace.focus.hovering) {
                 else => null,
                 .lens_handle => |handle| if (handle.lens_index == k) handle.part else null,
             };
             lens.update(hovered, platform.delta_seconds);
         }
 
+        // step 4: apply dragging
         switch (workspace.focus.grabbing) {
             .lens_handle => |handle| {
                 const lens = &workspace.lenses.items[handle.lens_index];
