@@ -46,62 +46,38 @@ progress_t: f32 = 0.0,
 
 workspace: Workspace,
 
-const HoveredSexpr = union(enum) {
-    leaf: f32,
-    pair: struct {
-        value: f32,
+const HoveredSexpr = struct {
+    next: ?struct {
         left: *HoveredSexpr,
         right: *HoveredSexpr,
     },
-
-    pub fn get(self: HoveredSexpr) f32 {
-        return switch (self) {
-            .leaf => |l| l,
-            .pair => |p| p.value,
-        };
-    }
-
-    pub fn set(self: *HoveredSexpr, v: f32) void {
-        switch (self.*) {
-            .leaf => |*l| l.* = v,
-            .pair => |*p| p.value = v,
-        }
-    }
+    value: f32,
 
     const Pool = std.heap.MemoryPool(HoveredSexpr);
 
     pub fn fromSexpr(pool: *Pool, value: *const Sexpr) !*HoveredSexpr {
-        const result = try pool.create();
-        result.* = switch (value.*) {
-            .atom_lit, .atom_var => .{ .leaf = 0 },
-            .pair => |p| .{ .pair = .{
-                .value = 0,
+        return store(pool, .{ .value = 0, .next = switch (value.*) {
+            .atom_lit, .atom_var => null,
+            .pair => |p| .{
                 .left = try fromSexpr(pool, p.left),
                 .right = try fromSexpr(pool, p.right),
-            } },
-        };
-        return result;
+            },
+        } });
     }
 
     pub fn clone(original: HoveredSexpr, pool: *Pool) !*HoveredSexpr {
-        const result = try pool.create();
-        result.* = switch (original) {
-            .leaf => |l| .{ .leaf = l },
-            .pair => |p| .{ .pair = .{
-                .value = p.value,
-                .left = try clone(p.left.*, pool),
-                .right = try clone(p.right.*, pool),
-            } },
-        };
-        return result;
+        return try store(pool, .{ .value = original.value, .next = if (original.next) |next| .{
+            .left = try clone(next.left.*, pool),
+            .right = try clone(next.right.*, pool),
+        } else null });
     }
 
     pub fn getAt(self: *HoveredSexpr, address: core.SexprAddress) *HoveredSexpr {
         var current: *HoveredSexpr = self;
         for (address) |dir| {
-            current = switch (current.*) {
-                .leaf => @panic("invalid address into hovered sexpr"),
-                .pair => |p| if (dir == .left) p.left else p.right,
+            current = switch (dir) {
+                .left => current.next.?.left,
+                .right => current.next.?.right,
             };
         }
         return current;
@@ -111,40 +87,28 @@ const HoveredSexpr = union(enum) {
         if (address) |a| {
             if (a.len == 0) {
                 self._update(1, delta_seconds);
-                switch (self.*) {
-                    .leaf => {},
-                    .pair => |*p| {
-                        p.left.update(null, delta_seconds);
-                        p.right.update(null, delta_seconds);
-                    },
+                if (self.next) |next| {
+                    next.left.update(null, delta_seconds);
+                    next.right.update(null, delta_seconds);
                 }
             } else {
                 self._update(0, delta_seconds);
-                switch (self.*) {
-                    .leaf => {},
-                    .pair => |*p| {
-                        p.left.update(if (a[0] == .left) a[1..] else null, delta_seconds);
-                        p.right.update(if (a[0] == .right) a[1..] else null, delta_seconds);
-                    },
+                if (self.next) |next| {
+                    next.left.update(if (a[0] == .left) a[1..] else null, delta_seconds);
+                    next.right.update(if (a[0] == .right) a[1..] else null, delta_seconds);
                 }
             }
         } else {
             self._update(0, delta_seconds);
-            switch (self.*) {
-                .leaf => {},
-                .pair => |*p| {
-                    p.left.update(null, delta_seconds);
-                    p.right.update(null, delta_seconds);
-                },
+            if (self.next) |next| {
+                next.left.update(null, delta_seconds);
+                next.right.update(null, delta_seconds);
             }
         }
     }
 
     fn _update(self: *HoveredSexpr, goal: f32, delta_seconds: f32) void {
-        switch (self.*) {
-            .leaf => |*l| math.lerp_towards(l, goal, 0.6, delta_seconds),
-            .pair => |*p| math.lerp_towards(&p.value, goal, 0.6, delta_seconds),
-        }
+        math.lerp_towards(&self.value, goal, 0.6, delta_seconds);
     }
 
     pub fn setAt(this: *const HoveredSexpr, pool: *Pool, address: core.SexprAddress, value: *HoveredSexpr) !*HoveredSexpr {
@@ -153,21 +117,18 @@ const HoveredSexpr = union(enum) {
         } else {
             const first = address[0];
             const rest = address[1..];
-            switch (this.*) {
-                .pair => |p| {
-                    switch (first) {
-                        .left => {
-                            const new_left = try p.left.setAt(pool, rest, value);
-                            return try store(pool, .{ .pair = .{ .left = new_left, .right = p.right, .value = p.value } });
-                        },
-                        .right => {
-                            const new_right = try p.right.setAt(pool, rest, value);
-                            return try store(pool, .{ .pair = .{ .left = p.left, .right = new_right, .value = p.value } });
-                        },
-                    }
-                },
-                else => return error.BAD_INPUT,
-            }
+            if (this.next) |next| {
+                switch (first) {
+                    .left => {
+                        const new_left = try next.left.setAt(pool, rest, value);
+                        return try store(pool, .{ .value = this.value, .next = .{ .left = new_left, .right = next.right } });
+                    },
+                    .right => {
+                        const new_right = try next.right.setAt(pool, rest, value);
+                        return try store(pool, .{ .value = this.value, .next = .{ .left = next.left, .right = new_right } });
+                    },
+                }
+            } else panic("bad address", .{});
         }
     }
 
@@ -195,7 +156,7 @@ const VeryPhysicalSexpr = struct {
         const actual_point = point.applyToLocalPoint(.lerp(.{}, .{
             .turns = -0.02,
             .pos = .new(0.5, 0),
-        }, hovered.get() / 2.0));
+        }, hovered.value / 2.0));
         switch (value.*) {
             .atom_lit, .atom_var => try drawer.drawSexpr(camera, .{
                 .pos = actual_point,
@@ -205,8 +166,8 @@ const VeryPhysicalSexpr = struct {
             .pair => |pair| {
                 try drawer.drawTemplatePairHolder(camera, actual_point);
                 // try drawTemplateWildcardLinesNonRecursive(...);
-                try _draw(drawer, camera, pair.left, hovered.pair.left, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT));
-                try _draw(drawer, camera, pair.right, hovered.pair.right, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT));
+                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT));
+                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT));
             },
         }
     }
@@ -505,7 +466,7 @@ const Workspace = struct {
                         .value = original_parent.value.getAt(h.address).?,
                         .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
                     });
-                    workspace.sexprs.items[workspace.sexprs.items.len - 1].hovered.set(1.0);
+                    workspace.sexprs.items[workspace.sexprs.items.len - 1].hovered.value = 1.0;
                     break :blk .{ .sexpr = .{
                         .sexpr_index = workspace.sexprs.items.len - 1,
                         .address = &.{},
@@ -2439,7 +2400,7 @@ pub const EdgePos = kommon.grid2D.EdgePos;
 // pub const LocalDecisions = @import("../chesstory/GameState.zig").LocalDecisions;
 
 const Atom = core.Atom;
-const Pair = core.Pair;
+// const Pair = core.Pair;
 const Sexpr = core.Sexpr;
 const Fnk = core.Fnk;
 const FnkBody = core.FnkBody;
