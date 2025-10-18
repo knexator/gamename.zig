@@ -504,7 +504,8 @@ const Workspace = struct {
         for (workspace.sexprs.items, 0..) |s, k| {
             const hovered = switch (workspace.focus.hovering) {
                 else => null,
-                .sexpr => |sexpr| if (sexpr.sexpr_index == k) sexpr.address else null,
+                // special case: no hover anim for base values
+                .sexpr => |sexpr| if (sexpr.sexpr_index == k and sexpr.address.len > 0) sexpr.address else null,
             };
             const droppable = switch (workspace.focus.grabbing) {
                 else => null,
