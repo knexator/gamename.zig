@@ -83,26 +83,26 @@ const HoveredSexpr = struct {
         return current;
     }
 
-    pub fn update(self: *HoveredSexpr, address: ?core.SexprAddress, delta_seconds: f32) void {
+    pub fn update(self: *HoveredSexpr, address: ?core.SexprAddress, target_value_if_matches: f32, delta_seconds: f32) void {
         if (address) |a| {
             if (a.len == 0) {
-                self._update(1, delta_seconds);
+                self._update(target_value_if_matches, delta_seconds);
                 if (self.next) |next| {
-                    next.left.update(null, delta_seconds);
-                    next.right.update(null, delta_seconds);
+                    next.left.update(null, target_value_if_matches, delta_seconds);
+                    next.right.update(null, target_value_if_matches, delta_seconds);
                 }
             } else {
                 self._update(0, delta_seconds);
                 if (self.next) |next| {
-                    next.left.update(if (a[0] == .left) a[1..] else null, delta_seconds);
-                    next.right.update(if (a[0] == .right) a[1..] else null, delta_seconds);
+                    next.left.update(if (a[0] == .left) a[1..] else null, target_value_if_matches, delta_seconds);
+                    next.right.update(if (a[0] == .right) a[1..] else null, target_value_if_matches, delta_seconds);
                 }
             }
         } else {
             self._update(0, delta_seconds);
             if (self.next) |next| {
-                next.left.update(null, delta_seconds);
-                next.right.update(null, delta_seconds);
+                next.left.update(null, target_value_if_matches, delta_seconds);
+                next.right.update(null, target_value_if_matches, delta_seconds);
             }
         }
     }
@@ -466,7 +466,6 @@ const Workspace = struct {
                         .value = original_parent.value.getAt(h.address).?,
                         .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
                     });
-                    workspace.sexprs.items[workspace.sexprs.items.len - 1].hovered.value = 1.0;
                     break :blk .{ .sexpr = .{
                         .sexpr_index = workspace.sexprs.items.len - 1,
                         .address = &.{},
@@ -511,8 +510,8 @@ const Workspace = struct {
                         null;
                 } else null,
             };
-            _ = droppable;
-            s.hovered.update(hovered, platform.delta_seconds);
+            assert(hovered == null or droppable == null);
+            s.hovered.update(droppable orelse hovered, if (droppable != null) 2.0 else 1.0, platform.delta_seconds);
         }
         for (workspace.lenses.items, 0..) |*lens, k| {
             const hovered = switch (workspace.focus.hovering) {
@@ -539,10 +538,7 @@ const Workspace = struct {
                     .sexpr => |dropzone| ViewHelper.sexprTemplateChildView(
                         workspace.sexprs.items[dropzone.sexpr_index].point,
                         dropzone.address,
-                    ).applyToLocalPoint(.{
-                        .pos = .new(0.5, 0),
-                        .turns = -0.02,
-                    }),
+                    ),
                     .nothing => .{
                         .pos = mouse.cur.position,
                         .scale = 1,
@@ -553,8 +549,8 @@ const Workspace = struct {
             },
         }
 
-        std.log.debug("drop {any}", .{workspace.focus.dropzone});
-        std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
+        // std.log.debug("drop {any}", .{workspace.focus.dropzone});
+        // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
     }
 };
 
