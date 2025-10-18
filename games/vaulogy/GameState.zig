@@ -458,7 +458,13 @@ const Workspace = struct {
             .lens_handle => workspace.focus.hovering,
             .sexpr => |h| blk: {
                 if (h.address.len == 0) {
-                    break :blk workspace.focus.hovering;
+                    // move the sexpr to the end of the list so it draws on top
+                    const asdf = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
+                    workspace.sexprs.appendAssumeCapacity(asdf);
+                    break :blk .{ .sexpr = .{
+                        .sexpr_index = workspace.sexprs.items.len - 1,
+                        .address = &.{},
+                    } };
                 } else {
                     const original_parent = workspace.sexprs.items[h.sexpr_index];
                     try workspace.sexprs.append(.{
