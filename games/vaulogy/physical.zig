@@ -157,6 +157,18 @@ pub const ViewHelper = struct {
         return result;
     }
 
+    const Offsets = struct {
+        LEFT: Point,
+        RIGHT: Point,
+    };
+    pub const OFFSET_TEMPLATE: Offsets = .{
+        .LEFT = OFFSET_TEMPLATE_PAIR_LEFT,
+        .RIGHT = OFFSET_TEMPLATE_PAIR_RIGHT,
+    };
+    pub const OFFSET_PATTERN: Offsets = .{
+        .LEFT = OFFSET_PATTERN_PAIR_LEFT,
+        .RIGHT = OFFSET_PATTERN_PAIR_RIGHT,
+    };
     pub const OFFSET_TEMPLATE_PAIR_LEFT: Point = .{ .pos = .new(0.5, -0.5), .scale = 0.5 };
     pub const OFFSET_TEMPLATE_PAIR_RIGHT: Point = .{ .pos = .new(0.5, 0.5), .scale = 0.5 };
     pub const OFFSET_PATTERN_PAIR_LEFT: Point = .{ .pos = .new(-1, -0.5), .scale = 0.5 };

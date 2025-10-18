@@ -139,20 +139,64 @@ const HoveredSexpr = struct {
     }
 };
 
+const VeryPhysicalCase = struct {
+    pattern: VeryPhysicalSexpr,
+    fnk_name: VeryPhysicalSexpr,
+    template: VeryPhysicalSexpr,
+    next: void = {},
+    handle: Vec2,
+    handle_hot_t: f32 = 0,
+    pub const handle_radius: f32 = 0.2;
+
+    pub fn fromValues(
+        pool: *HoveredSexpr.Pool,
+        values: struct {
+            pattern: *const Sexpr,
+            fnk_name: *const Sexpr,
+            template: *const Sexpr,
+        },
+        center: Point,
+    ) !VeryPhysicalCase {
+        return .{
+            .handle = center.pos,
+            .pattern = try .fromSexpr(pool, values.pattern, center.applyToLocalPoint(.{ .pos = .xneg }), true),
+            .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
+            .fnk_name = try .fromSexpr(pool, values.fnk_name, center
+                .applyToLocalPoint(.{ .pos = .new(3, 0) }).applyToLocalPoint(.{ .scale = 0.5 }), false),
+        };
+    }
+
+    pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
+        drawer.canvas.strokeCircle(128, camera, case.handle, handle_radius * (1 + case.handle_hot_t * 0.2), 0.05, .black);
+        try case.pattern.draw(drawer, camera);
+        try case.template.draw(drawer, camera);
+        // try case.fnk_name.draw(drawer, camera);
+    }
+
+    pub fn update(case: *VeryPhysicalCase, delta_seconds: f32) void {
+        const center: Point = .{ .pos = case.handle };
+        case.pattern.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xneg }), 0.6, delta_seconds);
+        case.template.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xpos }), 0.6, delta_seconds);
+        // case.fnk_name.point.lerp_towards(...);
+    }
+};
+
 const VeryPhysicalSexpr = struct {
     hovered: *HoveredSexpr,
     point: Point,
     value: *const Sexpr,
+    is_pattern: bool,
 
-    pub fn fromSexpr(pool: *HoveredSexpr.Pool, value: *const Sexpr, point: Point) !VeryPhysicalSexpr {
+    pub fn fromSexpr(pool: *HoveredSexpr.Pool, value: *const Sexpr, point: Point, is_pattern: bool) !VeryPhysicalSexpr {
         return .{
             .hovered = try HoveredSexpr.fromSexpr(pool, value),
             .point = point,
             .value = value,
+            .is_pattern = is_pattern,
         };
     }
 
-    fn _draw(drawer: *Drawer, camera: Rect, value: *const Sexpr, hovered: *HoveredSexpr, point: Point) !void {
+    fn _draw(drawer: *Drawer, camera: Rect, value: *const Sexpr, hovered: *HoveredSexpr, point: Point, is_pattern: bool) !void {
         const actual_point = point.applyToLocalPoint(.lerp(.{}, .{
             .turns = -0.02,
             .pos = .new(0.5, 0),
@@ -161,19 +205,20 @@ const VeryPhysicalSexpr = struct {
             .atom_lit, .atom_var => try drawer.drawSexpr(camera, .{
                 .pos = actual_point,
                 .value = value,
-                .is_pattern = 0,
+                .is_pattern = if (is_pattern) 1 else 0,
             }),
             .pair => |pair| {
                 try drawer.drawTemplatePairHolder(camera, actual_point);
                 // try drawTemplateWildcardLinesNonRecursive(...);
-                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT));
-                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT));
+                const offset = if (is_pattern) ViewHelper.OFFSET_PATTERN else ViewHelper.OFFSET_TEMPLATE;
+                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern);
+                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern);
             },
         }
     }
 
     pub fn draw(sexpr: VeryPhysicalSexpr, drawer: *Drawer, camera: Rect) !void {
-        return _draw(drawer, camera, sexpr.value, sexpr.hovered, sexpr.point);
+        return _draw(drawer, camera, sexpr.value, sexpr.hovered, sexpr.point, sexpr.is_pattern);
     }
 
     pub fn updateSubValue(
@@ -221,6 +266,7 @@ const Workspace = struct {
 
     lenses: std.ArrayList(Lens),
     sexprs: std.ArrayList(VeryPhysicalSexpr),
+    cases: std.ArrayList(VeryPhysicalCase),
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -231,6 +277,7 @@ const Workspace = struct {
         grabbing: Target = .nothing,
         dropzone: Target = .nothing,
 
+        // TODO: rename *_index to index
         const Target = union(enum) {
             nothing,
             sexpr: struct {
@@ -240,6 +287,9 @@ const Workspace = struct {
             lens_handle: struct {
                 lens_index: usize,
                 part: Lens.Part,
+            },
+            case_handle: struct {
+                case_index: usize,
             },
         };
     };
@@ -259,10 +309,17 @@ const Workspace = struct {
         dst.sexprs = .init(mem.gpa);
         var random: std.Random.DefaultPrng = .init(1);
         if (true) {
-            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}));
+            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
         } else {
-            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}));
+            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
         }
+
+        dst.cases = .init(mem.gpa);
+        try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+            .pattern = Sexpr.builtin.true,
+            .template = Sexpr.builtin.false,
+            .fnk_name = Sexpr.builtin.identity,
+        }, .{ .pos = .new(0, 3) }));
     }
 
     const valid: []const *const Sexpr = &.{
@@ -342,6 +399,10 @@ const Workspace = struct {
             try s.draw(drawer, camera);
         }
 
+        for (workspace.cases.items) |c| {
+            try c.draw(drawer, camera);
+        }
+
         for (workspace.lenses.items) |lens| {
             drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
 
@@ -416,6 +477,12 @@ const Workspace = struct {
                     break :blk s;
                 }
 
+                for (workspace.cases.items, 0..) |*case, k| {
+                    if (mouse.cur.position.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
+                        break :blk .{ .case_handle = .{ .case_index = k } };
+                    }
+                }
+
                 break :blk .nothing;
             },
         };
@@ -455,7 +522,7 @@ const Workspace = struct {
             workspace.focus.grabbing
         else switch (workspace.focus.hovering) {
             .nothing => .nothing,
-            .lens_handle => workspace.focus.hovering,
+            .lens_handle, .case_handle => workspace.focus.hovering,
             .sexpr => |h| blk: {
                 if (h.address.len == 0) {
                     // move the sexpr to the end of the list so it draws on top
@@ -471,6 +538,7 @@ const Workspace = struct {
                         .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
                         .value = original_parent.value.getAt(h.address).?,
                         .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
+                        .is_pattern = original_parent.is_pattern,
                     });
                     break :blk .{ .sexpr = .{
                         .sexpr_index = workspace.sexprs.items.len - 1,
@@ -520,6 +588,13 @@ const Workspace = struct {
             assert(hovered == null or droppable == null);
             s.hovered.update(droppable orelse hovered, if (droppable != null) 2.0 else 1.0, platform.delta_seconds);
         }
+        for (workspace.cases.items, 0..) |*c, k| {
+            const target: f32 = switch (workspace.focus.hovering) {
+                else => 0,
+                .case_handle => |handle| if (handle.case_index == k) 1 else 0,
+            };
+            math.lerp_towards(&c.handle_hot_t, target, 0.6, platform.delta_seconds);
+        }
         for (workspace.lenses.items, 0..) |*lens, k| {
             const hovered = switch (workspace.focus.hovering) {
                 else => null,
@@ -538,6 +613,10 @@ const Workspace = struct {
                     .target => lens.target.addInPlace(mouse.deltaPos()),
                 }
             },
+            .case_handle => |p| {
+                const case = &workspace.cases.items[p.case_index];
+                case.handle = mouse.cur.position;
+            },
             .sexpr => |p| {
                 assert(p.address.len == 0);
                 const s = &workspace.sexprs.items[p.sexpr_index];
@@ -554,6 +633,11 @@ const Workspace = struct {
                 };
                 s.point.lerp_towards(target, 0.6, platform.delta_seconds);
             },
+        }
+
+        // update cases spring positions
+        for (workspace.cases.items) |*c| {
+            c.update(platform.delta_seconds);
         }
 
         // std.log.debug("drop {any}", .{workspace.focus.dropzone});
