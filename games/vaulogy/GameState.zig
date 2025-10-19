@@ -243,7 +243,7 @@ const Workspace = struct {
         source_hot_t: f32 = 0,
         target_hot_t: f32 = 0,
         tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
-            original_index: usize,
+            original: *const VeryPhysicalSexpr,
             new_point: Point,
         }) = .empty,
         const handle_radius: f32 = 0.1;
@@ -274,12 +274,21 @@ const Workspace = struct {
 
     const Focus = struct {
         hovering: Target = .nothing,
-        grabbing: Target = .nothing,
+        // grabbing: Target = .nothing,
+        grabbing: union(enum) {
+            nothing,
+            sexpr: VeryPhysicalSexpr,
+            deprecated: Target,
+        } = .nothing,
         dropzone: Target = .nothing,
 
         // TODO: rename *_index to index
         const Target = union(enum) {
             nothing,
+            sexpr2: struct {
+                original: *const VeryPhysicalSexpr,
+                address: core.SexprAddress,
+            },
             sexpr: struct {
                 sexpr_index: usize,
                 address: core.SexprAddress,
@@ -347,9 +356,6 @@ const Workspace = struct {
     /// assumes a lot of things, only call it in some parts of update()
     fn sexprAt(workspace: *Workspace, res: std.mem.Allocator, pos: Vec2) !?Focus.Target {
         for (workspace.sexprs.items, 0..) |s, k| {
-            // HACKY!
-            if (std.meta.activeTag(workspace.focus.grabbing) == .sexpr and
-                workspace.focus.grabbing.sexpr.sexpr_index == k) continue;
             if (try ViewHelper.overlapsTemplateSexpr(res, s.value, s.point, pos)) |address| {
                 return .{ .sexpr = .{ .sexpr_index = k, .address = address } };
             }
@@ -363,9 +369,9 @@ const Workspace = struct {
             lens.tmp_visible_sexprs = .empty;
 
             // TODO: cull and only store visible parts
-            for (workspace.sexprs.items, 0..) |s, k| {
+            for (workspace.sexprs.items) |*s| {
                 try lens.tmp_visible_sexprs.append(tmp, .{
-                    .original_index = k,
+                    .original = s,
                     .new_point = (Point{
                         .pos = lens.target,
                         .scale = lens.target_radius,
@@ -375,13 +381,28 @@ const Workspace = struct {
                     }).inverseApplyGetLocal(s.point)),
                 });
             }
+            switch (workspace.focus.grabbing) {
+                else => {},
+                .sexpr => |*grabbed| {
+                    try lens.tmp_visible_sexprs.append(tmp, .{
+                        .original = grabbed,
+                        .new_point = (Point{
+                            .pos = lens.target,
+                            .scale = lens.target_radius,
+                        }).applyToLocalPoint((Point{
+                            .pos = lens.source,
+                            .scale = lens.source_radius,
+                        }).inverseApplyGetLocal(grabbed.point)),
+                    });
+                },
+            }
 
             for (0..lens_index) |other_lens_index| {
                 const other_lens = workspace.lenses.items[other_lens_index];
                 if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
                 for (other_lens.tmp_visible_sexprs.items) |s| {
                     try lens.tmp_visible_sexprs.append(tmp, .{
-                        .original_index = s.original_index,
+                        .original = s.original,
                         .new_point = (Point{
                             .pos = lens.target,
                             .scale = lens.target_radius,
@@ -413,7 +434,7 @@ const Workspace = struct {
                 defer platform.gl.stopStencil();
 
                 for (lens.tmp_visible_sexprs.items) |s| {
-                    var scaled = workspace.sexprs.items[s.original_index];
+                    var scaled = s.original.*;
                     scaled.point = s.new_point;
                     try scaled.draw(drawer, camera);
                 }
@@ -439,6 +460,12 @@ const Workspace = struct {
             );
         }
 
+        switch (workspace.focus.grabbing) {
+            .nothing => {},
+            .deprecated => {},
+            .sexpr => |grabbed| try grabbed.draw(drawer, camera),
+        }
+
         // state changes
 
         const mouse = platform.getMouse(camera);
@@ -459,7 +486,7 @@ const Workspace = struct {
                 for (workspace.lenses.items) |lens| {
                     if (mouse.cur.position.distTo(lens.target) < lens.target_radius) {
                         for (lens.tmp_visible_sexprs.items) |s| {
-                            const original = workspace.sexprs.items[s.original_index];
+                            const original = s.original.*;
                             if (try ViewHelper.overlapsTemplateSexpr(
                                 // TODO: use a more persistent allocator
                                 drawer.canvas.frame_arena.allocator(),
@@ -467,7 +494,7 @@ const Workspace = struct {
                                 s.new_point,
                                 mouse.cur.position,
                             )) |address| {
-                                break :blk .{ .sexpr = .{ .sexpr_index = s.original_index, .address = address } };
+                                break :blk .{ .sexpr2 = .{ .original = s.original, .address = address } };
                             }
                         }
                     }
@@ -492,22 +519,24 @@ const Workspace = struct {
             // mouse is not pressed, release
             switch (workspace.focus.grabbing) {
                 else => {},
-                .sexpr => |g| {
-                    assert(g.address.len == 0);
+                .sexpr => |grabbed| {
                     switch (workspace.focus.dropzone) {
-                        else => {},
+                        else => unreachable,
+                        .nothing => {
+                            try workspace.sexprs.append(grabbed);
+                            workspace.focus.hovering = .{ .sexpr = .{
+                                .sexpr_index = workspace.sexprs.items.len - 1,
+                                .address = &.{},
+                            } };
+                        },
                         .sexpr => |dropzone| {
-                            const held_value = workspace.sexprs.items[g.sexpr_index].value;
-                            const held_hovered = workspace.sexprs.items[g.sexpr_index].hovered;
                             try workspace.sexprs.items[dropzone.sexpr_index].updateSubValue(
                                 dropzone.address,
-                                held_value,
-                                held_hovered,
+                                grabbed.value,
+                                grabbed.hovered,
                                 mem,
                                 &workspace.hover_pool,
                             );
-                            assert(g.sexpr_index > dropzone.sexpr_index);
-                            _ = workspace.sexprs.orderedRemove(g.sexpr_index);
                             workspace.focus.hovering = .{ .sexpr = .{
                                 .sexpr_index = dropzone.sexpr_index,
                                 .address = dropzone.address,
@@ -522,27 +551,34 @@ const Workspace = struct {
             workspace.focus.grabbing
         else switch (workspace.focus.hovering) {
             .nothing => .nothing,
-            .lens_handle, .case_handle => workspace.focus.hovering,
-            .sexpr => |h| blk: {
+            .lens_handle, .case_handle => .{ .deprecated = workspace.focus.hovering },
+            .sexpr2 => |h| blk: {
                 if (h.address.len == 0) {
-                    // move the sexpr to the end of the list so it draws on top
-                    const asdf = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
-                    workspace.sexprs.appendAssumeCapacity(asdf);
-                    break :blk .{ .sexpr = .{
-                        .sexpr_index = workspace.sexprs.items.len - 1,
-                        .address = &.{},
-                    } };
+                    std.log.err("TODO", .{});
+                    break :blk .nothing;
+                    // const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
+                    // break :blk .{ .sexpr = grabbed };
                 } else {
-                    const original_parent = workspace.sexprs.items[h.sexpr_index];
-                    try workspace.sexprs.append(.{
+                    const original_parent = h.original.*;
+                    break :blk .{ .sexpr = .{
                         .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
                         .value = original_parent.value.getAt(h.address).?,
                         .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
                         .is_pattern = original_parent.is_pattern,
-                    });
+                    } };
+                }
+            },
+            .sexpr => |h| blk: {
+                if (h.address.len == 0) {
+                    const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
+                    break :blk .{ .sexpr = grabbed };
+                } else {
+                    const original_parent = workspace.sexprs.items[h.sexpr_index];
                     break :blk .{ .sexpr = .{
-                        .sexpr_index = workspace.sexprs.items.len - 1,
-                        .address = &.{},
+                        .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
+                        .value = original_parent.value.getAt(h.address).?,
+                        .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
+                        .is_pattern = original_parent.is_pattern,
                     } };
                 }
             },
@@ -569,24 +605,24 @@ const Workspace = struct {
         );
 
         // update hover_t
-        for (workspace.sexprs.items, 0..) |s, k| {
+        for (workspace.sexprs.items, 0..) |*s, k| {
             const hovered = switch (workspace.focus.hovering) {
                 else => null,
                 // special case: no hover anim for base values
+                .sexpr2 => |sexpr| if (sexpr.original == s and sexpr.address.len > 0) sexpr.address else null,
                 .sexpr => |sexpr| if (sexpr.sexpr_index == k and sexpr.address.len > 0) sexpr.address else null,
             };
-            const droppable = switch (workspace.focus.grabbing) {
-                else => null,
-                .sexpr => |sexpr| if (sexpr.sexpr_index == k) blk: {
-                    assert(sexpr.address.len == 0);
-                    break :blk if (std.meta.activeTag(workspace.focus.dropzone) == .sexpr)
-                        sexpr.address
-                    else
-                        null;
-                } else null,
-            };
-            assert(hovered == null or droppable == null);
-            s.hovered.update(droppable orelse hovered, if (droppable != null) 2.0 else 1.0, platform.delta_seconds);
+            s.hovered.update(hovered, 1.0, platform.delta_seconds);
+        }
+        switch (workspace.focus.grabbing) {
+            .sexpr => |*grabbed| {
+                grabbed.hovered.update(switch (workspace.focus.dropzone) {
+                    .sexpr => &.{},
+                    .nothing => null,
+                    else => unreachable,
+                }, 2.0, platform.delta_seconds);
+            },
+            else => {},
         }
         for (workspace.cases.items, 0..) |*c, k| {
             const target: f32 = switch (workspace.focus.hovering) {
@@ -606,20 +642,22 @@ const Workspace = struct {
         // apply dragging
         switch (workspace.focus.grabbing) {
             .nothing => {},
-            .lens_handle => |p| {
-                const lens = &workspace.lenses.items[p.lens_index];
-                switch (p.part) {
-                    .source => lens.source.addInPlace(mouse.deltaPos()),
-                    .target => lens.target.addInPlace(mouse.deltaPos()),
-                }
+            .deprecated => |x| switch (x) {
+                .nothing => {},
+                .lens_handle => |p| {
+                    const lens = &workspace.lenses.items[p.lens_index];
+                    switch (p.part) {
+                        .source => lens.source.addInPlace(mouse.deltaPos()),
+                        .target => lens.target.addInPlace(mouse.deltaPos()),
+                    }
+                },
+                .case_handle => |p| {
+                    const case = &workspace.cases.items[p.case_index];
+                    case.handle = mouse.cur.position;
+                },
+                .sexpr, .sexpr2 => unreachable,
             },
-            .case_handle => |p| {
-                const case = &workspace.cases.items[p.case_index];
-                case.handle = mouse.cur.position;
-            },
-            .sexpr => |p| {
-                assert(p.address.len == 0);
-                const s = &workspace.sexprs.items[p.sexpr_index];
+            .sexpr => |*grabbed| {
                 const target: Point = switch (workspace.focus.dropzone) {
                     .sexpr => |dropzone| ViewHelper.sexprTemplateChildView(
                         workspace.sexprs.items[dropzone.sexpr_index].point,
@@ -631,7 +669,7 @@ const Workspace = struct {
                     },
                     else => unreachable,
                 };
-                s.point.lerp_towards(target, 0.6, platform.delta_seconds);
+                grabbed.point.lerp_towards(target, 0.6, platform.delta_seconds);
             },
         }
 
