@@ -248,6 +248,20 @@ const Workspace = struct {
         }) = .empty,
         const handle_radius: f32 = 0.1;
 
+        pub fn setHandlePos(self: *Lens, part: Part, pos: Vec2) void {
+            switch (part) {
+                .source => self.source = pos.sub(.fromPolar(self.source_radius + 0.05, 0.125)),
+                .target => self.target = pos.sub(.fromPolar(self.target_radius + 0.05, 0.125)),
+            }
+        }
+
+        pub fn handlePos(self: Lens, part: Part) Vec2 {
+            return switch (part) {
+                .source => self.sourceHandlePos(),
+                .target => self.targetHandlePos(),
+            };
+        }
+
         pub fn sourceHandlePos(self: Lens) Vec2 {
             return self.source.add(.fromPolar(self.source_radius + 0.05, 0.125));
         }
@@ -271,6 +285,8 @@ const Workspace = struct {
     hover_pool: HoveredSexpr.Pool,
 
     focus: Focus = .{},
+
+    undo_stack: std.ArrayList(UndoableCommand),
 
     const Focus = struct {
         hovering: Target = .nothing,
@@ -303,8 +319,32 @@ const Workspace = struct {
         };
     };
 
+    const UndoableCommand = struct {
+        specific: union(enum) {
+            noop,
+            // TODO: unify?
+            picked_lens: struct {
+                /// always is .lens_handle
+                target: Focus.Target,
+                old_position: Vec2,
+            },
+            dropped_lens: struct {
+                /// always is .lens_handle
+                target: Focus.Target,
+                new_position: Vec2,
+            },
+            // moved_sexpr: struct {
+            //     sexpr_index: usize,
+            //     old_position: Vec2,
+            //     new_position: Vec2,
+            // },
+        },
+    };
+
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
+
+        dst.undo_stack = .init(mem.gpa);
 
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
@@ -468,6 +508,39 @@ const Workspace = struct {
 
         // state changes
 
+        if (platform.keyboard.wasPressed(.KeyZ)) {
+            if (workspace.undo_stack.pop()) |command| {
+                switch (command.specific) {
+                    .noop => {},
+                    .picked_lens => |p| {
+                        const lens = &workspace.lenses.items[
+                            switch (p.target) {
+                                .lens_handle => |h| h.lens_index,
+                                else => unreachable,
+                            }
+                        ];
+                        lens.setHandlePos(p.target.lens_handle.part, p.old_position);
+                        assert(workspace.focus.grabbing.deprecated.lens_handle.part == p.target.lens_handle.part);
+                        assert(workspace.focus.grabbing.deprecated.lens_handle.lens_index == p.target.lens_handle.lens_index);
+                        workspace.focus.hovering = .nothing;
+                        workspace.focus.grabbing = .nothing;
+                    },
+                    .dropped_lens => |p| {
+                        const picked = workspace.undo_stack.pop().?.specific.picked_lens;
+                        assert(p.target.lens_handle.part == picked.target.lens_handle.part);
+                        assert(p.target.lens_handle.lens_index == picked.target.lens_handle.lens_index);
+                        const lens = &workspace.lenses.items[
+                            switch (picked.target) {
+                                .lens_handle => |h| h.lens_index,
+                                else => unreachable,
+                            }
+                        ];
+                        lens.setHandlePos(picked.target.lens_handle.part, picked.old_position);
+                    },
+                }
+            }
+        }
+
         const mouse = platform.getMouse(camera);
         // set hovering
         workspace.focus.hovering = switch (workspace.focus.grabbing) {
@@ -519,6 +592,17 @@ const Workspace = struct {
             // mouse is not pressed, release
             switch (workspace.focus.grabbing) {
                 else => {},
+                .deprecated => |x| switch (x) {
+                    else => {},
+                    .lens_handle => |lens| {
+                        try workspace.undo_stack.append(.{
+                            .specific = .{ .dropped_lens = .{
+                                .target = x,
+                                .new_position = workspace.lenses.items[lens.lens_index].handlePos(lens.part),
+                            } },
+                        });
+                    },
+                },
                 .sexpr => |grabbed| {
                     switch (workspace.focus.dropzone) {
                         else => unreachable,
@@ -551,7 +635,16 @@ const Workspace = struct {
             workspace.focus.grabbing
         else switch (workspace.focus.hovering) {
             .nothing => .nothing,
-            .lens_handle, .case_handle => .{ .deprecated = workspace.focus.hovering },
+            .lens_handle => |h| blk: {
+                try workspace.undo_stack.append(.{
+                    .specific = .{ .picked_lens = .{
+                        .target = workspace.focus.hovering,
+                        .old_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
+                    } },
+                });
+                break :blk .{ .deprecated = workspace.focus.hovering };
+            },
+            .case_handle => .{ .deprecated = workspace.focus.hovering },
             .sexpr2 => |h| blk: {
                 if (h.address.len == 0) {
                     std.log.err("TODO", .{});
