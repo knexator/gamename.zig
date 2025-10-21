@@ -547,7 +547,7 @@ const Workspace = struct {
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
             if (workspace.undo_stack.pop()) |command| {
-                switch (command.specific) {
+                again: switch (command.specific) {
                     .noop => {},
                     .picked_lens_or_case => |p| {
                         switch (p.target) {
@@ -597,8 +597,7 @@ const Workspace = struct {
                         workspace.focus.grabbing = .nothing;
                     },
                     .dropped_sexpr => |p| {
-                        const picked = workspace.undo_stack.pop().?.specific.grabbed_sexpr;
-                        var grabbed: VeryPhysicalSexpr = switch (p.new_place) {
+                        workspace.focus.grabbing = .{ .sexpr = switch (p.new_place) {
                             .board => |position| blk: {
                                 assert(p.overwritten_value == null);
                                 const k = for (workspace.sexprs.items, 0..) |s, k| {
@@ -613,14 +612,10 @@ const Workspace = struct {
                                 try workspace.sexprs.items[s.sexpr_index].updateSubValue(s.address, old.value, old.hovered, mem, &workspace.hover_pool);
                                 break :blk r;
                             },
-                        };
-                        switch (picked.origin) {
-                            .board => |old_position| {
-                                grabbed.point.pos = old_position;
-                                try workspace.sexprs.append(grabbed);
-                            },
-                            .sexpr => {},
-                        }
+                        } };
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        assert(std.meta.activeTag(next_cmd.specific) == .grabbed_sexpr);
+                        continue :again next_cmd.specific;
                     },
                 }
             }
