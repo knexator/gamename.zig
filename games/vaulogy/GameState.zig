@@ -321,7 +321,13 @@ const Workspace = struct {
         specific: union(enum) {
             noop,
             dropped_sexpr,
-            grabbed_sexpr,
+            grabbed_sexpr: struct {
+                origin: union(enum) {
+                    board: Vec2,
+                    // TODO
+                    sexpr,
+                },
+            },
             // TODO: unify?
             picked_lens_or_case: struct {
                 /// always is .lens_handle or .case_handle
@@ -555,8 +561,22 @@ const Workspace = struct {
                         }
                         workspace.focus.grabbing = .nothing;
                     },
-                    .dropped_sexpr => std.log.err("TODO", .{}),
-                    .grabbed_sexpr => std.log.err("TODO", .{}),
+                    .grabbed_sexpr => |g| {
+                        switch (g.origin) {
+                            .board => |position| {
+                                var grabbed = workspace.focus.grabbing.sexpr;
+                                grabbed.point.pos = position;
+                                try workspace.sexprs.append(grabbed);
+                            },
+                            else => {},
+                        }
+                        workspace.focus.grabbing = .nothing;
+                    },
+                    .dropped_sexpr => {
+                        const picked = workspace.undo_stack.pop().?.specific.grabbed_sexpr;
+                        _ = picked;
+                        std.log.err("TODO", .{});
+                    },
                 }
             }
         }
@@ -637,7 +657,12 @@ const Workspace = struct {
                         .old_position = workspace.cases.items[h.case_index].handle,
                     },
                 } },
-                .sexpr => .{ .specific = .grabbed_sexpr },
+                .sexpr => |s| .{ .specific = .{ .grabbed_sexpr = .{
+                    .origin = if (s.address.len == 0)
+                        .{ .board = workspace.sexprs.items[s.sexpr_index].point.pos }
+                    else
+                        .sexpr,
+                } } },
             }
         else if (workspace.focus.grabbing != .nothing and !mouse.cur.isDown(.left))
             switch (workspace.focus.grabbing) {
