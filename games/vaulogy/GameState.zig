@@ -407,6 +407,8 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect, mem: *VeryPermamentGameStuff) !void {
+        // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
+
         // set lenses data
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
             const tmp = drawer.canvas.frame_arena.allocator();
@@ -659,107 +661,6 @@ const Workspace = struct {
         else
             .noop;
 
-        // actually perform the action
-        switch (action.specific) {
-            .noop => {},
-            .picked_lens_or_case => |h| workspace.focus.grabbing = .{ .deprecated = h.target },
-            .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
-            .dropped_sexpr => {
-                switch (workspace.focus.dropzone) {
-                    else => unreachable,
-                    .nothing => try workspace.sexprs.append(workspace.focus.grabbing.sexpr),
-                    .sexpr => |dropzone| {
-                        try workspace.sexprs.items[dropzone.sexpr_index].updateSubValue(
-                            dropzone.address,
-                            workspace.focus.grabbing.sexpr.value,
-                            workspace.focus.grabbing.sexpr.hovered,
-                            mem,
-                            &workspace.hover_pool,
-                        );
-                    },
-                }
-                workspace.focus.grabbing = .nothing;
-            },
-            .grabbed_sexpr => {
-                workspace.focus.grabbing = switch (workspace.focus.hovering) {
-                    else => unreachable,
-                    .sexpr2 => |h| blk: {
-                        if (h.address.len == 0) {
-                            std.log.err("TODO", .{});
-                            break :blk .nothing;
-                            // const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
-                            // break :blk .{ .sexpr = grabbed };
-                        } else {
-                            const original_parent = h.original.*;
-                            break :blk .{ .sexpr = .{
-                                .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
-                                .value = original_parent.value.getAt(h.address).?,
-                                .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
-                                .is_pattern = original_parent.is_pattern,
-                            } };
-                        }
-                    },
-                    .sexpr => |h| blk: {
-                        if (h.address.len == 0) {
-                            const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
-                            break :blk .{ .sexpr = grabbed };
-                        } else {
-                            const original_parent = workspace.sexprs.items[h.sexpr_index];
-                            break :blk .{ .sexpr = .{
-                                .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
-                                .value = original_parent.value.getAt(h.address).?,
-                                .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
-                                .is_pattern = original_parent.is_pattern,
-                            } };
-                        }
-                    },
-                };
-            },
-        }
-        if (action.specific != .noop) {
-            try workspace.undo_stack.append(action);
-        }
-
-        // after dropping, set hover to the dropped thing
-        // after grabbing, set dropzone to the grabbed thing
-        // TODO: generalize
-        switch (action.specific) {
-            else => {},
-            .grabbed_sexpr => {
-                switch (workspace.focus.grabbing) {
-                    else => unreachable,
-                    .sexpr => {
-                        // TODO: fix
-                        // workspace.focus.dropzone = workspace.focus.hovering;
-                        // workspace.focus.hovering = .nothing;
-                    },
-                }
-            },
-            .dropped_sexpr => {
-                switch (workspace.focus.dropzone) {
-                    else => unreachable,
-                    .nothing => {
-                        workspace.focus.hovering = .{ .sexpr = .{
-                            .sexpr_index = workspace.sexprs.items.len - 1,
-                            .address = &.{},
-                        } };
-                        workspace.focus.dropzone = .nothing;
-                    },
-                    .sexpr => |dropzone| {
-                        workspace.focus.hovering = .{ .sexpr = .{
-                            .sexpr_index = dropzone.sexpr_index,
-                            .address = dropzone.address,
-                        } };
-                        workspace.focus.dropzone = .nothing;
-                    },
-                }
-            },
-        }
-
-        // if (workspace.focus.grabbing != .nothing) {
-        //     workspace.focus.hovering = .nothing;
-        // }
-
         // cursor
         platform.setCursor(
             if (workspace.focus.grabbing != .nothing)
@@ -844,8 +745,66 @@ const Workspace = struct {
             c.update(platform.delta_seconds);
         }
 
-        // std.log.debug("drop {any}", .{workspace.focus.dropzone});
-        // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
+        // actually perform the action
+        switch (action.specific) {
+            .noop => {},
+            .picked_lens_or_case => |h| workspace.focus.grabbing = .{ .deprecated = h.target },
+            .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
+            .dropped_sexpr => {
+                switch (workspace.focus.dropzone) {
+                    else => unreachable,
+                    .nothing => try workspace.sexprs.append(workspace.focus.grabbing.sexpr),
+                    .sexpr => |dropzone| {
+                        try workspace.sexprs.items[dropzone.sexpr_index].updateSubValue(
+                            dropzone.address,
+                            workspace.focus.grabbing.sexpr.value,
+                            workspace.focus.grabbing.sexpr.hovered,
+                            mem,
+                            &workspace.hover_pool,
+                        );
+                    },
+                }
+                workspace.focus.grabbing = .nothing;
+            },
+            .grabbed_sexpr => {
+                workspace.focus.grabbing = switch (workspace.focus.hovering) {
+                    else => unreachable,
+                    .sexpr2 => |h| blk: {
+                        if (h.address.len == 0) {
+                            std.log.err("TODO", .{});
+                            break :blk .nothing;
+                            // const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
+                            // break :blk .{ .sexpr = grabbed };
+                        } else {
+                            const original_parent = h.original.*;
+                            break :blk .{ .sexpr = .{
+                                .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
+                                .value = original_parent.value.getAt(h.address).?,
+                                .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
+                                .is_pattern = original_parent.is_pattern,
+                            } };
+                        }
+                    },
+                    .sexpr => |h| blk: {
+                        if (h.address.len == 0) {
+                            const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
+                            break :blk .{ .sexpr = grabbed };
+                        } else {
+                            const original_parent = workspace.sexprs.items[h.sexpr_index];
+                            break :blk .{ .sexpr = .{
+                                .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
+                                .value = original_parent.value.getAt(h.address).?,
+                                .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
+                                .is_pattern = original_parent.is_pattern,
+                            } };
+                        }
+                    },
+                };
+            },
+        }
+        if (action.specific != .noop) {
+            try workspace.undo_stack.append(action);
+        }
     }
 };
 
