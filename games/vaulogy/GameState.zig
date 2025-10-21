@@ -534,6 +534,7 @@ const Workspace = struct {
                             },
                             else => unreachable,
                         }
+                        workspace.focus.grabbing = .nothing;
                     },
                     .dropped_lens_or_case => |p| {
                         switch (p.target) {
@@ -552,8 +553,10 @@ const Workspace = struct {
                             },
                             else => {},
                         }
+                        workspace.focus.grabbing = .nothing;
                     },
-                    .dropped_sexpr, .grabbed_sexpr => std.log.err("TODO", .{}),
+                    .dropped_sexpr => std.log.err("TODO", .{}),
+                    .grabbed_sexpr => std.log.err("TODO", .{}),
                 }
             }
         }
