@@ -323,13 +323,13 @@ const Workspace = struct {
         specific: union(enum) {
             noop,
             // TODO: unify?
-            picked_lens: struct {
-                /// always is .lens_handle
+            picked_lens_or_case: struct {
+                /// always is .lens_handle or .case_handle
                 target: Focus.Target,
                 old_position: Vec2,
             },
-            dropped_lens: struct {
-                /// always is .lens_handle
+            dropped_lens_or_case: struct {
+                /// always is .lens_handle or .case_handle
                 target: Focus.Target,
                 new_position: Vec2,
             },
@@ -339,6 +339,8 @@ const Workspace = struct {
             //     new_position: Vec2,
             // },
         },
+
+        pub const noop: UndoableCommand = .{ .specific = .noop };
     };
 
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
@@ -512,40 +514,51 @@ const Workspace = struct {
             if (workspace.undo_stack.pop()) |command| {
                 switch (command.specific) {
                     .noop => {},
-                    .picked_lens => |p| {
-                        const lens = &workspace.lenses.items[
-                            switch (p.target) {
-                                .lens_handle => |h| h.lens_index,
-                                else => unreachable,
-                            }
-                        ];
-                        lens.setHandlePos(p.target.lens_handle.part, p.old_position);
-                        assert(workspace.focus.grabbing.deprecated.lens_handle.part == p.target.lens_handle.part);
-                        assert(workspace.focus.grabbing.deprecated.lens_handle.lens_index == p.target.lens_handle.lens_index);
-                        workspace.focus.hovering = .nothing;
-                        workspace.focus.grabbing = .nothing;
+                    .picked_lens_or_case => |p| {
+                        switch (p.target) {
+                            .lens_handle => |h| {
+                                const lens = &workspace.lenses.items[h.lens_index];
+                                lens.setHandlePos(p.target.lens_handle.part, p.old_position);
+                                assert(workspace.focus.grabbing.deprecated.lens_handle.part == p.target.lens_handle.part);
+                                assert(workspace.focus.grabbing.deprecated.lens_handle.lens_index == p.target.lens_handle.lens_index);
+                                workspace.focus.hovering = .nothing;
+                                workspace.focus.grabbing = .nothing;
+                            },
+                            .case_handle => |h| {
+                                const case = &workspace.cases.items[h.case_index];
+                                case.handle = p.old_position;
+                                assert(workspace.focus.grabbing.deprecated.case_handle.case_index == p.target.case_handle.case_index);
+                                workspace.focus.hovering = .nothing;
+                                workspace.focus.grabbing = .nothing;
+                            },
+                            else => unreachable,
+                        }
                     },
-                    .dropped_lens => |p| {
-                        const picked = workspace.undo_stack.pop().?.specific.picked_lens;
-                        assert(p.target.lens_handle.part == picked.target.lens_handle.part);
-                        assert(p.target.lens_handle.lens_index == picked.target.lens_handle.lens_index);
-                        const lens = &workspace.lenses.items[
-                            switch (picked.target) {
-                                .lens_handle => |h| h.lens_index,
-                                else => unreachable,
-                            }
-                        ];
-                        lens.setHandlePos(picked.target.lens_handle.part, picked.old_position);
+                    .dropped_lens_or_case => |p| {
+                        switch (p.target) {
+                            .lens_handle => |h| {
+                                const picked = workspace.undo_stack.pop().?.specific.picked_lens_or_case;
+                                assert(p.target.lens_handle.part == picked.target.lens_handle.part);
+                                assert(p.target.lens_handle.lens_index == picked.target.lens_handle.lens_index);
+                                const lens = &workspace.lenses.items[h.lens_index];
+                                lens.setHandlePos(picked.target.lens_handle.part, picked.old_position);
+                            },
+                            .case_handle => |h| {
+                                const picked = workspace.undo_stack.pop().?.specific.picked_lens_or_case;
+                                assert(p.target.case_handle.case_index == picked.target.case_handle.case_index);
+                                const case = &workspace.cases.items[h.case_index];
+                                case.handle = picked.old_position;
+                            },
+                            else => {},
+                        }
                     },
                 }
             }
         }
 
         const mouse = platform.getMouse(camera);
-        // set hovering
-        workspace.focus.hovering = switch (workspace.focus.grabbing) {
-            // else => |x| x,
-            else => .nothing,
+        // TODO: findThingUnderCursor(grabbed)
+        const hovered_or_dropzone_thing: Focus.Target = switch (workspace.focus.grabbing) {
             .nothing => blk: {
                 for (workspace.lenses.items, 0..) |*lens, k| {
                     if (mouse.cur.position.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
@@ -585,24 +598,79 @@ const Workspace = struct {
 
                 break :blk .nothing;
             },
+            .sexpr => if (try sexprAt(workspace, platform.gpa, mouse.cur.position)) |target| target else .nothing,
+            .deprecated => |d| switch (d) {
+                .nothing, .lens_handle, .case_handle => .nothing,
+                .sexpr => if (try sexprAt(workspace, platform.gpa, mouse.cur.position)) |target| target else .nothing,
+                .sexpr2 => if (try sexprAt(workspace, platform.gpa, mouse.cur.position)) |target| target else .nothing,
+            },
         };
+
+        workspace.focus.hovering = switch (workspace.focus.grabbing) {
+            else => .nothing,
+            .nothing => hovered_or_dropzone_thing,
+        };
+        workspace.focus.dropzone = switch (workspace.focus.grabbing) {
+            else => hovered_or_dropzone_thing,
+            .nothing => .nothing,
+        };
+
+        const action: UndoableCommand = if (workspace.focus.grabbing == .nothing and mouse.cur.isDown(.left))
+            switch (workspace.focus.hovering) {
+                .nothing => .noop,
+                .lens_handle => |h| .{ .specific = .{
+                    .picked_lens_or_case = .{
+                        .target = workspace.focus.hovering,
+                        .old_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
+                    },
+                } },
+                .case_handle => |h| .{ .specific = .{
+                    .picked_lens_or_case = .{
+                        .target = workspace.focus.hovering,
+                        .old_position = workspace.cases.items[h.case_index].handle,
+                    },
+                } },
+                else => .noop,
+            }
+        else if (workspace.focus.grabbing != .nothing and !mouse.cur.isDown(.left))
+            switch (workspace.focus.grabbing) {
+                .nothing => unreachable,
+                .deprecated => |d| switch (d) {
+                    .nothing => .noop,
+                    .lens_handle => |h| .{ .specific = .{
+                        .dropped_lens_or_case = .{
+                            .target = d,
+                            .new_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
+                        },
+                    } },
+                    .case_handle => |h| .{ .specific = .{
+                        .dropped_lens_or_case = .{
+                            .target = d,
+                            .new_position = workspace.cases.items[h.case_index].handle,
+                        },
+                    } },
+                    else => .noop,
+                },
+                .sexpr => .noop,
+            }
+        else
+            .noop;
+
+        // actually perform the action
+        switch (action.specific) {
+            .noop => {},
+            .picked_lens_or_case => |h| workspace.focus.grabbing = .{ .deprecated = h.target },
+            .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
+        }
+        if (action.specific != .noop) {
+            try workspace.undo_stack.append(action);
+        }
 
         // set grabbing
         workspace.focus.grabbing = if (!mouse.cur.isDown(.left)) blk: {
             // mouse is not pressed, release
             switch (workspace.focus.grabbing) {
                 else => {},
-                .deprecated => |x| switch (x) {
-                    else => {},
-                    .lens_handle => |lens| {
-                        try workspace.undo_stack.append(.{
-                            .specific = .{ .dropped_lens = .{
-                                .target = x,
-                                .new_position = workspace.lenses.items[lens.lens_index].handlePos(lens.part),
-                            } },
-                        });
-                    },
-                },
                 .sexpr => |grabbed| {
                     switch (workspace.focus.dropzone) {
                         else => unreachable,
@@ -635,16 +703,7 @@ const Workspace = struct {
             workspace.focus.grabbing
         else switch (workspace.focus.hovering) {
             .nothing => .nothing,
-            .lens_handle => |h| blk: {
-                try workspace.undo_stack.append(.{
-                    .specific = .{ .picked_lens = .{
-                        .target = workspace.focus.hovering,
-                        .old_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
-                    } },
-                });
-                break :blk .{ .deprecated = workspace.focus.hovering };
-            },
-            .case_handle => .{ .deprecated = workspace.focus.hovering },
+            else => .nothing,
             .sexpr2 => |h| blk: {
                 if (h.address.len == 0) {
                     std.log.err("TODO", .{});
@@ -679,13 +738,6 @@ const Workspace = struct {
         if (workspace.focus.grabbing != .nothing) {
             workspace.focus.hovering = .nothing;
         }
-
-        workspace.focus.dropzone = if (std.meta.activeTag(workspace.focus.grabbing) == .sexpr) blk: {
-            break :blk if (try sexprAt(workspace, platform.gpa, mouse.cur.position)) |target|
-                target
-            else
-                .nothing;
-        } else .nothing;
 
         // cursor
         platform.setCursor(
