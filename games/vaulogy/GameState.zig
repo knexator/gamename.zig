@@ -289,14 +289,12 @@ const Workspace = struct {
     undo_stack: std.ArrayList(UndoableCommand),
 
     const Focus = struct {
-        hovering: Target = .nothing,
         // grabbing: Target = .nothing,
         grabbing: union(enum) {
             nothing,
             sexpr: VeryPhysicalSexpr,
             deprecated: Target,
         } = .nothing,
-        dropzone: Target = .nothing,
 
         // TODO: rename *_index to index
         const Target = union(enum) {
@@ -525,15 +523,11 @@ const Workspace = struct {
                                 lens.setHandlePos(p.target.lens_handle.part, p.old_position);
                                 assert(workspace.focus.grabbing.deprecated.lens_handle.part == p.target.lens_handle.part);
                                 assert(workspace.focus.grabbing.deprecated.lens_handle.lens_index == p.target.lens_handle.lens_index);
-                                workspace.focus.hovering = .nothing;
-                                workspace.focus.grabbing = .nothing;
                             },
                             .case_handle => |h| {
                                 const case = &workspace.cases.items[h.case_index];
                                 case.handle = p.old_position;
                                 assert(workspace.focus.grabbing.deprecated.case_handle.case_index == p.target.case_handle.case_index);
-                                workspace.focus.hovering = .nothing;
-                                workspace.focus.grabbing = .nothing;
                             },
                             else => unreachable,
                         }
@@ -611,27 +605,27 @@ const Workspace = struct {
             },
         };
 
-        workspace.focus.hovering = switch (workspace.focus.grabbing) {
+        const hovering = switch (workspace.focus.grabbing) {
             else => .nothing,
             .nothing => hovered_or_dropzone_thing,
         };
-        workspace.focus.dropzone = switch (workspace.focus.grabbing) {
+        const dropzone = switch (workspace.focus.grabbing) {
             else => hovered_or_dropzone_thing,
             .nothing => .nothing,
         };
 
         const action: UndoableCommand = if (workspace.focus.grabbing == .nothing and mouse.cur.isDown(.left))
-            switch (workspace.focus.hovering) {
+            switch (hovering) {
                 .nothing => .noop,
                 .lens_handle => |h| .{ .specific = .{
                     .picked_lens_or_case = .{
-                        .target = workspace.focus.hovering,
+                        .target = hovering,
                         .old_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
                     },
                 } },
                 .case_handle => |h| .{ .specific = .{
                     .picked_lens_or_case = .{
-                        .target = workspace.focus.hovering,
+                        .target = hovering,
                         .old_position = workspace.cases.items[h.case_index].handle,
                     },
                 } },
@@ -665,7 +659,7 @@ const Workspace = struct {
         platform.setCursor(
             if (workspace.focus.grabbing != .nothing)
                 .grabbing
-            else if (workspace.focus.hovering != .nothing)
+            else if (hovering != .nothing)
                 .could_grab
             else
                 .default,
@@ -673,7 +667,7 @@ const Workspace = struct {
 
         // update hover_t
         for (workspace.sexprs.items, 0..) |*s, k| {
-            const hovered = switch (workspace.focus.hovering) {
+            const hovered = switch (hovering) {
                 else => null,
                 // special case: no hover anim for base values
                 .sexpr2 => |sexpr| if (sexpr.original == s and sexpr.address.len > 0) sexpr.address else null,
@@ -683,7 +677,7 @@ const Workspace = struct {
         }
         switch (workspace.focus.grabbing) {
             .sexpr => |*grabbed| {
-                grabbed.hovered.update(switch (workspace.focus.dropzone) {
+                grabbed.hovered.update(switch (dropzone) {
                     .sexpr => &.{},
                     .nothing => null,
                     else => unreachable,
@@ -692,14 +686,14 @@ const Workspace = struct {
             else => {},
         }
         for (workspace.cases.items, 0..) |*c, k| {
-            const target: f32 = switch (workspace.focus.hovering) {
+            const target: f32 = switch (hovering) {
                 else => 0,
                 .case_handle => |handle| if (handle.case_index == k) 1 else 0,
             };
             math.lerp_towards(&c.handle_hot_t, target, 0.6, platform.delta_seconds);
         }
         for (workspace.lenses.items, 0..) |*lens, k| {
-            const hovered = switch (workspace.focus.hovering) {
+            const hovered = switch (hovering) {
                 else => null,
                 .lens_handle => |handle| if (handle.lens_index == k) handle.part else null,
             };
@@ -725,10 +719,10 @@ const Workspace = struct {
                 .sexpr, .sexpr2 => unreachable,
             },
             .sexpr => |*grabbed| {
-                const target: Point = switch (workspace.focus.dropzone) {
-                    .sexpr => |dropzone| ViewHelper.sexprTemplateChildView(
-                        workspace.sexprs.items[dropzone.sexpr_index].point,
-                        dropzone.address,
+                const target: Point = switch (dropzone) {
+                    .sexpr => |s| ViewHelper.sexprTemplateChildView(
+                        workspace.sexprs.items[s.sexpr_index].point,
+                        s.address,
                     ),
                     .nothing => .{
                         .pos = mouse.cur.position,
@@ -751,12 +745,12 @@ const Workspace = struct {
             .picked_lens_or_case => |h| workspace.focus.grabbing = .{ .deprecated = h.target },
             .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
             .dropped_sexpr => {
-                switch (workspace.focus.dropzone) {
+                switch (dropzone) {
                     else => unreachable,
                     .nothing => try workspace.sexprs.append(workspace.focus.grabbing.sexpr),
-                    .sexpr => |dropzone| {
-                        try workspace.sexprs.items[dropzone.sexpr_index].updateSubValue(
-                            dropzone.address,
+                    .sexpr => |s| {
+                        try workspace.sexprs.items[s.sexpr_index].updateSubValue(
+                            s.address,
                             workspace.focus.grabbing.sexpr.value,
                             workspace.focus.grabbing.sexpr.hovered,
                             mem,
@@ -767,7 +761,7 @@ const Workspace = struct {
                 workspace.focus.grabbing = .nothing;
             },
             .grabbed_sexpr => {
-                workspace.focus.grabbing = switch (workspace.focus.hovering) {
+                workspace.focus.grabbing = switch (hovering) {
                     else => unreachable,
                     .sexpr2 => |h| blk: {
                         if (h.address.len == 0) {
@@ -787,7 +781,7 @@ const Workspace = struct {
                     },
                     .sexpr => |h| blk: {
                         if (h.address.len == 0) {
-                            const grabbed = workspace.sexprs.swapRemove(workspace.focus.hovering.sexpr.sexpr_index);
+                            const grabbed = workspace.sexprs.swapRemove(hovering.sexpr.sexpr_index);
                             break :blk .{ .sexpr = grabbed };
                         } else {
                             const original_parent = workspace.sexprs.items[h.sexpr_index];
