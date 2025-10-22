@@ -598,7 +598,7 @@ const Workspace = struct {
                                 grabbed.point.pos = position;
                                 try workspace.sexprs.append(grabbed);
                             },
-                            else => {},
+                            .sexpr => _ = workspace.popGrabbedSexpr(),
                         }
                         workspace.focus.grabbing = .nothing;
                     },
