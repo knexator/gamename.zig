@@ -330,8 +330,6 @@ const Workspace = struct {
     };
 
     const BaseSexprPlace = union(enum) {
-        // TODO: remove
-        index: usize,
         board: Vec2,
         grabbed,
     };
@@ -451,14 +449,15 @@ const Workspace = struct {
 
     fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace) *VeryPhysicalSexpr {
         return switch (place) {
-            .index => &workspace.sexprs.items[place.index],
-            .board => |p| &workspace.sexprs.items[
-                for (workspace.sexprs.items, 0..) |s, k| {
-                    if (s.point.pos.equals(p)) break k;
-                } else unreachable
-            ],
+            .board => |p| &workspace.sexprs.items[workspace.boardSexprIndexAtPos(p).?],
             .grabbed => &workspace.grabbed_sexpr.?,
         };
+    }
+
+    fn boardSexprIndexAtPos(workspace: *Workspace, pos: Vec2) ?usize {
+        for (workspace.sexprs.items, 0..) |s, k| {
+            if (s.point.pos.equals(pos)) return k;
+        } else return null;
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect, mem: *VeryPermamentGameStuff) !void {
@@ -470,9 +469,9 @@ const Workspace = struct {
             lens.tmp_visible_sexprs = .empty;
 
             // TODO: cull and only store visible parts
-            for (workspace.sexprs.items, 0..) |*s, k| {
+            for (workspace.sexprs.items) |*s| {
                 try lens.tmp_visible_sexprs.append(tmp, .{
-                    .original_place = .{ .index = k },
+                    .original_place = .{ .board = s.point.pos },
                     .new_point = (Point{
                         .pos = lens.target,
                         .scale = lens.target_radius,
@@ -666,8 +665,8 @@ const Workspace = struct {
                             )) |address| {
                                 // TODO: easy win by storing directly the base place
                                 break :blk .{ .sexpr = .{ .sexpr_index = switch (s.original_place) {
-                                    .index => |i| i,
-                                    .grabbed, .board => @panic("TODO"),
+                                    .board => |p| workspace.boardSexprIndexAtPos(p).?,
+                                    .grabbed => @panic("TODO"),
                                 }, .address = address } };
                             }
                         }
