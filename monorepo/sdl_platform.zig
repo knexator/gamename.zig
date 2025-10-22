@@ -749,6 +749,7 @@ pub fn main() !void {
             sdl_platform.delta_seconds = math.tof32(ns_since_last_frame) / std.time.ns_per_s;
             sdl_platform.global_seconds += sdl_platform.delta_seconds;
             sdl_platform.aspect_ratio = window_size.aspectRatio();
+            sdl_platform.mouse = mouse;
             sdl_platform.keyboard = keyboard;
             sdl_platform.sound_queue.* = .initEmpty();
             if (try my_game.update(sdl_platform)) break :main_loop;
