@@ -722,9 +722,9 @@ const Workspace = struct {
                                     grabbed.point.pos = position;
                                     try workspace.sexprs.append(grabbed);
                                 } else {
-                                    // TODO: find the bug
-                                    // const old = workspace.sexprAtPlace(.{ .board = position }).getSubValue(g.origin.local);
-                                    // old.hovered.value = 1;
+                                    // TODO: make nicer?
+                                    const old = workspace.sexprAtPlace(.{ .board = position }).getSubValue(g.origin.local);
+                                    old.hovered.value = 10;
                                 }
                             },
                             .grabbed => unreachable,
