@@ -258,12 +258,7 @@ const Workspace = struct {
         source_hot_t: f32 = 0,
         target_hot_t: f32 = 0,
         tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
-            // TODO: remove
-            original: *const VeryPhysicalSexpr,
-            original_place: union(enum) {
-                index: usize,
-                grabbed,
-            },
+            original_place: BaseSexprPlace,
             new_point: Point,
         }) = .empty,
         const handle_radius: f32 = 0.1;
@@ -334,6 +329,13 @@ const Workspace = struct {
         };
     };
 
+    const BaseSexprPlace = union(enum) {
+        // TODO: remove
+        index: usize,
+        board: Vec2,
+        grabbed,
+    };
+    // TODO: remove?
     const SexprPlace = union(enum) {
         // index: usize,
         // grabbed,
@@ -447,6 +449,18 @@ const Workspace = struct {
         workspace.grabbed_sexpr = sexpr;
     }
 
+    fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace) *VeryPhysicalSexpr {
+        return switch (place) {
+            .index => &workspace.sexprs.items[place.index],
+            .board => |p| &workspace.sexprs.items[
+                for (workspace.sexprs.items, 0..) |s, k| {
+                    if (s.point.pos.equals(p)) break k;
+                } else unreachable
+            ],
+            .grabbed => &workspace.grabbed_sexpr.?,
+        };
+    }
+
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect, mem: *VeryPermamentGameStuff) !void {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
 
@@ -459,7 +473,6 @@ const Workspace = struct {
             for (workspace.sexprs.items, 0..) |*s, k| {
                 try lens.tmp_visible_sexprs.append(tmp, .{
                     .original_place = .{ .index = k },
-                    .original = s,
                     .new_point = (Point{
                         .pos = lens.target,
                         .scale = lens.target_radius,
@@ -472,7 +485,6 @@ const Workspace = struct {
             if (workspace.grabbed_sexpr) |*grabbed| {
                 try lens.tmp_visible_sexprs.append(tmp, .{
                     .original_place = .grabbed,
-                    .original = grabbed,
                     .new_point = (Point{
                         .pos = lens.target,
                         .scale = lens.target_radius,
@@ -488,7 +500,6 @@ const Workspace = struct {
                 if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
                 for (other_lens.tmp_visible_sexprs.items) |s| {
                     try lens.tmp_visible_sexprs.append(tmp, .{
-                        .original = s.original,
                         .original_place = s.original_place,
                         .new_point = (Point{
                             .pos = lens.target,
@@ -521,7 +532,7 @@ const Workspace = struct {
                 defer platform.gl.stopStencil();
 
                 for (lens.tmp_visible_sexprs.items) |s| {
-                    var scaled = s.original.*;
+                    var scaled = workspace.sexprAtPlace(s.original_place).*;
                     scaled.point = s.new_point;
                     try scaled.draw(drawer, camera);
                 }
@@ -645,7 +656,7 @@ const Workspace = struct {
                 for (workspace.lenses.items) |lens| {
                     if (mouse.cur.position.distTo(lens.target) < lens.target_radius) {
                         for (lens.tmp_visible_sexprs.items) |s| {
-                            const original = s.original.*;
+                            const original = sexprAtPlace(workspace, s.original_place);
                             if (try ViewHelper.overlapsTemplateSexpr(
                                 // TODO: use a more persistent allocator
                                 drawer.canvas.frame_arena.allocator(),
@@ -653,9 +664,10 @@ const Workspace = struct {
                                 s.new_point,
                                 mouse.cur.position,
                             )) |address| {
+                                // TODO: easy win by storing directly the base place
                                 break :blk .{ .sexpr = .{ .sexpr_index = switch (s.original_place) {
                                     .index => |i| i,
-                                    .grabbed => @panic("TODO"),
+                                    .grabbed, .board => @panic("TODO"),
                                 }, .address = address } };
                             }
                         }
