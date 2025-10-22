@@ -502,17 +502,7 @@ var global_gpa_BAD: std.mem.Allocator = gpa;
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
-    .getMouse = struct {
-        pub fn anon(camera: Rect) Mouse {
-            var result = mouse;
-            result.cur.position = camera.applyToLocalPosition(result.cur.position);
-            result.prev.position = camera.applyToLocalPosition(result.prev.position);
-            // TODO: delete these fields
-            result.cur.client_pos = .zero;
-            result.prev.client_pos = .zero;
-            return result;
-        }
-    }.anon,
+    .mouse = undefined,
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,
     .setButtonChanged = setButtonChanged,
@@ -1045,6 +1035,7 @@ export fn update(delta_seconds: f32) void {
     web_platform.aspect_ratio = js_better.canvas.getSize().aspectRatio();
     web_platform.delta_seconds = delta_seconds;
     web_platform.global_seconds += delta_seconds;
+    web_platform.mouse = mouse;
     web_platform.keyboard = keyboard;
     web_platform.sound_queue.* = .initEmpty();
 

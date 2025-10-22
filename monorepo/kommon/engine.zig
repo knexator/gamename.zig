@@ -24,7 +24,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
     const loops = stuff.loops;
     return struct {
         gpa: std.mem.Allocator,
-        getMouse: *const fn (camera: Rect) Mouse,
+        mouse: Mouse,
         keyboard: Keyboard,
         setKeyChanged: *const fn (key: KeyboardButton) void,
         setButtonChanged: *const fn (button: kommon.input.MouseButton) void,
@@ -44,6 +44,16 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         // TODO: don't require this
         forgetUserUploadedFile: *const fn () void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
+
+        pub fn getMouse(self: @This(), camera: Rect) Mouse {
+            var result = self.mouse;
+            result.cur.position = camera.applyToLocalPosition(result.cur.position);
+            result.prev.position = camera.applyToLocalPosition(result.prev.position);
+            // TODO: delete these fields
+            result.cur.client_pos = .zero;
+            result.prev.client_pos = .zero;
+            return result;
+        }
 
         pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
             if (self.keyboard.wasPressed(key)) return true;

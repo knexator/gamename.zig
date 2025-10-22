@@ -275,6 +275,82 @@ pub const Texture = struct {
     resolution: UVec2,
 };
 
+const Gl = @This();
+pub const stub = Stub.vtable;
+
+const Stub = struct {
+    const vtable: Gl = .{
+        .clear = clear,
+        .buildRenderable = buildRenderable,
+        .useRenderable = useRenderable,
+        .buildTexture2D = buildTexture2D,
+        .buildInstancedRenderable = buildInstancedRenderable,
+        .useInstancedRenderable = useInstancedRenderable,
+        .loadTextureDataFromBase64 = loadTextureDataFromBase64,
+        .loadTextureDataFromFilename = loadTextureDataFromFilename,
+        .startStencil = startStencil,
+        .doneStencil = doneStencil,
+        .stopStencil = stopStencil,
+    };
+
+    fn startStencil() void {}
+    fn doneStencil() void {}
+    fn stopStencil() void {}
+    fn clear(_: FColor) void {}
+
+    fn loadTextureDataFromBase64(_: []const u8) *const anyopaque {
+        return undefined;
+    }
+
+    fn loadTextureDataFromFilename(_: [:0]const u8) *const anyopaque {
+        return undefined;
+    }
+
+    pub fn buildTexture2D(_: *const anyopaque, _: bool) Gl.Texture {
+        return undefined;
+    }
+
+    pub fn buildRenderable(
+        _: [:0]const u8,
+        _: [:0]const u8,
+        _: Gl.VertexInfo.Collection,
+        _: []const Gl.UniformInfo.In,
+    ) !Gl.Renderable {
+        return undefined;
+    }
+
+    pub fn useRenderable(
+        _: Gl.Renderable,
+        _: *const anyopaque,
+        _: usize,
+        _: []const [3]Gl.IndexType,
+        _: []const Gl.UniformInfo.Runtime,
+        _: ?Gl.Texture,
+    ) void {}
+
+    pub fn buildInstancedRenderable(
+        _: [:0]const u8,
+        _: [:0]const u8,
+        _: Gl.VertexInfo.Collection,
+        _: Gl.VertexInfo.Collection,
+        _: []const Gl.UniformInfo.In,
+    ) !Gl.InstancedRenderable {
+        return undefined;
+    }
+
+    pub fn useInstancedRenderable(
+        _: Gl.InstancedRenderable,
+        _: *const anyopaque,
+        _: usize,
+        _: []const [3]Gl.IndexType,
+        _: *const anyopaque,
+        _: usize,
+        _: usize,
+        _: []const Gl.UniformInfo.Runtime,
+        _: ?Gl.Texture,
+    ) void {}
+};
+
 const std = @import("std");
 const math = @import("math.zig");
 const Color = math.Color;

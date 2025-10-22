@@ -9,6 +9,106 @@ comptime {
     std.testing.refAllDecls(@import("execution_tree.zig"));
 }
 
+test "fuzz example" {
+    const TestPlatform = struct {
+        global_seconds: f32 = 0,
+        delta_seconds: f32 = 0,
+        mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 },
+        keyboard: Keyboard = .{ .cur = .init, .prev = .init, .cur_time = 0 },
+
+        const TestPlatform = @This();
+
+        pub fn after(self: *TestPlatform) void {
+            self.mouse.prev = self.mouse.cur;
+            self.mouse.cur.scrolled = .none;
+            self.keyboard.prev = self.keyboard.cur;
+        }
+
+        pub fn getGives(self: *TestPlatform, delta_seconds: f32) PlatformGives {
+            self.keyboard.cur_time = self.global_seconds;
+            self.mouse.cur_time = self.global_seconds;
+            self.global_seconds += delta_seconds;
+
+            return .{
+                .mouse = self.mouse,
+                .keyboard = self.keyboard,
+                .gpa = std.testing.allocator,
+
+                .aspect_ratio = stuff.metadata.desired_aspect_ratio,
+                .delta_seconds = delta_seconds,
+                .global_seconds = self.global_seconds,
+                .gl = .stub,
+                .setCursor = struct {
+                    fn anon(_: Mouse.Cursor) void {}
+                }.anon,
+
+                .askUserForFile = undefined,
+                .setKeyChanged = undefined,
+                .setButtonChanged = undefined,
+                .sound_queue = undefined,
+                .loop_volumes = undefined,
+                .sample_rate = undefined,
+                .enqueueSamples = undefined,
+                .queuedSeconds = undefined,
+                .downloadAsFile = undefined,
+                .userUploadedFile = undefined,
+                .forgetUserUploadedFile = undefined,
+            };
+        }
+    };
+
+    const FakeInput = extern struct {
+        z_down: bool,
+        mouse_left_down: bool,
+        mouse_pos: Vec2,
+    };
+
+    const Context = struct {
+        fn testOne(context: @This(), input: []const u8) anyerror!void {
+            _ = context;
+            var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
+            defer mem.deinit();
+            var workspace: Workspace = undefined;
+            try workspace.init(&mem);
+            defer workspace.deinit();
+            var frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+            defer frame_arena.deinit();
+
+            var test_platform: TestPlatform = .{};
+
+            var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
+            while (it.next()) |cur_input_raw| {
+                if (cur_input_raw.len == @sizeOf(FakeInput)) {
+                    const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
+                    test_platform.keyboard.cur.keys.KeyZ = cur_input.z_down;
+                    test_platform.mouse.cur.buttons.left = cur_input.mouse_left_down;
+                    test_platform.mouse.cur.position = cur_input.mouse_pos;
+                    try workspace.update(test_platform.getGives(1.0 / 60.0), null, .fromCenterAndSize(.zero, .new(16, 9)), &mem, frame_arena.allocator());
+                    _ = frame_arena.reset(.retain_capacity);
+                }
+            }
+        }
+    };
+    try std.testing.fuzz(Context{}, Context.testOne, .{});
+}
+
+test "No leaks on Workspace and Drawer" {
+    var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
+    defer mem.deinit();
+    var workspace: Workspace = undefined;
+    try workspace.init(&mem);
+    defer workspace.deinit();
+    var usual: kommon.Usual = undefined;
+    usual.init(
+        std.testing.allocator,
+        @intCast(std.testing.random_seed),
+        try Canvas.init(Gl.stub, std.testing.allocator, &.{}, &.{}),
+    );
+    defer usual.deinit(undefined);
+    const drawer: Drawer = try .init(&usual);
+    _ = drawer;
+}
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -395,6 +495,14 @@ const Workspace = struct {
         }, .{ .pos = .new(0, 3) }));
     }
 
+    pub fn deinit(workspace: *Workspace) void {
+        workspace.lenses.deinit();
+        workspace.sexprs.deinit();
+        workspace.cases.deinit();
+        workspace.hover_pool.deinit();
+        workspace.undo_stack.deinit();
+    }
+
     const valid: []const *const Sexpr = &.{
         &Sexpr.doLit("Hermes"),
         &Sexpr.doLit("Mercury"),
@@ -461,59 +569,7 @@ const Workspace = struct {
         } else return null;
     }
 
-    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect, mem: *VeryPermamentGameStuff) !void {
-        // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
-
-        // set lenses data
-        for (workspace.lenses.items, 0..) |*lens, lens_index| {
-            const tmp = drawer.canvas.frame_arena.allocator();
-            lens.tmp_visible_sexprs = .empty;
-
-            // TODO: cull and only store visible parts
-            for (workspace.sexprs.items) |*s| {
-                try lens.tmp_visible_sexprs.append(tmp, .{
-                    .original_place = .{ .board = s.point.pos },
-                    .new_point = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(s.point)),
-                });
-            }
-            if (workspace.grabbed_sexpr) |*grabbed| {
-                try lens.tmp_visible_sexprs.append(tmp, .{
-                    .original_place = .grabbed,
-                    .new_point = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(grabbed.point)),
-                });
-            }
-
-            for (0..lens_index) |other_lens_index| {
-                const other_lens = workspace.lenses.items[other_lens_index];
-                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
-                for (other_lens.tmp_visible_sexprs.items) |s| {
-                    try lens.tmp_visible_sexprs.append(tmp, .{
-                        .original_place = s.original_place,
-                        .new_point = (Point{
-                            .pos = lens.target,
-                            .scale = lens.target_radius,
-                        }).applyToLocalPoint((Point{
-                            .pos = lens.source,
-                            .scale = lens.source_radius,
-                        }).inverseApplyGetLocal(s.new_point)),
-                    });
-                }
-            }
-        }
-
-        // drawing
+    fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
         for (workspace.sexprs.items) |s| {
             try s.draw(drawer, camera);
         }
@@ -559,7 +615,63 @@ const Workspace = struct {
         }
 
         if (workspace.grabbed_sexpr) |s| try s.draw(drawer, camera);
+    }
 
+    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, camera: Rect, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
+        // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
+
+        // set lenses data
+        for (workspace.lenses.items, 0..) |*lens, lens_index| {
+            lens.tmp_visible_sexprs = .empty;
+
+            // TODO: cull and only store visible parts
+            for (workspace.sexprs.items) |*s| {
+                try lens.tmp_visible_sexprs.append(frame_arena, .{
+                    .original_place = .{ .board = s.point.pos },
+                    .new_point = (Point{
+                        .pos = lens.target,
+                        .scale = lens.target_radius,
+                    }).applyToLocalPoint((Point{
+                        .pos = lens.source,
+                        .scale = lens.source_radius,
+                    }).inverseApplyGetLocal(s.point)),
+                });
+            }
+            if (workspace.grabbed_sexpr) |*grabbed| {
+                try lens.tmp_visible_sexprs.append(frame_arena, .{
+                    .original_place = .grabbed,
+                    .new_point = (Point{
+                        .pos = lens.target,
+                        .scale = lens.target_radius,
+                    }).applyToLocalPoint((Point{
+                        .pos = lens.source,
+                        .scale = lens.source_radius,
+                    }).inverseApplyGetLocal(grabbed.point)),
+                });
+            }
+
+            for (0..lens_index) |other_lens_index| {
+                const other_lens = workspace.lenses.items[other_lens_index];
+                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
+                for (other_lens.tmp_visible_sexprs.items) |s| {
+                    try lens.tmp_visible_sexprs.append(frame_arena, .{
+                        .original_place = s.original_place,
+                        .new_point = (Point{
+                            .pos = lens.target,
+                            .scale = lens.target_radius,
+                        }).applyToLocalPoint((Point{
+                            .pos = lens.source,
+                            .scale = lens.source_radius,
+                        }).inverseApplyGetLocal(s.new_point)),
+                    });
+                }
+            }
+        }
+
+        // drawing
+        if (drawer) |d| {
+            try workspace.draw(platform, d, camera);
+        }
         // state changes
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
@@ -670,8 +782,8 @@ const Workspace = struct {
                         for (lens.tmp_visible_sexprs.items) |s| {
                             const original = sexprAtPlace(workspace, s.original_place);
                             if (try ViewHelper.overlapsTemplateSexpr(
-                                // TODO: use a more persistent allocator
-                                drawer.canvas.frame_arena.allocator(),
+                                // TODO: don't leak
+                                mem.gpa,
                                 original.value,
                                 s.new_point,
                                 mouse.cur.position,
@@ -685,7 +797,8 @@ const Workspace = struct {
                     }
                 }
 
-                if (try sexprAt(workspace, drawer.canvas.frame_arena.allocator(), mouse.cur.position)) |s| {
+                // TODO: dont leak
+                if (try sexprAt(workspace, mem.gpa, mouse.cur.position)) |s| {
                     break :blk s;
                 }
 
@@ -2191,7 +2304,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     platform.gl.clear(COLORS.bg);
 
     if (true) {
-        try self.workspace.update(platform, &self.drawer, self.camera, &self.core_mem);
+        try self.workspace.update(platform, &self.drawer, self.camera, &self.core_mem, self.drawer.canvas.frame_arena.allocator());
     }
 
     if (false) {

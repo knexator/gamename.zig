@@ -247,7 +247,13 @@ pub fn main() !void {
             .useInstancedRenderable = useInstancedRenderable,
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
             .loadTextureDataFromFilename = loadTextureDataFromFilename,
+            .startStencil = NOOP,
+            .doneStencil = NOOP,
+            .stopStencil = NOOP,
         };
+
+        // TODO: remove
+        fn NOOP() void {}
 
         pub fn clear(color: FColor) void {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
@@ -620,17 +626,7 @@ pub fn main() !void {
 
     var sdl_platform: PlatformGives = .{
         .gpa = gpa,
-        .getMouse = struct {
-            pub fn anon(camera: Rect) Mouse {
-                var result = mouse;
-                result.cur.position = camera.applyToLocalPosition(result.cur.position);
-                result.prev.position = camera.applyToLocalPosition(result.prev.position);
-                // TODO: delete these fields
-                result.cur.client_pos = .zero;
-                result.prev.client_pos = .zero;
-                return result;
-            }
-        }.anon,
+        .mouse = mouse,
         .keyboard = keyboard,
         .setKeyChanged = setKeyChanged,
         .setButtonChanged = setButtonChanged,
