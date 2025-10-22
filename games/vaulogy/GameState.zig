@@ -315,10 +315,7 @@ const Workspace = struct {
         // TODO: rename *_index to index
         const Target = union(enum) {
             nothing,
-            sexpr: struct {
-                sexpr_index: usize,
-                address: core.SexprAddress,
-            },
+            sexpr: SexprPlace,
             lens_handle: struct {
                 lens_index: usize,
                 part: Lens.Part,
@@ -333,16 +330,9 @@ const Workspace = struct {
         board: Vec2,
         grabbed,
     };
-    // TODO: remove?
-    const SexprPlace = union(enum) {
-        // index: usize,
-        // grabbed,
-        board: Vec2,
-        // TODO: improve
-        sexpr: struct {
-            sexpr_index: usize,
-            address: core.SexprAddress,
-        },
+    const SexprPlace = struct {
+        base: BaseSexprPlace,
+        local: core.SexprAddress,
     };
     const UndoableCommand = struct {
         specific: union(enum) {
@@ -383,11 +373,11 @@ const Workspace = struct {
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
         dst.lenses = .init(mem.gpa);
-        try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
-            .{},
-            &.{ .right, .left },
-        ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
-        try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
+        // try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
+        //     .{},
+        //     &.{ .right, .left },
+        // ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
+        // try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
 
         dst.sexprs = .init(mem.gpa);
         var random: std.Random.DefaultPrng = .init(1);
@@ -427,11 +417,12 @@ const Workspace = struct {
         }
     }
 
+    // TODO: remove/rework, at least the return value
     /// assumes a lot of things, only call it in some parts of update()
     fn sexprAt(workspace: *Workspace, res: std.mem.Allocator, pos: Vec2) !?Focus.Target {
-        for (workspace.sexprs.items, 0..) |s, k| {
+        for (workspace.sexprs.items) |s| {
             if (try ViewHelper.overlapsTemplateSexpr(res, s.value, s.point, pos)) |address| {
-                return .{ .sexpr = .{ .sexpr_index = k, .address = address } };
+                return .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } };
             }
         } else return null;
     }
@@ -455,6 +446,16 @@ const Workspace = struct {
     }
 
     fn boardSexprIndexAtPos(workspace: *Workspace, pos: Vec2) ?usize {
+        if (@import("builtin").mode == .Debug) {
+            var count: usize = 0;
+            for (workspace.sexprs.items) |s| {
+                if (s.point.pos.equals(pos)) {
+                    count += 1;
+                }
+            }
+            assert(count <= 1);
+        }
+
         for (workspace.sexprs.items, 0..) |s, k| {
             if (s.point.pos.equals(pos)) return k;
         } else return null;
@@ -602,35 +603,47 @@ const Workspace = struct {
                         workspace.focus.grabbing = .nothing;
                     },
                     .grabbed_sexpr => |g| {
-                        switch (g.origin) {
+                        switch (g.origin.base) {
                             .board => |position| {
                                 var grabbed = workspace.popGrabbedSexpr();
-                                grabbed.point.pos = position;
-                                try workspace.sexprs.append(grabbed);
+                                if (g.origin.local.len == 0) {
+                                    grabbed.point.pos = position;
+                                    try workspace.sexprs.append(grabbed);
+                                } else {
+                                    // TODO: find the bug
+                                    // const old = workspace.sexprAtPlace(.{ .board = position }).getSubValue(g.origin.local);
+                                    // old.hovered.value = 1;
+                                }
                             },
-                            .sexpr => _ = workspace.popGrabbedSexpr(),
+                            .grabbed => unreachable,
                         }
                         workspace.focus.grabbing = .nothing;
                     },
                     .dropped_sexpr => |p| {
-                        workspace.focus.grabbing = .{ .sexpr = switch (p.new_place) {
-                            .board => |position| blk: {
-                                assert(p.overwritten_value == null);
-                                const k = for (workspace.sexprs.items, 0..) |s, k| {
-                                    if (s.point.pos.equals(position)) break k;
-                                } else unreachable;
-                                workspace.pushGrabbedSexpr(workspace.sexprs.swapRemove(k));
-                                break :blk {};
+                        workspace.focus.grabbing = .{
+                            .sexpr = switch (p.new_place.base) {
+                                .grabbed => unreachable,
+                                .board => |position| blk: {
+                                    const k = workspace.boardSexprIndexAtPos(position).?;
+                                    if (p.overwritten_value) |overwritten| {
+                                        var grabbed = workspace.sexprs.items[k].getSubValue(p.new_place.local);
+                                        grabbed.point.scale = 1;
+                                        try workspace.sexprs.items[k].updateSubValue(
+                                            p.new_place.local,
+                                            overwritten.value,
+                                            overwritten.hovered,
+                                            mem,
+                                            &workspace.hover_pool,
+                                        );
+                                        workspace.pushGrabbedSexpr(grabbed);
+                                    } else {
+                                        const grabbed = workspace.sexprs.swapRemove(k);
+                                        workspace.pushGrabbedSexpr(grabbed);
+                                    }
+                                    break :blk {};
+                                },
                             },
-                            .sexpr => |s| blk: {
-                                var r = workspace.sexprs.items[s.sexpr_index].getSubValue(s.address);
-                                r.point.scale = 1.0;
-                                const old = p.overwritten_value.?;
-                                try workspace.sexprs.items[s.sexpr_index].updateSubValue(s.address, old.value, old.hovered, mem, &workspace.hover_pool);
-                                workspace.pushGrabbedSexpr(r);
-                                break :blk {};
-                            },
-                        } };
+                        };
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .grabbed_sexpr);
                         continue :again next_cmd.specific;
@@ -663,11 +676,10 @@ const Workspace = struct {
                                 s.new_point,
                                 mouse.cur.position,
                             )) |address| {
-                                // TODO: easy win by storing directly the base place
-                                break :blk .{ .sexpr = .{ .sexpr_index = switch (s.original_place) {
-                                    .board => |p| workspace.boardSexprIndexAtPos(p).?,
-                                    .grabbed => @panic("TODO"),
-                                }, .address = address } };
+                                break :blk .{ .sexpr = .{
+                                    .base = s.original_place,
+                                    .local = address,
+                                } };
                             }
                         }
                     }
@@ -712,11 +724,14 @@ const Workspace = struct {
         );
 
         // update hover_t
-        for (workspace.sexprs.items, 0..) |*s, k| {
+        for (workspace.sexprs.items) |*s| {
             const hovered = switch (hovering) {
                 else => null,
-                // special case: no hover anim for base values
-                .sexpr => |sexpr| if (sexpr.sexpr_index == k and sexpr.address.len > 0) sexpr.address else null,
+                .sexpr => |sexpr| switch (sexpr.base) {
+                    // special case: no hover anim for base values
+                    .board => |pos| if (pos.equals(s.point.pos) and sexpr.local.len > 0) sexpr.local else null,
+                    .grabbed => unreachable,
+                },
             };
             s.hovered.update(hovered, 1.0, platform.delta_seconds);
         }
@@ -763,8 +778,8 @@ const Workspace = struct {
             .sexpr => {
                 const target: Point = switch (dropzone) {
                     .sexpr => |s| ViewHelper.sexprTemplateChildView(
-                        workspace.sexprs.items[s.sexpr_index].point,
-                        s.address,
+                        workspace.sexprAtPlace(s.base).point,
+                        s.local,
                     ),
                     .nothing => .{
                         .pos = mouse.cur.position,
@@ -797,12 +812,17 @@ const Workspace = struct {
                         .old_position = workspace.cases.items[h.case_index].handle,
                     },
                 } },
-                .sexpr => |s| .{ .specific = .{ .grabbed_sexpr = .{
-                    .origin = if (s.address.len == 0)
-                        .{ .board = workspace.sexprs.items[s.sexpr_index].point.pos }
-                    else
-                        .{ .sexpr = .{ .sexpr_index = s.sexpr_index, .address = s.address } },
-                } } },
+                .sexpr => |s| .{
+                    .specific = .{
+                        .grabbed_sexpr = .{
+                            .origin = s,
+                            //  if (s.local.len == 0)
+                            //     .{ .board = workspace.sexprs.items[s.sexpr_index].point.pos }
+                            // else
+                            //     .{ .sexpr = .{ .sexpr_index = s.sexpr_index, .address = s.address } },
+                        },
+                    },
+                },
             }
         else if (workspace.focus.grabbing != .nothing and !mouse.cur.isDown(.left))
             switch (workspace.focus.grabbing) {
@@ -825,12 +845,14 @@ const Workspace = struct {
                         .specific = .{
                             .dropped_sexpr = switch (dropzone) {
                                 .nothing => .{
-                                    .new_place = .{ .board = workspace.grabbed_sexpr.?.point.pos },
+                                    .new_place = .{ .base = .{
+                                        .board = workspace.grabbed_sexpr.?.point.pos,
+                                    }, .local = &.{} },
                                     .overwritten_value = null,
                                 },
                                 .sexpr => |s| .{
-                                    .new_place = .{ .sexpr = .{ .sexpr_index = s.sexpr_index, .address = s.address } },
-                                    .overwritten_value = workspace.sexprs.items[s.sexpr_index].getSubValue(s.address),
+                                    .new_place = s,
+                                    .overwritten_value = workspace.sexprAtPlace(s.base).getSubValue(s.local),
                                 },
                                 else => unreachable,
                             },
@@ -841,12 +863,14 @@ const Workspace = struct {
                     .specific = .{
                         .dropped_sexpr = switch (dropzone) {
                             .nothing => .{
-                                .new_place = .{ .board = workspace.grabbed_sexpr.?.point.pos },
+                                .new_place = .{ .base = .{
+                                    .board = workspace.grabbed_sexpr.?.point.pos,
+                                }, .local = &.{} },
                                 .overwritten_value = null,
                             },
                             .sexpr => |s| .{
-                                .new_place = .{ .sexpr = .{ .sexpr_index = s.sexpr_index, .address = s.address } },
-                                .overwritten_value = workspace.sexprs.items[s.sexpr_index].getSubValue(s.address),
+                                .new_place = s,
+                                .overwritten_value = workspace.sexprAtPlace(s.base).getSubValue(s.local),
                             },
                             else => unreachable,
                         },
@@ -867,8 +891,8 @@ const Workspace = struct {
                     .nothing => try workspace.sexprs.append(workspace.popGrabbedSexpr()),
                     .sexpr => |s| {
                         const grabbed = workspace.popGrabbedSexpr();
-                        try workspace.sexprs.items[s.sexpr_index].updateSubValue(
-                            s.address,
+                        try workspace.sexprAtPlace(s.base).updateSubValue(
+                            s.local,
                             grabbed.value,
                             grabbed.hovered,
                             mem,
@@ -882,18 +906,24 @@ const Workspace = struct {
                 workspace.focus.grabbing = switch (hovering) {
                     else => unreachable,
                     .sexpr => |h| blk: {
-                        if (h.address.len == 0) {
-                            workspace.pushGrabbedSexpr(workspace.sexprs.swapRemove(hovering.sexpr.sexpr_index));
-                            break :blk .sexpr;
-                        } else {
-                            const original_parent = workspace.sexprs.items[h.sexpr_index];
-                            workspace.pushGrabbedSexpr(.{
-                                .hovered = try original_parent.hovered.getAt(h.address).clone(&workspace.hover_pool),
-                                .value = original_parent.value.getAt(h.address).?,
-                                .point = ViewHelper.sexprTemplateChildView(original_parent.point, h.address),
-                                .is_pattern = original_parent.is_pattern,
-                            });
-                            break :blk .sexpr;
+                        switch (h.base) {
+                            .grabbed => unreachable,
+                            .board => |p| {
+                                const k = workspace.boardSexprIndexAtPos(p).?;
+                                if (h.local.len == 0) {
+                                    workspace.pushGrabbedSexpr(workspace.sexprs.swapRemove(k));
+                                    break :blk .sexpr;
+                                } else {
+                                    const original = workspace.sexprs.items[k].getSubValue(h.local);
+                                    workspace.pushGrabbedSexpr(.{
+                                        .hovered = try original.hovered.clone(&workspace.hover_pool),
+                                        .value = original.value,
+                                        .point = original.point,
+                                        .is_pattern = original.is_pattern,
+                                    });
+                                    break :blk .sexpr;
+                                }
+                            },
                         }
                     },
                 };
