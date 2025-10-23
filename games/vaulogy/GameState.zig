@@ -359,7 +359,6 @@ const Workspace = struct {
         target_hot_t: f32 = 0,
         tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
             original_place: BaseSexprPlace,
-            new_point: Point,
             lens_transform: Transform,
         }) = .empty,
         const handle_radius: f32 = 0.1;
@@ -618,7 +617,7 @@ const Workspace = struct {
 
                 for (lens.tmp_visible_sexprs.items) |s| {
                     var scaled = workspace.sexprAtPlace(s.original_place).*;
-                    scaled.point = s.new_point;
+                    scaled.point = s.lens_transform.actOn(scaled.point);
                     try scaled.draw(drawer, camera);
                 }
             }
@@ -672,7 +671,7 @@ const Workspace = struct {
                             // TODO: don't leak
                             res,
                             original.value,
-                            s.new_point,
+                            s.lens_transform.actOn(original.point),
                             pos,
                         )) |address| {
                             return .{
@@ -719,14 +718,12 @@ const Workspace = struct {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
                     .original_place = .{ .board = s.point.pos },
                     .lens_transform = lens.getTransform(),
-                    .new_point = lens.getTransform().actOn(s.point),
                 });
             }
-            if (workspace.grabbed_sexpr) |s| {
+            if (workspace.grabbed_sexpr) |_| {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
                     .original_place = .grabbed,
                     .lens_transform = lens.getTransform(),
-                    .new_point = lens.getTransform().actOn(s.point),
                 });
             }
 
@@ -736,7 +733,6 @@ const Workspace = struct {
                 for (other_lens.tmp_visible_sexprs.items) |s| {
                     try lens.tmp_visible_sexprs.append(frame_arena, .{
                         .original_place = s.original_place,
-                        .new_point = lens.getTransform().actOn(s.new_point),
                         .lens_transform = .combine(s.lens_transform, lens.getTransform()),
                     });
                 }
