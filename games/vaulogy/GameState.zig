@@ -408,16 +408,15 @@ const Workspace = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
         grabbing: Target = .nothing,
 
-        // TODO: rename *_index to index
         const Target = union(enum) {
             nothing,
             sexpr: SexprPlace,
             lens_handle: struct {
-                lens_index: usize,
+                index: usize,
                 part: Lens.Part,
             },
             case_handle: struct {
-                case_index: usize,
+                index: usize,
             },
         };
     };
@@ -677,15 +676,15 @@ const Workspace = struct {
                     .picked_lens_or_case => |p| {
                         switch (p.target) {
                             .lens_handle => |h| {
-                                const lens = &workspace.lenses.items[h.lens_index];
+                                const lens = &workspace.lenses.items[h.index];
                                 lens.setHandlePos(p.target.lens_handle.part, p.old_position);
                                 assert(workspace.focus.grabbing.lens_handle.part == p.target.lens_handle.part);
-                                assert(workspace.focus.grabbing.lens_handle.lens_index == p.target.lens_handle.lens_index);
+                                assert(workspace.focus.grabbing.lens_handle.index == p.target.lens_handle.index);
                             },
                             .case_handle => |h| {
-                                const case = &workspace.cases.items[h.case_index];
+                                const case = &workspace.cases.items[h.index];
                                 case.handle = p.old_position;
-                                assert(workspace.focus.grabbing.case_handle.case_index == p.target.case_handle.case_index);
+                                assert(workspace.focus.grabbing.case_handle.index == p.target.case_handle.index);
                             },
                             else => unreachable,
                         }
@@ -696,14 +695,14 @@ const Workspace = struct {
                             .lens_handle => |h| {
                                 const picked = workspace.undo_stack.pop().?.specific.picked_lens_or_case;
                                 assert(p.target.lens_handle.part == picked.target.lens_handle.part);
-                                assert(p.target.lens_handle.lens_index == picked.target.lens_handle.lens_index);
-                                const lens = &workspace.lenses.items[h.lens_index];
+                                assert(p.target.lens_handle.index == picked.target.lens_handle.index);
+                                const lens = &workspace.lenses.items[h.index];
                                 lens.setHandlePos(picked.target.lens_handle.part, picked.old_position);
                             },
                             .case_handle => |h| {
                                 const picked = workspace.undo_stack.pop().?.specific.picked_lens_or_case;
-                                assert(p.target.case_handle.case_index == picked.target.case_handle.case_index);
-                                const case = &workspace.cases.items[h.case_index];
+                                assert(p.target.case_handle.index == picked.target.case_handle.index);
+                                const case = &workspace.cases.items[h.index];
                                 case.handle = picked.old_position;
                             },
                             else => {},
@@ -764,10 +763,10 @@ const Workspace = struct {
             .nothing => blk: {
                 for (workspace.lenses.items, 0..) |*lens, k| {
                     if (mouse.cur.position.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
-                        break :blk .{ .lens_handle = .{ .lens_index = k, .part = .source } };
+                        break :blk .{ .lens_handle = .{ .index = k, .part = .source } };
                     }
                     if (mouse.cur.position.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
-                        break :blk .{ .lens_handle = .{ .lens_index = k, .part = .target } };
+                        break :blk .{ .lens_handle = .{ .index = k, .part = .target } };
                     }
                 }
 
@@ -798,7 +797,7 @@ const Workspace = struct {
 
                 for (workspace.cases.items, 0..) |*case, k| {
                     if (mouse.cur.position.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
-                        break :blk .{ .case_handle = .{ .case_index = k } };
+                        break :blk .{ .case_handle = .{ .index = k } };
                     }
                 }
 
@@ -849,14 +848,14 @@ const Workspace = struct {
         for (workspace.cases.items, 0..) |*c, k| {
             const target: f32 = switch (hovering) {
                 else => 0,
-                .case_handle => |handle| if (handle.case_index == k) 1 else 0,
+                .case_handle => |handle| if (handle.index == k) 1 else 0,
             };
             math.lerp_towards(&c.handle_hot_t, target, 0.6, platform.delta_seconds);
         }
         for (workspace.lenses.items, 0..) |*lens, k| {
             const hovered = switch (hovering) {
                 else => null,
-                .lens_handle => |handle| if (handle.lens_index == k) handle.part else null,
+                .lens_handle => |handle| if (handle.index == k) handle.part else null,
             };
             lens.update(hovered, platform.delta_seconds);
         }
@@ -865,14 +864,14 @@ const Workspace = struct {
         switch (workspace.focus.grabbing) {
             .nothing => {},
             .lens_handle => |p| {
-                const lens = &workspace.lenses.items[p.lens_index];
+                const lens = &workspace.lenses.items[p.index];
                 switch (p.part) {
                     .source => lens.source.addInPlace(mouse.deltaPos()),
                     .target => lens.target.addInPlace(mouse.deltaPos()),
                 }
             },
             .case_handle => |p| {
-                const case = &workspace.cases.items[p.case_index];
+                const case = &workspace.cases.items[p.index];
                 case.handle = mouse.cur.position;
             },
             .sexpr => {
@@ -903,13 +902,13 @@ const Workspace = struct {
                 .lens_handle => |h| .{ .specific = .{
                     .picked_lens_or_case = .{
                         .target = hovering,
-                        .old_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
+                        .old_position = workspace.lenses.items[h.index].handlePos(h.part),
                     },
                 } },
                 .case_handle => |h| .{ .specific = .{
                     .picked_lens_or_case = .{
                         .target = hovering,
-                        .old_position = workspace.cases.items[h.case_index].handle,
+                        .old_position = workspace.cases.items[h.index].handle,
                     },
                 } },
                 .sexpr => |s| .{
@@ -930,13 +929,13 @@ const Workspace = struct {
                 .lens_handle => |h| .{ .specific = .{
                     .dropped_lens_or_case = .{
                         .target = workspace.focus.grabbing,
-                        .new_position = workspace.lenses.items[h.lens_index].handlePos(h.part),
+                        .new_position = workspace.lenses.items[h.index].handlePos(h.part),
                     },
                 } },
                 .case_handle => |h| .{ .specific = .{
                     .dropped_lens_or_case = .{
                         .target = workspace.focus.grabbing,
-                        .new_position = workspace.cases.items[h.case_index].handle,
+                        .new_position = workspace.cases.items[h.index].handle,
                     },
                 } },
                 .sexpr => .{
