@@ -520,16 +520,6 @@ const Workspace = struct {
         }
     }
 
-    // TODO: remove/rework, at least the return value
-    /// assumes a lot of things, only call it in some parts of update()
-    fn sexprAt(workspace: *Workspace, res: std.mem.Allocator, pos: Vec2) !?Focus.Target {
-        for (workspace.sexprs.items) |s| {
-            if (try ViewHelper.overlapsTemplateSexpr(res, s.value, s.point, pos)) |address| {
-                return .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } };
-            }
-        } else return null;
-    }
-
     fn popGrabbedSexpr(workspace: *Workspace) VeryPhysicalSexpr {
         const r = workspace.grabbed_sexpr.?;
         workspace.grabbed_sexpr = null;
@@ -610,6 +600,62 @@ const Workspace = struct {
         }
 
         if (workspace.grabbed_sexpr) |s| try s.draw(drawer, camera);
+    }
+
+    fn findHoverableOrDropzoneAtPosition(workspace: *Workspace, pos: Vec2, res: std.mem.Allocator) !Focus.Target {
+        const grabbed_tag = std.meta.activeTag(workspace.focus.grabbing);
+
+        // lenses
+        if (grabbed_tag == .nothing) {
+            for (workspace.lenses.items, 0..) |*lens, k| {
+                if (pos.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
+                    return .{ .lens_handle = .{ .index = k, .part = .source } };
+                }
+                if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
+                    return .{ .lens_handle = .{ .index = k, .part = .target } };
+                }
+            }
+        }
+
+        // sexprs inside lenses and on the board
+        if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
+            for (workspace.lenses.items) |lens| {
+                if (pos.distTo(lens.target) < lens.target_radius) {
+                    for (lens.tmp_visible_sexprs.items) |s| {
+                        if (s.original_place == .grabbed) continue;
+                        const original = sexprAtPlace(workspace, s.original_place);
+                        if (try ViewHelper.overlapsTemplateSexpr(
+                            // TODO: don't leak
+                            res,
+                            original.value,
+                            s.new_point,
+                            pos,
+                        )) |address| {
+                            return .{ .sexpr = .{
+                                .base = s.original_place,
+                                .local = address,
+                            } };
+                        }
+                    }
+                }
+            }
+
+            for (workspace.sexprs.items) |s| {
+                if (try ViewHelper.overlapsTemplateSexpr(res, s.value, s.point, pos)) |address| {
+                    return .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } };
+                }
+            }
+        }
+
+        if (grabbed_tag == .nothing) {
+            for (workspace.cases.items, 0..) |*case, k| {
+                if (pos.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
+                    return .{ .case_handle = .{ .index = k } };
+                }
+            }
+        }
+
+        return .nothing;
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, camera: Rect, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
@@ -758,54 +804,7 @@ const Workspace = struct {
         }
 
         const mouse = platform.getMouse(camera);
-        // TODO: findThingUnderCursor(grabbed)
-        const hovered_or_dropzone_thing: Focus.Target = switch (workspace.focus.grabbing) {
-            .nothing => blk: {
-                for (workspace.lenses.items, 0..) |*lens, k| {
-                    if (mouse.cur.position.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
-                        break :blk .{ .lens_handle = .{ .index = k, .part = .source } };
-                    }
-                    if (mouse.cur.position.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
-                        break :blk .{ .lens_handle = .{ .index = k, .part = .target } };
-                    }
-                }
-
-                for (workspace.lenses.items) |lens| {
-                    if (mouse.cur.position.distTo(lens.target) < lens.target_radius) {
-                        for (lens.tmp_visible_sexprs.items) |s| {
-                            const original = sexprAtPlace(workspace, s.original_place);
-                            if (try ViewHelper.overlapsTemplateSexpr(
-                                // TODO: don't leak
-                                mem.gpa,
-                                original.value,
-                                s.new_point,
-                                mouse.cur.position,
-                            )) |address| {
-                                break :blk .{ .sexpr = .{
-                                    .base = s.original_place,
-                                    .local = address,
-                                } };
-                            }
-                        }
-                    }
-                }
-
-                // TODO: dont leak
-                if (try sexprAt(workspace, mem.gpa, mouse.cur.position)) |s| {
-                    break :blk s;
-                }
-
-                for (workspace.cases.items, 0..) |*case, k| {
-                    if (mouse.cur.position.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
-                        break :blk .{ .case_handle = .{ .index = k } };
-                    }
-                }
-
-                break :blk .nothing;
-            },
-            .sexpr => if (try sexprAt(workspace, platform.gpa, mouse.cur.position)) |target| target else .nothing,
-            .lens_handle, .case_handle => .nothing,
-        };
+        const hovered_or_dropzone_thing = try workspace.findHoverableOrDropzoneAtPosition(mouse.cur.position, mem.gpa);
 
         const hovering: Focus.Target = switch (workspace.focus.grabbing) {
             else => .nothing,
