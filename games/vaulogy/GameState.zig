@@ -360,8 +360,47 @@ const Workspace = struct {
         tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
             original_place: BaseSexprPlace,
             new_point: Point,
+            lens_transform: Transform,
         }) = .empty,
         const handle_radius: f32 = 0.1;
+
+        /// To understand this, think of the fixed point of the lenses zoom
+        pub const Transform = struct {
+            center: Vec2,
+            scale: f32,
+
+            pub const identity: Transform = .{ .center = .zero, .scale = 1 };
+
+            pub fn actOn(transform: Transform, point: Point) Point {
+                return .{
+                    .pos = transform.center.add(
+                        point.pos.sub(transform.center).scale(transform.scale),
+                    ),
+                    .scale = point.scale * transform.scale,
+                    .turns = point.turns,
+                };
+            }
+
+            pub fn combine(first: Transform, second: Transform) Transform {
+                // center is the fixed point of applying first, then second
+                return .{
+                    .center = Vec2.add(
+                        first.center.scale((1.0 - first.scale) * second.scale),
+                        second.center.scale(1.0 - second.scale),
+                    ).scale(1.0 / (1.0 - first.scale * second.scale)),
+                    .scale = first.scale * second.scale,
+                };
+            }
+        };
+
+        pub fn getTransform(lens: Lens) Transform {
+            const scale = lens.target_radius / lens.source_radius;
+            const delta = lens.target.sub(lens.source);
+            return .{
+                .center = lens.source.sub(delta.scale(1.0 / (scale - 1.0))),
+                .scale = scale,
+            };
+        }
 
         pub fn setHandlePos(self: *Lens, part: Part, pos: Vec2) void {
             switch (part) {
@@ -408,16 +447,21 @@ const Workspace = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
         grabbing: Target = .nothing,
 
-        const Target = union(enum) {
-            nothing,
-            sexpr: SexprPlace,
-            lens_handle: struct {
-                index: usize,
-                part: Lens.Part,
+        const Target = struct {
+            kind: union(enum) {
+                nothing,
+                sexpr: SexprPlace,
+                lens_handle: struct {
+                    index: usize,
+                    part: Lens.Part,
+                },
+                case_handle: struct {
+                    index: usize,
+                },
             },
-            case_handle: struct {
-                index: usize,
-            },
+            lens_transform: Lens.Transform = .identity,
+
+            pub const nothing: Target = .{ .kind = .nothing };
         };
     };
 
@@ -603,16 +647,16 @@ const Workspace = struct {
     }
 
     fn findHoverableOrDropzoneAtPosition(workspace: *Workspace, pos: Vec2, res: std.mem.Allocator) !Focus.Target {
-        const grabbed_tag = std.meta.activeTag(workspace.focus.grabbing);
+        const grabbed_tag = std.meta.activeTag(workspace.focus.grabbing.kind);
 
         // lenses
         if (grabbed_tag == .nothing) {
             for (workspace.lenses.items, 0..) |*lens, k| {
                 if (pos.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
-                    return .{ .lens_handle = .{ .index = k, .part = .source } };
+                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .source } } };
                 }
                 if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
-                    return .{ .lens_handle = .{ .index = k, .part = .target } };
+                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .target } } };
                 }
             }
         }
@@ -631,10 +675,15 @@ const Workspace = struct {
                             s.new_point,
                             pos,
                         )) |address| {
-                            return .{ .sexpr = .{
-                                .base = s.original_place,
-                                .local = address,
-                            } };
+                            return .{
+                                .kind = .{
+                                    .sexpr = .{
+                                        .base = s.original_place,
+                                        .local = address,
+                                    },
+                                },
+                                .lens_transform = s.lens_transform,
+                            };
                         }
                     }
                 }
@@ -642,7 +691,7 @@ const Workspace = struct {
 
             for (workspace.sexprs.items) |s| {
                 if (try ViewHelper.overlapsTemplateSexpr(res, s.value, s.point, pos)) |address| {
-                    return .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } };
+                    return .{ .kind = .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } } };
                 }
             }
         }
@@ -650,7 +699,7 @@ const Workspace = struct {
         if (grabbed_tag == .nothing) {
             for (workspace.cases.items, 0..) |*case, k| {
                 if (pos.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
-                    return .{ .case_handle = .{ .index = k } };
+                    return .{ .kind = .{ .case_handle = .{ .index = k } } };
                 }
             }
         }
@@ -666,28 +715,18 @@ const Workspace = struct {
             lens.tmp_visible_sexprs = .empty;
 
             // TODO: cull and only store visible parts
-            for (workspace.sexprs.items) |*s| {
+            for (workspace.sexprs.items) |s| {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
                     .original_place = .{ .board = s.point.pos },
-                    .new_point = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(s.point)),
+                    .lens_transform = lens.getTransform(),
+                    .new_point = lens.getTransform().actOn(s.point),
                 });
             }
-            if (workspace.grabbed_sexpr) |*grabbed| {
+            if (workspace.grabbed_sexpr) |s| {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
                     .original_place = .grabbed,
-                    .new_point = (Point{
-                        .pos = lens.target,
-                        .scale = lens.target_radius,
-                    }).applyToLocalPoint((Point{
-                        .pos = lens.source,
-                        .scale = lens.source_radius,
-                    }).inverseApplyGetLocal(grabbed.point)),
+                    .lens_transform = lens.getTransform(),
+                    .new_point = lens.getTransform().actOn(s.point),
                 });
             }
 
@@ -697,13 +736,8 @@ const Workspace = struct {
                 for (other_lens.tmp_visible_sexprs.items) |s| {
                     try lens.tmp_visible_sexprs.append(frame_arena, .{
                         .original_place = s.original_place,
-                        .new_point = (Point{
-                            .pos = lens.target,
-                            .scale = lens.target_radius,
-                        }).applyToLocalPoint((Point{
-                            .pos = lens.source,
-                            .scale = lens.source_radius,
-                        }).inverseApplyGetLocal(s.new_point)),
+                        .new_point = lens.getTransform().actOn(s.new_point),
+                        .lens_transform = .combine(s.lens_transform, lens.getTransform()),
                     });
                 }
             }
@@ -720,17 +754,17 @@ const Workspace = struct {
                 again: switch (command.specific) {
                     .noop => {},
                     .picked_lens_or_case => |p| {
-                        switch (p.target) {
+                        switch (p.target.kind) {
                             .lens_handle => |h| {
                                 const lens = &workspace.lenses.items[h.index];
                                 lens.setHandlePos(h.part, p.old_position);
-                                assert(workspace.focus.grabbing.lens_handle.part == h.part);
-                                assert(workspace.focus.grabbing.lens_handle.index == h.index);
+                                assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
+                                assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
                             },
                             .case_handle => |h| {
                                 const case = &workspace.cases.items[h.index];
                                 case.handle = p.old_position;
-                                assert(workspace.focus.grabbing.case_handle.index == h.index);
+                                assert(workspace.focus.grabbing.kind.case_handle.index == h.index);
                             },
                             else => unreachable,
                         }
@@ -781,7 +815,7 @@ const Workspace = struct {
                                 }
                             },
                         }
-                        workspace.focus.grabbing = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } };
+                        workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .grabbed_sexpr);
                         continue :again next_cmd.specific;
@@ -793,20 +827,20 @@ const Workspace = struct {
         const mouse = platform.getMouse(camera);
         const hovered_or_dropzone_thing = try workspace.findHoverableOrDropzoneAtPosition(mouse.cur.position, mem.gpa);
 
-        const hovering: Focus.Target = switch (workspace.focus.grabbing) {
+        const hovering: Focus.Target = switch (workspace.focus.grabbing.kind) {
             else => .nothing,
             .nothing => hovered_or_dropzone_thing,
         };
-        const dropzone: Focus.Target = switch (workspace.focus.grabbing) {
+        const dropzone: Focus.Target = switch (workspace.focus.grabbing.kind) {
             else => hovered_or_dropzone_thing,
             .nothing => .nothing,
         };
 
         // cursor
         platform.setCursor(
-            if (workspace.focus.grabbing != .nothing)
+            if (workspace.focus.grabbing.kind != .nothing)
                 .grabbing
-            else if (hovering != .nothing)
+            else if (hovering.kind != .nothing)
                 .could_grab
             else
                 .default,
@@ -814,7 +848,7 @@ const Workspace = struct {
 
         // update hover_t
         for (workspace.sexprs.items) |*s| {
-            const hovered = switch (hovering) {
+            const hovered = switch (hovering.kind) {
                 else => null,
                 .sexpr => |sexpr| switch (sexpr.base) {
                     // special case: no hover anim for base values
@@ -825,21 +859,21 @@ const Workspace = struct {
             s.hovered.update(hovered, 1.0, platform.delta_seconds);
         }
         if (workspace.grabbed_sexpr) |*grabbed| {
-            grabbed.hovered.update(switch (dropzone) {
+            grabbed.hovered.update(switch (dropzone.kind) {
                 .sexpr => &.{},
                 .nothing => null,
                 else => unreachable,
             }, 2.0, platform.delta_seconds);
         }
         for (workspace.cases.items, 0..) |*c, k| {
-            const target: f32 = switch (hovering) {
+            const target: f32 = switch (hovering.kind) {
                 else => 0,
                 .case_handle => |handle| if (handle.index == k) 1 else 0,
             };
             math.lerp_towards(&c.handle_hot_t, target, 0.6, platform.delta_seconds);
         }
         for (workspace.lenses.items, 0..) |*lens, k| {
-            const hovered = switch (hovering) {
+            const hovered = switch (hovering.kind) {
                 else => null,
                 .lens_handle => |handle| if (handle.index == k) handle.part else null,
             };
@@ -847,7 +881,7 @@ const Workspace = struct {
         }
 
         // apply dragging
-        switch (workspace.focus.grabbing) {
+        switch (workspace.focus.grabbing.kind) {
             .nothing => {},
             .lens_handle => |p| {
                 const lens = &workspace.lenses.items[p.index];
@@ -861,11 +895,14 @@ const Workspace = struct {
                 case.handle = mouse.cur.position;
             },
             .sexpr => {
-                const target: Point = switch (dropzone) {
-                    .sexpr => |s| ViewHelper.sexprTemplateChildView(
-                        workspace.sexprAtPlace(s.base).point,
-                        s.local,
-                    ),
+                const target: Point = switch (dropzone.kind) {
+                    .sexpr => |s| blk: {
+                        std.log.debug("dropzone lens transform: {any}", .{dropzone.lens_transform});
+                        break :blk ViewHelper.sexprTemplateChildView(
+                            dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base).point),
+                            s.local,
+                        );
+                    },
                     .nothing => .{
                         .pos = mouse.cur.position,
                         .scale = 1,
@@ -882,8 +919,8 @@ const Workspace = struct {
             c.update(platform.delta_seconds);
         }
 
-        const action: UndoableCommand = if (workspace.focus.grabbing == .nothing and mouse.wasPressed(.left))
-            switch (hovering) {
+        const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and mouse.wasPressed(.left))
+            switch (hovering.kind) {
                 .nothing => .noop,
                 .lens_handle => |h| .{ .specific = .{
                     .picked_lens_or_case = .{
@@ -903,8 +940,8 @@ const Workspace = struct {
                     },
                 },
             }
-        else if (workspace.focus.grabbing != .nothing and !mouse.cur.isDown(.left))
-            switch (workspace.focus.grabbing) {
+        else if (workspace.focus.grabbing.kind != .nothing and !mouse.cur.isDown(.left))
+            switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
                 .lens_handle => |h| .{ .specific = .{
                     .dropped_lens_or_case = .{
@@ -920,7 +957,7 @@ const Workspace = struct {
                 } },
                 .sexpr => .{
                     .specific = .{
-                        .dropped_sexpr = switch (dropzone) {
+                        .dropped_sexpr = switch (dropzone.kind) {
                             .nothing => .{
                                 .new_place = .{ .base = .{
                                     .board = workspace.grabbed_sexpr.?.point.pos,
@@ -945,7 +982,7 @@ const Workspace = struct {
             .picked_lens_or_case => |h| workspace.focus.grabbing = h.target,
             .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
             .dropped_sexpr => {
-                switch (dropzone) {
+                switch (dropzone.kind) {
                     else => unreachable,
                     .nothing => try workspace.sexprs.append(workspace.popGrabbedSexpr()),
                     .sexpr => |s| {
@@ -962,7 +999,7 @@ const Workspace = struct {
                 workspace.focus.grabbing = .nothing;
             },
             .grabbed_sexpr => {
-                switch (hovering) {
+                switch (hovering.kind) {
                     else => unreachable,
                     .sexpr => |h| {
                         switch (h.base) {
@@ -980,11 +1017,12 @@ const Workspace = struct {
                                         .is_pattern = original.is_pattern,
                                     });
                                 }
+                                workspace.grabbed_sexpr.?.point = hovering.lens_transform.actOn(workspace.grabbed_sexpr.?.point);
                             },
                         }
                     },
                 }
-                workspace.focus.grabbing = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } };
+                workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
             },
         }
         if (action.specific != .noop) {
