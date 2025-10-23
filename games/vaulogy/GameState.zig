@@ -723,37 +723,24 @@ const Workspace = struct {
                         switch (p.target) {
                             .lens_handle => |h| {
                                 const lens = &workspace.lenses.items[h.index];
-                                lens.setHandlePos(p.target.lens_handle.part, p.old_position);
-                                assert(workspace.focus.grabbing.lens_handle.part == p.target.lens_handle.part);
-                                assert(workspace.focus.grabbing.lens_handle.index == p.target.lens_handle.index);
+                                lens.setHandlePos(h.part, p.old_position);
+                                assert(workspace.focus.grabbing.lens_handle.part == h.part);
+                                assert(workspace.focus.grabbing.lens_handle.index == h.index);
                             },
                             .case_handle => |h| {
                                 const case = &workspace.cases.items[h.index];
                                 case.handle = p.old_position;
-                                assert(workspace.focus.grabbing.case_handle.index == p.target.case_handle.index);
+                                assert(workspace.focus.grabbing.case_handle.index == h.index);
                             },
                             else => unreachable,
                         }
                         workspace.focus.grabbing = .nothing;
                     },
                     .dropped_lens_or_case => |p| {
-                        switch (p.target) {
-                            .lens_handle => |h| {
-                                const picked = workspace.undo_stack.pop().?.specific.picked_lens_or_case;
-                                assert(p.target.lens_handle.part == picked.target.lens_handle.part);
-                                assert(p.target.lens_handle.index == picked.target.lens_handle.index);
-                                const lens = &workspace.lenses.items[h.index];
-                                lens.setHandlePos(picked.target.lens_handle.part, picked.old_position);
-                            },
-                            .case_handle => |h| {
-                                const picked = workspace.undo_stack.pop().?.specific.picked_lens_or_case;
-                                assert(p.target.case_handle.index == picked.target.case_handle.index);
-                                const case = &workspace.cases.items[h.index];
-                                case.handle = picked.old_position;
-                            },
-                            else => {},
-                        }
-                        workspace.focus.grabbing = .nothing;
+                        workspace.focus.grabbing = p.target;
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        assert(std.meta.activeTag(next_cmd.specific) == .picked_lens_or_case);
+                        continue :again next_cmd.specific;
                     },
                     .grabbed_sexpr => |g| {
                         switch (g.origin.base) {
@@ -912,13 +899,7 @@ const Workspace = struct {
                 } },
                 .sexpr => |s| .{
                     .specific = .{
-                        .grabbed_sexpr = .{
-                            .origin = s,
-                            //  if (s.local.len == 0)
-                            //     .{ .board = workspace.sexprs.items[s.sexpr_index].point.pos }
-                            // else
-                            //     .{ .sexpr = .{ .sexpr_index = s.sexpr_index, .address = s.address } },
-                        },
+                        .grabbed_sexpr = .{ .origin = s },
                     },
                 },
             }
