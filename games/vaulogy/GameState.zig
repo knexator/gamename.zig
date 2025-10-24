@@ -257,6 +257,14 @@ const VeryPhysicalGarland = struct {
         // TODO: cable
         for (garland.cases.items) |c| try c.draw(drawer, camera);
     }
+
+    pub fn update(garland: *VeryPhysicalGarland, delta_seconds: f32) void {
+        for (garland.cases.items, 0..) |*c, k| {
+            const target = garland.handle.addY(1 + 2.5 * tof32(k));
+            Vec2.lerpTowards(&c.handle, target, 0.6, delta_seconds);
+            c.update(delta_seconds);
+        }
+    }
 };
 
 const VeryPhysicalCase = struct {
@@ -545,6 +553,7 @@ const Workspace = struct {
                 case_handle: struct {
                     index: usize,
                 },
+                garland_handle: usize,
             },
             lens_transform: Lens.Transform = .identity,
 
@@ -577,6 +586,7 @@ const Workspace = struct {
                 origin: SexprPlace,
             },
             // TODO: unify?
+            // TODO: rename
             picked_lens_or_case: struct {
                 /// always is .lens_handle or .case_handle
                 target: Focus.Target,
@@ -707,6 +717,7 @@ const Workspace = struct {
         const items = switch (T) {
             VeryPhysicalSexpr => workspace.sexprs.items,
             VeryPhysicalCase => workspace.cases.items,
+            VeryPhysicalGarland => workspace.garlands.items,
             else => comptime unreachable,
         };
 
@@ -729,6 +740,7 @@ const Workspace = struct {
         const items = switch (T) {
             VeryPhysicalSexpr => workspace.sexprs.items,
             VeryPhysicalCase => workspace.cases.items,
+            VeryPhysicalGarland => workspace.garlands.items,
             else => comptime unreachable,
         };
         return &items[workspace.boardThingIndexAtPos(T, pos).?];
@@ -739,6 +751,7 @@ const Workspace = struct {
         return switch (T) {
             VeryPhysicalSexpr => workspace.sexprs.swapRemove(k),
             VeryPhysicalCase => workspace.cases.swapRemove(k),
+            VeryPhysicalGarland => workspace.garlands.swapRemove(k),
             else => comptime unreachable,
         };
     }
@@ -860,10 +873,20 @@ const Workspace = struct {
             }
         }
 
+        // cases
         if (grabbed_tag == .nothing) {
             for (workspace.cases.items, 0..) |*case, k| {
                 if (pos.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
                     return .{ .kind = .{ .case_handle = .{ .index = k } } };
+                }
+            }
+        }
+
+        // garlands
+        if (grabbed_tag == .nothing) {
+            for (workspace.garlands.items, 0..) |*garland, k| {
+                if (pos.distTo(garland.handle) < VeryPhysicalGarland.handle_radius) {
+                    return .{ .kind = .{ .garland_handle = k } };
                 }
             }
         }
@@ -1046,7 +1069,7 @@ const Workspace = struct {
         if (workspace.grabbed_sexpr) |*grabbed| {
             grabbed.is_pattern = switch (dropzone.kind) {
                 .nothing => grabbed.is_pattern,
-                .lens_handle, .case_handle => unreachable,
+                .lens_handle, .case_handle, .garland_handle => unreachable,
                 .sexpr => |s| workspace.sexprAtPlace(s.base).is_pattern,
             };
             grabbed.hovered.update(switch (dropzone.kind) {
@@ -1055,6 +1078,14 @@ const Workspace = struct {
                 else => unreachable,
             }, 2.0, platform.delta_seconds);
             grabbed.updateIsPattern(platform.delta_seconds);
+        }
+        // TODO: reduce duplication?
+        for (workspace.garlands.items, 0..) |*g, k| {
+            const target: f32 = switch (hovering.kind) {
+                else => 0,
+                .garland_handle => |handle| if (handle == k) 1 else 0,
+            };
+            math.lerp_towards(&g.handle_hot_t, target, 0.6, platform.delta_seconds);
         }
         for (workspace.cases.items, 0..) |*c, k| {
             const target: f32 = switch (hovering.kind) {
@@ -1085,6 +1116,10 @@ const Workspace = struct {
                 const case = &workspace.cases.items[p.index];
                 case.handle = mouse.cur.position;
             },
+            .garland_handle => |k| {
+                const garland = &workspace.garlands.items[k];
+                garland.handle = mouse.cur.position;
+            },
             .sexpr => {
                 assert(workspace.grabbed_sexpr != null);
                 const target: Point = switch (dropzone.kind) {
@@ -1105,9 +1140,13 @@ const Workspace = struct {
             },
         }
 
-        // update cases spring positions
+        // update cases & garlands spring positions
         for (workspace.cases.items) |*c| {
             c.update(platform.delta_seconds);
+        }
+
+        for (workspace.garlands.items) |*g| {
+            g.update(platform.delta_seconds);
         }
 
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and mouse.wasPressed(.left))
@@ -1123,6 +1162,12 @@ const Workspace = struct {
                     .picked_lens_or_case = .{
                         .target = hovering,
                         .old_position = workspace.cases.items[h.index].handle,
+                    },
+                } },
+                .garland_handle => |k| .{ .specific = .{
+                    .picked_lens_or_case = .{
+                        .target = hovering,
+                        .old_position = workspace.garlands.items[k].handle,
                     },
                 } },
                 .sexpr => |s| .{
@@ -1144,6 +1189,12 @@ const Workspace = struct {
                     .dropped_lens_or_case = .{
                         .target = workspace.focus.grabbing,
                         .new_position = workspace.cases.items[h.index].handle,
+                    },
+                } },
+                .garland_handle => |k| .{ .specific = .{
+                    .dropped_lens_or_case = .{
+                        .target = workspace.focus.grabbing,
+                        .new_position = workspace.garlands.items[k].getBoardPos(),
                     },
                 } },
                 .sexpr => .{
