@@ -50,7 +50,7 @@ pub const ViewHelper = struct {
             overlapsTemplateSexpr(alloc, sexpr, sexpr_pos, needle_pos);
     }
 
-    pub fn overlapsTemplateSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
+    fn overlapsTemplateSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
         var result = std.ArrayList(core.SexprAddressItem).init(alloc);
         defer result.deinit();
         // TODO (low priority): probably can be made more efficient by using less changes of coordinates
@@ -93,7 +93,7 @@ pub const ViewHelper = struct {
         }
     }
 
-    pub fn overlapsPatternSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
+    fn overlapsPatternSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
         var result = std.ArrayList(core.SexprAddressItem).init(alloc);
         defer result.deinit();
         // TODO (low priority): probably can be made more efficient by using less changes of coordinates

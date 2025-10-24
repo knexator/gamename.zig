@@ -314,6 +314,7 @@ const VeryPhysicalSexpr = struct {
     point: Point,
     value: *const Sexpr,
     is_pattern: bool,
+    is_pattern_t: f32,
 
     pub fn fromSexpr(pool: *HoveredSexpr.Pool, value: *const Sexpr, point: Point, is_pattern: bool) !VeryPhysicalSexpr {
         return .{
@@ -321,22 +322,25 @@ const VeryPhysicalSexpr = struct {
             .point = point,
             .value = value,
             .is_pattern = is_pattern,
+            .is_pattern_t = if (is_pattern) 1.0 else 0.0,
         };
     }
 
-    fn _draw(drawer: *Drawer, camera: Rect, value: *const Sexpr, hovered: *HoveredSexpr, point: Point, is_pattern: bool) !void {
-        const actual_point = point.applyToLocalPoint(.lerp(.{}, if (is_pattern) .{
-            .turns = 0.02,
-            .pos = .new(-0.5, 0),
-        } else .{
-            .turns = -0.02,
-            .pos = .new(0.5, 0),
-        }, hovered.value / 2.0));
+    fn updateIsPattern(sexpr: *VeryPhysicalSexpr, delta_seconds: f32) void {
+        math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
+    }
+
+    fn _draw(drawer: *Drawer, camera: Rect, value: *const Sexpr, hovered: *HoveredSexpr, point: Point, is_pattern: bool, is_pattern_t: f32) !void {
+        const actual_point = point.applyToLocalPoint(.lerp(.{}, .lerp(
+            .{ .turns = -0.02, .pos = .new(0.5, 0) },
+            .{ .turns = 0.02, .pos = .new(-0.5, 0) },
+            is_pattern_t,
+        ), hovered.value / 2.0));
         switch (value.*) {
             .atom_lit, .atom_var => try drawer.drawSexpr(camera, .{
                 .pos = actual_point,
                 .value = value,
-                .is_pattern = if (is_pattern) 1 else 0,
+                .is_pattern = is_pattern_t,
             }),
             .pair => |pair| {
                 try if (is_pattern)
@@ -345,14 +349,14 @@ const VeryPhysicalSexpr = struct {
                     drawer.drawTemplatePairHolder(camera, actual_point);
                 // try drawTemplateWildcardLinesNonRecursive(...);
                 const offset = if (is_pattern) ViewHelper.OFFSET_PATTERN else ViewHelper.OFFSET_TEMPLATE;
-                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern);
-                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern);
+                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t);
+                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t);
             },
         }
     }
 
     pub fn draw(sexpr: VeryPhysicalSexpr, drawer: *Drawer, camera: Rect) !void {
-        return _draw(drawer, camera, sexpr.value, sexpr.hovered, sexpr.point, sexpr.is_pattern);
+        return _draw(drawer, camera, sexpr.value, sexpr.hovered, sexpr.point, sexpr.is_pattern, sexpr.is_pattern_t);
     }
 
     pub fn updateSubValue(
@@ -380,6 +384,7 @@ const VeryPhysicalSexpr = struct {
             ),
             .value = self.value.getAt(address).?,
             .is_pattern = self.is_pattern,
+            .is_pattern_t = self.is_pattern_t,
         };
     }
 };
@@ -728,9 +733,10 @@ const Workspace = struct {
                     for (lens.tmp_visible_sexprs.items) |s| {
                         if (s.original_place == .grabbed) continue;
                         const original = sexprAtPlace(workspace, s.original_place);
-                        if (try ViewHelper.overlapsTemplateSexpr(
+                        if (try ViewHelper.overlapsSexpr(
                             // TODO: don't leak
                             res,
+                            original.is_pattern,
                             original.value,
                             s.lens_transform.actOn(original.point),
                             pos,
@@ -750,7 +756,7 @@ const Workspace = struct {
             }
 
             for (workspace.sexprs.items) |s| {
-                if (try ViewHelper.overlapsTemplateSexpr(res, s.value, s.point, pos)) |address| {
+                if (try ViewHelper.overlapsSexpr(res, s.is_pattern, s.value, s.point, pos)) |address| {
                     return .{ .kind = .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } } };
                 }
             }
@@ -927,6 +933,7 @@ const Workspace = struct {
                 },
             };
             s.hovered.update(hovered, 1.0, platform.delta_seconds);
+            s.updateIsPattern(platform.delta_seconds);
         }
         for (workspace.cases.items) |*c| {
             assert(@FieldType(VeryPhysicalCase, "next") == void);
@@ -940,23 +947,21 @@ const Workspace = struct {
                     },
                 };
                 c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
+                c.sexprAt(part).updateIsPattern(platform.delta_seconds);
             }
         }
         if (workspace.grabbed_sexpr) |*grabbed| {
+            grabbed.is_pattern = switch (dropzone.kind) {
+                .nothing => grabbed.is_pattern,
+                .lens_handle, .case_handle => unreachable,
+                .sexpr => |s| workspace.sexprAtPlace(s.base).is_pattern,
+            };
             grabbed.hovered.update(switch (dropzone.kind) {
                 .sexpr => &.{},
                 .nothing => null,
                 else => unreachable,
             }, 2.0, platform.delta_seconds);
-            grabbed.is_pattern = switch (dropzone.kind) {
-                .nothing => grabbed.is_pattern,
-                .lens_handle, .case_handle => unreachable,
-                .sexpr => |s| switch (s.base) {
-                    .grabbed => unreachable,
-                    .board => false,
-                    .case => |c| c.part == .pattern,
-                },
-            };
+            grabbed.updateIsPattern(platform.delta_seconds);
         }
         for (workspace.cases.items, 0..) |*c, k| {
             const target: f32 = switch (hovering.kind) {
@@ -1110,6 +1115,7 @@ const Workspace = struct {
                                 .value = original.value,
                                 .point = original.point,
                                 .is_pattern = original.is_pattern,
+                                .is_pattern_t = original.is_pattern_t,
                             };
                         };
                         grabbed.point = hovering.lens_transform.actOn(grabbed.point);
