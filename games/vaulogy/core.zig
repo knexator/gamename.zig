@@ -262,10 +262,17 @@ pub fn equalSexprAddress(a: SexprAddress, b: SexprAddress) bool {
 }
 
 pub const CaseAddress = []const usize;
+pub const CasePart = enum {
+    pattern,
+    template,
+    fnk_name,
+
+    pub const all: [3]CasePart = .{ .pattern, .template, .fnk_name };
+};
 pub const FullAddress = struct {
     case_address: CaseAddress,
     sexpr_address: SexprAddress,
-    which: enum { pattern, template, fnk_name },
+    which: CasePart,
 
     pub fn equals(this: FullAddress, other: FullAddress) bool {
         return this.which == other.which and

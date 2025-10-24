@@ -478,7 +478,7 @@ fn drawTemplateVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: At
     try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.template_variable, .black, visuals.color);
 }
 
-fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point) !void {
+pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point) !void {
     try drawer.drawShapeV3(camera, world_point, AtomVisuals.Geometry.pattern_pair_holder, .black, .gray(3.0 / 8.0));
 }
 

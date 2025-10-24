@@ -43,6 +43,13 @@ pub const ViewHelper = struct {
         };
     }
 
+    pub fn overlapsSexpr(alloc: std.mem.Allocator, is_pattern: bool, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
+        return if (is_pattern)
+            overlapsPatternSexpr(alloc, sexpr, sexpr_pos, needle_pos)
+        else
+            overlapsTemplateSexpr(alloc, sexpr, sexpr_pos, needle_pos);
+    }
+
     pub fn overlapsTemplateSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
         var result = std.ArrayList(core.SexprAddressItem).init(alloc);
         defer result.deinit();
@@ -155,6 +162,13 @@ pub const ViewHelper = struct {
             });
         }
         return result;
+    }
+
+    pub fn sexprChildView(is_pattern: bool, parent: Point, address: core.SexprAddress) Point {
+        return if (is_pattern)
+            sexprPatternChildView(parent, address)
+        else
+            sexprTemplateChildView(parent, address);
     }
 
     const Offsets = struct {
