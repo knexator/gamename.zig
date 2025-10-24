@@ -585,6 +585,15 @@ const Workspace = struct {
         var random: std.Random.DefaultPrng = .init(1);
         if (true) {
             try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
+
+            for ([_][]const u8{
+                "Hermes",    "Mercury",
+                "Ares",      "Mars",
+                "Zeus",      "Jupiter",
+                "Aphrodite", "Venus",
+            }, 0..) |n, k| {
+                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) + tof32(k % 2), -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
+            }
         } else {
             try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
         }
