@@ -239,6 +239,26 @@ const HoveredSexpr = struct {
     }
 };
 
+const VeryPhysicalGarland = struct {
+    // TODO: doubly linked list?
+    cases: std.ArrayListUnmanaged(VeryPhysicalCase),
+
+    handle: Vec2,
+    handle_hot_t: f32 = 0,
+    pub const handle_radius: f32 = 0.2;
+
+    pub fn getBoardPos(garland: VeryPhysicalGarland) Vec2 {
+        return garland.handle;
+    }
+
+    pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) !void {
+        // TODO: Handle.draw
+        drawer.canvas.strokeCircle(128, camera, garland.handle, handle_radius * (1 + garland.handle_hot_t * 0.2), 0.05, .black);
+        // TODO: cable
+        for (garland.cases.items) |c| try c.draw(drawer, camera);
+    }
+};
+
 const VeryPhysicalCase = struct {
     pattern: VeryPhysicalSexpr,
     fnk_name: VeryPhysicalSexpr,
@@ -271,6 +291,7 @@ const VeryPhysicalCase = struct {
     }
 
     pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
+        // TODO: Handle.draw
         drawer.canvas.strokeCircle(128, camera, case.handle, handle_radius * (1 + case.handle_hot_t * 0.2), 0.05, .black);
         try case.pattern.draw(drawer, camera);
         try case.template.draw(drawer, camera);
@@ -500,6 +521,7 @@ const Workspace = struct {
     lenses: std.ArrayList(Lens),
     sexprs: std.ArrayList(VeryPhysicalSexpr),
     cases: std.ArrayList(VeryPhysicalCase),
+    garlands: std.ArrayList(VeryPhysicalGarland),
     grabbed_sexpr: ?VeryPhysicalSexpr = null,
 
     hover_pool: HoveredSexpr.Pool,
@@ -612,6 +634,24 @@ const Workspace = struct {
             .template = Sexpr.builtin.false,
             .fnk_name = Sexpr.builtin.identity,
         }, .{ .pos = .new(0, 3) }));
+
+        dst.garlands = .init(mem.gpa);
+        try dst.garlands.append(.{
+            .cases = try .initCapacity(mem.gpa, 4),
+            .handle = .new(0, 5),
+        });
+        for ([_][2][]const u8{
+            .{ "Hermes", "Mercury" },
+            .{ "Ares", "Mars" },
+            .{ "Zeus", "Jupiter" },
+            .{ "Aphrodite", "Venus" },
+        }, 0..) |p, k| {
+            dst.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
+                .pattern = try mem.storeSexpr(.doLit(p[0])),
+                .template = try mem.storeSexpr(.doLit(p[1])),
+                .fnk_name = Sexpr.builtin.identity,
+            }, .{ .pos = dst.garlands.items[0].handle.addY(1 + 2.5 * tof32(k)) }));
+        }
     }
 
     pub fn deinit(workspace: *Workspace) void {
@@ -710,6 +750,10 @@ const Workspace = struct {
 
         for (workspace.cases.items) |c| {
             try c.draw(drawer, camera);
+        }
+
+        for (workspace.garlands.items) |g| {
+            try g.draw(drawer, camera);
         }
 
         for (workspace.lenses.items) |lens| {
