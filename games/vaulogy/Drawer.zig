@@ -1,3 +1,5 @@
+// FUTURE: would be nice if drawSexpr(is_pattern_t) gradually changed the geometry shape
+
 pub const Drawer = @This();
 
 canvas: *Canvas,
@@ -381,7 +383,7 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
     }
 }
 
-fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
+pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
     switch (sexpr.*) {
         .atom_lit => |lit| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
@@ -400,7 +402,7 @@ fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: 
     }
 }
 
-fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
+pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
     switch (sexpr.*) {
         .atom_lit => |lit| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);

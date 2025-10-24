@@ -337,11 +337,10 @@ const VeryPhysicalSexpr = struct {
             is_pattern_t,
         ), hovered.value / 2.0));
         switch (value.*) {
-            .atom_lit, .atom_var => try drawer.drawSexpr(camera, .{
-                .pos = actual_point,
-                .value = value,
-                .is_pattern = is_pattern_t,
-            }),
+            .atom_lit, .atom_var => try if (is_pattern)
+                drawer.drawPatternSexpr(camera, value, actual_point)
+            else
+                drawer.drawTemplateSexpr(camera, value, actual_point),
             .pair => |pair| {
                 try if (is_pattern)
                     drawer.drawPatternPairHolder(camera, actual_point)
@@ -356,7 +355,26 @@ const VeryPhysicalSexpr = struct {
     }
 
     pub fn draw(sexpr: VeryPhysicalSexpr, drawer: *Drawer, camera: Rect) !void {
-        return _draw(drawer, camera, sexpr.value, sexpr.hovered, sexpr.point, sexpr.is_pattern, sexpr.is_pattern_t);
+        assert(math.in01(sexpr.is_pattern_t));
+        // TODO: use the actual bool?
+        const base_point = if (!sexpr.is_pattern)
+            sexpr.point.applyToLocalPoint(.{ .turns = math.remap(
+                sexpr.is_pattern_t,
+                0.5,
+                0,
+                -0.25,
+                0,
+            ) })
+        else
+            sexpr.point.applyToLocalPoint(.{ .turns = math.remap(
+                sexpr.is_pattern_t,
+                0.5,
+                1,
+                0.25,
+                0,
+            ) });
+
+        return _draw(drawer, camera, sexpr.value, sexpr.hovered, base_point, sexpr.is_pattern, sexpr.is_pattern_t);
     }
 
     pub fn updateSubValue(
