@@ -248,6 +248,10 @@ const VeryPhysicalCase = struct {
     handle_hot_t: f32 = 0,
     pub const handle_radius: f32 = 0.2;
 
+    pub fn getBoardPos(case: VeryPhysicalCase) Vec2 {
+        return case.handle;
+    }
+
     pub fn fromValues(
         pool: *HoveredSexpr.Pool,
         values: struct {
@@ -315,6 +319,10 @@ const VeryPhysicalSexpr = struct {
     value: *const Sexpr,
     is_pattern: bool,
     is_pattern_t: f32,
+
+    pub fn getBoardPos(sexpr: VeryPhysicalSexpr) Vec2 {
+        return sexpr.point.pos;
+    }
 
     pub fn fromSexpr(pool: *HoveredSexpr.Pool, value: *const Sexpr, point: Point, is_pattern: bool) !VeryPhysicalSexpr {
         return .{
@@ -649,45 +657,50 @@ const Workspace = struct {
 
     fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace) *VeryPhysicalSexpr {
         return switch (place) {
-            .board => |p| &workspace.sexprs.items[workspace.boardSexprIndexAtPos(p).?],
+            .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
             .grabbed => &workspace.grabbed_sexpr.?,
-            .case => |case| workspace.cases.items[
-                workspace.boardCaseIndexAtPos(case.parent_handle_pos).?
-            ].childCase(case.local).sexprAt(case.part),
+            .case => |case| workspace.getAt(VeryPhysicalCase, case.parent_handle_pos).childCase(case.local).sexprAt(case.part),
         };
     }
 
-    fn boardSexprIndexAtPos(workspace: *Workspace, pos: Vec2) ?usize {
+    fn boardThingIndexAtPos(workspace: *Workspace, T: type, pos: Vec2) ?usize {
+        const items = switch (T) {
+            VeryPhysicalSexpr => workspace.sexprs.items,
+            VeryPhysicalCase => workspace.cases.items,
+            else => comptime unreachable,
+        };
+
         if (@import("builtin").mode == .Debug) {
             var count: usize = 0;
-            for (workspace.sexprs.items) |s| {
-                if (s.point.pos.equals(pos)) {
+            for (items) |s| {
+                if (s.getBoardPos().equals(pos)) {
                     count += 1;
                 }
             }
             assert(count <= 1);
         }
 
-        for (workspace.sexprs.items, 0..) |s, k| {
-            if (s.point.pos.equals(pos)) return k;
+        for (items, 0..) |s, k| {
+            if (s.getBoardPos().equals(pos)) return k;
         } else return null;
     }
 
-    // TODO: reduce duplication
-    fn boardCaseIndexAtPos(workspace: *Workspace, pos: Vec2) ?usize {
-        if (@import("builtin").mode == .Debug) {
-            var count: usize = 0;
-            for (workspace.cases.items) |s| {
-                if (s.handle.equals(pos)) {
-                    count += 1;
-                }
-            }
-            assert(count <= 1);
-        }
+    fn getAt(workspace: *Workspace, comptime T: type, pos: Vec2) *T {
+        const items = switch (T) {
+            VeryPhysicalSexpr => workspace.sexprs.items,
+            VeryPhysicalCase => workspace.cases.items,
+            else => comptime unreachable,
+        };
+        return &items[workspace.boardThingIndexAtPos(T, pos).?];
+    }
 
-        for (workspace.cases.items, 0..) |s, k| {
-            if (s.handle.equals(pos)) return k;
-        } else return null;
+    fn popAt(workspace: *Workspace, comptime T: type, pos: Vec2) T {
+        const k = workspace.boardThingIndexAtPos(T, pos).?;
+        return switch (T) {
+            VeryPhysicalSexpr => workspace.sexprs.swapRemove(k),
+            VeryPhysicalCase => workspace.cases.swapRemove(k),
+            else => comptime unreachable,
+        };
     }
 
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
@@ -921,7 +934,7 @@ const Workspace = struct {
                             assert(p.new_place.local.len == 0);
                             const grabbed = switch (p.new_place.base) {
                                 else => unreachable,
-                                .board => |position| workspace.sexprs.swapRemove(workspace.boardSexprIndexAtPos(position).?),
+                                .board => |position| workspace.popAt(VeryPhysicalSexpr, position),
                             };
                             workspace.pushGrabbedSexpr(grabbed);
                         }
@@ -1139,7 +1152,7 @@ const Workspace = struct {
                         const destroyed_grabbed: ?VeryPhysicalSexpr = switch (h.base) {
                             .grabbed => unreachable,
                             .board => |p| if (h.local.len == 0)
-                                workspace.sexprs.swapRemove(workspace.boardSexprIndexAtPos(p).?)
+                                workspace.popAt(VeryPhysicalSexpr, p)
                             else
                                 null,
                             .case => null,
