@@ -819,6 +819,15 @@ const Workspace = struct {
                     .lens_transform = lens.getTransform(),
                 });
             }
+            for (workspace.cases.items) |c| {
+                assert(@FieldType(VeryPhysicalCase, "next") == void);
+                inline for (core.CasePart.all) |part| {
+                    try lens.tmp_visible_sexprs.append(frame_arena, .{
+                        .original_place = .{ .case = .{ .parent_handle_pos = c.handle, .local = &.{}, .part = part } },
+                        .lens_transform = lens.getTransform(),
+                    });
+                }
+            }
             if (workspace.grabbed_sexpr) |_| {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
                     .original_place = .grabbed,
