@@ -70,7 +70,7 @@ test "fuzz example" {
             defer mem.deinit();
             var workspace: Workspace = undefined;
             try workspace.init(&mem);
-            defer workspace.deinit();
+            defer workspace.deinit(std.testing.allocator);
             var frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
             defer frame_arena.deinit();
 
@@ -97,7 +97,7 @@ test "No leaks on Workspace and Drawer" {
     defer mem.deinit();
     var workspace: Workspace = undefined;
     try workspace.init(&mem);
-    defer workspace.deinit();
+    defer workspace.deinit(std.testing.allocator);
     var usual: kommon.Usual = undefined;
     usual.init(
         std.testing.allocator,
@@ -721,16 +721,16 @@ const Workspace = struct {
         }
     }
 
-    pub fn deinit(workspace: *Workspace) void {
+    pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
         workspace.lenses.deinit();
         workspace.sexprs.deinit();
         workspace.cases.deinit();
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
-        // TODO
-        // for (workspace.garlands.items) |*g| {
-        //     g.handles_for_new_cases.deinit()
-        // }
+        for (workspace.garlands.items) |*g| {
+            g.handles_for_new_cases.deinit(gpa);
+            g.cases.deinit(gpa);
+        }
         workspace.garlands.deinit();
     }
 
