@@ -263,7 +263,7 @@ const VeryPhysicalGarland = struct {
         drawer.canvas.strokeCircle(128, camera, garland.handle, handle_radius * (1 + garland.handle_hot_t * 0.2), 0.05, .black);
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(k);
-            drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.2), 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.6), 0.05, .black);
         }
         // TODO: cable
         for (garland.cases.items) |c| try c.draw(drawer, camera);
@@ -302,14 +302,14 @@ const VeryPhysicalGarland = struct {
         }
     }
 
+    pub fn constChildCase(parent: *const VeryPhysicalGarland, local: core.CaseAddress) *const VeryPhysicalCase {
+        assert(local.len >= 1);
+        return parent.cases.items[local[0]].childCase(local[1..]);
+    }
+
     pub fn childCase(parent: *VeryPhysicalGarland, local: core.CaseAddress) *VeryPhysicalCase {
-        assert(local.len == 1);
-        return &parent.cases.items[local[0]];
-        // var cur = parent;
-        // for (local) |k| {
-        //     cur = cur.next.?.[k];
-        // }
-        // return cur;
+        assert(local.len >= 1);
+        return parent.cases.items[local[0]].childCase(local[1..]);
     }
 
     pub fn popCase(parent: *VeryPhysicalGarland, index: usize) VeryPhysicalCase {
@@ -321,14 +321,48 @@ const VeryPhysicalGarland = struct {
         try parent.handles_for_new_cases_rest.insert(mem, index, .{ .pos = parent.handleForNewCases(index).pos });
         try parent.cases.insert(mem, index, case);
     }
+
+    pub fn addressIterator(garland: *const VeryPhysicalGarland, mem: std.mem.Allocator) AddressIterator {
+        return .{ .mem = mem, .garland = garland };
+    }
+
+    // TODO: memory usage could be improved
+    pub const AddressIterator = struct {
+        mem: std.mem.Allocator,
+        child: ?*AddressIterator = null,
+        k: usize = 0,
+        garland: *const VeryPhysicalGarland,
+
+        pub fn next(it: *AddressIterator) !?core.CaseAddress {
+            if (it.child == null) {
+                if (it.k >= it.garland.cases.items.len) return null;
+                it.child = try it.mem.create(AddressIterator);
+                it.child.?.* = .{ .garland = &it.garland.cases.items[it.k].next, .mem = it.mem };
+                return try it.mem.dupe(usize, &.{it.k});
+            } else {
+                const maybe_rest = try it.child.?.next();
+                if (maybe_rest) |rest| {
+                    const result = try it.mem.alloc(usize, rest.len + 1);
+                    @memcpy(result[1..], rest);
+                    it.mem.free(rest);
+                    result[0] = it.k;
+                    return result;
+                } else {
+                    it.mem.destroy(it.child.?);
+                    it.child = null;
+                    it.k += 1;
+                    return it.next();
+                }
+            }
+        }
+    };
 };
 
 const VeryPhysicalCase = struct {
     pattern: VeryPhysicalSexpr,
     fnk_name: VeryPhysicalSexpr,
     template: VeryPhysicalSexpr,
-    next: void = {},
-    // next: VeryPhysicalGarland,
+    next: VeryPhysicalGarland,
     handle: Vec2,
     handle_hot_t: f32 = 0,
     pub const handle_radius: f32 = 0.2;
@@ -352,10 +386,11 @@ const VeryPhysicalCase = struct {
             .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
             .fnk_name = try .fromSexpr(pool, values.fnk_name, center
                 .applyToLocalPoint(.{ .pos = .new(3, 0) }).applyToLocalPoint(.{ .scale = 0.5 }), false),
-            // .next = .{
-            //     .handle = center.applyToLocalPosition(.new(3, 0)),
-            //     .cases = .empty,
-            // },
+            .next = .{
+                .handle = center.applyToLocalPosition(.new(3, 0)),
+                .cases = .empty,
+                .handles_for_new_cases_rest = .empty,
+            },
         };
     }
 
@@ -372,20 +407,26 @@ const VeryPhysicalCase = struct {
         case.pattern.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xneg }), 0.6, delta_seconds);
         case.template.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xpos }), 0.6, delta_seconds);
         // case.fnk_name.point.lerp_towards(...);
+        Vec2.lerpTowards(&case.next.handle, center.applyToLocalPosition(.new(3, 0)), 0.6, delta_seconds);
+        case.next.update(delta_seconds);
     }
 
-    // TODO: pointers?
+    pub fn constChildCase(parent: *const VeryPhysicalCase, local: core.CaseAddress) *const VeryPhysicalCase {
+        var cur = parent;
+        for (local) |k| {
+            cur = &cur.next.cases.items[k];
+        }
+        return cur;
+    }
+
     pub fn childCase(parent: *VeryPhysicalCase, local: core.CaseAddress) *VeryPhysicalCase {
-        assert(local.len == 0);
-        return parent;
-        // var cur = parent;
-        // for (local) |k| {
-        //     cur = cur.next.?.[k];
-        // }
-        // return cur;
+        var cur = parent;
+        for (local) |k| {
+            cur = &cur.next.cases.items[k];
+        }
+        return cur;
     }
 
-    // TODO: pointers?
     pub fn sexprAt(case: *VeryPhysicalCase, part: core.CasePart) *VeryPhysicalSexpr {
         return switch (part) {
             .template => &case.template,
@@ -401,6 +442,31 @@ const VeryPhysicalCase = struct {
             .fnk_name => &case.fnk_name,
         };
     }
+
+    // pub const RefIterator = BaseIterator(*Self, *T);
+    // pub const ConstIterator = BaseIterator(*const Self, *const T);
+    // fn BaseIterator(comptime SelfType: type, comptime ElementPtr: type) type {
+    //     return struct {
+    //         pub fn next() void {}
+    //     };
+    // }
+
+    pub fn addressIterator(case: *const VeryPhysicalCase, mem: std.mem.Allocator) AddressIterator {
+        return .{ .inner = case.next.addressIterator(mem) };
+    }
+
+    // TODO: memory usage could be improved
+    pub const AddressIterator = struct {
+        inner: VeryPhysicalGarland.AddressIterator,
+        done_self: bool = false,
+
+        pub fn next(it: *AddressIterator) !?[]const usize {
+            if (!it.done_self) {
+                it.done_self = true;
+                return &.{};
+            } else return it.inner.next();
+        }
+    };
 };
 
 const VeryPhysicalSexpr = struct {
@@ -754,7 +820,7 @@ const Workspace = struct {
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
         for (workspace.garlands.items) |*g| {
-            g.handles_for_new_cases.deinit(gpa);
+            g.handles_for_new_cases_rest.deinit(gpa);
             g.cases.deinit(gpa);
         }
         workspace.garlands.deinit();
@@ -947,31 +1013,35 @@ const Workspace = struct {
                 }
             }
 
-            for (workspace.cases.items) |c| {
-                assert(@FieldType(VeryPhysicalCase, "next") == void);
-                inline for (core.CasePart.all) |part| {
-                    const s = c.constSexprAt(part);
-                    if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |address| {
-                        return .{ .kind = .{ .sexpr = .{ .base = .{ .case = .{
-                            .parent_handle_pos = c.handle,
-                            .part = part,
-                            .local = &.{},
-                        } }, .local = address } } };
+            for (workspace.cases.items) |parent_case| {
+                var it = parent_case.addressIterator(res);
+                while (try it.next()) |address| {
+                    const c = parent_case.constChildCase(address);
+                    inline for (core.CasePart.all) |part| {
+                        const s = c.constSexprAt(part);
+                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |local_address| {
+                            return .{ .kind = .{ .sexpr = .{ .base = .{ .case = .{
+                                .parent_handle_pos = c.handle,
+                                .part = part,
+                                .local = address,
+                            } }, .local = local_address } } };
+                        }
                     }
                 }
             }
 
-            for (workspace.garlands.items) |g| {
-                for (g.cases.items, 0..) |c, k| {
-                    assert(@FieldType(VeryPhysicalCase, "next") == void);
+            for (workspace.garlands.items) |garland| {
+                var it = garland.addressIterator(res);
+                while (try it.next()) |address| {
+                    const c = garland.constChildCase(address);
                     inline for (core.CasePart.all) |part| {
                         const s = c.constSexprAt(part);
-                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |address| {
+                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |sexpr_address| {
                             return .{ .kind = .{ .sexpr = .{ .base = .{ .garland = .{
-                                .parent_handle_pos = g.handle,
+                                .parent_handle_pos = garland.handle,
                                 .part = part,
-                                .local = try res.dupe(usize, &.{k}),
-                            } }, .local = address } } };
+                                .local = address,
+                            } }, .local = sexpr_address } } };
                         }
                     }
                 }
@@ -1049,20 +1119,40 @@ const Workspace = struct {
                 });
             }
             for (workspace.cases.items) |c| {
-                assert(@FieldType(VeryPhysicalCase, "next") == void);
+                var it = c.next.addressIterator(mem.gpa);
+                while (try it.next()) |address| {
+                    inline for (core.CasePart.all) |part| {
+                        try lens.tmp_visible_sexprs.append(frame_arena, .{
+                            .original_place = .{ .case = .{
+                                .parent_handle_pos = c.handle,
+                                .local = address,
+                                .part = part,
+                            } },
+                            .lens_transform = lens.getTransform(),
+                        });
+                    }
+                }
                 inline for (core.CasePart.all) |part| {
                     try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = .{ .case = .{ .parent_handle_pos = c.handle, .local = &.{}, .part = part } },
+                        .original_place = .{ .case = .{
+                            .parent_handle_pos = c.handle,
+                            .local = &.{},
+                            .part = part,
+                        } },
                         .lens_transform = lens.getTransform(),
                     });
                 }
             }
             for (workspace.garlands.items) |g| {
-                for (g.cases.items, 0..) |_, k| {
-                    assert(@FieldType(VeryPhysicalCase, "next") == void);
+                var it = g.addressIterator(mem.gpa);
+                while (try it.next()) |address| {
                     inline for (core.CasePart.all) |part| {
                         try lens.tmp_visible_sexprs.append(frame_arena, .{
-                            .original_place = .{ .garland = .{ .parent_handle_pos = g.handle, .local = try mem.gpa.dupe(usize, &.{k}), .part = part } },
+                            .original_place = .{ .garland = .{
+                                .parent_handle_pos = g.handle,
+                                .local = address,
+                                .part = part,
+                            } },
                             .lens_transform = lens.getTransform(),
                         });
                     }
@@ -1226,30 +1316,38 @@ const Workspace = struct {
             s.hovered.update(hovered, 1.0, platform.delta_seconds);
             s.updateIsPattern(platform.delta_seconds);
         }
-        for (workspace.cases.items) |*c| {
-            assert(@FieldType(VeryPhysicalCase, "next") == void);
-            inline for (core.CasePart.all) |part| {
-                const hovered = switch (hovering.kind) {
-                    else => null,
-                    .sexpr => |sexpr| switch (sexpr.base) {
-                        .board, .garland => null,
-                        .case => |case| if (case.parent_handle_pos.equals(c.handle) and case.part == part) sexpr.local else null,
-                        .grabbed => unreachable,
-                    },
-                };
-                c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
-                c.sexprAt(part).updateIsPattern(platform.delta_seconds);
+        for (workspace.cases.items) |*parent| {
+            var it = parent.addressIterator(frame_arena);
+            while (try it.next()) |address| {
+                const c = parent.childCase(address);
+                inline for (core.CasePart.all) |part| {
+                    const hovered = switch (hovering.kind) {
+                        else => null,
+                        .sexpr => |sexpr| switch (sexpr.base) {
+                            .board, .garland => null,
+                            .case => |case| if (case.parent_handle_pos.equals(c.handle) and
+                                parent.childCase(case.local) == c and
+                                case.part == part) sexpr.local else null,
+                            .grabbed => unreachable,
+                        },
+                    };
+                    c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
+                    c.sexprAt(part).updateIsPattern(platform.delta_seconds);
+                }
             }
         }
         for (workspace.garlands.items) |*g| {
-            for (g.cases.items) |*c| {
-                assert(@FieldType(VeryPhysicalCase, "next") == void);
+            var it = g.addressIterator(frame_arena);
+            while (try it.next()) |address| {
+                const c = g.childCase(address);
                 inline for (core.CasePart.all) |part| {
                     const hovered = switch (hovering.kind) {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
                             .board, .case => null,
-                            .garland => |garland| if (garland.parent_handle_pos.equals(g.handle) and g.childCase(garland.local) == c and garland.part == part) sexpr.local else null,
+                            .garland => |garland| if (garland.parent_handle_pos.equals(g.handle) and
+                                g.childCase(garland.local) == c and
+                                garland.part == part) sexpr.local else null,
                             .grabbed => unreachable,
                         },
                     };
