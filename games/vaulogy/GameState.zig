@@ -817,6 +817,11 @@ const Workspace = struct {
                 .fnk_name = Sexpr.builtin.identity,
             }, .{ .pos = dst.garlands.items[0].handle.addY(1 + 2.5 * tof32(k)) }));
         }
+        try dst.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
+            .pattern = Sexpr.builtin.true,
+            .template = Sexpr.builtin.false,
+            .fnk_name = Sexpr.builtin.identity,
+        }, .{ .pos = dst.garlands.items[0].handle.addX(6) }));
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
