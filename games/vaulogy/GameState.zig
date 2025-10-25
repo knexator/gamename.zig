@@ -258,7 +258,11 @@ const VeryPhysicalGarland = struct {
         return garland.handle;
     }
 
-    pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) error{
+        InvalidUtf8,
+        OutOfMemory,
+        BadVertexOrder,
+    }!void {
         // TODO: Handle.draw
         drawer.canvas.strokeCircle(128, camera, garland.handle, handle_radius * (1 + garland.handle_hot_t * 0.2), 0.05, .black);
         for (0..garland.cases.items.len + 1) |k| {
@@ -367,6 +371,8 @@ const VeryPhysicalCase = struct {
     handle_hot_t: f32 = 0,
     pub const handle_radius: f32 = 0.2;
 
+    const fnk_name_offset: Point = .{ .scale = 0.5, .turns = -0.25, .pos = .new(4, 0) };
+
     pub fn getBoardPos(case: VeryPhysicalCase) Vec2 {
         return case.handle;
     }
@@ -384,10 +390,9 @@ const VeryPhysicalCase = struct {
             .handle = center.pos,
             .pattern = try .fromSexpr(pool, values.pattern, center.applyToLocalPoint(.{ .pos = .xneg }), true),
             .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
-            .fnk_name = try .fromSexpr(pool, values.fnk_name, center
-                .applyToLocalPoint(.{ .pos = .new(3, 0) }).applyToLocalPoint(.{ .scale = 0.5 }), false),
+            .fnk_name = try .fromSexpr(pool, values.fnk_name, center.applyToLocalPoint(fnk_name_offset), false),
             .next = .{
-                .handle = center.applyToLocalPosition(.new(3, 0)),
+                .handle = center.applyToLocalPosition(.new(6, 0)),
                 .cases = .empty,
                 .handles_for_new_cases_rest = .empty,
             },
@@ -399,15 +404,16 @@ const VeryPhysicalCase = struct {
         drawer.canvas.strokeCircle(128, camera, case.handle, handle_radius * (1 + case.handle_hot_t * 0.2), 0.05, .black);
         try case.pattern.draw(drawer, camera);
         try case.template.draw(drawer, camera);
-        // try case.fnk_name.draw(drawer, camera);
+        try case.fnk_name.draw(drawer, camera);
+        try case.next.draw(drawer, camera);
     }
 
     pub fn update(case: *VeryPhysicalCase, delta_seconds: f32) void {
         const center: Point = .{ .pos = case.handle };
         case.pattern.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xneg }), 0.6, delta_seconds);
         case.template.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xpos }), 0.6, delta_seconds);
-        // case.fnk_name.point.lerp_towards(...);
-        Vec2.lerpTowards(&case.next.handle, center.applyToLocalPosition(.new(3, 0)), 0.6, delta_seconds);
+        case.fnk_name.point.lerp_towards(center.applyToLocalPoint(fnk_name_offset), 0.6, delta_seconds);
+        Vec2.lerpTowards(&case.next.handle, center.applyToLocalPosition(.new(7, -1.5)), 0.6, delta_seconds);
         case.next.update(delta_seconds);
     }
 
