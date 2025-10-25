@@ -242,6 +242,10 @@ const HoveredSexpr = struct {
 const VeryPhysicalGarland = struct {
     // TODO: doubly linked list?
     cases: std.ArrayListUnmanaged(VeryPhysicalCase),
+    handles_for_new_cases: std.ArrayListUnmanaged(struct {
+        pos: Vec2,
+        hot_t: f32 = 0,
+    }),
 
     handle: Vec2,
     handle_hot_t: f32 = 0,
@@ -254,15 +258,26 @@ const VeryPhysicalGarland = struct {
     pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) !void {
         // TODO: Handle.draw
         drawer.canvas.strokeCircle(128, camera, garland.handle, handle_radius * (1 + garland.handle_hot_t * 0.2), 0.05, .black);
+        for (garland.handles_for_new_cases.items) |h| {
+            drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.2), 0.05, .black);
+        }
         // TODO: cable
         for (garland.cases.items) |c| try c.draw(drawer, camera);
     }
 
     pub fn update(garland: *VeryPhysicalGarland, delta_seconds: f32) void {
+        assert(garland.handles_for_new_cases.items.len == garland.cases.items.len + 1);
         for (garland.cases.items, 0..) |*c, k| {
-            const target = garland.handle.addY(1 + 2.5 * tof32(k));
+            const target = garland.handle.addY(1.5 + 2.5 * tof32(k));
             Vec2.lerpTowards(&c.handle, target, 0.6, delta_seconds);
             c.update(delta_seconds);
+        }
+        for (garland.handles_for_new_cases.items, 0..) |*h, k| {
+            const target = if (k == 0)
+                garland.handle.addY(1.5 / 2.0)
+            else
+                garland.handle.addY(1.5 + 2.5 * (tof32(k) - 0.5));
+            Vec2.lerpTowards(&h.pos, target, 0.6, delta_seconds);
         }
     }
 
@@ -274,6 +289,16 @@ const VeryPhysicalGarland = struct {
         //     cur = cur.next.?.[k];
         // }
         // return cur;
+    }
+
+    pub fn popCase(parent: *VeryPhysicalGarland, index: usize) VeryPhysicalCase {
+        _ = parent.handles_for_new_cases.orderedRemove(index + 1);
+        return parent.cases.orderedRemove(index);
+    }
+
+    pub fn insertCase(parent: *VeryPhysicalGarland, mem: std.mem.Allocator, index: usize, case: VeryPhysicalCase) !void {
+        try parent.handles_for_new_cases.insert(mem, index, .{ .pos = parent.handles_for_new_cases.items[index].pos });
+        try parent.cases.insert(mem, index, case);
     }
 };
 
@@ -564,12 +589,19 @@ const Workspace = struct {
                     index: usize,
                 },
                 garland_handle: usize,
+                case_handle_in_garland: CaseInGarlandPlace,
             },
             lens_transform: Lens.Transform = .identity,
 
             pub const nothing: Target = .{ .kind = .nothing };
             pub const grabbed_sexpr: Target = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
         };
+    };
+
+    const CaseInGarlandPlace = struct {
+        garland_index: usize,
+        case_index: usize,
+        existing_case: bool,
     };
 
     const BaseSexprPlace = union(enum) {
@@ -611,6 +643,11 @@ const Workspace = struct {
                 /// always is .lens_handle or .case_handle
                 target: Focus.Target,
                 new_position: Vec2,
+            },
+            picked_case_from_garland: CaseInGarlandPlace,
+            dropped_case_into_garland: struct {
+                old_index: usize,
+                new_position: CaseInGarlandPlace,
             },
             // moved_sexpr: struct {
             //     sexpr_index: usize,
@@ -664,7 +701,12 @@ const Workspace = struct {
         try dst.garlands.append(.{
             .cases = try .initCapacity(mem.gpa, 4),
             .handle = .new(0, 5),
+            .handles_for_new_cases = try .initCapacity(mem.gpa, 5),
         });
+
+        for (0..5) |k| {
+            dst.garlands.items[0].handles_for_new_cases.appendAssumeCapacity(.{ .pos = .new(0, tof32(k)) });
+        }
         for ([_][2][]const u8{
             .{ "Hermes", "Mercury" },
             .{ "Ares", "Mars" },
@@ -829,7 +871,7 @@ const Workspace = struct {
 
         // lenses
         if (grabbed_tag == .nothing) {
-            for (workspace.lenses.items, 0..) |*lens, k| {
+            for (workspace.lenses.items, 0..) |lens, k| {
                 if (pos.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
                     return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .source } } };
                 }
@@ -907,7 +949,7 @@ const Workspace = struct {
 
         // cases
         if (grabbed_tag == .nothing) {
-            for (workspace.cases.items, 0..) |*case, k| {
+            for (workspace.cases.items, 0..) |case, k| {
                 if (pos.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
                     return .{ .kind = .{ .case_handle = .{ .index = k } } };
                 }
@@ -916,9 +958,43 @@ const Workspace = struct {
 
         // garlands
         if (grabbed_tag == .nothing) {
-            for (workspace.garlands.items, 0..) |*garland, k| {
+            for (workspace.garlands.items, 0..) |garland, k| {
                 if (pos.distTo(garland.handle) < VeryPhysicalGarland.handle_radius) {
                     return .{ .kind = .{ .garland_handle = k } };
+                }
+            }
+        }
+
+        // cases in garlands, for picking
+        if (grabbed_tag == .nothing) {
+            for (workspace.garlands.items, 0..) |garland, garland_index| {
+                for (garland.cases.items, 0..) |case, case_index| {
+                    if (pos.distTo(case.handle) < VeryPhysicalCase.handle_radius) {
+                        return .{ .kind = .{
+                            .case_handle_in_garland = .{
+                                .garland_index = garland_index,
+                                .case_index = case_index,
+                                .existing_case = true,
+                            },
+                        } };
+                    }
+                }
+            }
+        }
+
+        // cases in garlands, for dropping
+        if (grabbed_tag == .case_handle) {
+            for (workspace.garlands.items, 0..) |garland, garland_index| {
+                for (garland.handles_for_new_cases.items, 0..) |handle, handle_index| {
+                    if (pos.distTo(handle.pos) < VeryPhysicalCase.handle_radius) {
+                        return .{ .kind = .{
+                            .case_handle_in_garland = .{
+                                .garland_index = garland_index,
+                                .case_index = handle_index,
+                                .existing_case = false,
+                            },
+                        } };
+                    }
                 }
             }
         }
@@ -1003,19 +1079,35 @@ const Workspace = struct {
                                 assert(workspace.focus.grabbing.kind.case_handle.index == h.index);
                             },
                             .garland_handle => |h| {
-                                const case = &workspace.garlands.items[h];
-                                case.handle = p.old_position;
+                                const garland = &workspace.garlands.items[h];
+                                garland.handle = p.old_position;
                                 assert(workspace.focus.grabbing.kind.garland_handle == h);
                             },
-                            .nothing, .sexpr => unreachable,
+                            .nothing, .sexpr, .case_handle_in_garland => unreachable,
                         }
                         workspace.focus.grabbing = .nothing;
                     },
                     .dropped_lens_or_case => |p| {
                         workspace.focus.grabbing = p.target;
                         const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .picked_lens_or_case);
+                        assert(std.meta.activeTag(next_cmd.specific) == .picked_lens_or_case or std.meta.activeTag(next_cmd.specific) == .picked_case_from_garland);
                         continue :again next_cmd.specific;
+                    },
+                    .picked_case_from_garland => |h| {
+                        assert(h.existing_case);
+                        const garland = &workspace.garlands.items[h.garland_index];
+                        const case = workspace.cases.orderedRemove(workspace.focus.grabbing.kind.case_handle.index);
+                        // TODO: don't leak
+                        try garland.insertCase(mem.gpa, h.case_index, case);
+                        workspace.focus.grabbing = .nothing;
+                    },
+                    .dropped_case_into_garland => |h| {
+                        assert(!h.new_position.existing_case);
+                        assert(workspace.focus.grabbing.kind == .nothing);
+                        const garland = &workspace.garlands.items[h.new_position.garland_index];
+                        const case = garland.popCase(h.new_position.case_index);
+                        try workspace.cases.insert(h.old_index, case);
+                        workspace.focus.grabbing = .{ .kind = .{ .case_handle = .{ .index = h.old_index } } };
                     },
                     .grabbed_sexpr => |g| {
                         var grabbed = workspace.popGrabbedSexpr();
@@ -1134,7 +1226,7 @@ const Workspace = struct {
         if (workspace.grabbed_sexpr) |*grabbed| {
             grabbed.is_pattern = switch (dropzone.kind) {
                 .nothing => grabbed.is_pattern,
-                .lens_handle, .case_handle, .garland_handle => unreachable,
+                .lens_handle, .case_handle, .garland_handle, .case_handle_in_garland => unreachable,
                 .sexpr => |s| workspace.sexprAtPlace(s.base).is_pattern,
             };
             grabbed.hovered.update(switch (dropzone.kind) {
@@ -1146,11 +1238,31 @@ const Workspace = struct {
         }
         // TODO: reduce duplication?
         for (workspace.garlands.items, 0..) |*g, k| {
-            const target: f32 = switch (hovering.kind) {
-                else => 0,
-                .garland_handle => |handle| if (handle == k) 1 else 0,
-            };
-            math.lerp_towards(&g.handle_hot_t, target, 0.6, platform.delta_seconds);
+            {
+                const target: f32 = switch (hovering.kind) {
+                    else => 0,
+                    .garland_handle => |handle| if (handle == k) 1 else 0,
+                };
+                math.lerp_towards(&g.handle_hot_t, target, 0.6, platform.delta_seconds);
+            }
+
+            for (g.cases.items, 0..) |*c, case_index| {
+                const target: f32 = switch (hovering.kind) {
+                    else => 0,
+                    .case_handle_in_garland => |h| if (h.garland_index == k and
+                        h.case_index == case_index and h.existing_case) 1 else 0,
+                };
+                math.lerp_towards(&c.handle_hot_t, target, 0.6, platform.delta_seconds);
+            }
+
+            for (g.handles_for_new_cases.items, 0..) |*c, c_index| {
+                const target: f32 = switch (dropzone.kind) {
+                    else => 0,
+                    .case_handle_in_garland => |h| if (h.garland_index == k and
+                        h.case_index == c_index and !h.existing_case) 1 else 0,
+                };
+                math.lerp_towards(&c.hot_t, target, 0.6, platform.delta_seconds);
+            }
         }
         for (workspace.cases.items, 0..) |*c, k| {
             const target: f32 = switch (hovering.kind) {
@@ -1170,6 +1282,7 @@ const Workspace = struct {
         // apply dragging
         switch (workspace.focus.grabbing.kind) {
             .nothing => {},
+            .case_handle_in_garland => unreachable,
             .lens_handle => |p| {
                 const lens = &workspace.lenses.items[p.index];
                 switch (p.part) {
@@ -1235,6 +1348,9 @@ const Workspace = struct {
                         .old_position = workspace.garlands.items[k].handle,
                     },
                 } },
+                .case_handle_in_garland => |h| .{ .specific = .{
+                    .picked_case_from_garland = h,
+                } },
                 .sexpr => |s| .{
                     .specific = .{
                         .grabbed_sexpr = .{ .origin = s },
@@ -1250,18 +1366,28 @@ const Workspace = struct {
                         .new_position = workspace.lenses.items[h.index].handlePos(h.part),
                     },
                 } },
-                .case_handle => |h| .{ .specific = .{
-                    .dropped_lens_or_case = .{
-                        .target = workspace.focus.grabbing,
-                        .new_position = workspace.cases.items[h.index].handle,
-                    },
-                } },
+                .case_handle => |h| switch (dropzone.kind) {
+                    else => unreachable,
+                    .nothing => .{ .specific = .{
+                        .dropped_lens_or_case = .{
+                            .target = workspace.focus.grabbing,
+                            .new_position = workspace.cases.items[h.index].handle,
+                        },
+                    } },
+                    .case_handle_in_garland => |t| .{ .specific = .{
+                        .dropped_case_into_garland = .{
+                            .old_index = h.index,
+                            .new_position = t,
+                        },
+                    } },
+                },
                 .garland_handle => |k| .{ .specific = .{
                     .dropped_lens_or_case = .{
                         .target = workspace.focus.grabbing,
                         .new_position = workspace.garlands.items[k].getBoardPos(),
                     },
                 } },
+                .case_handle_in_garland => unreachable,
                 .sexpr => .{
                     .specific = .{
                         .dropped_sexpr = switch (dropzone.kind) {
@@ -1288,6 +1414,22 @@ const Workspace = struct {
             .noop => {},
             .picked_lens_or_case => |h| workspace.focus.grabbing = h.target,
             .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
+            .picked_case_from_garland => |h| {
+                const garland = &workspace.garlands.items[h.garland_index];
+                const case = garland.popCase(h.case_index);
+                try workspace.cases.append(case);
+                // TODO: lens transform
+                workspace.focus.grabbing = .{ .kind = .{
+                    .case_handle = .{ .index = workspace.cases.items.len - 1 },
+                }, .lens_transform = .identity };
+            },
+            .dropped_case_into_garland => |h| {
+                const garland = &workspace.garlands.items[h.new_position.garland_index];
+                // TODO: does this fuck up the next indices?
+                const case = workspace.cases.orderedRemove(h.old_index);
+                try garland.insertCase(mem.gpa, h.new_position.case_index, case);
+                workspace.focus.grabbing = .nothing;
+            },
             .dropped_sexpr => {
                 switch (dropzone.kind) {
                     else => unreachable,
