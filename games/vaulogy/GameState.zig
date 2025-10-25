@@ -265,6 +265,16 @@ const VeryPhysicalGarland = struct {
             c.update(delta_seconds);
         }
     }
+
+    pub fn childCase(parent: *VeryPhysicalGarland, local: core.CaseAddress) *VeryPhysicalCase {
+        assert(local.len == 1);
+        return &parent.cases.items[local[0]];
+        // var cur = parent;
+        // for (local) |k| {
+        //     cur = cur.next.?.[k];
+        // }
+        // return cur;
+    }
 };
 
 const VeryPhysicalCase = struct {
@@ -569,6 +579,11 @@ const Workspace = struct {
             local: core.CaseAddress,
             part: core.CasePart,
         },
+        garland: struct {
+            parent_handle_pos: Vec2,
+            local: core.CaseAddress,
+            part: core.CasePart,
+        },
         grabbed,
     };
     const SexprPlace = struct {
@@ -710,6 +725,7 @@ const Workspace = struct {
             .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
             .grabbed => &workspace.grabbed_sexpr.?,
             .case => |case| workspace.getAt(VeryPhysicalCase, case.parent_handle_pos).childCase(case.local).sexprAt(case.part),
+            .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent_handle_pos).childCase(garland.local).sexprAt(garland.part),
         };
     }
 
@@ -823,7 +839,7 @@ const Workspace = struct {
             }
         }
 
-        // sexprs inside lenses and on the board and on cases
+        // sexprs inside lenses and on the board and on cases and on garlands
         if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
             for (workspace.lenses.items) |lens| {
                 if (pos.distTo(lens.target) < lens.target_radius) {
@@ -868,6 +884,22 @@ const Workspace = struct {
                             .part = part,
                             .local = &.{},
                         } }, .local = address } } };
+                    }
+                }
+            }
+
+            for (workspace.garlands.items) |g| {
+                for (g.cases.items, 0..) |c, k| {
+                    assert(@FieldType(VeryPhysicalCase, "next") == void);
+                    inline for (core.CasePart.all) |part| {
+                        const s = c.constSexprAt(part);
+                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |address| {
+                            return .{ .kind = .{ .sexpr = .{ .base = .{ .garland = .{
+                                .parent_handle_pos = g.handle,
+                                .part = part,
+                                .local = try res.dupe(usize, &.{k}),
+                            } }, .local = address } } };
+                        }
                     }
                 }
             }
@@ -917,6 +949,17 @@ const Workspace = struct {
                     });
                 }
             }
+            for (workspace.garlands.items) |g| {
+                for (g.cases.items, 0..) |_, k| {
+                    assert(@FieldType(VeryPhysicalCase, "next") == void);
+                    inline for (core.CasePart.all) |part| {
+                        try lens.tmp_visible_sexprs.append(frame_arena, .{
+                            .original_place = .{ .garland = .{ .parent_handle_pos = g.handle, .local = try mem.gpa.dupe(usize, &.{k}), .part = part } },
+                            .lens_transform = lens.getTransform(),
+                        });
+                    }
+                }
+            }
             if (workspace.grabbed_sexpr) |_| {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
                     .original_place = .grabbed,
@@ -959,7 +1002,12 @@ const Workspace = struct {
                                 case.handle = p.old_position;
                                 assert(workspace.focus.grabbing.kind.case_handle.index == h.index);
                             },
-                            else => unreachable,
+                            .garland_handle => |h| {
+                                const case = &workspace.garlands.items[h];
+                                case.handle = p.old_position;
+                                assert(workspace.focus.grabbing.kind.garland_handle == h);
+                            },
+                            .nothing, .sexpr => unreachable,
                         }
                         workspace.focus.grabbing = .nothing;
                     },
@@ -978,7 +1026,7 @@ const Workspace = struct {
                                 grabbed.point.pos = position;
                                 try workspace.sexprs.append(grabbed);
                             },
-                            .case => {},
+                            .case, .garland => {},
                         }
                         const old = workspace.sexprAtPlace(g.origin.base).getSubValue(g.origin.local);
                         old.hovered.value = 10;
@@ -1044,7 +1092,7 @@ const Workspace = struct {
                 .sexpr => |sexpr| switch (sexpr.base) {
                     // special case: no hover anim for base values
                     .board => |pos| if (pos.equals(s.point.pos) and sexpr.local.len > 0) sexpr.local else null,
-                    .case => null,
+                    .case, .garland => null,
                     .grabbed => unreachable,
                 },
             };
@@ -1057,13 +1105,30 @@ const Workspace = struct {
                 const hovered = switch (hovering.kind) {
                     else => null,
                     .sexpr => |sexpr| switch (sexpr.base) {
-                        .board => null,
+                        .board, .garland => null,
                         .case => |case| if (case.parent_handle_pos.equals(c.handle) and case.part == part) sexpr.local else null,
                         .grabbed => unreachable,
                     },
                 };
                 c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
                 c.sexprAt(part).updateIsPattern(platform.delta_seconds);
+            }
+        }
+        for (workspace.garlands.items) |*g| {
+            for (g.cases.items) |*c| {
+                assert(@FieldType(VeryPhysicalCase, "next") == void);
+                inline for (core.CasePart.all) |part| {
+                    const hovered = switch (hovering.kind) {
+                        else => null,
+                        .sexpr => |sexpr| switch (sexpr.base) {
+                            .board, .case => null,
+                            .garland => |garland| if (garland.parent_handle_pos.equals(g.handle) and g.childCase(garland.local) == c and garland.part == part) sexpr.local else null,
+                            .grabbed => unreachable,
+                        },
+                    };
+                    c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
+                    c.sexprAt(part).updateIsPattern(platform.delta_seconds);
+                }
             }
         }
         if (workspace.grabbed_sexpr) |*grabbed| {
@@ -1250,7 +1315,7 @@ const Workspace = struct {
                                 workspace.popAt(VeryPhysicalSexpr, p)
                             else
                                 null,
-                            .case => null,
+                            .case, .garland => null,
                         };
                         var grabbed: VeryPhysicalSexpr = destroyed_grabbed orelse blk: {
                             const original = workspace.sexprAtPlace(h.base).getSubValue(h.local);
