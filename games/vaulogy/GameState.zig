@@ -727,6 +727,11 @@ const Workspace = struct {
         workspace.cases.deinit();
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
+        // TODO
+        // for (workspace.garlands.items) |*g| {
+        //     g.handles_for_new_cases.deinit()
+        // }
+        workspace.garlands.deinit();
     }
 
     const valid: []const *const Sexpr = &.{
@@ -1108,6 +1113,9 @@ const Workspace = struct {
                         const case = garland.popCase(h.new_position.case_index);
                         try workspace.cases.insert(h.old_index, case);
                         workspace.focus.grabbing = .{ .kind = .{ .case_handle = .{ .index = h.old_index } } };
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        assert(std.meta.activeTag(next_cmd.specific) == .picked_lens_or_case or std.meta.activeTag(next_cmd.specific) == .picked_case_from_garland);
+                        continue :again next_cmd.specific;
                     },
                     .grabbed_sexpr => |g| {
                         var grabbed = workspace.popGrabbedSexpr();
@@ -1425,7 +1433,6 @@ const Workspace = struct {
             },
             .dropped_case_into_garland => |h| {
                 const garland = &workspace.garlands.items[h.new_position.garland_index];
-                // TODO: does this fuck up the next indices?
                 const case = workspace.cases.orderedRemove(h.old_index);
                 try garland.insertCase(mem.gpa, h.new_position.case_index, case);
                 workspace.focus.grabbing = .nothing;
