@@ -242,14 +242,17 @@ const HoveredSexpr = struct {
 const VeryPhysicalGarland = struct {
     // TODO: doubly linked list?
     cases: std.ArrayListUnmanaged(VeryPhysicalCase),
-    handles_for_new_cases: std.ArrayListUnmanaged(struct {
-        pos: Vec2,
-        hot_t: f32 = 0,
-    }),
+    handles_for_new_cases_first: HandleForNewCase = .{ .pos = .zero },
+    handles_for_new_cases_rest: std.ArrayListUnmanaged(HandleForNewCase),
 
     handle: Vec2,
     handle_hot_t: f32 = 0,
     pub const handle_radius: f32 = 0.2;
+
+    const HandleForNewCase = struct {
+        pos: Vec2,
+        hot_t: f32 = 0,
+    };
 
     pub fn getBoardPos(garland: VeryPhysicalGarland) Vec2 {
         return garland.handle;
@@ -258,21 +261,39 @@ const VeryPhysicalGarland = struct {
     pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) !void {
         // TODO: Handle.draw
         drawer.canvas.strokeCircle(128, camera, garland.handle, handle_radius * (1 + garland.handle_hot_t * 0.2), 0.05, .black);
-        for (garland.handles_for_new_cases.items) |h| {
+        for (0..garland.cases.items.len + 1) |k| {
+            const h = garland.handleForNewCases(k);
             drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.2), 0.05, .black);
         }
         // TODO: cable
         for (garland.cases.items) |c| try c.draw(drawer, camera);
     }
 
+    pub fn handleForNewCases(garland: *const VeryPhysicalGarland, k: usize) *const HandleForNewCase {
+        assert(k <= garland.cases.items.len);
+        return if (k == 0)
+            &garland.handles_for_new_cases_first
+        else
+            &garland.handles_for_new_cases_rest.items[k - 1];
+    }
+
+    pub fn handleForNewCasesRef(garland: *VeryPhysicalGarland, k: usize) *HandleForNewCase {
+        assert(k <= garland.cases.items.len);
+        return if (k == 0)
+            &garland.handles_for_new_cases_first
+        else
+            &garland.handles_for_new_cases_rest.items[k - 1];
+    }
+
     pub fn update(garland: *VeryPhysicalGarland, delta_seconds: f32) void {
-        assert(garland.handles_for_new_cases.items.len == garland.cases.items.len + 1);
+        assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
         for (garland.cases.items, 0..) |*c, k| {
             const target = garland.handle.addY(1.5 + 2.5 * tof32(k));
             Vec2.lerpTowards(&c.handle, target, 0.6, delta_seconds);
             c.update(delta_seconds);
         }
-        for (garland.handles_for_new_cases.items, 0..) |*h, k| {
+        for (0..garland.cases.items.len + 1) |k| {
+            const h = garland.handleForNewCasesRef(k);
             const target = if (k == 0)
                 garland.handle.addY(1.5 / 2.0)
             else
@@ -292,12 +313,12 @@ const VeryPhysicalGarland = struct {
     }
 
     pub fn popCase(parent: *VeryPhysicalGarland, index: usize) VeryPhysicalCase {
-        _ = parent.handles_for_new_cases.orderedRemove(index + 1);
+        _ = parent.handles_for_new_cases_rest.orderedRemove(index);
         return parent.cases.orderedRemove(index);
     }
 
     pub fn insertCase(parent: *VeryPhysicalGarland, mem: std.mem.Allocator, index: usize, case: VeryPhysicalCase) !void {
-        try parent.handles_for_new_cases.insert(mem, index, .{ .pos = parent.handles_for_new_cases.items[index].pos });
+        try parent.handles_for_new_cases_rest.insert(mem, index, .{ .pos = parent.handleForNewCases(index).pos });
         try parent.cases.insert(mem, index, case);
     }
 };
@@ -307,6 +328,7 @@ const VeryPhysicalCase = struct {
     fnk_name: VeryPhysicalSexpr,
     template: VeryPhysicalSexpr,
     next: void = {},
+    // next: VeryPhysicalGarland,
     handle: Vec2,
     handle_hot_t: f32 = 0,
     pub const handle_radius: f32 = 0.2;
@@ -330,6 +352,10 @@ const VeryPhysicalCase = struct {
             .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
             .fnk_name = try .fromSexpr(pool, values.fnk_name, center
                 .applyToLocalPoint(.{ .pos = .new(3, 0) }).applyToLocalPoint(.{ .scale = 0.5 }), false),
+            // .next = .{
+            //     .handle = center.applyToLocalPosition(.new(3, 0)),
+            //     .cases = .empty,
+            // },
         };
     }
 
@@ -701,11 +727,11 @@ const Workspace = struct {
         try dst.garlands.append(.{
             .cases = try .initCapacity(mem.gpa, 4),
             .handle = .new(0, 5),
-            .handles_for_new_cases = try .initCapacity(mem.gpa, 5),
+            .handles_for_new_cases_rest = try .initCapacity(mem.gpa, 4),
         });
 
-        for (0..5) |k| {
-            dst.garlands.items[0].handles_for_new_cases.appendAssumeCapacity(.{ .pos = .new(0, tof32(k)) });
+        for (0..4) |k| {
+            dst.garlands.items[0].handles_for_new_cases_rest.appendAssumeCapacity(.{ .pos = .new(0, tof32(k + 1)) });
         }
         for ([_][2][]const u8{
             .{ "Hermes", "Mercury" },
@@ -990,7 +1016,8 @@ const Workspace = struct {
         // cases in garlands, for dropping
         if (grabbed_tag == .case_handle) {
             for (workspace.garlands.items, 0..) |garland, garland_index| {
-                for (garland.handles_for_new_cases.items, 0..) |handle, handle_index| {
+                for (0..garland.cases.items.len + 1) |handle_index| {
+                    const handle = garland.handleForNewCases(handle_index);
                     if (pos.distTo(handle.pos) < VeryPhysicalCase.handle_radius) {
                         return .{ .kind = .{
                             .case_handle_in_garland = .{
@@ -1263,7 +1290,8 @@ const Workspace = struct {
                 math.lerp_towards(&c.handle_hot_t, target, 0.6, platform.delta_seconds);
             }
 
-            for (g.handles_for_new_cases.items, 0..) |*c, c_index| {
+            for (0..g.cases.items.len + 1) |c_index| {
+                const c = g.handleForNewCasesRef(c_index);
                 const target: f32 = switch (dropzone.kind) {
                     else => 0,
                     .case_handle_in_garland => |h| if (h.garland_index == k and
