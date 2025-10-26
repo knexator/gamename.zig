@@ -1032,7 +1032,7 @@ const Workspace = struct {
                         const s = c.constSexprAt(part);
                         if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |local_address| {
                             return .{ .kind = .{ .sexpr = .{ .base = .{ .case = .{
-                                .parent_handle_pos = c.handle,
+                                .parent_handle_pos = parent_case.handle,
                                 .part = part,
                                 .local = address,
                             } }, .local = local_address } } };
