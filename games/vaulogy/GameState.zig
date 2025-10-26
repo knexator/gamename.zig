@@ -1037,7 +1037,7 @@ const Workspace = struct {
                                 .local = address,
                             } }, .local = local_address } } };
                         }
-                    }
+                    } else res.free(address);
                 }
             }
 
@@ -1054,7 +1054,7 @@ const Workspace = struct {
                                 .local = address,
                             } }, .local = sexpr_address } } };
                         }
-                    }
+                    } else res.free(address);
                 }
             }
         }
