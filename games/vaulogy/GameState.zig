@@ -723,38 +723,24 @@ const Workspace = struct {
     const UndoableCommand = struct {
         specific: union(enum) {
             noop,
-            dropped_sexpr: struct {
-                new_place: SexprPlace,
-                overwritten_value: ?VeryPhysicalSexpr,
+            dropped: struct {
+                at: Focus.Target,
+                /// only used when 'at' is of kind sexpr
+                overwritten_sexpr: ?VeryPhysicalSexpr,
+                /// for sexprs is always .grabbed,
+                /// for lens_handle is equal to .at,
+                /// for case_handle might be different
+                /// if it was dropped in a garland and thus
+                /// removed from its old board position.
+                old_grabbed_position: Focus.Target,
             },
-            grabbed_sexpr: struct {
-                origin: SexprPlace,
+            grabbed: struct {
+                from: Focus.Target,
                 /// not always used
                 old_position: Vec2,
                 /// not always used
                 old_ispattern: bool,
             },
-            // TODO: unify?
-            // TODO: rename
-            picked_lens_or_case: struct {
-                /// always is .lens_handle or .case_handle
-                target: Focus.Target,
-                old_position: Vec2,
-            },
-            dropped_lens_or_case: struct {
-                /// always is .lens_handle or .case_handle
-                target: Focus.Target,
-            },
-            picked_case_from_garland: CaseInGarlandPlace,
-            dropped_case_into_garland: struct {
-                old_index: usize,
-                new_position: CaseInGarlandPlace,
-            },
-            // moved_sexpr: struct {
-            //     sexpr_index: usize,
-            //     old_position: Vec2,
-            //     new_position: Vec2,
-            // },
         },
 
         pub const noop: UndoableCommand = .{ .specific = .noop };
@@ -1168,93 +1154,100 @@ const Workspace = struct {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
                     .noop => {},
-                    .picked_lens_or_case => |p| {
-                        switch (p.target.kind) {
+                    .grabbed => |g| {
+                        switch (g.from.kind) {
+                            .nothing => unreachable,
                             .lens_handle => |h| {
                                 const lens = &workspace.lenses.items[h.index];
-                                lens.setHandlePos(h.part, p.old_position);
+                                lens.setHandlePos(h.part, g.old_position);
                                 assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
                                 assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
                             },
                             .case_handle => |h| {
                                 const case = &workspace.cases.items[h.index];
-                                case.handle = p.old_position;
+                                case.handle = g.old_position;
                                 assert(workspace.focus.grabbing.kind.case_handle.index == h.index);
                             },
                             .garland_handle => |h| {
                                 const garland = &workspace.garlands.items[h];
-                                garland.handle = p.old_position;
+                                garland.handle = g.old_position;
                                 assert(workspace.focus.grabbing.kind.garland_handle == h);
                             },
-                            .nothing, .sexpr, .case_handle_in_garland => unreachable,
-                        }
-                        workspace.focus.grabbing = .nothing;
-                    },
-                    .dropped_lens_or_case => |p| {
-                        workspace.focus.grabbing = p.target;
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .picked_lens_or_case or std.meta.activeTag(next_cmd.specific) == .picked_case_from_garland);
-                        continue :again next_cmd.specific;
-                    },
-                    .picked_case_from_garland => |h| {
-                        assert(h.existing_case);
-                        const garland = &workspace.garlands.items[h.garland_index];
-                        const case = workspace.cases.orderedRemove(workspace.focus.grabbing.kind.case_handle.index);
-                        // TODO: don't leak
-                        try garland.insertCase(mem.gpa, h.case_index, case);
-                        workspace.focus.grabbing = .nothing;
-                    },
-                    .dropped_case_into_garland => |h| {
-                        assert(!h.new_position.existing_case);
-                        assert(workspace.focus.grabbing.kind == .nothing);
-                        const garland = &workspace.garlands.items[h.new_position.garland_index];
-                        const case = garland.popCase(h.new_position.case_index);
-                        try workspace.cases.insert(h.old_index, case);
-                        workspace.focus.grabbing = .{ .kind = .{ .case_handle = .{ .index = h.old_index } } };
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .picked_lens_or_case or std.meta.activeTag(next_cmd.specific) == .picked_case_from_garland);
-                        continue :again next_cmd.specific;
-                    },
-                    .grabbed_sexpr => |g| {
-                        var grabbed = workspace.popGrabbedSexpr();
-                        // recreate it if needed
-                        switch (g.origin.base) {
-                            .grabbed => unreachable,
-                            .board => |k| if (g.origin.local.len == 0) {
-                                grabbed.point.pos = g.old_position;
-                                grabbed.is_pattern = g.old_ispattern;
-                                try workspace.sexprs.insert(k, grabbed);
+                            .case_handle_in_garland => |h| {
+                                assert(h.existing_case);
+                                const garland = &workspace.garlands.items[h.garland_index];
+                                const case = workspace.cases.orderedRemove(workspace.focus.grabbing.kind.case_handle.index);
+                                // TODO: don't leak
+                                try garland.insertCase(mem.gpa, h.case_index, case);
                             },
-                            .case, .garland => {},
+                            .sexpr => |h| {
+                                var grabbed = workspace.popGrabbedSexpr();
+                                // recreate it if needed
+                                switch (h.base) {
+                                    .grabbed => unreachable,
+                                    .board => |k| if (h.local.len == 0) {
+                                        grabbed.point.pos = g.old_position;
+                                        grabbed.is_pattern = g.old_ispattern;
+                                        try workspace.sexprs.insert(k, grabbed);
+                                    },
+                                    .case, .garland => {},
+                                }
+                                const old = workspace.sexprAtPlace(h.base).getSubValue(h.local);
+                                old.hovered.value = 10;
+                            },
                         }
-                        const old = workspace.sexprAtPlace(g.origin.base).getSubValue(g.origin.local);
-                        old.hovered.value = 10;
                         workspace.focus.grabbing = .nothing;
                     },
-                    .dropped_sexpr => |p| {
-                        if (p.overwritten_value) |overwritten| {
-                            const base = workspace.sexprAtPlace(p.new_place.base);
-                            var grabbed = base.getSubValue(p.new_place.local);
-                            grabbed.point.scale = 1;
-                            try base.updateSubValue(
-                                p.new_place.local,
-                                overwritten.value,
-                                overwritten.hovered,
-                                mem,
-                                &workspace.hover_pool,
-                            );
-                            workspace.pushGrabbedSexpr(grabbed);
-                        } else {
-                            assert(p.new_place.local.len == 0);
-                            const grabbed = switch (p.new_place.base) {
-                                else => unreachable,
-                                .board => |position| workspace.popAt(VeryPhysicalSexpr, position),
-                            };
-                            workspace.pushGrabbedSexpr(grabbed);
+                    .dropped => |g| {
+                        switch (g.at.kind) {
+                            .lens_handle, .case_handle, .garland_handle => {
+                                workspace.focus.grabbing = g.at;
+                            },
+                            .case_handle_in_garland => |h| {
+                                assert(!h.existing_case);
+                                assert(workspace.focus.grabbing.kind == .nothing);
+                                const garland = &workspace.garlands.items[h.garland_index];
+                                const case = garland.popCase(h.case_index);
+                                // insert the thing at the old_grabbed_position
+                                switch (g.old_grabbed_position.kind) {
+                                    .case_handle => |c| try workspace.cases.insert(c.index, case),
+                                    else => unreachable,
+                                }
+                                workspace.focus.grabbing = g.old_grabbed_position;
+                            },
+                            // TODO: remove this case
+                            .nothing => {
+                                assert(std.meta.activeTag(g.old_grabbed_position.kind) == .sexpr);
+                                assert(g.old_grabbed_position.kind.sexpr.base == .grabbed);
+                                const grabbed = workspace.sexprs.pop().?;
+                                workspace.pushGrabbedSexpr(grabbed);
+                            },
+                            .sexpr => |h| {
+                                if (g.overwritten_sexpr) |overwritten| {
+                                    const base = workspace.sexprAtPlace(h.base);
+                                    var grabbed = base.getSubValue(h.local);
+                                    grabbed.point.scale = 1;
+                                    try base.updateSubValue(
+                                        h.local,
+                                        overwritten.value,
+                                        overwritten.hovered,
+                                        mem,
+                                        &workspace.hover_pool,
+                                    );
+                                    workspace.pushGrabbedSexpr(grabbed);
+                                } else {
+                                    assert(h.local.len == 0);
+                                    const grabbed = switch (h.base) {
+                                        else => unreachable,
+                                        .board => |position| workspace.popAt(VeryPhysicalSexpr, position),
+                                    };
+                                    workspace.pushGrabbedSexpr(grabbed);
+                                }
+                                workspace.focus.grabbing = .grabbed_sexpr;
+                            },
                         }
-                        workspace.focus.grabbing = .grabbed_sexpr;
                         const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .grabbed_sexpr);
+                        assert(std.meta.activeTag(next_cmd.specific) == .grabbed);
                         continue :again next_cmd.specific;
                     },
                 }
@@ -1443,34 +1436,42 @@ const Workspace = struct {
             g.update(platform.delta_seconds);
         }
 
+        // TODO: code could be massively reduced
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and mouse.wasPressed(.left))
             switch (hovering.kind) {
                 .nothing => .noop,
                 .lens_handle => |h| .{ .specific = .{
-                    .picked_lens_or_case = .{
-                        .target = hovering,
+                    .grabbed = .{
+                        .from = hovering,
                         .old_position = workspace.lenses.items[h.index].handlePos(h.part),
+                        .old_ispattern = undefined,
                     },
                 } },
                 .case_handle => |h| .{ .specific = .{
-                    .picked_lens_or_case = .{
-                        .target = hovering,
+                    .grabbed = .{
+                        .from = hovering,
                         .old_position = workspace.cases.items[h.index].handle,
+                        .old_ispattern = undefined,
                     },
                 } },
                 .garland_handle => |k| .{ .specific = .{
-                    .picked_lens_or_case = .{
-                        .target = hovering,
+                    .grabbed = .{
+                        .from = hovering,
                         .old_position = workspace.garlands.items[k].handle,
+                        .old_ispattern = undefined,
                     },
                 } },
-                .case_handle_in_garland => |h| .{ .specific = .{
-                    .picked_case_from_garland = h,
+                .case_handle_in_garland => .{ .specific = .{
+                    .grabbed = .{
+                        .from = hovering,
+                        .old_position = undefined,
+                        .old_ispattern = undefined,
+                    },
                 } },
                 .sexpr => |s| .{
                     .specific = .{
-                        .grabbed_sexpr = .{
-                            .origin = s,
+                        .grabbed = .{
+                            .from = hovering,
                             .old_position = workspace.sexprAtPlace(s.base).point.pos,
                             .old_ispattern = workspace.sexprAtPlace(s.base).is_pattern,
                         },
@@ -1481,42 +1482,49 @@ const Workspace = struct {
             switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
                 .lens_handle => .{ .specific = .{
-                    .dropped_lens_or_case = .{
-                        .target = workspace.focus.grabbing,
+                    .dropped = .{
+                        .at = workspace.focus.grabbing,
+                        .old_grabbed_position = workspace.focus.grabbing,
+                        .overwritten_sexpr = undefined,
                     },
                 } },
-                .case_handle => |h| switch (dropzone.kind) {
+                .case_handle => switch (dropzone.kind) {
                     else => unreachable,
                     .nothing => .{ .specific = .{
-                        .dropped_lens_or_case = .{
-                            .target = workspace.focus.grabbing,
+                        .dropped = .{
+                            .at = workspace.focus.grabbing,
+                            .old_grabbed_position = workspace.focus.grabbing,
+                            .overwritten_sexpr = undefined,
                         },
                     } },
-                    .case_handle_in_garland => |t| .{ .specific = .{
-                        .dropped_case_into_garland = .{
-                            .old_index = h.index,
-                            .new_position = t,
+                    .case_handle_in_garland => .{ .specific = .{
+                        .dropped = .{
+                            .at = dropzone,
+                            .old_grabbed_position = workspace.focus.grabbing,
+                            .overwritten_sexpr = undefined,
                         },
                     } },
                 },
                 .garland_handle => .{ .specific = .{
-                    .dropped_lens_or_case = .{
-                        .target = workspace.focus.grabbing,
+                    .dropped = .{
+                        .at = workspace.focus.grabbing,
+                        .old_grabbed_position = workspace.focus.grabbing,
+                        .overwritten_sexpr = undefined,
                     },
                 } },
                 .case_handle_in_garland => unreachable,
                 .sexpr => .{
                     .specific = .{
-                        .dropped_sexpr = switch (dropzone.kind) {
+                        .dropped = switch (dropzone.kind) {
                             .nothing => .{
-                                .new_place = .{ .base = .{
-                                    .board = workspace.sexprs.items.len,
-                                }, .local = &.{} },
-                                .overwritten_value = null,
+                                .at = .{ .kind = .nothing },
+                                .old_grabbed_position = .grabbed_sexpr,
+                                .overwritten_sexpr = null,
                             },
                             .sexpr => |s| .{
-                                .new_place = s,
-                                .overwritten_value = workspace.sexprAtPlace(s.base).getSubValue(s.local),
+                                .at = dropzone,
+                                .old_grabbed_position = .grabbed_sexpr,
+                                .overwritten_sexpr = workspace.sexprAtPlace(s.base).getSubValue(s.local),
                             },
                             else => unreachable,
                         },
@@ -1529,43 +1537,19 @@ const Workspace = struct {
         // actually perform the action
         switch (action.specific) {
             .noop => {},
-            .picked_lens_or_case => |h| workspace.focus.grabbing = h.target,
-            .dropped_lens_or_case => workspace.focus.grabbing = .nothing,
-            .picked_case_from_garland => |h| {
-                const garland = &workspace.garlands.items[h.garland_index];
-                const case = garland.popCase(h.case_index);
-                try workspace.cases.append(case);
-                // TODO: lens transform
-                workspace.focus.grabbing = .{ .kind = .{
-                    .case_handle = .{ .index = workspace.cases.items.len - 1 },
-                }, .lens_transform = .identity };
-            },
-            .dropped_case_into_garland => |h| {
-                const garland = &workspace.garlands.items[h.new_position.garland_index];
-                const case = workspace.cases.orderedRemove(h.old_index);
-                try garland.insertCase(mem.gpa, h.new_position.case_index, case);
-                workspace.focus.grabbing = .nothing;
-            },
-            .dropped_sexpr => {
-                switch (dropzone.kind) {
-                    else => unreachable,
-                    .nothing => try workspace.sexprs.append(workspace.popGrabbedSexpr()),
-                    .sexpr => |s| {
-                        const grabbed = workspace.popGrabbedSexpr();
-                        try workspace.sexprAtPlace(s.base).updateSubValue(
-                            s.local,
-                            grabbed.value,
-                            grabbed.hovered,
-                            mem,
-                            &workspace.hover_pool,
-                        );
+            .grabbed => |g| {
+                switch (g.from.kind) {
+                    .nothing => unreachable,
+                    .lens_handle, .case_handle, .garland_handle => workspace.focus.grabbing = g.from,
+                    .case_handle_in_garland => |h| {
+                        const garland = &workspace.garlands.items[h.garland_index];
+                        const case = garland.popCase(h.case_index);
+                        try workspace.cases.append(case);
+                        // TODO: lens transform
+                        workspace.focus.grabbing = .{ .kind = .{
+                            .case_handle = .{ .index = workspace.cases.items.len - 1 },
+                        }, .lens_transform = .identity };
                     },
-                }
-                workspace.focus.grabbing = .nothing;
-            },
-            .grabbed_sexpr => {
-                switch (hovering.kind) {
-                    else => unreachable,
                     .sexpr => |h| {
                         const destroyed_grabbed: ?VeryPhysicalSexpr = switch (h.base) {
                             .grabbed => unreachable,
@@ -1587,9 +1571,38 @@ const Workspace = struct {
                         };
                         grabbed.point = hovering.lens_transform.actOn(grabbed.point);
                         workspace.pushGrabbedSexpr(grabbed);
+                        workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
                     },
                 }
-                workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
+            },
+            .dropped => |g| {
+                switch (g.at.kind) {
+                    .lens_handle, .case_handle, .garland_handle => workspace.focus.grabbing = .nothing,
+                    .case_handle_in_garland => |h| {
+                        const garland = &workspace.garlands.items[h.garland_index];
+                        const case = workspace.cases.orderedRemove(g.old_grabbed_position.kind.case_handle.index);
+                        try garland.insertCase(mem.gpa, h.case_index, case);
+                        workspace.focus.grabbing = .nothing;
+                    },
+                    .nothing => {
+                        assert(std.meta.activeTag(g.old_grabbed_position.kind) == .sexpr);
+                        assert(g.old_grabbed_position.kind.sexpr.base == .grabbed);
+                        try workspace.sexprs.append(workspace.popGrabbedSexpr());
+                        workspace.focus.grabbing = .nothing;
+                    },
+                    .sexpr => |s| {
+                        const grabbed = workspace.popGrabbedSexpr();
+                        try workspace.sexprAtPlace(s.base).updateSubValue(
+                            s.local,
+                            grabbed.value,
+                            grabbed.hovered,
+                            mem,
+                            &workspace.hover_pool,
+                        );
+
+                        workspace.focus.grabbing = .nothing;
+                    },
+                }
             },
         }
         if (action.specific != .noop) {
