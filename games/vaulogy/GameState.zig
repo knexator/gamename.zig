@@ -1130,7 +1130,7 @@ const Workspace = struct {
                 });
             }
             for (workspace.cases.items) |c| {
-                var it = c.next.addressIterator(mem.gpa);
+                var it = c.addressIterator(mem.gpa);
                 while (try it.next()) |address| {
                     inline for (core.CasePart.all) |part| {
                         try lens.tmp_visible_sexprs.append(frame_arena, .{
@@ -1142,16 +1142,6 @@ const Workspace = struct {
                             .lens_transform = lens.getTransform(),
                         });
                     }
-                }
-                inline for (core.CasePart.all) |part| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = .{ .case = .{
-                            .parent_handle_pos = c.handle,
-                            .local = &.{},
-                            .part = part,
-                        } },
-                        .lens_transform = lens.getTransform(),
-                    });
                 }
             }
             for (workspace.garlands.items) |g| {
