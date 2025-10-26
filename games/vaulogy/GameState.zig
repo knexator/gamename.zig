@@ -671,7 +671,6 @@ const Workspace = struct {
     sexprs: std.ArrayList(VeryPhysicalSexpr),
     cases: std.ArrayList(VeryPhysicalCase),
     garlands: std.ArrayList(VeryPhysicalGarland),
-    grabbed_sexpr: ?VeryPhysicalSexpr = null,
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -700,7 +699,6 @@ const Workspace = struct {
             lens_transform: Lens.Transform = .identity,
 
             pub const nothing: Target = .{ .kind = .nothing };
-            pub const grabbed_sexpr: Target = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
         };
     };
 
@@ -722,7 +720,6 @@ const Workspace = struct {
             local: core.CaseAddress,
             part: core.CasePart,
         },
-        grabbed,
     };
     const SexprPlace = struct {
         base: BaseSexprPlace,
@@ -858,21 +855,9 @@ const Workspace = struct {
         }
     }
 
-    fn popGrabbedSexpr(workspace: *Workspace) VeryPhysicalSexpr {
-        const r = workspace.grabbed_sexpr.?;
-        workspace.grabbed_sexpr = null;
-        return r;
-    }
-
-    fn pushGrabbedSexpr(workspace: *Workspace, sexpr: VeryPhysicalSexpr) void {
-        assert(workspace.grabbed_sexpr == null);
-        workspace.grabbed_sexpr = sexpr;
-    }
-
     fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace) *VeryPhysicalSexpr {
         return switch (place) {
             .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
-            .grabbed => &workspace.grabbed_sexpr.?,
             .case => |case| workspace.getAt(VeryPhysicalCase, case.parent).childCase(case.local).sexprAt(case.part),
             .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent).childCase(garland.local).sexprAt(garland.part),
         };
@@ -899,7 +884,8 @@ const Workspace = struct {
     }
 
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
-        for (workspace.sexprs.items) |s| {
+        for (workspace.sexprs.items, 0..) |s, k| {
+            if (isGrabbed(.{ .board = k }, workspace.focus.grabbing)) continue;
             try s.draw(drawer, camera);
         }
 
@@ -947,11 +933,15 @@ const Workspace = struct {
             );
         }
 
-        if (workspace.grabbed_sexpr) |s| try s.draw(drawer, camera);
+        switch (workspace.focus.grabbing.kind) {
+            else => {},
+            .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
+        }
     }
 
     fn findHoverableOrDropzoneAtPosition(workspace: *Workspace, pos: Vec2, res: std.mem.Allocator) !Focus.Target {
-        const grabbed_tag = std.meta.activeTag(workspace.focus.grabbing.kind);
+        const grabbed = workspace.focus.grabbing;
+        const grabbed_tag = std.meta.activeTag(grabbed.kind);
 
         // lenses
         if (grabbed_tag == .nothing) {
@@ -970,7 +960,7 @@ const Workspace = struct {
             for (workspace.lenses.items) |lens| {
                 if (pos.distTo(lens.target) < lens.target_radius) {
                     for (lens.tmp_visible_sexprs.items) |s| {
-                        if (s.original_place == .grabbed) continue;
+                        if (isGrabbed(s.original_place, grabbed)) continue;
                         const original = sexprAtPlace(workspace, s.original_place);
                         if (try ViewHelper.overlapsSexpr(
                             // TODO: don't leak
@@ -995,6 +985,7 @@ const Workspace = struct {
             }
 
             for (workspace.sexprs.items, 0..) |s, k| {
+                if (isGrabbed(.{ .board = k }, grabbed)) continue;
                 if (try ViewHelper.overlapsSexpr(res, s.is_pattern, s.value, s.point, pos)) |address| {
                     return .{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = address } } };
                 }
@@ -1135,12 +1126,6 @@ const Workspace = struct {
                     }
                 }
             }
-            if (workspace.grabbed_sexpr) |_| {
-                try lens.tmp_visible_sexprs.append(frame_arena, .{
-                    .original_place = .grabbed,
-                    .lens_transform = lens.getTransform(),
-                });
-            }
 
             for (0..lens_index) |other_lens_index| {
                 const other_lens = workspace.lenses.items[other_lens_index];
@@ -1191,19 +1176,12 @@ const Workspace = struct {
                                 try garland.insertCase(mem.gpa, h.case_index, case);
                             },
                             .sexpr => |h| {
-                                var grabbed = workspace.popGrabbedSexpr();
-                                // recreate it if needed
-                                switch (h.base) {
-                                    .grabbed => unreachable,
-                                    .board => |k| if (h.local.len == 0) {
-                                        grabbed.point.pos = g.old_position;
-                                        grabbed.is_pattern = g.old_ispattern;
-                                        try workspace.sexprs.insert(k, grabbed);
-                                    },
-                                    .case, .garland => {},
-                                }
-                                const old = workspace.sexprAtPlace(h.base).getSubValue(h.local);
+                                var old = workspace.sexprAtPlace(h.base).getSubValue(h.local);
                                 old.hovered.value = 10;
+                                if (h.local.len == 0 and std.meta.activeTag(h.base) == .board) {
+                                    old.point.pos = g.old_position;
+                                    old.is_pattern = g.old_ispattern;
+                                }
                             },
                         }
                         workspace.focus.grabbing = .nothing;
@@ -1226,6 +1204,7 @@ const Workspace = struct {
                                 workspace.focus.grabbing = g.old_grabbed_position;
                             },
                             .nothing => {
+                                if (true) @panic("TODO");
                                 switch (g.old_grabbed_position.kind) {
                                     else => unreachable,
                                     .sexpr => |h| {
@@ -1236,6 +1215,7 @@ const Workspace = struct {
                                 }
                             },
                             .sexpr => |h| {
+                                if (true) @panic("TODO");
                                 if (g.overwritten_sexpr) |overwritten| {
                                     const base = workspace.sexprAtPlace(h.base);
                                     var grabbed = base.getSubValue(h.local);
@@ -1292,16 +1272,28 @@ const Workspace = struct {
         // update hover_t
         // TODO: iterator over all sexprs?
         for (workspace.sexprs.items, 0..) |*s, k| {
-            const hovered = switch (hovering.kind) {
-                else => null,
-                .sexpr => |sexpr| switch (sexpr.base) {
-                    // special case: no hover anim for base values
-                    .board => |b| if (b == k and sexpr.local.len > 0) sexpr.local else null,
-                    .case, .garland => null,
-                    .grabbed => unreachable,
-                },
-            };
-            s.hovered.update(hovered, 1.0, platform.delta_seconds);
+            if (isGrabbed(.{ .board = k }, workspace.focus.grabbing)) {
+                s.is_pattern = switch (dropzone.kind) {
+                    .nothing => s.is_pattern,
+                    .lens_handle, .case_handle, .garland_handle, .case_handle_in_garland => unreachable,
+                    .sexpr => |x| workspace.sexprAtPlace(x.base).is_pattern,
+                };
+                s.hovered.update(switch (dropzone.kind) {
+                    .sexpr => &.{},
+                    .nothing => null,
+                    else => unreachable,
+                }, 2.0, platform.delta_seconds);
+            } else {
+                const hovered = switch (hovering.kind) {
+                    else => null,
+                    .sexpr => |sexpr| switch (sexpr.base) {
+                        // special case: no hover anim for base values
+                        .board => |b| if (b == k and sexpr.local.len > 0) sexpr.local else null,
+                        .case, .garland => null,
+                    },
+                };
+                s.hovered.update(hovered, 1.0, platform.delta_seconds);
+            }
             s.updateIsPattern(platform.delta_seconds);
         }
         for (workspace.cases.items, 0..) |*parent, k| {
@@ -1316,7 +1308,6 @@ const Workspace = struct {
                             .case => |case| if (case.parent == k and
                                 parent.childCase(case.local) == c and
                                 case.part == part) sexpr.local else null,
-                            .grabbed => unreachable,
                         },
                     };
                     c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
@@ -1336,7 +1327,6 @@ const Workspace = struct {
                             .garland => |garland| if (garland.parent == k and
                                 g.childCase(garland.local) == c and
                                 garland.part == part) sexpr.local else null,
-                            .grabbed => unreachable,
                         },
                     };
                     c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
@@ -1344,19 +1334,7 @@ const Workspace = struct {
                 }
             }
         }
-        if (workspace.grabbed_sexpr) |*grabbed| {
-            grabbed.is_pattern = switch (dropzone.kind) {
-                .nothing => grabbed.is_pattern,
-                .lens_handle, .case_handle, .garland_handle, .case_handle_in_garland => unreachable,
-                .sexpr => |s| workspace.sexprAtPlace(s.base).is_pattern,
-            };
-            grabbed.hovered.update(switch (dropzone.kind) {
-                .sexpr => &.{},
-                .nothing => null,
-                else => unreachable,
-            }, 2.0, platform.delta_seconds);
-            grabbed.updateIsPattern(platform.delta_seconds);
-        }
+
         // TODO: reduce duplication?
         for (workspace.garlands.items, 0..) |*g, k| {
             {
@@ -1420,12 +1398,13 @@ const Workspace = struct {
                 const garland = &workspace.garlands.items[k];
                 garland.handle = mouse.cur.position;
             },
-            .sexpr => {
-                assert(workspace.grabbed_sexpr != null);
+            .sexpr => |g| {
+                assert(g.local.len == 0);
+                const grabbed = workspace.sexprAtPlace(g.base);
                 const target: Point = switch (dropzone.kind) {
                     .sexpr => |s| blk: {
                         break :blk ViewHelper.sexprChildView(
-                            workspace.grabbed_sexpr.?.is_pattern,
+                            grabbed.is_pattern,
                             dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base).point),
                             s.local,
                         );
@@ -1436,7 +1415,7 @@ const Workspace = struct {
                     },
                     else => unreachable,
                 };
-                workspace.grabbed_sexpr.?.point.lerp_towards(target, 0.6, platform.delta_seconds);
+                grabbed.point.lerp_towards(target, 0.6, platform.delta_seconds);
             },
         }
 
@@ -1530,13 +1509,13 @@ const Workspace = struct {
                     .specific = .{
                         .dropped = switch (dropzone.kind) {
                             .nothing => .{
-                                .at = .{ .kind = .nothing },
-                                .old_grabbed_position = .grabbed_sexpr,
+                                .at = workspace.focus.grabbing,
+                                .old_grabbed_position = workspace.focus.grabbing,
                                 .overwritten_sexpr = null,
                             },
                             .sexpr => |s| .{
                                 .at = dropzone,
-                                .old_grabbed_position = .grabbed_sexpr,
+                                .old_grabbed_position = workspace.focus.grabbing,
                                 .overwritten_sexpr = workspace.sexprAtPlace(s.base).getSubValue(s.local),
                             },
                             else => unreachable,
@@ -1564,32 +1543,33 @@ const Workspace = struct {
                         }, .lens_transform = .identity };
                     },
                     .sexpr => |h| {
-                        const destroyed_grabbed: ?VeryPhysicalSexpr = switch (h.base) {
-                            .grabbed => unreachable,
-                            .board => |p| if (h.local.len == 0)
-                                workspace.popAt(VeryPhysicalSexpr, p)
-                            else
-                                null,
+                        const existing_grabbed: ?usize = switch (h.base) {
+                            .board => |k| if (h.local.len == 0) k else null,
                             .case, .garland => null,
                         };
-                        var grabbed: VeryPhysicalSexpr = destroyed_grabbed orelse blk: {
+                        const grabbed: usize = existing_grabbed orelse blk: {
                             const original = workspace.sexprAtPlace(h.base).getSubValue(h.local);
-                            break :blk .{
+                            try workspace.sexprs.append(.{
                                 .hovered = try original.hovered.clone(&workspace.hover_pool),
                                 .value = original.value,
                                 .point = original.point,
                                 .is_pattern = original.is_pattern,
                                 .is_pattern_t = original.is_pattern_t,
-                            };
+                            });
+                            break :blk workspace.sexprs.items.len - 1;
                         };
-                        grabbed.point = hovering.lens_transform.actOn(grabbed.point);
-                        workspace.pushGrabbedSexpr(grabbed);
-                        workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{ .base = .grabbed, .local = &.{} } } };
+                        const base = workspace.sexprAtPlace(.{ .board = grabbed });
+                        base.point = hovering.lens_transform.actOn(base.point);
+                        workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{
+                            .base = .{ .board = grabbed },
+                            .local = &.{},
+                        } } };
                     },
                 }
             },
             .dropped => |g| {
                 switch (g.at.kind) {
+                    .nothing => unreachable,
                     .lens_handle, .case_handle, .garland_handle => workspace.focus.grabbing = .nothing,
                     .case_handle_in_garland => |h| {
                         const garland = &workspace.garlands.items[h.garland_index];
@@ -1597,21 +1577,21 @@ const Workspace = struct {
                         try garland.insertCase(mem.gpa, h.case_index, case);
                         workspace.focus.grabbing = .nothing;
                     },
-                    .nothing => {
-                        assert(std.meta.activeTag(g.old_grabbed_position.kind) == .sexpr);
-                        assert(g.old_grabbed_position.kind.sexpr.base == .grabbed);
-                        try workspace.sexprs.append(workspace.popGrabbedSexpr());
-                        workspace.focus.grabbing = .nothing;
-                    },
                     .sexpr => |s| {
-                        const grabbed = workspace.popGrabbedSexpr();
-                        try workspace.sexprAtPlace(s.base).updateSubValue(
-                            s.local,
-                            grabbed.value,
-                            grabbed.hovered,
-                            mem,
-                            &workspace.hover_pool,
-                        );
+                        assert(std.meta.activeTag(g.old_grabbed_position.kind.sexpr.base) == .board);
+                        assert(g.old_grabbed_position.kind.sexpr.local.len == 0);
+                        if (g.overwritten_sexpr != null) {
+                            const k = g.old_grabbed_position.kind.sexpr.base.board;
+                            const grabbed = workspace.sexprs.items[k];
+                            try workspace.sexprAtPlace(s.base).updateSubValue(
+                                s.local,
+                                grabbed.value,
+                                grabbed.hovered,
+                                mem,
+                                &workspace.hover_pool,
+                            );
+                            _ = workspace.sexprs.orderedRemove(k);
+                        }
 
                         workspace.focus.grabbing = .nothing;
                     },
@@ -1621,6 +1601,19 @@ const Workspace = struct {
         if (action.specific != .noop) {
             try workspace.undo_stack.append(action);
         }
+    }
+
+    fn isGrabbed(thing: BaseSexprPlace, grabbed: Focus.Target) bool {
+        return switch (grabbed.kind) {
+            else => false,
+            .sexpr => |s| switch (s.base) {
+                .case, .garland => unreachable,
+                .board => |k| switch (thing) {
+                    .board => |k2| k == k2,
+                    else => false,
+                },
+            },
+        };
     }
 };
 
