@@ -731,6 +731,8 @@ const Workspace = struct {
                 origin: SexprPlace,
                 /// not always used
                 old_position: Vec2,
+                /// not always used
+                old_ispattern: bool,
             },
             // TODO: unify?
             // TODO: rename
@@ -1220,6 +1222,7 @@ const Workspace = struct {
                             .grabbed => unreachable,
                             .board => |k| if (g.origin.local.len == 0) {
                                 grabbed.point.pos = g.old_position;
+                                grabbed.is_pattern = g.old_ispattern;
                                 try workspace.sexprs.insert(k, grabbed);
                             },
                             .case, .garland => {},
@@ -1469,6 +1472,7 @@ const Workspace = struct {
                         .grabbed_sexpr = .{
                             .origin = s,
                             .old_position = workspace.sexprAtPlace(s.base).point.pos,
+                            .old_ispattern = workspace.sexprAtPlace(s.base).is_pattern,
                         },
                     },
                 },
