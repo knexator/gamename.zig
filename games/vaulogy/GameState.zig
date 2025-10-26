@@ -742,7 +742,6 @@ const Workspace = struct {
             dropped_lens_or_case: struct {
                 /// always is .lens_handle or .case_handle
                 target: Focus.Target,
-                new_position: Vec2,
             },
             picked_case_from_garland: CaseInGarlandPlace,
             dropped_case_into_garland: struct {
@@ -1477,10 +1476,9 @@ const Workspace = struct {
         else if (workspace.focus.grabbing.kind != .nothing and !mouse.cur.isDown(.left))
             switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
-                .lens_handle => |h| .{ .specific = .{
+                .lens_handle => .{ .specific = .{
                     .dropped_lens_or_case = .{
                         .target = workspace.focus.grabbing,
-                        .new_position = workspace.lenses.items[h.index].handlePos(h.part),
                     },
                 } },
                 .case_handle => |h| switch (dropzone.kind) {
@@ -1488,7 +1486,6 @@ const Workspace = struct {
                     .nothing => .{ .specific = .{
                         .dropped_lens_or_case = .{
                             .target = workspace.focus.grabbing,
-                            .new_position = workspace.cases.items[h.index].handle,
                         },
                     } },
                     .case_handle_in_garland => |t| .{ .specific = .{
@@ -1498,10 +1495,9 @@ const Workspace = struct {
                         },
                     } },
                 },
-                .garland_handle => |k| .{ .specific = .{
+                .garland_handle => .{ .specific = .{
                     .dropped_lens_or_case = .{
                         .target = workspace.focus.grabbing,
-                        .new_position = workspace.garlands.items[k].getBoardPos(),
                     },
                 } },
                 .case_handle_in_garland => unreachable,
