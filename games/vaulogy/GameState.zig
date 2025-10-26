@@ -1225,12 +1225,15 @@ const Workspace = struct {
                                 }
                                 workspace.focus.grabbing = g.old_grabbed_position;
                             },
-                            // TODO: remove this case
                             .nothing => {
-                                assert(std.meta.activeTag(g.old_grabbed_position.kind) == .sexpr);
-                                assert(g.old_grabbed_position.kind.sexpr.base == .grabbed);
-                                const grabbed = workspace.sexprs.pop().?;
-                                workspace.pushGrabbedSexpr(grabbed);
+                                switch (g.old_grabbed_position.kind) {
+                                    else => unreachable,
+                                    .sexpr => |h| {
+                                        assert(h.base == .grabbed);
+                                        const grabbed = workspace.sexprs.pop().?;
+                                        workspace.pushGrabbedSexpr(grabbed);
+                                    },
+                                }
                             },
                             .sexpr => |h| {
                                 if (g.overwritten_sexpr) |overwritten| {
