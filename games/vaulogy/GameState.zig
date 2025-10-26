@@ -254,6 +254,14 @@ const VeryPhysicalGarland = struct {
         hot_t: f32 = 0,
     };
 
+    pub fn deinit(garland: *VeryPhysicalGarland, allocator: std.mem.Allocator) void {
+        garland.handles_for_new_cases_rest.deinit(allocator);
+        for (garland.cases.items) |*c| {
+            c.next.deinit(allocator);
+        }
+        garland.cases.deinit(allocator);
+    }
+
     pub fn getBoardPos(garland: VeryPhysicalGarland) Vec2 {
         return garland.handle;
     }
@@ -814,15 +822,17 @@ const Workspace = struct {
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
+        for (workspace.cases.items) |*c| {
+            c.next.deinit(gpa);
+        }
+        for (workspace.garlands.items) |*g| {
+            g.deinit(gpa);
+        }
         workspace.lenses.deinit();
         workspace.sexprs.deinit();
         workspace.cases.deinit();
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
-        for (workspace.garlands.items) |*g| {
-            g.handles_for_new_cases_rest.deinit(gpa);
-            g.cases.deinit(gpa);
-        }
         workspace.garlands.deinit();
     }
 
