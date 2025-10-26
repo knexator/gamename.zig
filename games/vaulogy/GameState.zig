@@ -703,14 +703,14 @@ const Workspace = struct {
     };
 
     const BaseSexprPlace = union(enum) {
-        board: Vec2,
+        board: usize,
         case: struct {
-            parent_handle_pos: Vec2,
+            parent: usize,
             local: core.CaseAddress,
             part: core.CasePart,
         },
         garland: struct {
-            parent_handle_pos: Vec2,
+            parent: usize,
             local: core.CaseAddress,
             part: core.CasePart,
         },
@@ -729,6 +729,8 @@ const Workspace = struct {
             },
             grabbed_sexpr: struct {
                 origin: SexprPlace,
+                /// not always used
+                old_position: Vec2,
             },
             // TODO: unify?
             // TODO: rename
@@ -874,46 +876,23 @@ const Workspace = struct {
         return switch (place) {
             .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
             .grabbed => &workspace.grabbed_sexpr.?,
-            .case => |case| workspace.getAt(VeryPhysicalCase, case.parent_handle_pos).childCase(case.local).sexprAt(case.part),
-            .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent_handle_pos).childCase(garland.local).sexprAt(garland.part),
+            .case => |case| workspace.getAt(VeryPhysicalCase, case.parent).childCase(case.local).sexprAt(case.part),
+            .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent).childCase(garland.local).sexprAt(garland.part),
         };
     }
 
-    fn boardThingIndexAtPos(workspace: *Workspace, T: type, pos: Vec2) ?usize {
+    // This made more sense when it was indexed by a Vec2
+    fn getAt(workspace: *Workspace, comptime T: type, k: usize) *T {
         const items = switch (T) {
             VeryPhysicalSexpr => workspace.sexprs.items,
             VeryPhysicalCase => workspace.cases.items,
             VeryPhysicalGarland => workspace.garlands.items,
             else => comptime unreachable,
         };
-
-        if (@import("builtin").mode == .Debug) {
-            var count: usize = 0;
-            for (items) |s| {
-                if (s.getBoardPos().equals(pos)) {
-                    count += 1;
-                }
-            }
-            assert(count <= 1);
-        }
-
-        for (items, 0..) |s, k| {
-            if (s.getBoardPos().equals(pos)) return k;
-        } else return null;
+        return &items[k];
     }
 
-    fn getAt(workspace: *Workspace, comptime T: type, pos: Vec2) *T {
-        const items = switch (T) {
-            VeryPhysicalSexpr => workspace.sexprs.items,
-            VeryPhysicalCase => workspace.cases.items,
-            VeryPhysicalGarland => workspace.garlands.items,
-            else => comptime unreachable,
-        };
-        return &items[workspace.boardThingIndexAtPos(T, pos).?];
-    }
-
-    fn popAt(workspace: *Workspace, comptime T: type, pos: Vec2) T {
-        const k = workspace.boardThingIndexAtPos(T, pos).?;
+    fn popAt(workspace: *Workspace, comptime T: type, k: usize) T {
         return switch (T) {
             VeryPhysicalSexpr => workspace.sexprs.swapRemove(k),
             VeryPhysicalCase => workspace.cases.swapRemove(k),
@@ -1018,13 +997,13 @@ const Workspace = struct {
                 }
             }
 
-            for (workspace.sexprs.items) |s| {
+            for (workspace.sexprs.items, 0..) |s, k| {
                 if (try ViewHelper.overlapsSexpr(res, s.is_pattern, s.value, s.point, pos)) |address| {
-                    return .{ .kind = .{ .sexpr = .{ .base = .{ .board = s.point.pos }, .local = address } } };
+                    return .{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = address } } };
                 }
             }
 
-            for (workspace.cases.items) |parent_case| {
+            for (workspace.cases.items, 0..) |parent_case, k| {
                 var it = parent_case.addressIterator(res);
                 while (try it.next()) |address| {
                     const c = parent_case.constChildCase(address);
@@ -1032,7 +1011,7 @@ const Workspace = struct {
                         const s = c.constSexprAt(part);
                         if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |local_address| {
                             return .{ .kind = .{ .sexpr = .{ .base = .{ .case = .{
-                                .parent_handle_pos = parent_case.handle,
+                                .parent = k,
                                 .part = part,
                                 .local = address,
                             } }, .local = local_address } } };
@@ -1041,7 +1020,7 @@ const Workspace = struct {
                 }
             }
 
-            for (workspace.garlands.items) |garland| {
+            for (workspace.garlands.items, 0..) |garland, k| {
                 var it = garland.addressIterator(res);
                 while (try it.next()) |address| {
                     const c = garland.constChildCase(address);
@@ -1049,7 +1028,7 @@ const Workspace = struct {
                         const s = c.constSexprAt(part);
                         if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |sexpr_address| {
                             return .{ .kind = .{ .sexpr = .{ .base = .{ .garland = .{
-                                .parent_handle_pos = garland.handle,
+                                .parent = k,
                                 .part = part,
                                 .local = address,
                             } }, .local = sexpr_address } } };
@@ -1123,19 +1102,19 @@ const Workspace = struct {
             lens.tmp_visible_sexprs = .empty;
 
             // TODO: cull and only store visible parts
-            for (workspace.sexprs.items) |s| {
+            for (workspace.sexprs.items, 0..) |_, k| {
                 try lens.tmp_visible_sexprs.append(frame_arena, .{
-                    .original_place = .{ .board = s.point.pos },
+                    .original_place = .{ .board = k },
                     .lens_transform = lens.getTransform(),
                 });
             }
-            for (workspace.cases.items) |c| {
+            for (workspace.cases.items, 0..) |c, k| {
                 var it = c.addressIterator(mem.gpa);
                 while (try it.next()) |address| {
                     inline for (core.CasePart.all) |part| {
                         try lens.tmp_visible_sexprs.append(frame_arena, .{
                             .original_place = .{ .case = .{
-                                .parent_handle_pos = c.handle,
+                                .parent = k,
                                 .local = address,
                                 .part = part,
                             } },
@@ -1144,13 +1123,13 @@ const Workspace = struct {
                     }
                 }
             }
-            for (workspace.garlands.items) |g| {
+            for (workspace.garlands.items, 0..) |g, k| {
                 var it = g.addressIterator(mem.gpa);
                 while (try it.next()) |address| {
                     inline for (core.CasePart.all) |part| {
                         try lens.tmp_visible_sexprs.append(frame_arena, .{
                             .original_place = .{ .garland = .{
-                                .parent_handle_pos = g.handle,
+                                .parent = k,
                                 .local = address,
                                 .part = part,
                             } },
@@ -1240,9 +1219,9 @@ const Workspace = struct {
                         // recreate it if needed
                         switch (g.origin.base) {
                             .grabbed => unreachable,
-                            .board => |position| if (g.origin.local.len == 0) {
-                                grabbed.point.pos = position;
-                                try workspace.sexprs.append(grabbed);
+                            .board => |k| if (g.origin.local.len == 0) {
+                                grabbed.point.pos = g.old_position;
+                                try workspace.sexprs.insert(k, grabbed);
                             },
                             .case, .garland => {},
                         }
@@ -1304,12 +1283,12 @@ const Workspace = struct {
 
         // update hover_t
         // TODO: iterator over all sexprs?
-        for (workspace.sexprs.items) |*s| {
+        for (workspace.sexprs.items, 0..) |*s, k| {
             const hovered = switch (hovering.kind) {
                 else => null,
                 .sexpr => |sexpr| switch (sexpr.base) {
                     // special case: no hover anim for base values
-                    .board => |pos| if (pos.equals(s.point.pos) and sexpr.local.len > 0) sexpr.local else null,
+                    .board => |b| if (b == k and sexpr.local.len > 0) sexpr.local else null,
                     .case, .garland => null,
                     .grabbed => unreachable,
                 },
@@ -1317,7 +1296,7 @@ const Workspace = struct {
             s.hovered.update(hovered, 1.0, platform.delta_seconds);
             s.updateIsPattern(platform.delta_seconds);
         }
-        for (workspace.cases.items) |*parent| {
+        for (workspace.cases.items, 0..) |*parent, k| {
             var it = parent.addressIterator(frame_arena);
             while (try it.next()) |address| {
                 const c = parent.childCase(address);
@@ -1326,7 +1305,7 @@ const Workspace = struct {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
                             .board, .garland => null,
-                            .case => |case| if (case.parent_handle_pos.equals(c.handle) and
+                            .case => |case| if (case.parent == k and
                                 parent.childCase(case.local) == c and
                                 case.part == part) sexpr.local else null,
                             .grabbed => unreachable,
@@ -1337,7 +1316,7 @@ const Workspace = struct {
                 }
             }
         }
-        for (workspace.garlands.items) |*g| {
+        for (workspace.garlands.items, 0..) |*g, k| {
             var it = g.addressIterator(frame_arena);
             while (try it.next()) |address| {
                 const c = g.childCase(address);
@@ -1346,7 +1325,7 @@ const Workspace = struct {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
                             .board, .case => null,
-                            .garland => |garland| if (garland.parent_handle_pos.equals(g.handle) and
+                            .garland => |garland| if (garland.parent == k and
                                 g.childCase(garland.local) == c and
                                 garland.part == part) sexpr.local else null,
                             .grabbed => unreachable,
@@ -1488,7 +1467,10 @@ const Workspace = struct {
                 } },
                 .sexpr => |s| .{
                     .specific = .{
-                        .grabbed_sexpr = .{ .origin = s },
+                        .grabbed_sexpr = .{
+                            .origin = s,
+                            .old_position = workspace.sexprAtPlace(s.base).point.pos,
+                        },
                     },
                 },
             }
@@ -1528,7 +1510,7 @@ const Workspace = struct {
                         .dropped_sexpr = switch (dropzone.kind) {
                             .nothing => .{
                                 .new_place = .{ .base = .{
-                                    .board = workspace.grabbed_sexpr.?.point.pos,
+                                    .board = workspace.sexprs.items.len,
                                 }, .local = &.{} },
                                 .overwritten_value = null,
                             },
