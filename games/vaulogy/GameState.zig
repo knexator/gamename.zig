@@ -1149,8 +1149,9 @@ const Workspace = struct {
         }
 
         // garlands
-        if (grabbed_tag == .nothing) {
+        if (grabbed_tag == .nothing or grabbed_tag == .garland_handle) {
             for (workspace.garlands.items, 0..) |parent_garland, k| {
+                if (grabbed_tag == .garland_handle and grabbed.kind.garland_handle.parent.garland == k) continue;
                 var it = parent_garland.childGarlandsAddressIterator(res);
                 while (try it.next()) |address| {
                     const garland = parent_garland.constChildGarland(address);
@@ -1508,7 +1509,7 @@ const Workspace = struct {
                 var it = g.childGarlandsAddressIterator(frame_arena);
                 while (try it.next()) |address| {
                     const handle = &g.childGarland(address).handle;
-                    const target: f32 = switch (hovering.kind) {
+                    const target: f32 = switch (hovered_or_dropzone_thing.kind) {
                         else => 0,
                         .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
                     };
@@ -1580,6 +1581,18 @@ const Workspace = struct {
                             !h.existing_case) 1 else 0,
                     };
                     math.lerp_towards(&c.hot_t, target, 0.6, platform.delta_seconds);
+                }
+            }
+
+            {
+                var it = g.next.childGarlandsAddressIterator(frame_arena);
+                while (try it.next()) |address| {
+                    const handle = &g.next.childGarland(address).handle;
+                    const target: f32 = switch (hovered_or_dropzone_thing.kind) {
+                        else => 0,
+                        .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
+                    };
+                    math.lerp_towards(&handle.hot_t, target, 0.6, platform.delta_seconds);
                 }
             }
         }
@@ -1697,7 +1710,11 @@ const Workspace = struct {
                 },
                 .garland_handle => .{ .specific = .{
                     .dropped = .{
-                        .at = workspace.focus.grabbing,
+                        .at = switch (dropzone.kind) {
+                            .nothing => workspace.focus.grabbing,
+                            .garland_handle => dropzone,
+                            else => unreachable,
+                        },
                         .old_grabbed_position = workspace.focus.grabbing,
                         .overwritten_sexpr = undefined,
                     },
@@ -1800,7 +1817,24 @@ const Workspace = struct {
             .dropped => |g| {
                 switch (g.at.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .garland_handle => workspace.focus.grabbing = .nothing,
+                    .lens_handle => workspace.focus.grabbing = .nothing,
+                    .garland_handle => |h| {
+                        if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
+                            workspace.focus.grabbing = .nothing;
+                        } else {
+                            const parent_case = switch (h.parent) {
+                                .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
+                                .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
+                            };
+                            const k = g.old_grabbed_position.kind.garland_handle.parent.garland;
+                            assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
+                            const garland = workspace.garlands.items[k];
+                            parent_case.next = garland;
+                            _ = workspace.garlands.orderedRemove(k);
+                            workspace.focus.grabbing = .nothing;
+                            std.log.debug("hola", .{});
+                        }
+                    },
                     .case_handle => |h| {
                         const old_k = g.old_grabbed_position.kind.case_handle.parent.case;
                         assert(g.old_grabbed_position.kind.case_handle.local.len == 0);
