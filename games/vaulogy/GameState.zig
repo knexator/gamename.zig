@@ -1162,6 +1162,19 @@ const Workspace = struct {
                     } else res.free(address);
                 }
             }
+
+            for (workspace.cases.items, 0..) |parent_case, k| {
+                var it = parent_case.next.childGarlandsAddressIterator(res);
+                while (try it.next()) |address| {
+                    const garland = parent_case.next.constChildGarland(address);
+                    if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
+                        return .{ .kind = .{ .garland_handle = .{
+                            .parent = .{ .case = k },
+                            .local = address,
+                        } } };
+                    } else res.free(address);
+                }
+            }
         }
 
         // cases, for picking
@@ -1718,8 +1731,7 @@ const Workspace = struct {
                     .nothing => unreachable,
                     .lens_handle => workspace.focus.grabbing = g.from,
                     .garland_handle => |h| {
-                        if (h.local.len == 0) {
-                            assert(std.meta.activeTag(h.parent) == .garland);
+                        if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = g.from;
                         } else {
                             const parent_case = switch (h.parent) {
