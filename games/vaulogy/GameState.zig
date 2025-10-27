@@ -247,13 +247,22 @@ const Handle = struct {
 const VeryPhysicalGarland = struct {
     // TODO: doubly linked list?
     cases: std.ArrayListUnmanaged(VeryPhysicalCase),
-    handles_for_new_cases_first: HandleForNewCase = .{ .pos = .zero },
+    handles_for_new_cases_first: HandleForNewCase,
     handles_for_new_cases_rest: std.ArrayListUnmanaged(HandleForNewCase),
 
     handle: Handle,
     pub const handle_radius: f32 = 0.2;
 
     const HandleForNewCase = Handle;
+
+    pub fn init(pos: Vec2) VeryPhysicalGarland {
+        return .{
+            .handle = .{ .pos = pos },
+            .cases = .empty,
+            .handles_for_new_cases_rest = .empty,
+            .handles_for_new_cases_first = .{ .pos = pos },
+        };
+    }
 
     pub fn deinit(garland: *VeryPhysicalGarland, allocator: std.mem.Allocator) void {
         garland.handles_for_new_cases_rest.deinit(allocator);
@@ -337,6 +346,13 @@ const VeryPhysicalGarland = struct {
         return parent.cases.items[local[0]].childCase(local[1..]);
     }
 
+    pub fn constChildGarland(parent: *const VeryPhysicalGarland, local: core.CaseAddress) *const VeryPhysicalGarland {
+        return if (local.len == 0)
+            parent
+        else
+            &parent.constChildCase(local).next;
+    }
+
     pub fn childGarland(parent: *VeryPhysicalGarland, local: core.CaseAddress) *VeryPhysicalGarland {
         return if (local.len == 0)
             parent
@@ -367,6 +383,10 @@ const VeryPhysicalGarland = struct {
         try parent.cases.insert(mem, index, case);
     }
 
+    pub fn childGarlandsAddressIterator(garland: *const VeryPhysicalGarland, mem: std.mem.Allocator) AddressIterator {
+        return .{ .mem = mem, .garland = garland, .start_with_empty = true };
+    }
+
     pub fn addressIterator(garland: *const VeryPhysicalGarland, mem: std.mem.Allocator) AddressIterator {
         return .{ .mem = mem, .garland = garland };
     }
@@ -377,8 +397,13 @@ const VeryPhysicalGarland = struct {
         child: ?*AddressIterator = null,
         k: usize = 0,
         garland: *const VeryPhysicalGarland,
+        start_with_empty: bool = false,
 
         pub fn next(it: *AddressIterator) !?core.CaseAddress {
+            if (it.start_with_empty) {
+                it.start_with_empty = false;
+                return &.{};
+            }
             if (it.child == null) {
                 if (it.k >= it.garland.cases.items.len) return null;
                 it.child = try it.mem.create(AddressIterator);
@@ -470,11 +495,7 @@ const VeryPhysicalCase = struct {
             .pattern = try .fromSexpr(pool, values.pattern, center.applyToLocalPoint(.{ .pos = .xneg }), true),
             .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
             .fnk_name = try .fromSexpr(pool, values.fnk_name, center.applyToLocalPoint(fnk_name_offset), false),
-            .next = .{
-                .handle = .{ .pos = center.applyToLocalPosition(.new(6, 0)) },
-                .cases = .empty,
-                .handles_for_new_cases_rest = .empty,
-            },
+            .next = .init(center.applyToLocalPosition(.new(6, 0))),
         };
     }
 
@@ -762,7 +783,7 @@ const Workspace = struct {
                     part: Lens.Part,
                 },
                 case_handle: CaseHandle,
-                garland_handle: usize,
+                garland_handle: GarlandHandle,
             },
             lens_transform: Lens.Transform = .identity,
 
@@ -777,6 +798,14 @@ const Workspace = struct {
             case: usize,
         },
         existing_case: bool,
+    };
+
+    const GarlandHandle = struct {
+        local: core.CaseAddress,
+        parent: union(enum) {
+            garland: usize,
+            case: usize,
+        },
     };
 
     const BaseSexprPlace = union(enum) {
@@ -869,6 +898,7 @@ const Workspace = struct {
         try dst.garlands.append(.{
             .cases = try .initCapacity(mem.gpa, 4),
             .handle = .{ .pos = .new(0, 5) },
+            .handles_for_new_cases_first = .{ .pos = .new(0, 5) },
             .handles_for_new_cases_rest = try .initCapacity(mem.gpa, 4),
         });
 
@@ -946,6 +976,13 @@ const Workspace = struct {
                 .case => |k| &workspace.cases.items[k].childCase(place.local).handle,
             };
         } else @panic("TODO");
+    }
+
+    fn garlandHandleRef(workspace: *Workspace, place: GarlandHandle) *Handle {
+        return switch (place.parent) {
+            .garland => |k| &workspace.garlands.items[k].childGarland(place.local).handle,
+            .case => |k| &workspace.cases.items[k].next.childGarland(place.local).handle,
+        };
     }
 
     // This made more sense when it was indexed by a Vec2
@@ -1113,9 +1150,16 @@ const Workspace = struct {
 
         // garlands
         if (grabbed_tag == .nothing) {
-            for (workspace.garlands.items, 0..) |garland, k| {
-                if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
-                    return .{ .kind = .{ .garland_handle = k } };
+            for (workspace.garlands.items, 0..) |parent_garland, k| {
+                var it = parent_garland.childGarlandsAddressIterator(res);
+                while (try it.next()) |address| {
+                    const garland = parent_garland.constChildGarland(address);
+                    if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
+                        return .{ .kind = .{ .garland_handle = .{
+                            .parent = .{ .garland = k },
+                            .local = address,
+                        } } };
+                    } else res.free(address);
                 }
             }
         }
@@ -1269,9 +1313,11 @@ const Workspace = struct {
                                 assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
                             },
                             .garland_handle => |h| {
-                                const garland = &workspace.garlands.items[h];
-                                garland.handle.pos = g.old_position;
-                                assert(workspace.focus.grabbing.kind.garland_handle == h);
+                                _ = h;
+                                @panic("TODO");
+                                // const garland = &workspace.garlands.items[h];
+                                // garland.handle.pos = g.old_position;
+                                // assert(workspace.focus.grabbing.kind.garland_handle == h);
                             },
                             .case_handle => |h| {
                                 if (h.local.len == 0) {
@@ -1303,8 +1349,12 @@ const Workspace = struct {
                     .dropped => |g| {
                         switch (g.at.kind) {
                             .nothing => unreachable,
-                            .lens_handle, .garland_handle => {
+                            .lens_handle => {
                                 workspace.focus.grabbing = g.at;
+                            },
+                            .garland_handle => {
+                                workspace.focus.grabbing = g.at;
+                                @panic("TODO");
                             },
                             .case_handle => |h| {
                                 const old_k = g.old_grabbed_position.kind.case_handle.parent.case;
@@ -1322,18 +1372,6 @@ const Workspace = struct {
                                     workspace.cases.items[old_k] = case;
                                 }
                             },
-                            // .case_handle_in_garland => |h| {
-                            //     assert(!h.existing_case);
-                            //     assert(workspace.focus.grabbing.kind == .nothing);
-                            //     const garland = &workspace.garlands.items[h.garland_index];
-                            //     const case = garland.popCase(h.case_index);
-                            //     // insert the thing at the old_grabbed_position
-                            //     switch (g.old_grabbed_position.kind) {
-                            //         .case_handle => |c| try workspace.cases.insert(c.index, case),
-                            //         else => unreachable,
-                            //     }
-                            //     workspace.focus.grabbing = g.old_grabbed_position;
-                            // },
                             .sexpr => |h| {
                                 if (g.overwritten_sexpr) |overwritten| {
                                     try workspace.sexprs.insert(g.old_grabbed_position.kind.sexpr.base.board, undefined);
@@ -1454,11 +1492,15 @@ const Workspace = struct {
         // TODO: reduce duplication?
         for (workspace.garlands.items, 0..) |*g, k| {
             {
-                const target: f32 = switch (hovering.kind) {
-                    else => 0,
-                    .garland_handle => |handle| if (handle == k) 1 else 0,
-                };
-                math.lerp_towards(&g.handle.hot_t, target, 0.6, platform.delta_seconds);
+                var it = g.childGarlandsAddressIterator(frame_arena);
+                while (try it.next()) |address| {
+                    const handle = &g.childGarland(address).handle;
+                    const target: f32 = switch (hovering.kind) {
+                        else => 0,
+                        .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
+                    };
+                    math.lerp_towards(&handle.hot_t, target, 0.6, platform.delta_seconds);
+                }
             }
 
             {
@@ -1547,10 +1589,7 @@ const Workspace = struct {
                 }
             },
             .case_handle => |p| workspace.caseHandleRef(p).pos = mouse.cur.position,
-            .garland_handle => |k| {
-                const garland = &workspace.garlands.items[k];
-                garland.handle.pos = mouse.cur.position;
-            },
+            .garland_handle => |p| workspace.garlandHandleRef(p).pos = mouse.cur.position,
             .sexpr => |g| {
                 assert(g.local.len == 0);
                 const grabbed = workspace.sexprAtPlace(g.base);
@@ -1602,7 +1641,7 @@ const Workspace = struct {
                 .garland_handle => |k| .{ .specific = .{
                     .grabbed = .{
                         .from = hovering,
-                        .old_position = workspace.garlands.items[k].handle.pos,
+                        .old_position = workspace.garlandHandleRef(k).pos,
                         .old_ispattern = undefined,
                     },
                 } },
@@ -1677,7 +1716,28 @@ const Workspace = struct {
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .garland_handle => workspace.focus.grabbing = g.from,
+                    .lens_handle => workspace.focus.grabbing = g.from,
+                    .garland_handle => |h| {
+                        if (h.local.len == 0) {
+                            assert(std.meta.activeTag(h.parent) == .garland);
+                            workspace.focus.grabbing = g.from;
+                        } else {
+                            const parent_case = switch (h.parent) {
+                                .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
+                                .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
+                            };
+                            const garland = parent_case.next;
+                            try workspace.garlands.append(garland);
+                            parent_case.next = .init(garland.handle.pos);
+                            // TODO: lens transform?
+                            workspace.focus.grabbing = .{ .kind = .{
+                                .garland_handle = .{
+                                    .local = &.{},
+                                    .parent = .{ .garland = workspace.garlands.items.len - 1 },
+                                },
+                            }, .lens_transform = .identity };
+                        }
+                    },
                     .case_handle => |h| {
                         assert(h.existing_case);
                         if (h.local.len == 0) {
