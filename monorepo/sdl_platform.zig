@@ -169,6 +169,8 @@ pub fn main() !void {
         try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
     }
 
+    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_STENCIL_SIZE, 8));
+
     const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
         stuff.metadata.name,
         @intCast(window_size.x),
@@ -247,13 +249,29 @@ pub fn main() !void {
             .useInstancedRenderable = useInstancedRenderable,
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
             .loadTextureDataFromFilename = loadTextureDataFromFilename,
-            .startStencil = NOOP,
-            .doneStencil = NOOP,
-            .stopStencil = NOOP,
+            .startStencil = startStencil,
+            .doneStencil = doneStencil,
+            .stopStencil = stopStencil,
         };
 
-        // TODO: remove
-        fn NOOP() void {}
+        fn startStencil() void {
+            gl.ClearStencil(0);
+            gl.Clear(gl.STENCIL_BUFFER_BIT);
+            gl.Enable(gl.STENCIL_TEST);
+            gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
+            gl.StencilFunc(gl.ALWAYS, 1, 0xFF);
+            gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        }
+
+        fn doneStencil() void {
+            gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
+            gl.StencilFunc(gl.EQUAL, 1, 0xFF);
+            gl.StencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        }
+
+        fn stopStencil() void {
+            gl.Disable(gl.STENCIL_TEST);
+        }
 
         pub fn clear(color: FColor) void {
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
