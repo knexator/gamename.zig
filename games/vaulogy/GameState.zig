@@ -851,6 +851,7 @@ const Workspace = struct {
         parent: union(enum) {
             garland: usize,
             case: usize,
+            executor: usize,
         },
     };
 
@@ -1032,16 +1033,22 @@ const Workspace = struct {
     }
 
     fn garlandHandleRef(workspace: *Workspace, place: GarlandHandle) *Handle {
-        return switch (place.parent) {
-            .garland => |k| &workspace.garlands.items[k].childGarland(place.local).handle,
-            .case => |k| &workspace.cases.items[k].next.childGarland(place.local).handle,
-        };
+        return &workspace.garlandAt(place).handle;
     }
 
     fn garlandAt(workspace: *Workspace, place: GarlandHandle) *VeryPhysicalGarland {
         return switch (place.parent) {
             .garland => |k| workspace.garlands.items[k].childGarland(place.local),
             .case => |k| workspace.cases.items[k].next.childGarland(place.local),
+            .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
+        };
+    }
+
+    fn caseFromGarland(workspace: *Workspace, place: GarlandHandle) *VeryPhysicalCase {
+        return switch (place.parent) {
+            .garland => |garland_index| workspace.garlands.items[garland_index].childCase(place.local),
+            .case => |case_index| workspace.cases.items[case_index].childCase(place.local),
+            .executor => |executor_index| workspace.executors.items[executor_index].garland.childCase(place.local),
         };
     }
 
@@ -1255,6 +1262,20 @@ const Workspace = struct {
                 }
             }
 
+            for (workspace.executors.items, 0..) |parent_executor, k| {
+                const parent_garland = parent_executor.garland;
+                var it = parent_garland.childGarlandsAddressIterator(res);
+                while (try it.next()) |address| {
+                    const garland = parent_garland.constChildGarland(address);
+                    if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
+                        return .{ .kind = .{ .garland_handle = .{
+                            .parent = .{ .executor = k },
+                            .local = address,
+                        } } };
+                    } else res.free(address);
+                }
+            }
+
             for (workspace.cases.items, 0..) |parent_case, k| {
                 var it = parent_case.next.childGarlandsAddressIterator(res);
                 while (try it.next()) |address| {
@@ -1423,10 +1444,7 @@ const Workspace = struct {
                                     garland.handle.pos = g.old_position;
                                 } else {
                                     const garland = workspace.garlands.pop().?;
-                                    const parent_case = switch (h.parent) {
-                                        .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
-                                        .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
-                                    };
+                                    const parent_case = workspace.caseFromGarland(h);
                                     parent_case.next = garland;
                                 }
                             },
@@ -1470,10 +1488,7 @@ const Workspace = struct {
                                     workspace.focus.grabbing = g.at;
                                 } else {
                                     try workspace.garlands.insert(old_k, undefined);
-                                    const parent_case = switch (h.parent) {
-                                        .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
-                                        .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
-                                    };
+                                    const parent_case = workspace.caseFromGarland(h);
                                     const garland = parent_case.next;
                                     parent_case.next = g.overwritten_garland;
                                     workspace.garlands.items[old_k] = garland;
@@ -1636,6 +1651,21 @@ const Workspace = struct {
         }
 
         // TODO: reduce duplication?
+        for (workspace.executors.items, 0..) |*e, k| {
+            const g = &e.garland;
+            _ = k;
+            {
+                var it = g.childGarlandsAddressIterator(frame_arena);
+                while (try it.next()) |address| {
+                    const handle = &g.childGarland(address).handle;
+                    const target: f32 = switch (hovered_or_dropzone_thing.kind) {
+                        else => 0,
+                        .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
+                    };
+                    math.lerp_towards(&handle.hot_t, target, 0.6, platform.delta_seconds);
+                }
+            }
+        }
         for (workspace.garlands.items, 0..) |*g, k| {
             {
                 var it = g.childGarlandsAddressIterator(frame_arena);
@@ -1907,11 +1937,20 @@ const Workspace = struct {
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = g.from;
+                        } else if (h.local.len == 0 and std.meta.activeTag(h.parent) == .executor) {
+                            const parent_executor = &workspace.executors.items[h.parent.executor];
+                            const garland = parent_executor.garland;
+                            try workspace.garlands.append(garland);
+                            parent_executor.garland = .init(garland.handle.pos);
+                            // TODO: lens transform?
+                            workspace.focus.grabbing = .{ .kind = .{
+                                .garland_handle = .{
+                                    .local = &.{},
+                                    .parent = .{ .garland = workspace.garlands.items.len - 1 },
+                                },
+                            }, .lens_transform = .identity };
                         } else {
-                            const parent_case = switch (h.parent) {
-                                .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
-                                .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
-                            };
+                            const parent_case = workspace.caseFromGarland(h);
                             const garland = parent_case.next;
                             try workspace.garlands.append(garland);
                             parent_case.next = .init(garland.handle.pos);
@@ -1983,11 +2022,16 @@ const Workspace = struct {
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = .nothing;
+                        } else if (h.local.len == 0 and std.meta.activeTag(h.parent) == .executor) {
+                            const parent_executor = &workspace.executors.items[h.parent.executor];
+                            const k = g.old_grabbed_position.kind.garland_handle.parent.garland;
+                            assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
+                            const garland = workspace.garlands.items[k];
+                            parent_executor.garland = garland;
+                            _ = workspace.garlands.orderedRemove(k);
+                            workspace.focus.grabbing = .nothing;
                         } else {
-                            const parent_case = switch (h.parent) {
-                                .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
-                                .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
-                            };
+                            const parent_case = workspace.caseFromGarland(h);
                             const k = g.old_grabbed_position.kind.garland_handle.parent.garland;
                             assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
                             const garland = workspace.garlands.items[k];
