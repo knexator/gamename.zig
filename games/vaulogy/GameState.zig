@@ -832,6 +832,8 @@ const Workspace = struct {
                 at: Focus.Target,
                 /// only used when 'at' is of kind sexpr
                 overwritten_sexpr: ?VeryPhysicalSexpr,
+                /// only used when 'at' is of kind garland_handle
+                overwritten_garland: VeryPhysicalGarland,
                 /// for sexprs is always 'board',
                 /// for lens_handle is equal to .at,
                 /// for case_handle might be different
@@ -982,6 +984,13 @@ const Workspace = struct {
         return switch (place.parent) {
             .garland => |k| &workspace.garlands.items[k].childGarland(place.local).handle,
             .case => |k| &workspace.cases.items[k].next.childGarland(place.local).handle,
+        };
+    }
+
+    fn garlandAt(workspace: *Workspace, place: GarlandHandle) *VeryPhysicalGarland {
+        return switch (place.parent) {
+            .garland => |k| workspace.garlands.items[k].childGarland(place.local),
+            .case => |k| workspace.cases.items[k].next.childGarland(place.local),
         };
     }
 
@@ -1327,11 +1336,17 @@ const Workspace = struct {
                                 assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
                             },
                             .garland_handle => |h| {
-                                _ = h;
-                                @panic("TODO");
-                                // const garland = &workspace.garlands.items[h];
-                                // garland.handle.pos = g.old_position;
-                                // assert(workspace.focus.grabbing.kind.garland_handle == h);
+                                if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
+                                    const garland = &workspace.garlands.items[h.parent.garland];
+                                    garland.handle.pos = g.old_position;
+                                } else {
+                                    const garland = workspace.garlands.pop().?;
+                                    const parent_case = switch (h.parent) {
+                                        .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
+                                        .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
+                                    };
+                                    parent_case.next = garland;
+                                }
                             },
                             .case_handle => |h| {
                                 if (h.local.len == 0) {
@@ -1366,9 +1381,21 @@ const Workspace = struct {
                             .lens_handle => {
                                 workspace.focus.grabbing = g.at;
                             },
-                            .garland_handle => {
-                                workspace.focus.grabbing = g.at;
-                                @panic("TODO");
+                            .garland_handle => |h| {
+                                const old_k = g.old_grabbed_position.kind.garland_handle.parent.garland;
+                                assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
+                                if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
+                                    workspace.focus.grabbing = g.at;
+                                } else {
+                                    try workspace.garlands.insert(old_k, undefined);
+                                    const parent_case = switch (h.parent) {
+                                        .garland => |garland_index| workspace.garlands.items[garland_index].childCase(h.local),
+                                        .case => |case_index| workspace.cases.items[case_index].childCase(h.local),
+                                    };
+                                    const garland = parent_case.next;
+                                    parent_case.next = g.overwritten_garland;
+                                    workspace.garlands.items[old_k] = garland;
+                                }
                             },
                             .case_handle => |h| {
                                 const old_k = g.old_grabbed_position.kind.case_handle.parent.case;
@@ -1689,6 +1716,7 @@ const Workspace = struct {
                         .at = workspace.focus.grabbing,
                         .old_grabbed_position = workspace.focus.grabbing,
                         .overwritten_sexpr = undefined,
+                        .overwritten_garland = undefined,
                     },
                 } },
                 .case_handle => switch (dropzone.kind) {
@@ -1698,6 +1726,7 @@ const Workspace = struct {
                             .at = workspace.focus.grabbing,
                             .old_grabbed_position = workspace.focus.grabbing,
                             .overwritten_sexpr = undefined,
+                            .overwritten_garland = undefined,
                         },
                     } },
                     .case_handle => .{ .specific = .{
@@ -1705,6 +1734,7 @@ const Workspace = struct {
                             .at = dropzone,
                             .old_grabbed_position = workspace.focus.grabbing,
                             .overwritten_sexpr = undefined,
+                            .overwritten_garland = undefined,
                         },
                     } },
                 },
@@ -1717,6 +1747,11 @@ const Workspace = struct {
                         },
                         .old_grabbed_position = workspace.focus.grabbing,
                         .overwritten_sexpr = undefined,
+                        .overwritten_garland = switch (dropzone.kind) {
+                            .nothing => undefined,
+                            .garland_handle => |h| workspace.garlandAt(h).*,
+                            else => unreachable,
+                        },
                     },
                 } },
                 .sexpr => .{
@@ -1726,11 +1761,13 @@ const Workspace = struct {
                                 .at = workspace.focus.grabbing,
                                 .old_grabbed_position = workspace.focus.grabbing,
                                 .overwritten_sexpr = null,
+                                .overwritten_garland = undefined,
                             },
                             .sexpr => |s| .{
                                 .at = dropzone,
                                 .old_grabbed_position = workspace.focus.grabbing,
                                 .overwritten_sexpr = workspace.sexprAtPlace(s.base).getSubValue(s.local),
+                                .overwritten_garland = undefined,
                             },
                             else => unreachable,
                         },
