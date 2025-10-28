@@ -329,9 +329,14 @@ const VeryPhysicalGarland = struct {
     }
 
     pub fn update(garland: *VeryPhysicalGarland, delta_seconds: f32) void {
+        garland.updateWithOffset(0, delta_seconds);
+    }
+
+    pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, delta_seconds: f32) void {
+        assert(math.in01(offset));
         assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
         for (garland.cases.items, 0..) |*c, k| {
-            const target = garland.handle.pos.addY(1.5 + 2.5 * tof32(k));
+            const target = garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) + offset));
             Vec2.lerpTowards(&c.handle.pos, target, 0.6, delta_seconds);
             c.update(delta_seconds);
         }
@@ -340,7 +345,7 @@ const VeryPhysicalGarland = struct {
             const target = if (k == 0)
                 garland.handle.pos.addY(1.5 / 2.0)
             else
-                garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) - 0.5));
+                garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) - 0.5 + offset));
             Vec2.lerpTowards(&h.pos, target, 0.6, delta_seconds);
         }
     }
@@ -703,6 +708,7 @@ const Executor = struct {
     handle: Handle,
 
     animation_t: f32 = 0,
+    animation_matching: ?VeryPhysicalCase = null,
     prev_pill: ?Pill = null,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
@@ -722,12 +728,14 @@ const Executor = struct {
         } else {
             drawer.canvas.strokeCircle(128, camera, executor.inputPoint().pos.addX(0.5), 1, 0.01, .black);
         }
+        if (executor.animation_matching) |c| try c.draw(drawer, camera);
         if (executor.prev_pill) |p| try p.draw(drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
     pub fn animating(executor: Executor) bool {
-        return executor.garland.cases.items.len > 0 and executor.input != null;
+        if (executor.animation_matching != null) assert(executor.input != null);
+        return executor.animation_matching != null;
     }
 
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, delta_seconds: f32) !void {
@@ -739,12 +747,17 @@ const Executor = struct {
             pill.input.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5, 0) }), 0.6, delta_seconds);
             pill.pattern.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-2, 0) }), 0.6, delta_seconds);
         }
+        if (executor.animation_matching == null and executor.garland.cases.items.len > 0 and executor.input != null) {
+            executor.animation_matching = executor.garland.popCase(0);
+            executor.animation_t = 0;
+        }
 
-        if (executor.animating()) {
+        if (executor.animation_matching) |case| {
+            executor.garland.updateWithOffset(1.0 - executor.animation_t, delta_seconds);
             executor.animation_t += delta_seconds;
             if (executor.animation_t >= 1) {
-                executor.animation_t = @mod(executor.animation_t, 1);
-                const case = executor.garland.popCase(0);
+                executor.animation_matching = null;
+                // executor.animation_t = @mod(executor.animation_t, 1);
                 const input = executor.input.?;
                 var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
                 if (try core.generateBindings(case.pattern.value, input.value, &new_bindings)) {
@@ -754,8 +767,9 @@ const Executor = struct {
                     executor.input.?.value = try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs);
                 } else new_bindings.deinit();
             }
+        } else {
+            executor.garland.update(delta_seconds);
         }
-        executor.garland.update(delta_seconds);
     }
 
     pub fn inputPoint(executor: Executor) Point {
