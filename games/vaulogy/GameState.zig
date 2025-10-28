@@ -699,12 +699,11 @@ const Executor = struct {
     }
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
-        const center: Point = .{ .pos = executor.handle.pos };
         try executor.handle.draw(drawer, camera);
         if (executor.input) |input| {
             try input.draw(drawer, camera);
         } else {
-            drawer.canvas.strokeCircle(128, camera, center.applyToLocalPoint(relative_input_point).pos, 1, 0.01, .black);
+            drawer.canvas.strokeCircle(128, camera, executor.inputPoint().pos.addX(0.5), 1, 0.01, .black);
         }
         try executor.garland.draw(drawer, camera);
     }
@@ -712,10 +711,14 @@ const Executor = struct {
     pub fn update(executor: *Executor, delta_seconds: f32) void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
         executor.garland.update(delta_seconds);
-        const center: Point = .{ .pos = executor.handle.pos };
         if (executor.input) |*input| {
-            input.point.lerp_towards(center.applyToLocalPoint(Executor.relative_input_point), 0.6, delta_seconds);
+            input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
         }
+    }
+
+    pub fn inputPoint(executor: Executor) Point {
+        const center: Point = .{ .pos = executor.handle.pos };
+        return center.applyToLocalPoint(Executor.relative_input_point);
     }
 };
 
@@ -1209,6 +1212,32 @@ const Workspace = struct {
             }
         }
 
+        for (workspace.executors.items, 0..) |executor, k| {
+            if (executor.input) |input| {
+                if (try ViewHelper.overlapsSexpr(
+                    // TODO: don't leak
+                    res,
+                    input.is_pattern,
+                    input.value,
+                    input.point,
+                    pos,
+                )) |address| {
+                    return .{ .kind = .{ .sexpr = .{
+                        .base = .{ .executor_input = k },
+                        .local = address,
+                    } } };
+                }
+            } else if (grabbed_tag == .sexpr) {
+                const center = executor.inputPoint().pos.addX(0.5);
+                if (center.distTo(pos) <= 1) {
+                    return .{ .kind = .{ .sexpr = .{
+                        .base = .{ .executor_input = k },
+                        .local = &.{},
+                    } } };
+                }
+            }
+        }
+
         // garlands
         if (grabbed_tag == .nothing or grabbed_tag == .garland_handle) {
             for (workspace.garlands.items, 0..) |parent_garland, k| {
@@ -1480,6 +1509,13 @@ const Workspace = struct {
                                         mem,
                                         &workspace.hover_pool,
                                     );
+                                } else if (std.meta.activeTag(h.base) == .executor_input) {
+                                    assert(h.local.len == 0);
+                                    try workspace.sexprs.insert(g.old_grabbed_position.kind.sexpr.base.board, undefined);
+                                    var grabbed = workspace.executors.items[h.base.executor_input].input.?;
+                                    grabbed.point.scale = 1;
+                                    workspace.sexprs.items[g.old_grabbed_position.kind.sexpr.base.board] = grabbed;
+                                    workspace.executors.items[h.base.executor_input].input = null;
                                 } else {
                                     assert(h.local.len == 0);
                                     assert(std.meta.eql(g.old_grabbed_position, g.at));
@@ -1524,7 +1560,10 @@ const Workspace = struct {
                 s.is_pattern = switch (dropzone.kind) {
                     .nothing => s.is_pattern,
                     .lens_handle, .case_handle, .garland_handle => unreachable,
-                    .sexpr => |x| workspace.sexprAtPlace(x.base).is_pattern,
+                    .sexpr => |x| switch (x.base) {
+                        else => workspace.sexprAtPlace(x.base).is_pattern,
+                        .executor_input => false,
+                    },
                 };
                 s.hovered.update(switch (dropzone.kind) {
                     .sexpr => &.{},
@@ -1713,12 +1752,17 @@ const Workspace = struct {
                 assert(g.local.len == 0);
                 const grabbed = workspace.sexprAtPlace(g.base);
                 const target: Point = switch (dropzone.kind) {
-                    .sexpr => |s| blk: {
-                        break :blk ViewHelper.sexprChildView(
+                    .sexpr => |s| switch (s.base) {
+                        else => ViewHelper.sexprChildView(
                             grabbed.is_pattern,
                             dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base).point),
                             s.local,
-                        );
+                        ),
+                        .executor_input => |k| ViewHelper.sexprChildView(
+                            false,
+                            workspace.executors.items[k].inputPoint(),
+                            s.local,
+                        ),
                     },
                     .nothing => .{
                         .pos = mouse.cur.position,
@@ -1836,7 +1880,13 @@ const Workspace = struct {
                             .sexpr => |s| .{
                                 .at = dropzone,
                                 .old_grabbed_position = workspace.focus.grabbing,
-                                .overwritten_sexpr = workspace.sexprAtPlace(s.base).getSubValue(s.local),
+                                .overwritten_sexpr = switch (s.base) {
+                                    else => workspace.sexprAtPlace(s.base).getSubValue(s.local),
+                                    .executor_input => |k| if (workspace.executors.items[k].input) |input|
+                                        input.getSubValue(s.local)
+                                    else
+                                        null,
+                                },
                                 .overwritten_garland = undefined,
                             },
                             else => unreachable,
@@ -1899,11 +1949,11 @@ const Workspace = struct {
                     .sexpr => |h| {
                         const existing_grabbed: ?usize = switch (h.base) {
                             .board => |k| if (h.local.len == 0) k else null,
-                            .executor_input => |k| blk: {
+                            .executor_input => |k| if (h.local.len == 0) blk: {
                                 try workspace.sexprs.append(workspace.executors.items[k].input.?);
                                 workspace.executors.items[k].input = null;
                                 break :blk workspace.sexprs.items.len - 1;
-                            },
+                            } else null,
                             .case, .garland => null,
                         };
                         const grabbed: usize = existing_grabbed orelse blk: {
@@ -1944,7 +1994,6 @@ const Workspace = struct {
                             parent_case.next = garland;
                             _ = workspace.garlands.orderedRemove(k);
                             workspace.focus.grabbing = .nothing;
-                            std.log.debug("hola", .{});
                         }
                     },
                     .case_handle => |h| {
@@ -1972,16 +2021,22 @@ const Workspace = struct {
                     .sexpr => |s| {
                         assert(std.meta.activeTag(g.old_grabbed_position.kind.sexpr.base) == .board);
                         assert(g.old_grabbed_position.kind.sexpr.local.len == 0);
-                        if (g.overwritten_sexpr != null) {
+                        if (g.overwritten_sexpr != null or std.meta.activeTag(s.base) == .executor_input) {
                             const k = g.old_grabbed_position.kind.sexpr.base.board;
                             const grabbed = workspace.sexprs.items[k];
-                            try workspace.sexprAtPlace(s.base).updateSubValue(
-                                s.local,
-                                grabbed.value,
-                                grabbed.hovered,
-                                mem,
-                                &workspace.hover_pool,
-                            );
+                            if (g.overwritten_sexpr == null) {
+                                assert(std.meta.activeTag(s.base) == .executor_input);
+                                assert(s.local.len == 0);
+                                workspace.executors.items[s.base.executor_input].input = grabbed;
+                            } else {
+                                try workspace.sexprAtPlace(s.base).updateSubValue(
+                                    s.local,
+                                    grabbed.value,
+                                    grabbed.hovered,
+                                    mem,
+                                    &workspace.hover_pool,
+                                );
+                            }
                             _ = workspace.sexprs.orderedRemove(k);
                         }
 
