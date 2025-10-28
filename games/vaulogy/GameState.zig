@@ -242,6 +242,11 @@ const HoveredSexpr = struct {
 const Handle = struct {
     pos: Vec2,
     hot_t: f32 = 0,
+    pub const radius = 0.2;
+
+    pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect) !void {
+        drawer.canvas.strokeCircle(128, camera, handle.pos, radius * (1 + handle.hot_t * 0.2), 0.05, .black);
+    }
 };
 
 const VeryPhysicalGarland = struct {
@@ -677,6 +682,43 @@ const VeryPhysicalSexpr = struct {
     }
 };
 
+// automatically consumes garland cases when input is present
+const Executor = struct {
+    input: ?VeryPhysicalSexpr = null,
+    garland: VeryPhysicalGarland,
+    handle: Handle,
+
+    const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
+    const relative_garland_pos: Vec2 = .new(3, 0);
+
+    pub fn init(pos: Vec2) Executor {
+        return .{
+            .handle = .{ .pos = pos },
+            .garland = .init(pos.add(relative_input_point.pos)),
+        };
+    }
+
+    pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
+        const center: Point = .{ .pos = executor.handle.pos };
+        try executor.handle.draw(drawer, camera);
+        if (executor.input) |input| {
+            try input.draw(drawer, camera);
+        } else {
+            drawer.canvas.strokeCircle(128, camera, center.applyToLocalPoint(relative_input_point).pos, 1, 0.01, .black);
+        }
+        try executor.garland.draw(drawer, camera);
+    }
+
+    pub fn update(executor: *Executor, delta_seconds: f32) void {
+        Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
+        executor.garland.update(delta_seconds);
+        const center: Point = .{ .pos = executor.handle.pos };
+        if (executor.input) |*input| {
+            input.point.lerp_towards(center.applyToLocalPoint(Executor.relative_input_point), 0.6, delta_seconds);
+        }
+    }
+};
+
 const Workspace = struct {
     pub const Lens = struct {
         source: Vec2,
@@ -763,6 +805,7 @@ const Workspace = struct {
     sexprs: std.ArrayList(VeryPhysicalSexpr),
     cases: std.ArrayList(VeryPhysicalCase),
     garlands: std.ArrayList(VeryPhysicalGarland),
+    executors: std.ArrayList(Executor),
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -924,6 +967,9 @@ const Workspace = struct {
             .template = Sexpr.builtin.false,
             .fnk_name = Sexpr.builtin.identity,
         }, .{ .pos = dst.garlands.items[0].handle.pos.addX(6) }));
+
+        dst.executors = .init(mem.gpa);
+        try dst.executors.append(.init(.new(-5, -5)));
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
@@ -1025,6 +1071,10 @@ const Workspace = struct {
         }
 
         for (workspace.garlands.items) |g| {
+            try g.draw(drawer, camera);
+        }
+
+        for (workspace.executors.items) |g| {
             try g.draw(drawer, camera);
         }
 
@@ -1672,6 +1722,10 @@ const Workspace = struct {
 
         for (workspace.garlands.items) |*g| {
             g.update(platform.delta_seconds);
+        }
+
+        for (workspace.executors.items) |*e| {
+            e.update(platform.delta_seconds);
         }
 
         // TODO: code could be massively reduced
