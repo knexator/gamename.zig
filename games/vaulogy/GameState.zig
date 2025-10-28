@@ -513,7 +513,7 @@ const VeryPhysicalCase = struct {
         case.pattern.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xneg }), 0.6, delta_seconds);
         case.template.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xpos }), 0.6, delta_seconds);
         case.fnk_name.point.lerp_towards(center.applyToLocalPoint(fnk_name_offset), 0.6, delta_seconds);
-        Vec2.lerpTowards(&case.next.handle.pos, center.applyToLocalPosition(.new(7, -1.5)), 0.6, delta_seconds);
+        Vec2.lerpTowards(&case.next.handle.pos, center.applyToLocalPosition(.new(8, -1.5)), 0.6, delta_seconds);
         case.next.update(delta_seconds);
     }
 
@@ -891,10 +891,10 @@ const Workspace = struct {
             .fnk_name = Sexpr.builtin.identity,
         }, .{ .pos = .new(0, 3) }));
         try dst.cases.append(try .fromValues(&dst.hover_pool, .{
-            .pattern = Sexpr.builtin.false,
-            .template = Sexpr.builtin.true,
+            .pattern = Sexpr.builtin.vars.v1,
+            .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
             .fnk_name = Sexpr.builtin.identity,
-        }, .{ .pos = .new(0, 4) }));
+        }, .{ .pos = .new(-7, 0) }));
 
         dst.garlands = .init(mem.gpa);
         try dst.garlands.append(.{
