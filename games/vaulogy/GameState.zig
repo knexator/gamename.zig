@@ -686,11 +686,24 @@ const VeryPhysicalSexpr = struct {
     }
 };
 
+const Pill = struct {
+    input: VeryPhysicalSexpr,
+    pattern: VeryPhysicalSexpr,
+
+    pub fn draw(pill: Pill, drawer: *Drawer, camera: Rect) !void {
+        try pill.input.draw(drawer, camera);
+        try pill.pattern.draw(drawer, camera);
+    }
+};
+
 // automatically consumes garland cases when input is present
 const Executor = struct {
     input: ?VeryPhysicalSexpr = null,
     garland: VeryPhysicalGarland,
     handle: Handle,
+
+    animation_t: f32 = 0,
+    prev_pill: ?Pill = null,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_pos: Vec2 = .new(4, 0);
@@ -709,15 +722,40 @@ const Executor = struct {
         } else {
             drawer.canvas.strokeCircle(128, camera, executor.inputPoint().pos.addX(0.5), 1, 0.01, .black);
         }
+        if (executor.prev_pill) |p| try p.draw(drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
-    pub fn update(executor: *Executor, delta_seconds: f32) void {
+    pub fn animating(executor: Executor) bool {
+        return executor.garland.cases.items.len > 0 and executor.input != null;
+    }
+
+    pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
-        executor.garland.update(delta_seconds);
         if (executor.input) |*input| {
             input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
         }
+        if (executor.prev_pill) |*pill| {
+            pill.input.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5, 0) }), 0.6, delta_seconds);
+            pill.pattern.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-2, 0) }), 0.6, delta_seconds);
+        }
+
+        if (executor.animating()) {
+            executor.animation_t += delta_seconds;
+            if (executor.animation_t >= 1) {
+                executor.animation_t = @mod(executor.animation_t, 1);
+                const case = executor.garland.popCase(0);
+                const input = executor.input.?;
+                var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
+                if (try core.generateBindings(case.pattern.value, input.value, &new_bindings)) {
+                    executor.prev_pill = .{ .pattern = case.pattern, .input = input };
+                    executor.garland = case.next;
+                    executor.input = case.template;
+                    executor.input.?.value = try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs);
+                } else new_bindings.deinit();
+            }
+        }
+        executor.garland.update(delta_seconds);
     }
 
     pub fn inputPoint(executor: Executor) Point {
@@ -1148,6 +1186,7 @@ const Workspace = struct {
         // executors
         if (grabbed_tag == .nothing) {
             for (workspace.executors.items, 0..) |executor, k| {
+                if (executor.animating()) continue;
                 if (pos.distTo(executor.handle.pos) < Handle.radius) {
                     return .{ .kind = .{ .executor_handle = k } };
                 }
@@ -1226,6 +1265,7 @@ const Workspace = struct {
         }
 
         for (workspace.executors.items, 0..) |executor, k| {
+            if (executor.animating()) continue;
             if (executor.input) |input| {
                 if (try ViewHelper.overlapsSexpr(
                     // TODO: don't leak
@@ -1269,6 +1309,7 @@ const Workspace = struct {
             }
 
             for (workspace.executors.items, 0..) |parent_executor, k| {
+                if (parent_executor.animating()) continue;
                 const parent_garland = parent_executor.garland;
                 var it = parent_garland.childGarlandsAddressIterator(res);
                 while (try it.next()) |address| {
@@ -1833,7 +1874,7 @@ const Workspace = struct {
         }
 
         for (workspace.executors.items) |*e| {
-            e.update(platform.delta_seconds);
+            try e.update(mem, platform.delta_seconds);
         }
 
         // TODO: code could be massively reduced
