@@ -1163,6 +1163,7 @@ const Workspace = struct {
                 if (grabbed_tag == .garland_handle and grabbed.kind.garland_handle.parent.garland == k) continue;
                 var it = parent_garland.childGarlandsAddressIterator(res);
                 while (try it.next()) |address| {
+                    if (grabbed_tag == .garland_handle and address.len == 0) continue;
                     const garland = parent_garland.constChildGarland(address);
                     if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
                         return .{ .kind = .{ .garland_handle = .{
