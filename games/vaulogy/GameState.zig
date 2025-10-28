@@ -863,6 +863,7 @@ const Workspace = struct {
             local: core.CaseAddress,
             part: core.CasePart,
         },
+        executor_input: usize,
     };
     const SexprPlace = struct {
         base: BaseSexprPlace,
@@ -1014,6 +1015,7 @@ const Workspace = struct {
             .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
             .case => |case| workspace.getAt(VeryPhysicalCase, case.parent).childCase(case.local).sexprAt(case.part),
             .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent).childCase(garland.local).sexprAt(garland.part),
+            .executor_input => |k| &(workspace.executors.items[k].input orelse unreachable),
         };
     }
 
@@ -1535,7 +1537,7 @@ const Workspace = struct {
                     .sexpr => |sexpr| switch (sexpr.base) {
                         // special case: no hover anim for base values
                         .board => |b| if (b == k and sexpr.local.len > 0) sexpr.local else null,
-                        .case, .garland => null,
+                        .case, .garland, .executor_input => null,
                     },
                 };
                 s.hovered.update(hovered, 1.0, platform.delta_seconds);
@@ -1550,7 +1552,7 @@ const Workspace = struct {
                     const hovered = switch (hovering.kind) {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
-                            .board, .garland => null,
+                            .board, .garland, .executor_input => null,
                             .case => |case| if (case.parent == k and
                                 parent.childCase(case.local) == c and
                                 case.part == part) sexpr.local else null,
@@ -1569,7 +1571,7 @@ const Workspace = struct {
                     const hovered = switch (hovering.kind) {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
-                            .board, .case => null,
+                            .board, .case, .executor_input => null,
                             .garland => |garland| if (garland.parent == k and
                                 g.childCase(garland.local) == c and
                                 garland.part == part) sexpr.local else null,
@@ -1578,6 +1580,19 @@ const Workspace = struct {
                     c.sexprAt(part).hovered.update(hovered, 1.0, platform.delta_seconds);
                     c.sexprAt(part).updateIsPattern(platform.delta_seconds);
                 }
+            }
+        }
+        for (workspace.executors.items, 0..) |*e, k| {
+            if (e.input) |*input| {
+                const hovered = switch (hovering.kind) {
+                    else => null,
+                    .sexpr => |sexpr| switch (sexpr.base) {
+                        .board, .case, .garland => null,
+                        .executor_input => |executor_index| if (executor_index == k) sexpr.local else null,
+                    },
+                };
+                input.hovered.update(hovered, 1.0, platform.delta_seconds);
+                input.updateIsPattern(platform.delta_seconds);
             }
         }
 
@@ -1884,6 +1899,11 @@ const Workspace = struct {
                     .sexpr => |h| {
                         const existing_grabbed: ?usize = switch (h.base) {
                             .board => |k| if (h.local.len == 0) k else null,
+                            .executor_input => |k| blk: {
+                                try workspace.sexprs.append(workspace.executors.items[k].input.?);
+                                workspace.executors.items[k].input = null;
+                                break :blk workspace.sexprs.items.len - 1;
+                            },
                             .case, .garland => null,
                         };
                         const grabbed: usize = existing_grabbed orelse blk: {
@@ -1979,7 +1999,7 @@ const Workspace = struct {
         return switch (grabbed.kind) {
             else => false,
             .sexpr => |s| switch (s.base) {
-                .case, .garland => unreachable,
+                .case, .garland, .executor_input => unreachable,
                 .board => |k| switch (thing) {
                     .board => |k2| k == k2,
                     else => false,
