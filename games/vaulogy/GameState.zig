@@ -247,6 +247,10 @@ const Handle = struct {
     pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect) !void {
         drawer.canvas.strokeCircle(128, camera, handle.pos, radius * (1 + handle.hot_t * 0.2), 0.05, .black);
     }
+
+    pub fn update(handle: *Handle, hot_target: f32, delta_seconds: f32) void {
+        math.lerp_towards(&handle.hot_t, hot_target, 0.6, delta_seconds);
+    }
 };
 
 const VeryPhysicalGarland = struct {
@@ -689,7 +693,7 @@ const Executor = struct {
     handle: Handle,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
-    const relative_garland_pos: Vec2 = .new(3, 0);
+    const relative_garland_pos: Vec2 = .new(4, 0);
 
     pub fn init(pos: Vec2) Executor {
         return .{
@@ -830,6 +834,7 @@ const Workspace = struct {
                 },
                 case_handle: CaseHandle,
                 garland_handle: GarlandHandle,
+                executor_handle: usize,
             },
             lens_transform: Lens.Transform = .identity,
 
@@ -1140,6 +1145,15 @@ const Workspace = struct {
             }
         }
 
+        // executors
+        if (grabbed_tag == .nothing) {
+            for (workspace.executors.items, 0..) |executor, k| {
+                if (pos.distTo(executor.handle.pos) < Handle.radius) {
+                    return .{ .kind = .{ .executor_handle = k } };
+                }
+            }
+        }
+
         // sexprs inside lenses and on the board and on cases and on garlands
         if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
             for (workspace.lenses.items) |lens| {
@@ -1424,6 +1438,10 @@ const Workspace = struct {
                     .grabbed => |g| {
                         switch (g.from.kind) {
                             .nothing => unreachable,
+                            .executor_handle => |h| {
+                                const e = &workspace.executors.items[h];
+                                e.handle.pos = g.old_position;
+                            },
                             .lens_handle => |h| {
                                 const lens = &workspace.lenses.items[h.index];
                                 lens.setHandlePos(h.part, g.old_position);
@@ -1469,7 +1487,7 @@ const Workspace = struct {
                     .dropped => |g| {
                         switch (g.at.kind) {
                             .nothing => unreachable,
-                            .lens_handle => {
+                            .lens_handle, .executor_handle => {
                                 workspace.focus.grabbing = g.at;
                             },
                             .garland_handle => |h| {
@@ -1565,7 +1583,7 @@ const Workspace = struct {
             if (isGrabbed(.{ .board = k }, workspace.focus.grabbing)) {
                 s.is_pattern = switch (dropzone.kind) {
                     .nothing => s.is_pattern,
-                    .lens_handle, .case_handle, .garland_handle => unreachable,
+                    .lens_handle, .case_handle, .garland_handle, .executor_handle => unreachable,
                     .sexpr => |x| switch (x.base) {
                         else => workspace.sexprAtPlace(x.base).is_pattern,
                         .executor_input => false,
@@ -1756,6 +1774,13 @@ const Workspace = struct {
             };
             lens.update(hovered, platform.delta_seconds);
         }
+        for (workspace.executors.items, 0..) |*executor, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .executor_handle => |index| if (index == k) 1 else 0,
+            };
+            executor.handle.update(hovered, platform.delta_seconds);
+        }
 
         // apply dragging
         switch (workspace.focus.grabbing.kind) {
@@ -1766,6 +1791,9 @@ const Workspace = struct {
                     .source => lens.source.addInPlace(mouse.deltaPos()),
                     .target => lens.target.addInPlace(mouse.deltaPos()),
                 }
+            },
+            .executor_handle => |h| {
+                workspace.executors.items[h].handle.pos = mouse.cur.position;
             },
             .case_handle => |p| workspace.caseHandleRef(p).pos = mouse.cur.position,
             .garland_handle => |p| workspace.garlandHandleRef(p).pos = mouse.cur.position,
@@ -1819,6 +1847,13 @@ const Workspace = struct {
                         .old_ispattern = undefined,
                     },
                 } },
+                .executor_handle => |h| .{ .specific = .{
+                    .grabbed = .{
+                        .from = hovering,
+                        .old_position = workspace.executors.items[h].handle.pos,
+                        .old_ispattern = undefined,
+                    },
+                } },
                 .case_handle => |h| .{ .specific = .{
                     .grabbed = .{
                         .from = hovering,
@@ -1846,7 +1881,7 @@ const Workspace = struct {
         else if (workspace.focus.grabbing.kind != .nothing and !mouse.cur.isDown(.left))
             switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
-                .lens_handle => .{ .specific = .{
+                .lens_handle, .executor_handle => .{ .specific = .{
                     .dropped = .{
                         .at = workspace.focus.grabbing,
                         .old_grabbed_position = workspace.focus.grabbing,
@@ -1924,7 +1959,7 @@ const Workspace = struct {
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
-                    .lens_handle => workspace.focus.grabbing = g.from,
+                    .lens_handle, .executor_handle => workspace.focus.grabbing = g.from,
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = g.from;
@@ -1997,7 +2032,7 @@ const Workspace = struct {
             .dropped => |g| {
                 switch (g.at.kind) {
                     .nothing => unreachable,
-                    .lens_handle => workspace.focus.grabbing = .nothing,
+                    .lens_handle, .executor_handle => workspace.focus.grabbing = .nothing,
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = .nothing;
