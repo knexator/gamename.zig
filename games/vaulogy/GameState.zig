@@ -531,6 +531,15 @@ const VeryPhysicalCase = struct {
         case.next.update(delta_seconds);
     }
 
+    pub fn kinematicUpdate(case: *VeryPhysicalCase, center: Point, delta_seconds: f32) void {
+        case.pattern.point = center.applyToLocalPoint(.{ .pos = .xneg });
+        case.template.point = center.applyToLocalPoint(.{ .pos = .xpos });
+        case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset);
+        // TODO: next cases
+        case.next.handle.pos = center.applyToLocalPosition(.new(8, -1.5));
+        case.next.update(delta_seconds);
+    }
+
     pub fn constChildCase(parent: *const VeryPhysicalCase, local: core.CaseAddress) *const VeryPhysicalCase {
         var cur = parent;
         for (local) |k| {
@@ -707,8 +716,11 @@ const Executor = struct {
     garland: VeryPhysicalGarland,
     handle: Handle,
 
-    animation_t: f32 = 0,
-    animation_matching: ?VeryPhysicalCase = null,
+    animation: ?struct {
+        t: f32 = 0,
+        next_input: ?*const core.Sexpr,
+        active_case: VeryPhysicalCase,
+    } = null,
     prev_pill: ?Pill = null,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
@@ -728,53 +740,93 @@ const Executor = struct {
         } else {
             drawer.canvas.strokeCircle(128, camera, executor.inputPoint().pos.addX(0.5), 1, 0.01, .black);
         }
-        if (executor.animation_matching) |c| try c.draw(drawer, camera);
+        if (executor.animation) |anim| {
+            try anim.active_case.draw(drawer, camera);
+        }
         if (executor.prev_pill) |p| try p.draw(drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
     pub fn animating(executor: Executor) bool {
-        if (executor.animation_matching != null) assert(executor.input != null);
-        return executor.animation_matching != null;
+        return executor.animation != null;
     }
 
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
-        if (executor.input) |*input| {
-            input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
-        }
         if (executor.prev_pill) |*pill| {
             pill.input.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5, 0) }), 0.6, delta_seconds);
             pill.pattern.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-2, 0) }), 0.6, delta_seconds);
         }
-        if (executor.animation_matching == null and executor.garland.cases.items.len > 0 and executor.input != null) {
-            executor.animation_matching = executor.garland.popCase(0);
-            executor.animation_t = 0;
+        if (executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null) {
+            const case = executor.garland.popCase(0);
+            const input = executor.input.?;
+            var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
+            defer new_bindings.deinit();
+            const next_input = if (try core.generateBindings(case.pattern.value, input.value, &new_bindings))
+                try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
+            else
+                null;
+            executor.animation = .{ .active_case = case, .next_input = next_input };
         }
 
-        if (executor.animation_matching) |case| {
-            executor.garland.updateWithOffset(1.0 - executor.animation_t, delta_seconds);
-            executor.animation_t += delta_seconds;
-            if (executor.animation_t >= 1) {
-                executor.animation_matching = null;
-                // executor.animation_t = @mod(executor.animation_t, 1);
-                const input = executor.input.?;
-                var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-                if (try core.generateBindings(case.pattern.value, input.value, &new_bindings)) {
-                    executor.prev_pill = .{ .pattern = case.pattern, .input = input };
-                    executor.garland = case.next;
-                    executor.input = case.template;
-                    executor.input.?.value = try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs);
-                } else new_bindings.deinit();
+        if (executor.animation) |*animation| {
+            const anim_t = animation.t;
+            if (animation.next_input == null) {
+                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
+                const flyaway_t = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+                const offset_t = math.remapClamped(anim_t, 0.2, 0.8, 1, 0);
+
+                const case_floating_away = executor.firstCasePoint()
+                    .applyToLocalPoint(Point.lerp(
+                    .{ .pos = .new(-match_t, 0) },
+                    .{ .pos = .new(6, -2), .scale = 0, .turns = -0.2 },
+                    flyaway_t,
+                ));
+                executor.garland.updateWithOffset(offset_t, delta_seconds);
+                animation.active_case.kinematicUpdate(case_floating_away, delta_seconds);
+                executor.input.?.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
+            } else {
+                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
+                // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+                // const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
+                // const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
+                const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
+                // const discarded_t = anim_t;
+
+                const case_point = executor.firstCasePoint().applyToLocalPoint(
+                    .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
+                );
+
+                executor.garland.updateWithOffset(1, delta_seconds);
+                animation.active_case.kinematicUpdate(case_point, delta_seconds);
+                executor.input.?.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
+            }
+            animation.t += delta_seconds;
+            if (animation.t >= 1) {
+                if (animation.next_input) |next_input| {
+                    executor.prev_pill = .{ .pattern = animation.active_case.pattern, .input = executor.input.? };
+                    executor.garland = animation.active_case.next;
+                    executor.input = animation.active_case.template;
+                    executor.input.?.value = next_input;
+                }
+                executor.animation = null;
             }
         } else {
             executor.garland.update(delta_seconds);
+            if (executor.input) |*input| {
+                input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
+            }
         }
     }
 
     pub fn inputPoint(executor: Executor) Point {
         const center: Point = .{ .pos = executor.handle.pos };
         return center.applyToLocalPoint(Executor.relative_input_point);
+    }
+
+    pub fn firstCasePoint(executor: Executor) Point {
+        const garland_point: Point = .{ .pos = executor.handle.pos.add(relative_garland_pos) };
+        return garland_point.applyToLocalPoint(.{ .pos = .new(0, 1.5) });
     }
 };
 
