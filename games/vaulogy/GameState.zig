@@ -1041,12 +1041,16 @@ const Workspace = struct {
         for (workspace.garlands.items) |*g| {
             g.deinit(gpa);
         }
+        for (workspace.executors.items) |*e| {
+            e.garland.deinit(gpa);
+        }
         workspace.lenses.deinit();
         workspace.sexprs.deinit();
         workspace.cases.deinit();
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
         workspace.garlands.deinit();
+        workspace.executors.deinit();
     }
 
     const valid: []const *const Sexpr = &.{
