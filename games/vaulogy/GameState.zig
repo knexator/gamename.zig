@@ -285,6 +285,15 @@ const VeryPhysicalGarland = struct {
         return garland.handle;
     }
 
+    pub fn clone(original: VeryPhysicalGarland, res: std.mem.Allocator) !VeryPhysicalGarland {
+        return .{
+            .handle = original.handle,
+            .handles_for_new_cases_first = original.handles_for_new_cases_first,
+            .handles_for_new_cases_rest = try original.handles_for_new_cases_rest.clone(res),
+            .cases = try original.cases.clone(res),
+        };
+    }
+
     pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) error{
         InvalidUtf8,
         OutOfMemory,
@@ -751,24 +760,16 @@ const Executor = struct {
         return executor.animation != null;
     }
 
+    pub fn startedExecution(executor: Executor) bool {
+        return executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null;
+    }
+
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
         if (executor.prev_pill) |*pill| {
             pill.input.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5, 0) }), 0.6, delta_seconds);
             pill.pattern.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-2, 0) }), 0.6, delta_seconds);
         }
-        if (executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null) {
-            const case = executor.garland.popCase(0);
-            const input = executor.input.?;
-            var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-            defer new_bindings.deinit();
-            const next_input = if (try core.generateBindings(case.pattern.value, input.value, &new_bindings))
-                try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
-            else
-                null;
-            executor.animation = .{ .active_case = case, .next_input = next_input };
-        }
-
         if (executor.animation) |*animation| {
             const anim_t = animation.t;
             if (animation.next_input == null) {
@@ -816,6 +817,18 @@ const Executor = struct {
             if (executor.input) |*input| {
                 input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
             }
+        }
+
+        if (executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null) {
+            const case = executor.garland.popCase(0);
+            const input = executor.input.?;
+            var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
+            defer new_bindings.deinit();
+            const next_input = if (try core.generateBindings(case.pattern.value, input.value, &new_bindings))
+                try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
+            else
+                null;
+            executor.animation = .{ .active_case = case, .next_input = next_input };
         }
     }
 
@@ -1004,6 +1017,12 @@ const Workspace = struct {
                 old_position: Vec2,
                 /// not always used
                 old_ispattern: bool,
+            },
+            started_execution: struct {
+                executor: usize,
+                input: VeryPhysicalSexpr,
+                garland: VeryPhysicalGarland,
+                prev_pill: ?Pill,
             },
         },
 
@@ -1546,6 +1565,16 @@ const Workspace = struct {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
                     .noop => {},
+                    .started_execution => |g| {
+                        const executor = &workspace.executors.items[g.executor];
+                        executor.input = g.input;
+                        executor.garland = g.garland;
+                        executor.prev_pill = g.prev_pill;
+                        executor.animation = null;
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        assert(std.meta.activeTag(next_cmd.specific) == .dropped);
+                        continue :again next_cmd.specific;
+                    },
                     .grabbed => |g| {
                         switch (g.from.kind) {
                             .nothing => unreachable,
@@ -2067,6 +2096,7 @@ const Workspace = struct {
         // actually perform the action
         switch (action.specific) {
             .noop => {},
+            .started_execution => unreachable,
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
@@ -2208,6 +2238,17 @@ const Workspace = struct {
         }
         if (action.specific != .noop) {
             try workspace.undo_stack.append(action);
+        }
+
+        for (workspace.executors.items, 0..) |e, k| {
+            if (e.startedExecution()) {
+                try workspace.undo_stack.append(.{ .specific = .{ .started_execution = .{
+                    .executor = k,
+                    .input = e.input.?,
+                    .garland = try e.garland.clone(mem.gpa),
+                    .prev_pill = e.prev_pill,
+                } } });
+            }
         }
     }
 
