@@ -750,7 +750,7 @@ const Executor = struct {
         next_input: ?*const core.Sexpr,
         invoked_fnk: ?VeryPhysicalGarland,
     } = null,
-    prev_pill: ?Pill = null,
+    prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_pos: Vec2 = .new(4, 0);
@@ -772,7 +772,7 @@ const Executor = struct {
         if (executor.animation) |anim| {
             try anim.active_case.draw(drawer, camera);
         }
-        if (executor.prev_pill) |p| try p.draw(drawer, camera);
+        for (executor.prev_pills.items) |p| try p.draw(drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
@@ -786,10 +786,7 @@ const Executor = struct {
 
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
-        if (executor.prev_pill) |*pill| {
-            pill.input.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5, 0) }), 0.6, delta_seconds);
-            pill.pattern.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-2, 0) }), 0.6, delta_seconds);
-        }
+        var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
             const anim_t = animation.t;
             if (animation.next_input == null) {
@@ -813,6 +810,7 @@ const Executor = struct {
                 // const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
                 const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
                 const discarded_t = anim_t;
+                pill_offset = enqueueing_t;
 
                 const case_point = executor.firstCasePoint().applyToLocalPoint(
                     .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
@@ -832,7 +830,8 @@ const Executor = struct {
             animation.t += delta_seconds;
             if (animation.t >= 1) {
                 if (animation.next_input) |next_input| {
-                    executor.prev_pill = .{ .pattern = animation.active_case.pattern, .input = executor.input.? };
+                    try executor.prev_pills.append(mem.gpa, .{ .pattern = animation.active_case.pattern, .input = executor.input.? });
+                    pill_offset -= 1;
                     executor.input = animation.active_case.template;
                     executor.input.?.value = next_input;
                     if (animation.invoked_fnk) |fnk| {
@@ -849,6 +848,12 @@ const Executor = struct {
             if (executor.input) |*input| {
                 input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
             }
+        }
+
+        for (executor.prev_pills.items, 0..) |*pill, k| {
+            const pill_input_pos = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5 * (tof32(executor.prev_pills.items.len - k) + pill_offset), 0) });
+            pill.input.point.lerp_towards(pill_input_pos, 0.6, delta_seconds);
+            pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), 0.6, delta_seconds);
         }
 
         if (executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null) {
@@ -968,6 +973,8 @@ const Workspace = struct {
     garlands: std.ArrayList(VeryPhysicalGarland),
     executors: std.ArrayList(Executor),
 
+    known_fnks: core.FnkCollection,
+
     hover_pool: HoveredSexpr.Pool,
 
     focus: Focus = .{},
@@ -1059,7 +1066,7 @@ const Workspace = struct {
                 executor: usize,
                 input: VeryPhysicalSexpr,
                 garland: VeryPhysicalGarland,
-                prev_pill: ?Pill,
+                prev_pills: []Pill,
             },
         },
 
@@ -1070,6 +1077,14 @@ const Workspace = struct {
         dst.* = kommon.meta.initDefaultFields(Workspace);
 
         dst.undo_stack = .init(mem.gpa);
+
+        dst.known_fnks = .init(mem.gpa);
+        try dst.known_fnks.put(valid[0], .{ .cases = .fromOwnedSlice(try mem.gpa.dupe(core.MatchCaseDefinition, &.{
+            .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.identity, .next = null },
+            .{ .pattern = valid[3], .template = valid[4], .fnk_name = Sexpr.builtin.identity, .next = null },
+            .{ .pattern = valid[5], .template = valid[6], .fnk_name = Sexpr.builtin.identity, .next = null },
+            .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.identity, .next = null },
+        })) });
 
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
@@ -1084,6 +1099,8 @@ const Workspace = struct {
         var random: std.Random.DefaultPrng = .init(1);
         if (true) {
             try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
+
+            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
 
             for ([_][]const u8{
                 "Hermes",    "Mercury",
@@ -1134,8 +1151,8 @@ const Workspace = struct {
         }
         try dst.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
             .pattern = Sexpr.builtin.true,
-            .template = Sexpr.builtin.false,
-            .fnk_name = Sexpr.builtin.identity,
+            .template = valid[1],
+            .fnk_name = valid[0],
         }, .{ .pos = dst.garlands.items[0].handle.pos.addX(6) }));
 
         dst.executors = .init(mem.gpa);
@@ -1162,6 +1179,7 @@ const Workspace = struct {
     }
 
     const valid: []const *const Sexpr = &.{
+        &Sexpr.doLit("planetFromOlympian"),
         &Sexpr.doLit("Hermes"),
         &Sexpr.doLit("Mercury"),
         &Sexpr.doLit("Ares"),
@@ -1606,7 +1624,7 @@ const Workspace = struct {
                         const executor = &workspace.executors.items[g.executor];
                         executor.input = g.input;
                         executor.garland = g.garland;
-                        executor.prev_pill = g.prev_pill;
+                        executor.prev_pills = .fromOwnedSlice(g.prev_pills);
                         executor.animation = null;
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped);
@@ -2289,7 +2307,7 @@ const Workspace = struct {
                     .executor = k,
                     .input = e.input.?,
                     .garland = try e.garland.clone(mem.gpa),
-                    .prev_pill = e.prev_pill,
+                    .prev_pills = (try e.prev_pills.clone(mem.gpa)).items,
                 } } });
             }
         }
