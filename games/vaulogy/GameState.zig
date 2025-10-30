@@ -1648,14 +1648,20 @@ const Workspace = struct {
                                 }
                             },
                             .sexpr => |h| {
-                                var old = workspace.sexprAtPlace(h.base).getSubValue(h.local);
-                                old.hovered.value = 10;
-                                if (h.local.len == 0 and std.meta.activeTag(h.base) == .board) {
-                                    const base = workspace.sexprAtPlace(h.base);
-                                    base.point.pos = g.old_position;
-                                    base.is_pattern = g.old_ispattern;
+                                if (h.local.len == 0 and std.meta.activeTag(h.base) == .executor_input) {
+                                    const old = workspace.sexprs.pop().?;
+                                    old.hovered.value = 10;
+                                    workspace.executors.items[h.base.executor_input].input = old;
                                 } else {
-                                    _ = workspace.sexprs.pop().?;
+                                    var old = workspace.sexprAtPlace(h.base).getSubValue(h.local);
+                                    old.hovered.value = 10;
+                                    if (h.local.len == 0 and std.meta.activeTag(h.base) == .board) {
+                                        const base = workspace.sexprAtPlace(h.base);
+                                        base.point.pos = g.old_position;
+                                        base.is_pattern = g.old_ispattern;
+                                    } else {
+                                        _ = workspace.sexprs.pop().?;
+                                    }
                                 }
                             },
                         }
