@@ -347,6 +347,7 @@ const VeryPhysicalGarland = struct {
 
     // TODO: maybe remove delta_seconds
     pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, delta_seconds: f32) void {
+        garland.handle.pos = center.pos;
         for (garland.cases.items, 0..) |*c, k| {
             const target = center.applyToLocalPoint(.{ .pos = .new(0, 1.5 + 2.5 * tof32(k)) });
             c.kinematicUpdate(target, null, delta_seconds);
@@ -564,7 +565,6 @@ const VeryPhysicalCase = struct {
         case.pattern.point = center.applyToLocalPoint(.{ .pos = .xneg });
         case.template.point = center.applyToLocalPoint(.{ .pos = .xpos });
         case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset);
-        case.next.handle.pos = center.applyToLocalPosition(.new(8, -1.5));
         case.next.kinematicUpdate(center.applyToLocalPoint(.{ .pos = next_garland_offset }).applyToLocalPoint(next_point_extra orelse .{}), delta_seconds);
     }
 
@@ -812,13 +812,15 @@ const Executor = struct {
                 const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
                 // const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
                 const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
-                // const discarded_t = anim_t;
+                const discarded_t = anim_t;
 
                 const case_point = executor.firstCasePoint().applyToLocalPoint(
                     .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
                 );
 
-                executor.garland.updateWithOffset(1, delta_seconds);
+                executor.garland.kinematicUpdate((Point{ .pos = executor.handle.pos.add(relative_garland_pos) })
+                    .applyToLocalPoint(.{ .pos = .new(0, 2.5) })
+                    .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t)), delta_seconds);
                 if (animation.invoked_fnk) |invoked| {
                     _ = invoked;
                     @panic("TODO");
