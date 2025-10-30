@@ -751,6 +751,7 @@ const Executor = struct {
         invoked_fnk: ?VeryPhysicalGarland,
     } = null,
     prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
+    enqueued_stack: std.ArrayListUnmanaged(VeryPhysicalGarland) = .empty,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_pos: Vec2 = .new(4, 0);
@@ -771,8 +772,10 @@ const Executor = struct {
         }
         if (executor.animation) |anim| {
             try anim.active_case.draw(drawer, camera);
+            if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
         }
         for (executor.prev_pills.items) |p| try p.draw(drawer, camera);
+        for (executor.enqueued_stack.items) |s| try s.draw(drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
@@ -784,7 +787,7 @@ const Executor = struct {
         return executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null;
     }
 
-    pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, delta_seconds: f32) !void {
+    pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
         var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
@@ -807,7 +810,7 @@ const Executor = struct {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
                 const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
-                // const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
+                const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
                 const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
                 const discarded_t = anim_t;
                 pill_offset = enqueueing_t;
@@ -819,9 +822,16 @@ const Executor = struct {
                 executor.garland.kinematicUpdate((Point{ .pos = executor.handle.pos.add(relative_garland_pos) })
                     .applyToLocalPoint(.{ .pos = .new(0, 2.5) })
                     .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t)), delta_seconds);
-                if (animation.invoked_fnk) |invoked| {
-                    _ = invoked;
-                    @panic("TODO");
+                if (animation.invoked_fnk) |*invoked| {
+                    const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
+                    const function_point = executor.garlandPoint()
+                        .applyToLocalPoint(.{ .pos = .new(2 * offset, 6 * offset) });
+                    invoked.kinematicUpdate(function_point, delta_seconds);
+
+                    animation.active_case.kinematicUpdate(case_point, .{
+                        .pos = .new(template_t * 6, -2 * enqueueing_t),
+                        .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
+                    }, delta_seconds);
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{ .pos = .new(-template_t * 2, 0) }, delta_seconds);
                 }
@@ -836,9 +846,13 @@ const Executor = struct {
                     executor.input.?.value = next_input;
                     if (animation.invoked_fnk) |fnk| {
                         executor.garland = fnk;
-                        @panic("TODO: store active_case.next");
-                    } else {
+                        if (animation.active_case.next.cases.items.len > 0) {
+                            try executor.enqueued_stack.append(mem.gpa, animation.active_case.next);
+                        }
+                    } else if (animation.active_case.next.cases.items.len > 0) {
                         executor.garland = animation.active_case.next;
+                    } else if (executor.enqueued_stack.pop()) |g| {
+                        executor.garland = g;
                     }
                 }
                 executor.animation = null;
@@ -865,7 +879,21 @@ const Executor = struct {
                 try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
             else
                 null;
-            const invoked_fnk: ?VeryPhysicalGarland = if (case.fnk_name.value.equals(Sexpr.builtin.identity)) null else @panic("TODO");
+            const invoked_fnk: ?VeryPhysicalGarland = if (case.fnk_name.value.equals(Sexpr.builtin.identity))
+                null
+            else blk: {
+                const fnk_body = known_fnks.get(case.fnk_name.value) orelse @panic("TODO: handle this");
+                // fnk_body.cases
+                var invoked: VeryPhysicalGarland = .init(case.fnk_name.point.pos.addY(10));
+                for (fnk_body.cases.items, 0..) |c, k| {
+                    try invoked.insertCase(mem.gpa, k, try .fromValues(hover_pool, .{
+                        .pattern = c.pattern,
+                        .fnk_name = c.fnk_name,
+                        .template = c.template,
+                    }, .{ .pos = invoked.handle.pos.addY(2.5 * tof32(k)) }));
+                }
+                break :blk invoked;
+            };
             executor.animation = .{
                 .active_case = case,
                 .next_input = next_input,
@@ -880,8 +908,11 @@ const Executor = struct {
     }
 
     pub fn firstCasePoint(executor: Executor) Point {
-        const garland_point: Point = .{ .pos = executor.handle.pos.add(relative_garland_pos) };
-        return garland_point.applyToLocalPoint(.{ .pos = .new(0, 1.5) });
+        return executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(0, 1.5) });
+    }
+
+    pub fn garlandPoint(executor: Executor) Point {
+        return .{ .pos = executor.handle.pos.add(relative_garland_pos) };
     }
 };
 
@@ -2034,7 +2065,7 @@ const Workspace = struct {
         }
 
         for (workspace.executors.items) |*e| {
-            try e.update(mem, platform.delta_seconds);
+            try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
         }
 
         // TODO: code could be massively reduced
