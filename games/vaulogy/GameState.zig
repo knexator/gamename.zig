@@ -345,6 +345,21 @@ const VeryPhysicalGarland = struct {
         garland.updateWithOffset(0, delta_seconds);
     }
 
+    // TODO: maybe remove delta_seconds
+    pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, delta_seconds: f32) void {
+        for (garland.cases.items, 0..) |*c, k| {
+            const target = center.applyToLocalPoint(.{ .pos = .new(0, 1.5 + 2.5 * tof32(k)) });
+            c.kinematicUpdate(target, null, delta_seconds);
+        }
+        for (0..garland.cases.items.len + 1) |k| {
+            const h = garland.handleForNewCasesRef(&.{k});
+            h.pos = if (k == 0)
+                garland.handle.pos.addY(1.5 / 2.0)
+            else
+                garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) - 0.5));
+        }
+    }
+
     pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, delta_seconds: f32) void {
         assert(math.in01(offset));
         assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
@@ -503,6 +518,7 @@ const VeryPhysicalCase = struct {
     pub const handle_radius: f32 = 0.2;
 
     const fnk_name_offset: Point = .{ .scale = 0.5, .turns = -0.25, .pos = .new(4, 0) };
+    const next_garland_offset: Vec2 = .new(8, -1.5);
 
     pub fn getBoardPos(case: VeryPhysicalCase) Vec2 {
         return case.handle;
@@ -540,17 +556,16 @@ const VeryPhysicalCase = struct {
         case.pattern.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xneg }), 0.6, delta_seconds);
         case.template.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xpos }), 0.6, delta_seconds);
         case.fnk_name.point.lerp_towards(center.applyToLocalPoint(fnk_name_offset), 0.6, delta_seconds);
-        Vec2.lerpTowards(&case.next.handle.pos, center.applyToLocalPosition(.new(8, -1.5)), 0.6, delta_seconds);
+        Vec2.lerpTowards(&case.next.handle.pos, center.applyToLocalPosition(next_garland_offset), 0.6, delta_seconds);
         case.next.update(delta_seconds);
     }
 
-    pub fn kinematicUpdate(case: *VeryPhysicalCase, center: Point, delta_seconds: f32) void {
+    pub fn kinematicUpdate(case: *VeryPhysicalCase, center: Point, next_point_extra: ?Point, delta_seconds: f32) void {
         case.pattern.point = center.applyToLocalPoint(.{ .pos = .xneg });
         case.template.point = center.applyToLocalPoint(.{ .pos = .xpos });
         case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset);
-        // TODO: next cases
         case.next.handle.pos = center.applyToLocalPosition(.new(8, -1.5));
-        case.next.update(delta_seconds);
+        case.next.kinematicUpdate(center.applyToLocalPoint(.{ .pos = next_garland_offset }).applyToLocalPoint(next_point_extra orelse .{}), delta_seconds);
     }
 
     pub fn constChildCase(parent: *const VeryPhysicalCase, local: core.CaseAddress) *const VeryPhysicalCase {
@@ -731,8 +746,9 @@ const Executor = struct {
 
     animation: ?struct {
         t: f32 = 0,
-        next_input: ?*const core.Sexpr,
         active_case: VeryPhysicalCase,
+        next_input: ?*const core.Sexpr,
+        invoked_fnk: ?VeryPhysicalGarland,
     } = null,
     prev_pill: ?Pill = null,
 
@@ -788,12 +804,12 @@ const Executor = struct {
                     flyaway_t,
                 ));
                 executor.garland.updateWithOffset(offset_t, delta_seconds);
-                animation.active_case.kinematicUpdate(case_floating_away, delta_seconds);
+                animation.active_case.kinematicUpdate(case_floating_away, null, delta_seconds);
                 executor.input.?.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
             } else {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
-                // const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
+                const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
                 // const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
                 const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
                 // const discarded_t = anim_t;
@@ -803,16 +819,26 @@ const Executor = struct {
                 );
 
                 executor.garland.updateWithOffset(1, delta_seconds);
-                animation.active_case.kinematicUpdate(case_point, delta_seconds);
+                if (animation.invoked_fnk) |invoked| {
+                    _ = invoked;
+                    @panic("TODO");
+                } else {
+                    animation.active_case.kinematicUpdate(case_point, .{ .pos = .new(-template_t * 2, 0) }, delta_seconds);
+                }
                 executor.input.?.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
             }
             animation.t += delta_seconds;
             if (animation.t >= 1) {
                 if (animation.next_input) |next_input| {
                     executor.prev_pill = .{ .pattern = animation.active_case.pattern, .input = executor.input.? };
-                    executor.garland = animation.active_case.next;
                     executor.input = animation.active_case.template;
                     executor.input.?.value = next_input;
+                    if (animation.invoked_fnk) |fnk| {
+                        executor.garland = fnk;
+                        @panic("TODO: store active_case.next");
+                    } else {
+                        executor.garland = animation.active_case.next;
+                    }
                 }
                 executor.animation = null;
             }
@@ -832,7 +858,12 @@ const Executor = struct {
                 try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
             else
                 null;
-            executor.animation = .{ .active_case = case, .next_input = next_input };
+            const invoked_fnk: ?VeryPhysicalGarland = if (case.fnk_name.value.equals(Sexpr.builtin.identity)) null else @panic("TODO");
+            executor.animation = .{
+                .active_case = case,
+                .next_input = next_input,
+                .invoked_fnk = invoked_fnk,
+            };
         }
     }
 
