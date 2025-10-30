@@ -286,11 +286,15 @@ const VeryPhysicalGarland = struct {
     }
 
     pub fn clone(original: VeryPhysicalGarland, res: std.mem.Allocator) !VeryPhysicalGarland {
+        const new_cases = try original.cases.clone(res);
+        for (new_cases.items) |*c| {
+            c.next = try c.next.clone(res);
+        }
         return .{
             .handle = original.handle,
             .handles_for_new_cases_first = original.handles_for_new_cases_first,
             .handles_for_new_cases_rest = try original.handles_for_new_cases_rest.clone(res),
-            .cases = try original.cases.clone(res),
+            .cases = new_cases,
         };
     }
 
