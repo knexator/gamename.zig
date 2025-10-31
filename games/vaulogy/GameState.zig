@@ -350,7 +350,7 @@ const VeryPhysicalGarland = struct {
         garland.handle.pos = center.pos;
         for (garland.cases.items, 0..) |*c, k| {
             const target = center.applyToLocalPoint(.{ .pos = .new(0, 1.5 + 2.5 * tof32(k)) });
-            c.kinematicUpdate(target, null, delta_seconds);
+            c.kinematicUpdate(target, null, null, delta_seconds);
         }
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCasesRef(&.{k});
@@ -561,10 +561,10 @@ const VeryPhysicalCase = struct {
         case.next.update(delta_seconds);
     }
 
-    pub fn kinematicUpdate(case: *VeryPhysicalCase, center: Point, next_point_extra: ?Point, delta_seconds: f32) void {
+    pub fn kinematicUpdate(case: *VeryPhysicalCase, center: Point, next_point_extra: ?Point, fnk_name_extra: ?Point, delta_seconds: f32) void {
         case.pattern.point = center.applyToLocalPoint(.{ .pos = .xneg });
         case.template.point = center.applyToLocalPoint(.{ .pos = .xpos });
-        case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset);
+        case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset).applyToLocalPoint(fnk_name_extra orelse .{});
         case.next.kinematicUpdate(center.applyToLocalPoint(.{ .pos = next_garland_offset }).applyToLocalPoint(next_point_extra orelse .{}), delta_seconds);
     }
 
@@ -804,7 +804,7 @@ const Executor = struct {
                     flyaway_t,
                 ));
                 executor.garland.updateWithOffset(offset_t, delta_seconds);
-                animation.active_case.kinematicUpdate(case_floating_away, null, delta_seconds);
+                animation.active_case.kinematicUpdate(case_floating_away, null, null, delta_seconds);
                 executor.input.?.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
             } else {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
@@ -831,9 +831,11 @@ const Executor = struct {
                     animation.active_case.kinematicUpdate(case_point, .{
                         .pos = .new(template_t * 6, -2 * enqueueing_t),
                         .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
-                    }, delta_seconds);
+                    }, .{ .pos = .new(invoking_t * 3, 0) }, delta_seconds);
                 } else {
-                    animation.active_case.kinematicUpdate(case_point, .{ .pos = .new(-template_t * 2, 0) }, delta_seconds);
+                    animation.active_case.kinematicUpdate(case_point, .{
+                        .pos = .new(-template_t * 2, 0),
+                    }, .{ .pos = .new(invoking_t * 3, 0) }, delta_seconds);
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
                         if (k == 0) {
                             const tt = 1 - template_t;
