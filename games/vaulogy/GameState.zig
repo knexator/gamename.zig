@@ -853,6 +853,8 @@ const Executor = struct {
                         executor.garland = animation.active_case.next;
                     } else if (executor.enqueued_stack.pop()) |g| {
                         executor.garland = g;
+                    } else {
+                        executor.garland = .init(executor.garlandPoint().pos);
                     }
                 }
                 executor.animation = null;
