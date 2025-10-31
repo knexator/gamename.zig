@@ -1658,6 +1658,7 @@ const Workspace = struct {
                         executor.input = g.input;
                         executor.garland = g.garland;
                         executor.prev_pills = .fromOwnedSlice(g.prev_pills);
+                        executor.enqueued_stack.clearRetainingCapacity();
                         executor.animation = null;
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped);
@@ -2336,6 +2337,7 @@ const Workspace = struct {
 
         for (workspace.executors.items, 0..) |e, k| {
             if (e.startedExecution()) {
+                assert(e.enqueued_stack.items.len == 0);
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution = .{
                     .executor = k,
                     .input = e.input.?,
