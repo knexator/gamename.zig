@@ -825,7 +825,7 @@ const Executor = struct {
                 if (animation.invoked_fnk) |*invoked| {
                     const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
                     const function_point = executor.garlandPoint()
-                        .applyToLocalPoint(.{ .pos = .new(2 * offset, 6 * offset) });
+                        .applyToLocalPoint(.{ .pos = .new(2 * offset + 6 - match_t - enqueueing_t * 5, 6 * offset) });
                     invoked.kinematicUpdate(function_point, delta_seconds);
 
                     animation.active_case.kinematicUpdate(case_point, .{
