@@ -834,6 +834,16 @@ const Executor = struct {
                     }, delta_seconds);
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{ .pos = .new(-template_t * 2, 0) }, delta_seconds);
+                    for (executor.enqueued_stack.items, 0..) |*x, k| {
+                        if (k == 0) {
+                            const tt = 1 - template_t;
+                            const et = 1 - enqueueing_t;
+                            x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
+                                .pos = .new(tt * 6 + 2 - template_t * 2, -2 * et),
+                                .turns = math.lerp(0, -0.1, math.smoothstepEased(et, 0, 1, .easeInOutCubic)),
+                            }), delta_seconds);
+                        } else @panic("TODO");
+                    }
                 }
                 executor.input.?.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
             }
