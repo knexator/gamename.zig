@@ -43,14 +43,14 @@ pub const ViewHelper = struct {
         };
     }
 
-    pub fn overlapsSexpr(alloc: std.mem.Allocator, is_pattern: bool, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
+    pub fn overlapsSexpr(alloc: std.mem.Allocator, is_pattern: bool, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2, allow_empty: bool) !?core.SexprAddress {
         return if (is_pattern)
-            overlapsPatternSexpr(alloc, sexpr, sexpr_pos, needle_pos)
+            overlapsPatternSexpr(alloc, sexpr, sexpr_pos, needle_pos, allow_empty)
         else
-            overlapsTemplateSexpr(alloc, sexpr, sexpr_pos, needle_pos);
+            overlapsTemplateSexpr(alloc, sexpr, sexpr_pos, needle_pos, allow_empty);
     }
 
-    fn overlapsTemplateSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
+    fn overlapsTemplateSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2, allow_empty: bool) !?core.SexprAddress {
         var result = std.ArrayList(core.SexprAddressItem).init(alloc);
         defer result.deinit();
         // TODO (low priority): probably can be made more efficient by using less changes of coordinates
@@ -59,6 +59,9 @@ pub const ViewHelper = struct {
         var cur_sexpr = sexpr;
         while (true) {
             switch (cur_sexpr.*) {
+                .empty => if (allow_empty and overlapsTemplateAtom(cur_sexpr_pos, needle_pos, .atom)) {
+                    return try result.toOwnedSlice();
+                } else return null,
                 .atom_lit, .atom_var => {
                     if (overlapsTemplateAtom(cur_sexpr_pos, needle_pos, .atom)) {
                         return try result.toOwnedSlice();
@@ -93,7 +96,7 @@ pub const ViewHelper = struct {
         }
     }
 
-    fn overlapsPatternSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2) !?core.SexprAddress {
+    fn overlapsPatternSexpr(alloc: std.mem.Allocator, sexpr: *const Sexpr, sexpr_pos: Point, needle_pos: Vec2, allow_empty: bool) !?core.SexprAddress {
         var result = std.ArrayList(core.SexprAddressItem).init(alloc);
         defer result.deinit();
         // TODO (low priority): probably can be made more efficient by using less changes of coordinates
@@ -102,6 +105,9 @@ pub const ViewHelper = struct {
         var cur_sexpr = sexpr;
         while (true) {
             switch (cur_sexpr.*) {
+                .empty => if (allow_empty and overlapsPatternAtom(cur_sexpr_pos, needle_pos, .atom)) {
+                    return try result.toOwnedSlice();
+                } else return null,
                 .atom_lit, .atom_var => {
                     if (overlapsPatternAtom(cur_sexpr_pos, needle_pos, .atom)) {
                         return try result.toOwnedSlice();

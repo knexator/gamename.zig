@@ -157,7 +157,7 @@ const HoveredSexpr = struct {
 
     pub fn fromSexpr(pool: *Pool, value: *const Sexpr) !*HoveredSexpr {
         return store(pool, .{ .value = 0, .next = switch (value.*) {
-            .atom_lit, .atom_var => null,
+            .atom_lit, .atom_var, .empty => null,
             .pair => |p| .{
                 .left = try fromSexpr(pool, p.left),
                 .right = try fromSexpr(pool, p.right),
@@ -658,6 +658,7 @@ const VeryPhysicalSexpr = struct {
             is_pattern_t,
         ), hovered.value / 2.0));
         switch (value.*) {
+            .empty => {},
             .atom_lit, .atom_var => try if (is_pattern)
                 drawer.drawPatternSexpr(camera, value, actual_point)
             else
@@ -854,8 +855,7 @@ const Executor = struct {
                 if (animation.next_input) |next_input| {
                     try executor.prev_pills.append(mem.gpa, .{ .pattern = animation.active_case.pattern, .input = executor.input.? });
                     pill_offset -= 1;
-                    executor.input = animation.active_case.template;
-                    executor.input.?.value = next_input;
+                    executor.input = try .fromSexpr(hover_pool, next_input, animation.active_case.template.point, false);
                     if (animation.invoked_fnk) |fnk| {
                         executor.garland = fnk;
                         if (animation.active_case.next.cases.items.len > 0) {
@@ -1101,6 +1101,8 @@ const Workspace = struct {
                 old_grabbed_position: Focus.Target,
             },
             grabbed: struct {
+                // TODO
+                // duplicate: bool,
                 from: Focus.Target,
                 /// not always used
                 old_position: Vec2,
@@ -1233,6 +1235,7 @@ const Workspace = struct {
         &Sexpr.doLit("Jupiter"),
         &Sexpr.doLit("Aphrodite"),
         &Sexpr.doLit("Venus"),
+        &.empty,
     };
 
     fn randomSexpr(mem: *core.VeryPermamentGameStuff, random: std.Random, max_depth: usize) !*const Sexpr {
@@ -1384,6 +1387,7 @@ const Workspace = struct {
 
         // sexprs inside lenses and on the board and on cases and on garlands
         if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
+            const is_dropzone = grabbed_tag != .nothing;
             for (workspace.lenses.items) |lens| {
                 if (pos.distTo(lens.target) < lens.target_radius) {
                     for (lens.tmp_visible_sexprs.items) |s| {
@@ -1396,6 +1400,7 @@ const Workspace = struct {
                             original.value,
                             s.lens_transform.actOn(original.point),
                             pos,
+                            is_dropzone,
                         )) |address| {
                             return .{
                                 .kind = .{
@@ -1413,7 +1418,7 @@ const Workspace = struct {
 
             for (workspace.sexprs.items, 0..) |s, k| {
                 if (isGrabbed(.{ .board = k }, grabbed)) continue;
-                if (try ViewHelper.overlapsSexpr(res, s.is_pattern, s.value, s.point, pos)) |address| {
+                if (try ViewHelper.overlapsSexpr(res, s.is_pattern, s.value, s.point, pos, is_dropzone)) |address| {
                     return .{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = address } } };
                 }
             }
@@ -1424,7 +1429,7 @@ const Workspace = struct {
                     const c = parent_case.constChildCase(address);
                     inline for (core.CasePart.all) |part| {
                         const s = c.constSexprAt(part);
-                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |local_address| {
+                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos, is_dropzone)) |local_address| {
                             return .{ .kind = .{ .sexpr = .{ .base = .{ .case = .{
                                 .parent = k,
                                 .part = part,
@@ -1441,7 +1446,7 @@ const Workspace = struct {
                     const c = garland.constChildCase(address);
                     inline for (core.CasePart.all) |part| {
                         const s = c.constSexprAt(part);
-                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos)) |sexpr_address| {
+                        if (try ViewHelper.overlapsSexpr(res, part == .pattern, s.value, s.point, pos, is_dropzone)) |sexpr_address| {
                             return .{ .kind = .{ .sexpr = .{ .base = .{ .garland = .{
                                 .parent = k,
                                 .part = part,
@@ -1463,6 +1468,7 @@ const Workspace = struct {
                     input.value,
                     input.point,
                     pos,
+                    grabbed_tag == .sexpr,
                 )) |address| {
                     return .{ .kind = .{ .sexpr = .{
                         .base = .{ .executor_input = k },

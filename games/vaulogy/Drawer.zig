@@ -385,6 +385,7 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
 
 pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
     switch (sexpr.*) {
+        .empty => {},
         .atom_lit => |lit| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
             try drawer.drawTemplateAtom(camera, point, visuals);
@@ -404,6 +405,7 @@ pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poi
 
 pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
     switch (sexpr.*) {
+        .empty => {},
         .atom_lit => |lit| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
             try drawer.drawPatternAtom(camera, point, visuals);

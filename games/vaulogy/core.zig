@@ -26,6 +26,7 @@ pub const Sexpr = union(enum) {
     atom_var: Atom,
     atom_lit: Atom,
     pair: Pair,
+    empty,
 
     pub const builtin: struct {
         true: *const Sexpr = &Sexpr.doLit("true"),
@@ -117,6 +118,10 @@ pub const Sexpr = union(enum) {
     pub fn equals(this: *const Sexpr, other: *const Sexpr) bool {
         if (this == other) return true;
         return switch (this.*) {
+            .empty => switch (other.*) {
+                .empty => true,
+                else => false,
+            },
             .atom_lit => |this_atom| switch (other.*) {
                 .atom_lit => |other_atom| this_atom.equals(other_atom),
                 else => false,
@@ -134,6 +139,7 @@ pub const Sexpr = union(enum) {
 
     pub fn hash(s: *const Sexpr) u32 {
         return switch (s.*) {
+            .empty => 0,
             .atom_lit => |a| std.array_hash_map.hashString(a.value),
             .atom_var => |a| std.hash.uint32(std.array_hash_map.hashString(a.value)),
             .pair => |p| {
@@ -229,6 +235,7 @@ pub const Sexpr = union(enum) {
         std.debug.assert(std.mem.eql(u8, fmt, ""));
         std.debug.assert(std.meta.eql(options, .{}));
         switch (value.*) {
+            .empty => try writer.writeAll("<empty>"),
             .atom_lit => |a| try writer.writeAll(a.value),
             .atom_var => |a| {
                 try writer.writeAll("@");
@@ -328,7 +335,7 @@ pub const Binding = struct {
     name: []const u8,
     value: *const Sexpr,
 };
-const Bindings = std.ArrayList(Binding);
+pub const Bindings = std.ArrayList(Binding);
 
 pub const SexprContext = struct {
     pub fn hash(self: @This(), s: *const Sexpr) u32 {
@@ -366,7 +373,7 @@ fn builtin_fnk_identity(v: *const Sexpr) *const Sexpr {
 
 fn @"builtin_fnk_eqAtoms?"(v: *const Sexpr) *const Sexpr {
     return switch (v.*) {
-        .atom_lit, .atom_var => Sexpr.fromBool(false),
+        .atom_lit, .atom_var, .empty => Sexpr.fromBool(false),
         .pair => |p| Sexpr.fromBool(p.left.isLit() and p.right.isLit() and Sexpr.equals(p.left, p.right)),
     };
 }
@@ -476,7 +483,7 @@ pub const ScoringRun = struct {
             }
             return fnk;
         } else switch (name.*) {
-            .atom_lit, .atom_var => return error.FnkNotFound,
+            .atom_lit, .atom_var, .empty => return error.FnkNotFound,
             .pair => |p| {
                 // try to compile it!
                 var exec = try ExecutionThread.init(p.right, p.left, this);
@@ -1300,6 +1307,7 @@ pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *B
     // try bindings.append(.{ .name = "xxx", .value = value });
 
     switch (pattern.*) {
+        .empty => return true,
         .atom_var => |pat| {
             switch (value.*) {
                 .atom_var => return error.BAD_INPUT,
@@ -1312,6 +1320,7 @@ pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *B
         },
         .atom_lit => |pat| {
             switch (value.*) {
+                .empty => return true,
                 .pair => return false,
                 .atom_lit => |val| return val.equals(pat),
                 .atom_var => return error.BAD_INPUT,
@@ -1321,6 +1330,11 @@ pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *B
             switch (value.*) {
                 .atom_lit => return false,
                 .atom_var => return error.BAD_INPUT,
+                .empty => {
+                    const a = try generateBindings(pat.left, &.empty, bindings);
+                    const b = try generateBindings(pat.right, &.empty, bindings);
+                    return a and b;
+                },
                 .pair => |val| {
                     const a = try generateBindings(pat.left, val.left, bindings);
                     const b = try generateBindings(pat.right, val.right, bindings);
@@ -1349,7 +1363,7 @@ fn partiallyFillTemplateV2(template: *const Sexpr, bindings: []const Binding, po
             }
             return .{ .result = template, .complete = false };
         },
-        .atom_lit => return .{ .result = template, .complete = true },
+        .atom_lit, .empty => return .{ .result = template, .complete = true },
         .pair => |templ| {
             const left = try partiallyFillTemplateV2(templ.left, bindings, pool);
             const right = try partiallyFillTemplateV2(templ.right, bindings, pool);
@@ -1427,6 +1441,7 @@ pub fn caseFromSexpr(cur: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryP
 fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPool(Sexpr)) error{ InvalidMetaFnk, OutOfMemory, BAD_INPUT }!?MatchCases {
     var cases = std.ArrayListUnmanaged(MatchCaseDefinition){};
     switch (s.*) {
+        .empty => @panic("TODO"),
         .atom_lit => return if (s.equals(Sexpr.builtin.meta.@"return")) null else error.InvalidMetaFnk,
         .atom_var => return error.BAD_INPUT,
         .pair => |p| {
@@ -1435,6 +1450,7 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
                 const cur = cur_parent.left;
                 try cases.append(arena, try caseFromSexpr(cur, arena, pool));
                 switch (cur_parent.right.*) {
+                    .empty => @panic("TODO"),
                     .atom_lit => |a| {
                         if (a.equals(Sexpr.builtin.nil.atom_lit)) {
                             break;
@@ -1456,13 +1472,13 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
 // ((atom . aaa) . (var . bbb)) => (aaa . @bbb)
 fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     switch (s.*) {
-        .atom_var, .atom_lit => return error.InvalidMetaFnk,
+        .atom_var, .atom_lit, .empty => return error.InvalidMetaFnk,
         .pair => |p| {
             if (p.left.equals(Sexpr.builtin.meta.atom)) {
                 return p.right;
             } else if (p.left.equals(Sexpr.builtin.meta.@"var")) {
                 switch (p.right.*) {
-                    .pair => return error.InvalidMetaFnk,
+                    .pair, .empty => return error.InvalidMetaFnk,
                     .atom_var => return error.BAD_INPUT,
                     .atom_lit => |a| {
                         const res: *Sexpr = try pool.create();
