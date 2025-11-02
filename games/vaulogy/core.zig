@@ -33,6 +33,8 @@ pub const Sexpr = union(enum) {
         false: *const Sexpr = &Sexpr.doLit("false"),
         nil: *const Sexpr = &Sexpr.doLit("nil"),
 
+        empty: *const Sexpr = &.empty,
+
         input: *const Sexpr = &Sexpr.doLit("input"),
         debug: *const Sexpr = &Sexpr.doLit("DEBUGGG"),
         identity: *const Sexpr = &Sexpr.doLit("identity"),
