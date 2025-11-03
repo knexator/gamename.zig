@@ -713,7 +713,11 @@ const VeryPhysicalSexpr = struct {
                 0,
             ) });
 
-        return _draw(drawer, camera, sexpr.value, sexpr.hovered, base_point, sexpr.is_pattern, sexpr.is_pattern_t);
+        if (sexpr.isEmpty()) {
+            try drawer.drawPlaceholder(camera, base_point, sexpr.is_pattern);
+        } else {
+            return _draw(drawer, camera, sexpr.value, sexpr.hovered, base_point, sexpr.is_pattern, sexpr.is_pattern_t);
+        }
     }
 
     pub fn updateSubValue(
@@ -824,11 +828,7 @@ const Executor = struct {
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera);
-        if (executor.input.isEmpty()) {
-            drawer.canvas.strokeCircle(128, camera, executor.inputPoint().pos.addX(0.5), 1, 0.01, .black);
-        } else {
-            try executor.input.draw(drawer, camera);
-        }
+        try executor.input.draw(drawer, camera);
         if (executor.animation) |anim| {
             try anim.active_case.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
@@ -1527,30 +1527,20 @@ const Workspace = struct {
 
         for (workspace.executors.items, 0..) |executor, k| {
             if (executor.animating()) continue;
-            if (!executor.input.isEmpty()) {
-                const input = executor.input;
-                if (try ViewHelper.overlapsSexpr(
-                    // TODO: don't leak
-                    res,
-                    input.is_pattern,
-                    input.value,
-                    input.point,
-                    pos,
-                    grabbed_tag == .sexpr,
-                )) |address| {
-                    return .{ .kind = .{ .sexpr = .{
-                        .base = .{ .executor_input = k },
-                        .local = address,
-                    } } };
-                }
-            } else if (grabbed_tag == .sexpr) {
-                const center = executor.inputPoint().pos.addX(0.5);
-                if (center.distTo(pos) <= 1) {
-                    return .{ .kind = .{ .sexpr = .{
-                        .base = .{ .executor_input = k },
-                        .local = &.{},
-                    } } };
-                }
+            const input = executor.input;
+            if (try ViewHelper.overlapsSexpr(
+                // TODO: don't leak
+                res,
+                input.is_pattern,
+                input.value,
+                input.point,
+                pos,
+                grabbed_tag == .sexpr,
+            )) |address| {
+                return .{ .kind = .{ .sexpr = .{
+                    .base = .{ .executor_input = k },
+                    .local = address,
+                } } };
             }
         }
 

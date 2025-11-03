@@ -36,6 +36,8 @@ pub const AtomVisuals = struct {
         template: Canvas.PrecomputedShape,
         pattern: Canvas.PrecomputedShape,
 
+        var template_placeholder: Canvas.PrecomputedShape = undefined;
+        var pattern_placeholder: Canvas.PrecomputedShape = undefined;
         var template_variable: Canvas.PrecomputedShape = undefined;
         var pattern_variable: Canvas.PrecomputedShape = undefined;
         var template_pair_holder: Canvas.PrecomputedShape = undefined;
@@ -134,6 +136,17 @@ pub const AtomVisuals = struct {
                     return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, -0.5));
                 }
             }.anon)));
+
+            Geometry.template_placeholder = try .fromPoints(mem, &([1]Vec2{.new(2, -1)} ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
+                }
+            }.anon) ++ [1]Vec2{.new(2, 1)}));
+            Geometry.pattern_placeholder = try .fromPoints(mem, &([1]Vec2{.new(-1, -1)} ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
+                }
+            }.anon) ++ [1]Vec2{.new(-1, 1)}));
         }
     };
 };
@@ -426,6 +439,13 @@ pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poin
 fn pixelWidth(camera: Rect) f32 {
     // const pixel_width = camera.height / window_size.y;
     return camera.size.y / 800.0;
+}
+
+pub fn drawPlaceholder(self: *Drawer, camera: Rect, world_point: Point, is_pattern: bool) !void {
+    try self.drawShapeV3(camera, world_point, if (is_pattern)
+        AtomVisuals.Geometry.pattern_placeholder
+    else
+        AtomVisuals.Geometry.template_placeholder, FColor.white.withAlpha(0.5), null);
 }
 
 // TODO: remove
