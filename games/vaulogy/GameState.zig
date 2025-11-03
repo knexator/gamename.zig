@@ -281,6 +281,34 @@ const VeryPhysicalGarland = struct {
         garland.cases.deinit(allocator);
     }
 
+    pub fn hash(garland: *const VeryPhysicalGarland) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (garland.cases.items) |case| {
+            std.hash.autoHash(&hasher, case.hash());
+        }
+        return @truncate(hasher.final());
+    }
+
+    pub fn fromDefinition(base: Point, definition: core.FnkBody, mem: *core.VeryPermamentGameStuff, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalGarland {
+        var result: VeryPhysicalGarland = .init(base.pos);
+        try result.cases.ensureUnusedCapacity(mem.gpa, definition.cases.items.len);
+        try result.handles_for_new_cases_rest.ensureUnusedCapacity(mem.gpa, definition.cases.items.len);
+        for (definition.cases.items, 0..) |case, k| {
+            try result.insertCase(mem.gpa, k, try .fromValues(hover_pool, .{
+                .pattern = case.pattern,
+                .fnk_name = case.fnk_name,
+                .template = case.template,
+                .next = if (case.next) |n|
+                    try .fromDefinition(base.applyToLocalPoint(.{
+                        .pos = .new(1, tof32(k)),
+                    }), .{ .cases = n }, mem, hover_pool)
+                else
+                    .init(base.applyToLocalPoint(.{ .pos = .new(1, tof32(k)) }).pos),
+            }, base.applyToLocalPoint(.{ .pos = .new(0, tof32(k)) })));
+        }
+        return result;
+    }
+
     pub fn getBoardPos(garland: VeryPhysicalGarland) Vec2 {
         return garland.handle;
     }
@@ -531,6 +559,7 @@ const VeryPhysicalCase = struct {
             pattern: *const Sexpr,
             fnk_name: *const Sexpr,
             template: *const Sexpr,
+            next: ?VeryPhysicalGarland = null,
         },
         center: Point,
     ) !VeryPhysicalCase {
@@ -539,8 +568,17 @@ const VeryPhysicalCase = struct {
             .pattern = try .fromSexpr(pool, values.pattern, center.applyToLocalPoint(.{ .pos = .xneg }), true),
             .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
             .fnk_name = try .fromSexpr(pool, values.fnk_name, center.applyToLocalPoint(fnk_name_offset), false),
-            .next = .init(center.applyToLocalPosition(.new(6, 0))),
+            .next = values.next orelse .init(center.applyToLocalPosition(.new(6, 0))),
         };
+    }
+
+    pub fn hash(case: *const VeryPhysicalCase) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, case.pattern.value.hash());
+        std.hash.autoHash(&hasher, case.template.value.hash());
+        std.hash.autoHash(&hasher, case.fnk_name.value.hash());
+        std.hash.autoHash(&hasher, case.next.hash());
+        return @truncate(hasher.final());
     }
 
     pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
@@ -990,6 +1028,9 @@ const Fnkviewer = struct {
     fnkname: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
 
+    last_fnkname_hash: u32 = 0,
+    // last_garland_hash: u32 = 0,
+
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 0.5), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1.5) };
 
@@ -1012,12 +1053,18 @@ const Fnkviewer = struct {
     }
 
     pub fn update(fnkviewer: *Fnkviewer, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        _ = mem;
-        _ = known_fnks;
-        _ = hover_pool;
         Vec2.lerpTowards(&fnkviewer.garland.handle.pos, fnkviewer.point().applyToLocalPoint(relative_garland_point).pos, 0.6, delta_seconds);
         fnkviewer.garland.update(delta_seconds);
         fnkviewer.fnkname.point.lerp_towards(fnkviewer.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
+
+        // TODO: some way to modify fnks
+        const cur_fnkname_hash = fnkviewer.fnkname.value.hash();
+        if (cur_fnkname_hash != fnkviewer.last_fnkname_hash) {
+            fnkviewer.last_fnkname_hash = cur_fnkname_hash;
+            if (known_fnks.get(fnkviewer.fnkname.value)) |definition| {
+                fnkviewer.garland = try .fromDefinition(fnkviewer.point().applyToLocalPoint(relative_garland_point), definition, mem, hover_pool);
+            }
+        }
     }
 };
 
