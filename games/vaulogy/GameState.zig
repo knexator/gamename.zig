@@ -985,6 +985,42 @@ const Executor = struct {
     }
 };
 
+const Fnkviewer = struct {
+    handle: Handle,
+    fnkname: VeryPhysicalSexpr,
+    garland: VeryPhysicalGarland,
+
+    const relative_fnkname_point: Point = .{ .pos = .new(-1, 0.5), .scale = 0.5, .turns = 0.25 };
+    const relative_garland_point: Point = .{ .pos = .new(1, 1.5) };
+
+    pub fn point(fnkviewer: *const Fnkviewer) Point {
+        return .{ .pos = fnkviewer.handle.pos };
+    }
+
+    pub fn init(base: Point, hover_pool: *HoveredSexpr.Pool) !Fnkviewer {
+        return .{
+            .handle = .{ .pos = base.pos },
+            .garland = .init(base.applyToLocalPoint(relative_garland_point).pos),
+            .fnkname = try .empty(base.applyToLocalPoint(relative_fnkname_point), hover_pool, false),
+        };
+    }
+
+    pub fn draw(fnkviewer: Fnkviewer, drawer: *Drawer, camera: Rect) !void {
+        try fnkviewer.handle.draw(drawer, camera);
+        try fnkviewer.fnkname.draw(drawer, camera);
+        try fnkviewer.garland.draw(drawer, camera);
+    }
+
+    pub fn update(fnkviewer: *Fnkviewer, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
+        _ = mem;
+        _ = known_fnks;
+        _ = hover_pool;
+        Vec2.lerpTowards(&fnkviewer.garland.handle.pos, fnkviewer.point().applyToLocalPoint(relative_garland_point).pos, 0.6, delta_seconds);
+        fnkviewer.garland.update(delta_seconds);
+        fnkviewer.fnkname.point.lerp_towards(fnkviewer.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
+    }
+};
+
 const Workspace = struct {
     pub const Lens = struct {
         source: Vec2,
@@ -1072,6 +1108,7 @@ const Workspace = struct {
     cases: std.ArrayList(VeryPhysicalCase),
     garlands: std.ArrayList(VeryPhysicalGarland),
     executors: std.ArrayList(Executor),
+    fnkviewers: std.ArrayList(Fnkviewer),
 
     known_fnks: core.FnkCollection,
 
@@ -1096,6 +1133,7 @@ const Workspace = struct {
                 case_handle: CaseHandle,
                 garland_handle: GarlandHandle,
                 executor_handle: usize,
+                fnkviewer_handle: usize,
             },
             lens_transform: Lens.Transform = .identity,
 
@@ -1118,6 +1156,7 @@ const Workspace = struct {
             garland: usize,
             case: usize,
             executor: usize,
+            fnkviewer: usize,
         },
     };
 
@@ -1134,6 +1173,7 @@ const Workspace = struct {
             part: core.CasePart,
         },
         executor_input: usize,
+        fnkviewer_fnkname: usize,
     };
     const SexprPlace = struct {
         base: BaseSexprPlace,
@@ -1258,6 +1298,9 @@ const Workspace = struct {
 
         dst.executors = .init(mem.gpa);
         try dst.executors.append(try .init(.new(-5, -5), &dst.hover_pool));
+
+        dst.fnkviewers = .init(mem.gpa);
+        try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
@@ -1309,6 +1352,7 @@ const Workspace = struct {
             .case => |case| workspace.getAt(VeryPhysicalCase, case.parent).childCase(case.local).sexprAt(case.part),
             .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent).childCase(garland.local).sexprAt(garland.part),
             .executor_input => |k| &workspace.executors.items[k].input,
+            .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
         };
     }
 
@@ -1330,6 +1374,7 @@ const Workspace = struct {
             .garland => |k| workspace.garlands.items[k].childGarland(place.local),
             .case => |k| workspace.cases.items[k].next.childGarland(place.local),
             .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
+            .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
         };
     }
 
@@ -1381,6 +1426,10 @@ const Workspace = struct {
         }
 
         for (workspace.executors.items) |g| {
+            try g.draw(drawer, camera);
+        }
+
+        for (workspace.fnkviewers.items) |g| {
             try g.draw(drawer, camera);
         }
 
@@ -1448,6 +1497,15 @@ const Workspace = struct {
                 if (executor.animating()) continue;
                 if (pos.distTo(executor.handle.pos) < Handle.radius) {
                     return .{ .kind = .{ .executor_handle = k } };
+                }
+            }
+        }
+
+        // fnkviewers
+        if (grabbed_tag == .nothing) {
+            for (workspace.fnkviewers.items, 0..) |fnkviewer, k| {
+                if (pos.distTo(fnkviewer.handle.pos) < Handle.radius) {
+                    return .{ .kind = .{ .fnkviewer_handle = k } };
                 }
             }
         }
@@ -1523,24 +1581,41 @@ const Workspace = struct {
                     } else res.free(address);
                 }
             }
-        }
 
-        for (workspace.executors.items, 0..) |executor, k| {
-            if (executor.animating()) continue;
-            const input = executor.input;
-            if (try ViewHelper.overlapsSexpr(
-                // TODO: don't leak
-                res,
-                input.is_pattern,
-                input.value,
-                input.point,
-                pos,
-                grabbed_tag == .sexpr,
-            )) |address| {
-                return .{ .kind = .{ .sexpr = .{
-                    .base = .{ .executor_input = k },
-                    .local = address,
-                } } };
+            for (workspace.executors.items, 0..) |executor, k| {
+                if (executor.animating()) continue;
+                const input = executor.input;
+                if (try ViewHelper.overlapsSexpr(
+                    // TODO: don't leak
+                    res,
+                    input.is_pattern,
+                    input.value,
+                    input.point,
+                    pos,
+                    grabbed_tag == .sexpr,
+                )) |address| {
+                    return .{ .kind = .{ .sexpr = .{
+                        .base = .{ .executor_input = k },
+                        .local = address,
+                    } } };
+                }
+            }
+
+            for (workspace.fnkviewers.items, 0..) |fnkviewer, k| {
+                if (try ViewHelper.overlapsSexpr(
+                    // TODO: don't leak
+                    res,
+                    fnkviewer.fnkname.is_pattern,
+                    fnkviewer.fnkname.value,
+                    fnkviewer.fnkname.point,
+                    pos,
+                    grabbed_tag == .sexpr,
+                )) |address| {
+                    return .{ .kind = .{ .sexpr = .{
+                        .base = .{ .fnkviewer_fnkname = k },
+                        .local = address,
+                    } } };
+                }
             }
         }
 
@@ -1570,6 +1645,20 @@ const Workspace = struct {
                     if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
                         return .{ .kind = .{ .garland_handle = .{
                             .parent = .{ .executor = k },
+                            .local = address,
+                        } } };
+                    } else res.free(address);
+                }
+            }
+
+            for (workspace.fnkviewers.items, 0..) |parent_fnkviewer, k| {
+                const parent_garland = parent_fnkviewer.garland;
+                var it = parent_garland.childGarlandsAddressIterator(res);
+                while (try it.next()) |address| {
+                    const garland = parent_garland.constChildGarland(address);
+                    if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
+                        return .{ .kind = .{ .garland_handle = .{
+                            .parent = .{ .fnkviewer = k },
                             .local = address,
                         } } };
                     } else res.free(address);
@@ -1747,6 +1836,10 @@ const Workspace = struct {
                                 const e = &workspace.executors.items[h];
                                 e.handle.pos = g.old_position;
                             },
+                            .fnkviewer_handle => |h| {
+                                const e = &workspace.fnkviewers.items[h];
+                                e.handle.pos = g.old_position;
+                            },
                             .lens_handle => |h| {
                                 const lens = &workspace.lenses.items[h.index];
                                 lens.setHandlePos(h.part, g.old_position);
@@ -1792,7 +1885,7 @@ const Workspace = struct {
                     .dropped => |g| {
                         switch (g.at.kind) {
                             .nothing => unreachable,
-                            .lens_handle, .executor_handle => {
+                            .lens_handle, .executor_handle, .fnkviewer_handle => {
                                 workspace.focus.grabbing = g.at;
                             },
                             .garland_handle => |h| {
@@ -1881,7 +1974,7 @@ const Workspace = struct {
             if (isGrabbed(.{ .board = k }, workspace.focus.grabbing)) {
                 s.is_pattern = switch (dropzone.kind) {
                     .nothing => s.is_pattern,
-                    .lens_handle, .case_handle, .garland_handle, .executor_handle => unreachable,
+                    else => unreachable,
                     .sexpr => |x| switch (x.base) {
                         else => workspace.sexprAtPlace(x.base).is_pattern,
                         .executor_input => false,
@@ -1896,9 +1989,9 @@ const Workspace = struct {
                 const hovered = switch (hovering.kind) {
                     else => null,
                     .sexpr => |sexpr| switch (sexpr.base) {
+                        else => null,
                         // special case: no hover anim for base values
                         .board => |b| if (b == k and sexpr.local.len > 0) sexpr.local else null,
-                        .case, .garland, .executor_input => null,
                     },
                 };
                 s.hovered.update(hovered, 1.0, platform.delta_seconds);
@@ -1913,7 +2006,7 @@ const Workspace = struct {
                     const hovered = switch (hovering.kind) {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
-                            .board, .garland, .executor_input => null,
+                            else => null,
                             .case => |case| if (case.parent == k and
                                 parent.childCase(case.local) == c and
                                 case.part == part) sexpr.local else null,
@@ -1932,7 +2025,7 @@ const Workspace = struct {
                     const hovered = switch (hovering.kind) {
                         else => null,
                         .sexpr => |sexpr| switch (sexpr.base) {
-                            .board, .case, .executor_input => null,
+                            else => null,
                             .garland => |garland| if (garland.parent == k and
                                 g.childCase(garland.local) == c and
                                 garland.part == part) sexpr.local else null,
@@ -1947,27 +2040,40 @@ const Workspace = struct {
             const hovered = switch (hovering.kind) {
                 else => null,
                 .sexpr => |sexpr| switch (sexpr.base) {
-                    .board, .case, .garland => null,
+                    else => null,
                     .executor_input => |executor_index| if (executor_index == k) sexpr.local else null,
                 },
             };
             e.input.hovered.update(hovered, 1.0, platform.delta_seconds);
             e.input.updateIsPattern(platform.delta_seconds);
         }
+        for (workspace.fnkviewers.items, 0..) |*e, k| {
+            const hovered = switch (hovering.kind) {
+                else => null,
+                .sexpr => |sexpr| switch (sexpr.base) {
+                    else => null,
+                    .fnkviewer_fnkname => |thing_index| if (thing_index == k) sexpr.local else null,
+                },
+            };
+            e.fnkname.hovered.update(hovered, 1.0, platform.delta_seconds);
+            e.fnkname.updateIsPattern(platform.delta_seconds);
+        }
 
         // TODO: reduce duplication?
-        for (workspace.executors.items, 0..) |*e, k| {
-            const g = &e.garland;
-            _ = k;
-            {
-                var it = g.childGarlandsAddressIterator(frame_arena);
-                while (try it.next()) |address| {
-                    const handle = &g.childGarland(address).handle;
-                    const target: f32 = switch (hovered_or_dropzone_thing.kind) {
-                        else => 0,
-                        .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
-                    };
-                    math.lerp_towards(&handle.hot_t, target, 0.6, platform.delta_seconds);
+        inline for (.{ workspace.executors.items, workspace.fnkviewers.items }) |things| {
+            for (things, 0..) |*e, k| {
+                const g = &e.garland;
+                _ = k;
+                {
+                    var it = g.childGarlandsAddressIterator(frame_arena);
+                    while (try it.next()) |address| {
+                        const handle = &g.childGarland(address).handle;
+                        const target: f32 = switch (hovered_or_dropzone_thing.kind) {
+                            else => 0,
+                            .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
+                        };
+                        math.lerp_towards(&handle.hot_t, target, 0.6, platform.delta_seconds);
+                    }
                 }
             }
         }
@@ -2081,6 +2187,7 @@ const Workspace = struct {
         // apply dragging
         switch (workspace.focus.grabbing.kind) {
             .nothing => {},
+            // TODO: would be nice to unify all handle dragging
             .lens_handle => |p| {
                 const lens = &workspace.lenses.items[p.index];
                 switch (p.part) {
@@ -2090,6 +2197,9 @@ const Workspace = struct {
             },
             .executor_handle => |h| {
                 workspace.executors.items[h].handle.pos = mouse.cur.position;
+            },
+            .fnkviewer_handle => |h| {
+                workspace.fnkviewers.items[h].handle.pos = mouse.cur.position;
             },
             .case_handle => |p| workspace.caseHandleRef(p).pos = mouse.cur.position,
             .garland_handle => |p| workspace.garlandHandleRef(p).pos = mouse.cur.position,
@@ -2132,6 +2242,10 @@ const Workspace = struct {
             try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
         }
 
+        for (workspace.fnkviewers.items) |*e| {
+            try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
+        }
+
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             switch (hovering.kind) {
                 .nothing => .noop,
@@ -2157,7 +2271,7 @@ const Workspace = struct {
         else if (workspace.focus.grabbing.kind != .nothing and !mouse.cur.isDown(.left) and !mouse.cur.isDown(.right))
             switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
-                .lens_handle, .executor_handle => .{ .specific = .{
+                .lens_handle, .executor_handle, .fnkviewer_handle => .{ .specific = .{
                     .dropped = .{
                         .at = workspace.focus.grabbing,
                         .old_grabbed_position = workspace.focus.grabbing,
@@ -2230,7 +2344,7 @@ const Workspace = struct {
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .executor_handle => {
+                    .lens_handle, .executor_handle, .fnkviewer_handle => {
                         if (g.duplicate) std.log.err("TODO", .{});
                         workspace.focus.grabbing = g.from;
                     },
@@ -2303,7 +2417,7 @@ const Workspace = struct {
             .dropped => |g| {
                 switch (g.at.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .executor_handle => workspace.focus.grabbing = .nothing,
+                    .lens_handle, .executor_handle, .fnkviewer_handle => workspace.focus.grabbing = .nothing,
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = .nothing;
@@ -2388,6 +2502,7 @@ const Workspace = struct {
             .nothing => unreachable,
             .lens_handle => |h| workspace.lenses.items[h.index].handlePos(h.part),
             .executor_handle => |h| workspace.executors.items[h].handle.pos,
+            .fnkviewer_handle => |h| workspace.fnkviewers.items[h].handle.pos,
             .case_handle => |h| workspace.caseHandleRef(h).pos,
             .garland_handle => |k| workspace.garlandHandleRef(k).pos,
             .sexpr => |s| workspace.sexprAtPlace(s.base).point.pos,
@@ -2398,7 +2513,7 @@ const Workspace = struct {
         return switch (grabbed.kind) {
             else => false,
             .sexpr => |s| switch (s.base) {
-                .case, .garland, .executor_input => unreachable,
+                else => unreachable,
                 .board => |k| switch (thing) {
                     .board => |k2| k == k2,
                     else => false,
