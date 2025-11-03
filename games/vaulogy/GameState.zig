@@ -647,6 +647,23 @@ const VeryPhysicalSexpr = struct {
         };
     }
 
+    pub fn empty(point: Point, hover_pool: *HoveredSexpr.Pool, is_pattern: bool) !VeryPhysicalSexpr {
+        return .{
+            .hovered = try HoveredSexpr.store(hover_pool, .{ .next = null, .value = 0 }),
+            .point = point,
+            .value = Sexpr.builtin.empty,
+            .is_pattern = is_pattern,
+            .is_pattern_t = if (is_pattern) 1.0 else 0.0,
+        };
+    }
+
+    pub fn isEmpty(sexpr: VeryPhysicalSexpr) bool {
+        return switch (sexpr.value.*) {
+            .empty => true,
+            else => false,
+        };
+    }
+
     fn updateIsPattern(sexpr: *VeryPhysicalSexpr, delta_seconds: f32) void {
         math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
     }
@@ -780,9 +797,8 @@ const Pill = struct {
 };
 
 // automatically consumes garland cases when input is present
-// TODO: 'empty' should be the null sexpr
 const Executor = struct {
-    input: ?VeryPhysicalSexpr = null,
+    input: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
     handle: Handle,
 
@@ -798,19 +814,20 @@ const Executor = struct {
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_pos: Vec2 = .new(4, 0);
 
-    pub fn init(pos: Vec2) Executor {
+    pub fn init(pos: Vec2, hover_pool: *HoveredSexpr.Pool) !Executor {
         return .{
             .handle = .{ .pos = pos },
             .garland = .init(pos.add(relative_input_point.pos)),
+            .input = try .empty((Point{ .pos = pos }).applyToLocalPoint(relative_input_point), hover_pool, false),
         };
     }
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera);
-        if (executor.input) |input| {
-            try input.draw(drawer, camera);
-        } else {
+        if (executor.input.isEmpty()) {
             drawer.canvas.strokeCircle(128, camera, executor.inputPoint().pos.addX(0.5), 1, 0.01, .black);
+        } else {
+            try executor.input.draw(drawer, camera);
         }
         if (executor.animation) |anim| {
             try anim.active_case.draw(drawer, camera);
@@ -826,7 +843,7 @@ const Executor = struct {
     }
 
     pub fn startedExecution(executor: Executor) bool {
-        return executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null;
+        return executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty();
     }
 
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
@@ -847,7 +864,7 @@ const Executor = struct {
                 ));
                 executor.garland.updateWithOffset(offset_t, delta_seconds);
                 animation.active_case.kinematicUpdate(case_floating_away, null, null, delta_seconds);
-                executor.input.?.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
+                executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
             } else {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
@@ -889,12 +906,12 @@ const Executor = struct {
                         } else @panic("TODO");
                     }
                 }
-                executor.input.?.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
+                executor.input.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
             }
             animation.t += delta_seconds;
             if (animation.t >= 1) {
                 if (animation.next_input) |next_input| {
-                    try executor.prev_pills.append(mem.gpa, .{ .pattern = animation.active_case.pattern, .input = executor.input.? });
+                    try executor.prev_pills.append(mem.gpa, .{ .pattern = animation.active_case.pattern, .input = executor.input });
                     pill_offset -= 1;
                     executor.input = try .fromSexpr(hover_pool, next_input, animation.active_case.template.point, false);
                     if (animation.invoked_fnk) |fnk| {
@@ -914,9 +931,7 @@ const Executor = struct {
             }
         } else {
             executor.garland.update(delta_seconds);
-            if (executor.input) |*input| {
-                input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
-            }
+            executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
         }
 
         for (executor.prev_pills.items, 0..) |*pill, k| {
@@ -925,12 +940,11 @@ const Executor = struct {
             pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), 0.6, delta_seconds);
         }
 
-        if (executor.animation == null and executor.garland.cases.items.len > 0 and executor.input != null) {
+        if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
             const case = executor.garland.popCase(0);
-            const input = executor.input.?;
             var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
             defer new_bindings.deinit();
-            const next_input = if (try core.generateBindings(case.pattern.value, input.value, &new_bindings))
+            const next_input = if (try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings))
                 try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
             else
                 null;
@@ -1243,7 +1257,7 @@ const Workspace = struct {
         }, .{ .pos = dst.garlands.items[0].handle.pos.addX(6) }));
 
         dst.executors = .init(mem.gpa);
-        try dst.executors.append(.init(.new(-5, -5)));
+        try dst.executors.append(try .init(.new(-5, -5), &dst.hover_pool));
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
@@ -1294,7 +1308,7 @@ const Workspace = struct {
             .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
             .case => |case| workspace.getAt(VeryPhysicalCase, case.parent).childCase(case.local).sexprAt(case.part),
             .garland => |garland| workspace.getAt(VeryPhysicalGarland, garland.parent).childCase(garland.local).sexprAt(garland.part),
-            .executor_input => |k| &(workspace.executors.items[k].input orelse unreachable),
+            .executor_input => |k| &workspace.executors.items[k].input,
         };
     }
 
@@ -1334,11 +1348,6 @@ const Workspace = struct {
         if (p.local.len == 0) switch (p.base) {
             else => {},
             .board => |k| return workspace.sexprs.orderedRemove(k),
-            .executor_input => |k| {
-                const result = workspace.executors.items[k].input.?;
-                workspace.executors.items[k].input = null;
-                return result;
-            },
         };
 
         const base = workspace.sexprAtPlace(p.base);
@@ -1518,7 +1527,8 @@ const Workspace = struct {
 
         for (workspace.executors.items, 0..) |executor, k| {
             if (executor.animating()) continue;
-            if (executor.input) |input| {
+            if (!executor.input.isEmpty()) {
+                const input = executor.input;
                 if (try ViewHelper.overlapsSexpr(
                     // TODO: don't leak
                     res,
@@ -1838,13 +1848,6 @@ const Workspace = struct {
                                         mem,
                                         &workspace.hover_pool,
                                     );
-                                } else if (std.meta.activeTag(h.base) == .executor_input) {
-                                    assert(h.local.len == 0);
-                                    try workspace.sexprs.insert(g.old_grabbed_position.kind.sexpr.base.board, undefined);
-                                    var grabbed = workspace.executors.items[h.base.executor_input].input.?;
-                                    grabbed.point.scale = 1;
-                                    workspace.sexprs.items[g.old_grabbed_position.kind.sexpr.base.board] = grabbed;
-                                    workspace.executors.items[h.base.executor_input].input = null;
                                 } else {
                                     assert(h.local.len == 0);
                                     assert(std.meta.eql(g.old_grabbed_position, g.at));
@@ -1951,17 +1954,15 @@ const Workspace = struct {
             }
         }
         for (workspace.executors.items, 0..) |*e, k| {
-            if (e.input) |*input| {
-                const hovered = switch (hovering.kind) {
-                    else => null,
-                    .sexpr => |sexpr| switch (sexpr.base) {
-                        .board, .case, .garland => null,
-                        .executor_input => |executor_index| if (executor_index == k) sexpr.local else null,
-                    },
-                };
-                input.hovered.update(hovered, 1.0, platform.delta_seconds);
-                input.updateIsPattern(platform.delta_seconds);
-            }
+            const hovered = switch (hovering.kind) {
+                else => null,
+                .sexpr => |sexpr| switch (sexpr.base) {
+                    .board, .case, .garland => null,
+                    .executor_input => |executor_index| if (executor_index == k) sexpr.local else null,
+                },
+            };
+            e.input.hovered.update(hovered, 1.0, platform.delta_seconds);
+            e.input.updateIsPattern(platform.delta_seconds);
         }
 
         // TODO: reduce duplication?
@@ -2221,13 +2222,7 @@ const Workspace = struct {
                             .sexpr => |s| .{
                                 .at = dropzone,
                                 .old_grabbed_position = workspace.focus.grabbing,
-                                .overwritten_sexpr = switch (s.base) {
-                                    else => workspace.sexprAtPlace(s.base).getSubValue(s.local),
-                                    .executor_input => |k| if (workspace.executors.items[k].input) |input|
-                                        input.getSubValue(s.local)
-                                    else
-                                        null,
-                                },
+                                .overwritten_sexpr = workspace.sexprAtPlace(s.base).getSubValue(s.local),
                                 .overwritten_garland = undefined,
                             },
                             else => unreachable,
@@ -2390,7 +2385,7 @@ const Workspace = struct {
                 assert(e.enqueued_stack.items.len == 0);
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution = .{
                     .executor = k,
-                    .input = e.input.?,
+                    .input = e.input,
                     .garland = try e.garland.clone(mem.gpa),
                     .prev_pills = (try e.prev_pills.clone(mem.gpa)).items,
                 } } });
