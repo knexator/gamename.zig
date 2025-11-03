@@ -948,7 +948,7 @@ const Executor = struct {
                 try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
             else
                 null;
-            const invoked_fnk: ?VeryPhysicalGarland = if (case.fnk_name.value.equals(Sexpr.builtin.identity))
+            const invoked_fnk: ?VeryPhysicalGarland = if (next_input == null or case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
                 null
             else blk: {
                 const fnk_body = known_fnks.get(case.fnk_name.value) orelse @panic("TODO: handle this");
