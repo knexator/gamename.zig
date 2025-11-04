@@ -546,7 +546,7 @@ const VeryPhysicalCase = struct {
     handle: Handle,
     pub const handle_radius: f32 = 0.2;
 
-    const fnk_name_offset: Point = .{ .scale = 0.5, .turns = -0.25, .pos = .new(4, 0) };
+    const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
     const next_garland_offset: Vec2 = .new(8, -1.5);
 
     pub fn getBoardPos(case: VeryPhysicalCase) Vec2 {
@@ -928,11 +928,11 @@ const Executor = struct {
                     animation.active_case.kinematicUpdate(case_point, .{
                         .pos = .new(template_t * 6, -2 * enqueueing_t),
                         .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
-                    }, .{ .pos = .new(invoking_t * 3, 0) }, delta_seconds);
+                    }, .{ .pos = .new(-invoking_t * 3, 0) }, delta_seconds);
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{
                         .pos = .new(-template_t * 2, 0),
-                    }, .{ .pos = .new(invoking_t * 3, 0) }, delta_seconds);
+                    }, .{ .pos = .new(-invoking_t * 3, 0) }, delta_seconds);
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
                         if (k == 0) {
                             const tt = 1 - template_t;
