@@ -1170,7 +1170,12 @@ const Workspace = struct {
         grabbing: Target = .nothing,
 
         const Target = struct {
-            kind: union(enum) {
+            kind: Kind,
+            lens_transform: Lens.Transform = .identity,
+
+            pub const nothing: Target = .{ .kind = .nothing };
+
+            pub const Kind = union(enum) {
                 nothing,
                 sexpr: SexprPlace,
                 lens_handle: struct {
@@ -1181,10 +1186,11 @@ const Workspace = struct {
                 garland_handle: GarlandHandle,
                 executor_handle: usize,
                 fnkviewer_handle: usize,
-            },
-            lens_transform: Lens.Transform = .identity,
 
-            pub const nothing: Target = .{ .kind = .nothing };
+                pub fn equals(a: Kind, b: Kind) bool {
+                    return kommon.meta.eql(a, b);
+                }
+            };
         };
     };
 
@@ -1464,7 +1470,12 @@ const Workspace = struct {
             try s.draw(drawer, camera);
         }
 
-        for (workspace.cases.items) |c| {
+        for (workspace.cases.items, 0..) |c, k| {
+            if (workspace.focus.grabbing.kind.equals(.{ .case_handle = .{
+                .local = &.{},
+                .parent = .{ .case = k },
+                .existing_case = true,
+            } })) continue;
             try c.draw(drawer, camera);
         }
 
@@ -1518,6 +1529,7 @@ const Workspace = struct {
 
         switch (workspace.focus.grabbing.kind) {
             else => {},
+            .case_handle => |k| try workspace.cases.items[k.parent.case].draw(drawer, camera),
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
     }
@@ -2557,16 +2569,10 @@ const Workspace = struct {
     }
 
     fn isGrabbed(thing: BaseSexprPlace, grabbed: Focus.Target) bool {
-        return switch (grabbed.kind) {
-            else => false,
-            .sexpr => |s| switch (s.base) {
-                else => unreachable,
-                .board => |k| switch (thing) {
-                    .board => |k2| k == k2,
-                    else => false,
-                },
-            },
-        };
+        return grabbed.kind.equals(.{ .sexpr = .{
+            .local = &.{},
+            .base = thing,
+        } });
     }
 };
 
