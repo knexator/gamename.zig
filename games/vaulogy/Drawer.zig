@@ -586,19 +586,22 @@ fn _drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Po
     }
 }
 
-fn clipAtomRegion(drawer: *Drawer, camera: Rect, world_point: Point) void {
+pub fn clipAtomRegion(drawer: *Drawer, camera: Rect, world_point: Point) void {
+    std.log.err("TODO", .{});
     // TODO
     _ = drawer;
     _ = camera;
     _ = world_point;
 }
 
-fn endClip(drawer: *Drawer) void {
+pub fn endClip(drawer: *Drawer) void {
+    std.log.err("TODO", .{});
     // TODO
     _ = drawer;
 }
 
-fn setTransparency(drawer: *Drawer, alpha: f32) void {
+pub fn setTransparency(drawer: *Drawer, alpha: f32) void {
+    std.log.err("TODO", .{});
     // TODO
     _ = drawer;
     _ = alpha;

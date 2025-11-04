@@ -1329,20 +1329,25 @@ pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *B
             }
         },
         .pair => |pat| {
-            switch (value.*) {
-                .atom_lit => return false,
-                .atom_var => return error.BAD_INPUT,
-                .empty => {
+            const starting_len = bindings.items.len;
+            const result = switch (value.*) {
+                .atom_lit => false,
+                .atom_var => error.BAD_INPUT,
+                .empty => blk: {
                     const a = try generateBindings(pat.left, &.empty, bindings);
                     const b = try generateBindings(pat.right, &.empty, bindings);
-                    return a and b;
+                    break :blk a and b;
                 },
-                .pair => |val| {
+                .pair => |val| blk: {
                     const a = try generateBindings(pat.left, val.left, bindings);
                     const b = try generateBindings(pat.right, val.right, bindings);
-                    return a and b;
+                    break :blk a and b;
                 },
+            };
+            if (!std.meta.eql(result, true)) {
+                bindings.shrinkAndFree(starting_len);
             }
+            return result;
         },
     }
 }

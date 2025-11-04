@@ -706,7 +706,16 @@ const VeryPhysicalSexpr = struct {
         math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
     }
 
-    fn _draw(drawer: *Drawer, camera: Rect, value: *const Sexpr, hovered: *HoveredSexpr, point: Point, is_pattern: bool, is_pattern_t: f32) !void {
+    fn _draw(
+        drawer: *Drawer,
+        camera: Rect,
+        value: *const Sexpr,
+        hovered: *HoveredSexpr,
+        point: Point,
+        is_pattern: bool,
+        is_pattern_t: f32,
+        maybe_bindings: ?BindingsState,
+    ) !void {
         const actual_point = point.applyToLocalPoint(.lerp(.{}, .lerp(
             .{ .turns = -0.02, .pos = .new(0.5, 0) },
             .{ .turns = 0.02, .pos = .new(-0.5, 0) },
@@ -725,13 +734,71 @@ const VeryPhysicalSexpr = struct {
                     drawer.drawTemplatePairHolder(camera, actual_point);
                 // try drawTemplateWildcardLinesNonRecursive(...);
                 const offset = if (is_pattern) ViewHelper.OFFSET_PATTERN else ViewHelper.OFFSET_TEMPLATE;
-                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t);
-                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t);
+                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t, maybe_bindings);
+                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t, maybe_bindings);
             },
+        }
+        if (maybe_bindings) |bindings| {
+            std.log.debug("value: {any}", .{value});
+            switch (value.*) {
+                // TODO: cables?
+                else => {},
+                .atom_var => |x| {
+                    // TODO: check that compiler skips the loop if anim_t is null
+                    for (bindings.new) |binding| {
+                        if (bindings.anim_t) |anim_t| {
+                            if (std.mem.eql(u8, binding.name, x.value)) {
+                                drawer.clipAtomRegion(camera, actual_point);
+                                const t = math.smoothstep(anim_t, 0, 0.4);
+                                try drawer.drawSexpr(camera, .{
+                                    .is_pattern = is_pattern_t,
+                                    .value = binding.value,
+                                    .pos = actual_point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
+                                });
+                                drawer.endClip();
+
+                                drawer.setTransparency(1 - anim_t);
+                                try drawer.drawSexpr(camera, .{
+                                    .is_pattern = is_pattern_t,
+                                    .value = value,
+                                    .pos = actual_point,
+                                });
+                                drawer.setTransparency(1);
+
+                                // TODO: uncomment
+                                // if (anim_t < 0.5) {
+                                //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
+                                // }
+
+                                break;
+                            }
+                        }
+                    } else for (bindings.old) |binding| {
+                        if (std.mem.eql(u8, binding.name, x.value)) {
+                            try drawer.drawSexpr(camera, .{
+                                .is_pattern = is_pattern_t,
+                                .value = binding.value,
+                                .pos = actual_point,
+                            });
+                            break;
+                        }
+                    } else {
+                        try drawer.drawSexpr(camera, .{
+                            .is_pattern = is_pattern_t,
+                            .value = value,
+                            .pos = actual_point,
+                        });
+                    }
+                },
+            }
         }
     }
 
     pub fn draw(sexpr: VeryPhysicalSexpr, drawer: *Drawer, camera: Rect) !void {
+        try sexpr.drawWithBindings(null, drawer, camera);
+    }
+
+    pub fn drawWithBindings(sexpr: VeryPhysicalSexpr, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
         assert(math.in01(sexpr.is_pattern_t));
         // TODO: use the actual bool?
         const base_point = if (!sexpr.is_pattern)
@@ -754,7 +821,7 @@ const VeryPhysicalSexpr = struct {
         if (sexpr.isEmpty()) {
             try drawer.drawPlaceholder(camera, base_point, sexpr.is_pattern);
         } else {
-            return _draw(drawer, camera, sexpr.value, sexpr.hovered, base_point, sexpr.is_pattern, sexpr.is_pattern_t);
+            return _draw(drawer, camera, sexpr.value, sexpr.hovered, base_point, sexpr.is_pattern, sexpr.is_pattern_t, bindings);
         }
     }
 
@@ -849,9 +916,11 @@ const Executor = struct {
         active_case: VeryPhysicalCase,
         next_input: ?*const core.Sexpr,
         invoked_fnk: ?VeryPhysicalGarland,
+        new_bindings: []const core.Binding,
     } = null,
     prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
     enqueued_stack: std.ArrayListUnmanaged(VeryPhysicalGarland) = .empty,
+    old_bindings: std.ArrayListUnmanaged(core.Binding) = .empty,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_pos: Vec2 = .new(4, 0);
@@ -866,8 +935,14 @@ const Executor = struct {
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera);
-        try executor.input.draw(drawer, camera);
+        const bindings: ?BindingsState = if (executor.animation) |anim| .{
+            .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
+            .old = executor.old_bindings.items,
+            .new = anim.new_bindings,
+        } else null;
+        try executor.input.drawWithBindings(bindings, drawer, camera);
         if (executor.animation) |anim| {
+            std.log.err("TODO NEXT: active case with bindings", .{});
             try anim.active_case.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
         }
@@ -981,7 +1056,6 @@ const Executor = struct {
         if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
             const case = executor.garland.popCase(0);
             var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-            defer new_bindings.deinit();
             const next_input = if (try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings))
                 try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
             else
@@ -1005,6 +1079,7 @@ const Executor = struct {
                 .active_case = case,
                 .next_input = next_input,
                 .invoked_fnk = invoked_fnk,
+                .new_bindings = try new_bindings.toOwnedSlice(),
             };
         }
     }
