@@ -326,7 +326,11 @@ const VeryPhysicalGarland = struct {
         };
     }
 
-    pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) error{
+    pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) !void {
+        try garland.drawWithBindings(null, drawer, camera);
+    }
+
+    pub fn drawWithBindings(garland: VeryPhysicalGarland, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) error{
         InvalidUtf8,
         OutOfMemory,
         BadVertexOrder,
@@ -338,7 +342,7 @@ const VeryPhysicalGarland = struct {
             drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.6), 0.05, .black);
         }
         // TODO: cable
-        for (garland.cases.items) |c| try c.draw(drawer, camera);
+        for (garland.cases.items) |c| try c.drawWithBindings(bindings, drawer, camera);
     }
 
     pub fn handleForNewCases(garland: *const VeryPhysicalGarland, address: core.CaseAddress) *const HandleForNewCase {
@@ -581,13 +585,17 @@ const VeryPhysicalCase = struct {
         return @truncate(hasher.final());
     }
 
-    pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
+    pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
         // TODO: Handle.draw
         drawer.canvas.strokeCircle(128, camera, case.handle.pos, handle_radius * (1 + case.handle.hot_t * 0.2), 0.05, .black);
-        try case.pattern.draw(drawer, camera);
-        try case.template.draw(drawer, camera);
-        try case.fnk_name.draw(drawer, camera);
-        try case.next.draw(drawer, camera);
+        try case.pattern.drawWithBindings(bindings, drawer, camera);
+        try case.template.drawWithBindings(bindings, drawer, camera);
+        try case.fnk_name.drawWithBindings(bindings, drawer, camera);
+        try case.next.drawWithBindings(bindings, drawer, camera);
+    }
+
+    pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
+        try case.drawWithBindings(null, drawer, camera);
     }
 
     pub fn update(case: *VeryPhysicalCase, delta_seconds: f32) void {
@@ -942,8 +950,7 @@ const Executor = struct {
         } else null;
         try executor.input.drawWithBindings(bindings, drawer, camera);
         if (executor.animation) |anim| {
-            std.log.err("TODO NEXT: active case with bindings", .{});
-            try anim.active_case.draw(drawer, camera);
+            try anim.active_case.drawWithBindings(bindings, drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
         }
         for (executor.prev_pills.items) |p| try p.draw(drawer, camera);
