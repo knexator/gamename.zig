@@ -1252,7 +1252,26 @@ test "scoring with comptime" {
 
 fn expectEqualSexprs(expected: *const Sexpr, actual: *const Sexpr) !void {
     switch (expected.*) {
+        .empty => switch (actual.*) {
+            .empty => return,
+            .atom_lit => |actual_atom| {
+                std.log.err("expected empty but found literal '{s}'\n", .{actual_atom.value});
+                return error.TestExpectedEqual;
+            },
+            .atom_var => |actual_atom| {
+                std.log.err("expected empty but found variable '{s}'\n", .{actual_atom.value});
+                return error.TestExpectedEqual;
+            },
+            .pair => |actual_pair| {
+                std.log.err("expected empty but found a pair {any}\n", .{actual_pair});
+                return error.TestExpectedEqual;
+            },
+        },
         .atom_lit => |expected_atom| switch (actual.*) {
+            .empty => {
+                std.log.err("expected literal '{s}' but found empty\n", .{expected_atom.value});
+                return error.TestExpectedEqual;
+            },
             .atom_lit => |actual_atom| {
                 return std.testing.expectEqualStrings(expected_atom.value, actual_atom.value);
             },
@@ -1266,6 +1285,10 @@ fn expectEqualSexprs(expected: *const Sexpr, actual: *const Sexpr) !void {
             },
         },
         .atom_var => |expected_atom| switch (actual.*) {
+            .empty => {
+                std.log.err("expected variable '{s}' but found empty\n", .{expected_atom.value});
+                return error.TestExpectedEqual;
+            },
             .atom_lit => |actual_atom| {
                 std.log.err("expected variable '{s}' but found literal '{s}'\n", .{ expected_atom.value, actual_atom.value });
                 return error.TestExpectedEqual;
@@ -1279,6 +1302,10 @@ fn expectEqualSexprs(expected: *const Sexpr, actual: *const Sexpr) !void {
             },
         },
         .pair => |expected_pair| switch (actual.*) {
+            .empty => {
+                std.log.err("expected pair but found empty\n", .{});
+                return error.TestExpectedEqual;
+            },
             .atom_lit => |actual_atom| {
                 std.log.err("expected pair but found literal '{s}'\n", .{actual_atom.value});
                 return error.TestExpectedEqual;

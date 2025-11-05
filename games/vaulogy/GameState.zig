@@ -1448,6 +1448,15 @@ const Workspace = struct {
         for (workspace.executors.items) |*e| {
             e.garland.deinit(gpa);
         }
+        for (workspace.fnkviewers.items) |*e| {
+            e.garland.deinit(gpa);
+        }
+        {
+            var it = workspace.known_fnks.iterator();
+            while (it.next()) |kv| {
+                kv.value_ptr.cases.deinit(gpa);
+            }
+        }
         workspace.lenses.deinit();
         workspace.sexprs.deinit();
         workspace.cases.deinit();
@@ -1455,6 +1464,8 @@ const Workspace = struct {
         workspace.undo_stack.deinit();
         workspace.garlands.deinit();
         workspace.executors.deinit();
+        workspace.fnkviewers.deinit();
+        workspace.known_fnks.deinit();
     }
 
     const valid: []const *const Sexpr = &.{
