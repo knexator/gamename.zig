@@ -309,6 +309,14 @@ const VeryPhysicalGarland = struct {
         return result;
     }
 
+    pub fn fillVariables(garland: *VeryPhysicalGarland, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) error{
+        OutOfMemory,
+        BAD_INPUT,
+        UsedUndefinedVariable,
+    }!void {
+        for (garland.cases.items) |*c| try c.fillVariables(bindings, mem);
+    }
+
     pub fn getBoardPos(garland: VeryPhysicalGarland) Vec2 {
         return garland.handle;
     }
@@ -585,6 +593,12 @@ const VeryPhysicalCase = struct {
         return @truncate(hasher.final());
     }
 
+    pub fn fillVariables(case: *VeryPhysicalCase, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
+        try case.pattern.fillVariables(bindings, mem);
+        try case.template.fillVariables(bindings, mem);
+        try case.next.fillVariables(bindings, mem);
+    }
+
     pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
         // TODO: Handle.draw
         drawer.canvas.strokeCircle(128, camera, case.handle.pos, handle_radius * (1 + case.handle.hot_t * 0.2), 0.05, .black);
@@ -710,6 +724,10 @@ const VeryPhysicalSexpr = struct {
         };
     }
 
+    pub fn fillVariables(sexpr: *VeryPhysicalSexpr, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
+        sexpr.value = try core.fillTemplateV2(sexpr.value, bindings, &mem.pool_for_sexprs);
+    }
+
     fn updateIsPattern(sexpr: *VeryPhysicalSexpr, delta_seconds: f32) void {
         math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
     }
@@ -747,7 +765,6 @@ const VeryPhysicalSexpr = struct {
             },
         }
         if (maybe_bindings) |bindings| {
-            std.log.debug("value: {any}", .{value});
             switch (value.*) {
                 // TODO: cables?
                 else => {},
@@ -756,38 +773,45 @@ const VeryPhysicalSexpr = struct {
                     for (bindings.new) |binding| {
                         if (bindings.anim_t) |anim_t| {
                             if (std.mem.eql(u8, binding.name, x.value)) {
-                                drawer.clipAtomRegion(camera, actual_point);
-                                const t = math.smoothstep(anim_t, 0, 0.4);
-                                try drawer.drawSexpr(camera, .{
-                                    .is_pattern = is_pattern_t,
-                                    .value = binding.value,
-                                    .pos = actual_point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
-                                });
-                                drawer.endClip();
+                                if (is_pattern) {
+                                    // TODO
+                                } else {
+                                    drawer.clipAtomRegion(camera, actual_point);
+                                    const t = math.smoothstep(anim_t, 0, 0.4);
+                                    try drawer.drawSexpr(camera, .{
+                                        .is_pattern = is_pattern_t,
+                                        .value = binding.value,
+                                        .pos = actual_point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
+                                    });
+                                    drawer.endClip();
 
-                                drawer.setTransparency(1 - anim_t);
-                                try drawer.drawSexpr(camera, .{
-                                    .is_pattern = is_pattern_t,
-                                    .value = value,
-                                    .pos = actual_point,
-                                });
-                                drawer.setTransparency(1);
+                                    drawer.setTransparency(1 - anim_t);
+                                    try drawer.drawSexpr(camera, .{
+                                        .is_pattern = is_pattern_t,
+                                        .value = value,
+                                        .pos = actual_point,
+                                    });
+                                    drawer.setTransparency(1);
 
-                                // TODO: uncomment
-                                // if (anim_t < 0.5) {
-                                //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
-                                // }
-
-                                break;
+                                    // TODO: uncomment
+                                    // if (anim_t < 0.5) {
+                                    //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
+                                    // }
+                                }
                             }
+                            break;
                         }
                     } else for (bindings.old) |binding| {
                         if (std.mem.eql(u8, binding.name, x.value)) {
-                            try drawer.drawSexpr(camera, .{
-                                .is_pattern = is_pattern_t,
-                                .value = binding.value,
-                                .pos = actual_point,
-                            });
+                            if (is_pattern) {
+                                // TODO
+                            } else {
+                                try drawer.drawSexpr(camera, .{
+                                    .is_pattern = is_pattern_t,
+                                    .value = binding.value,
+                                    .pos = actual_point,
+                                });
+                            }
                             break;
                         }
                     } else {
@@ -907,9 +931,9 @@ const Pill = struct {
     input: VeryPhysicalSexpr,
     pattern: VeryPhysicalSexpr,
 
-    pub fn draw(pill: Pill, drawer: *Drawer, camera: Rect) !void {
-        try pill.input.draw(drawer, camera);
-        try pill.pattern.draw(drawer, camera);
+    pub fn draw(pill: Pill, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
+        try pill.input.drawWithBindings(bindings, drawer, camera);
+        try pill.pattern.drawWithBindings(bindings, drawer, camera);
     }
 };
 
@@ -922,7 +946,7 @@ const Executor = struct {
     animation: ?struct {
         t: f32 = 0,
         active_case: VeryPhysicalCase,
-        next_input: ?*const core.Sexpr,
+        matching: bool,
         invoked_fnk: ?VeryPhysicalGarland,
         new_bindings: []const core.Binding,
     } = null,
@@ -943,18 +967,22 @@ const Executor = struct {
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera);
-        const bindings: ?BindingsState = if (executor.animation) |anim| .{
+        const bindings: BindingsState = if (executor.animation) |anim| .{
             .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
             .old = executor.old_bindings.items,
             .new = anim.new_bindings,
-        } else null;
+        } else .{
+            .anim_t = null,
+            .old = executor.old_bindings.items,
+            .new = &.{},
+        };
         try executor.input.drawWithBindings(bindings, drawer, camera);
         if (executor.animation) |anim| {
             try anim.active_case.drawWithBindings(bindings, drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
         }
-        for (executor.prev_pills.items) |p| try p.draw(drawer, camera);
-        for (executor.enqueued_stack.items) |s| try s.draw(drawer, camera);
+        for (executor.prev_pills.items) |p| try p.draw(bindings, drawer, camera);
+        for (executor.enqueued_stack.items) |s| try s.drawWithBindings(bindings, drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
@@ -966,12 +994,13 @@ const Executor = struct {
         return executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty();
     }
 
+    // try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
         var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
             const anim_t = animation.t;
-            if (animation.next_input == null) {
+            if (!animation.matching) {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                 const flyaway_t = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
                 const offset_t = math.remapClamped(anim_t, 0.2, 0.8, 1, 0);
@@ -1030,10 +1059,12 @@ const Executor = struct {
             }
             animation.t += delta_seconds;
             if (animation.t >= 1) {
-                if (animation.next_input) |next_input| {
+                if (animation.matching) {
                     try executor.prev_pills.append(mem.gpa, .{ .pattern = animation.active_case.pattern, .input = executor.input });
                     pill_offset -= 1;
-                    executor.input = try .fromSexpr(hover_pool, next_input, animation.active_case.template.point, false);
+                    try animation.active_case.fillVariables(animation.new_bindings, mem);
+                    executor.input = animation.active_case.template;
+
                     if (animation.invoked_fnk) |fnk| {
                         executor.garland = fnk;
                         if (animation.active_case.next.cases.items.len > 0) {
@@ -1046,7 +1077,10 @@ const Executor = struct {
                     } else {
                         executor.garland = .init(executor.garlandPoint().pos);
                     }
+                } else {
+                    assert(animation.new_bindings.len == 0);
                 }
+                try executor.old_bindings.appendSlice(mem.gpa, animation.new_bindings);
                 executor.animation = null;
             }
         } else {
@@ -1063,11 +1097,8 @@ const Executor = struct {
         if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
             const case = executor.garland.popCase(0);
             var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-            const next_input = if (try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings))
-                try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
-            else
-                null;
-            const invoked_fnk: ?VeryPhysicalGarland = if (next_input == null or case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
+            const matching = try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings);
+            const invoked_fnk: ?VeryPhysicalGarland = if (matching or case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
                 null
             else blk: {
                 const fnk_body = known_fnks.get(case.fnk_name.value) orelse @panic("TODO: handle this");
@@ -1084,7 +1115,7 @@ const Executor = struct {
             };
             executor.animation = .{
                 .active_case = case,
-                .next_input = next_input,
+                .matching = matching,
                 .invoked_fnk = invoked_fnk,
                 .new_bindings = try new_bindings.toOwnedSlice(),
             };
@@ -1343,6 +1374,7 @@ const Workspace = struct {
                 input: VeryPhysicalSexpr,
                 garland: VeryPhysicalGarland,
                 prev_pills: []Pill,
+                prev_old_bindings: []core.Binding,
             },
         },
 
@@ -1975,6 +2007,7 @@ const Workspace = struct {
                         executor.input = g.input;
                         executor.garland = g.garland;
                         executor.prev_pills = .fromOwnedSlice(g.prev_pills);
+                        executor.old_bindings = .fromOwnedSlice(g.prev_old_bindings);
                         executor.enqueued_stack.clearRetainingCapacity();
                         executor.animation = null;
                         const next_cmd = workspace.undo_stack.pop().?;
@@ -2644,6 +2677,7 @@ const Workspace = struct {
                     .input = e.input,
                     .garland = try e.garland.clone(mem.gpa),
                     .prev_pills = (try e.prev_pills.clone(mem.gpa)).items,
+                    .prev_old_bindings = (try e.old_bindings.clone(mem.gpa)).items,
                 } } });
             }
         }
