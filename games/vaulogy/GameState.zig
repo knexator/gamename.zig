@@ -1098,7 +1098,9 @@ const Executor = struct {
             const case = executor.garland.popCase(0);
             var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
             const matching = try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings);
-            const invoked_fnk: ?VeryPhysicalGarland = if (matching or case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
+            const invoked_fnk: ?VeryPhysicalGarland = if (!matching)
+                null
+            else if (case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
                 null
             else blk: {
                 const fnk_body = known_fnks.get(case.fnk_name.value) orelse @panic("TODO: handle this");
