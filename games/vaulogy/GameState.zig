@@ -1206,9 +1206,10 @@ const Fnkbox = struct {
     testcases: std.ArrayListUnmanaged(TestCase),
     // TODO: scroll: f32 = 0,
 
-    const relative_fnkname_point: Point = .{ .pos = .new(-1, 3), .scale = 0.5, .turns = 0.25 };
+    const relative_fnkname_point: Point = .{ .pos = .new(-4, 3.5), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(0, 3) };
-    const relative_bottom_testcase_point: Point = .{ .pos = .new(0, 1.5) };
+    const relative_bottom_testcase_point: Point = .{ .pos = .new(-1, 1.5) };
+    const relative_input_point: Point = .{ .pos = .new(-5, 4.5) };
 
     pub fn point(fnkbox: *const Fnkbox) Point {
         return .{ .pos = fnkbox.handle.pos };
@@ -1233,6 +1234,7 @@ const Fnkbox = struct {
         try fnkbox.handle.draw(drawer, camera);
         try fnkbox.fnkname.draw(drawer, camera);
         try fnkbox.garland.draw(drawer, camera);
+        if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
         for (fnkbox.testcases.items) |t| {
             try t.draw(drawer, camera);
         }
@@ -1395,6 +1397,7 @@ const Workspace = struct {
             case: usize,
             executor: usize,
             fnkviewer: usize,
+            fnkbox: usize,
         },
     };
 
@@ -1644,6 +1647,7 @@ const Workspace = struct {
             .case => |k| workspace.cases.items[k].next.childGarland(place.local),
             .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
             .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
+            .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
         };
     }
 
@@ -1942,6 +1946,20 @@ const Workspace = struct {
                     if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
                         return .{ .kind = .{ .garland_handle = .{
                             .parent = .{ .fnkviewer = k },
+                            .local = address,
+                        } } };
+                    } else res.free(address);
+                }
+            }
+
+            for (workspace.fnkboxes.items, 0..) |parent_thing, k| {
+                const parent_garland = parent_thing.garland;
+                var it = parent_garland.childGarlandsAddressIterator(res);
+                while (try it.next()) |address| {
+                    const garland = parent_garland.constChildGarland(address);
+                    if (pos.distTo(garland.handle.pos) < VeryPhysicalGarland.handle_radius) {
+                        return .{ .kind = .{ .garland_handle = .{
+                            .parent = .{ .fnkbox = k },
                             .local = address,
                         } } };
                     } else res.free(address);
