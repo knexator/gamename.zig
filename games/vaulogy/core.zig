@@ -1383,7 +1383,7 @@ fn fillTemplate(template: *const Sexpr, bindings: Bindings, pool: *MemoryPool(Se
     return fillTemplateV2(template, bindings.items, pool);
 }
 
-fn partiallyFillTemplateV2(template: *const Sexpr, bindings: []const Binding, pool: *MemoryPool(Sexpr)) OoM!struct {
+pub fn partiallyFillTemplateV2(template: *const Sexpr, bindings: []const Binding, pool: *MemoryPool(Sexpr)) OoM!struct {
     result: *const Sexpr,
     complete: bool,
 } {

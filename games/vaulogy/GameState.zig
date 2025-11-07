@@ -725,7 +725,7 @@ const VeryPhysicalSexpr = struct {
     }
 
     pub fn fillVariables(sexpr: *VeryPhysicalSexpr, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
-        sexpr.value = try core.fillTemplateV2(sexpr.value, bindings, &mem.pool_for_sexprs);
+        sexpr.value = (try core.partiallyFillTemplateV2(sexpr.value, bindings, &mem.pool_for_sexprs)).result;
     }
 
     fn updateIsPattern(sexpr: *VeryPhysicalSexpr, delta_seconds: f32) void {
