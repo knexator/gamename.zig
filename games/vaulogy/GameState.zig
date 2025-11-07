@@ -1224,6 +1224,11 @@ const Fnkbox = struct {
         };
     }
 
+    pub fn deinit(fnkbox: *Fnkbox, gpa: std.mem.Allocator) void {
+        fnkbox.testcases.deinit(gpa);
+        fnkbox.garland.deinit(gpa);
+    }
+
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
         try fnkbox.handle.draw(drawer, camera);
         try fnkbox.fnkname.draw(drawer, camera);
@@ -1554,11 +1559,18 @@ const Workspace = struct {
         for (workspace.garlands.items) |*g| {
             g.deinit(gpa);
         }
-        for (workspace.executors.items) |*e| {
-            e.garland.deinit(gpa);
-        }
-        for (workspace.fnkviewers.items) |*e| {
-            e.garland.deinit(gpa);
+        inline for (.{
+            workspace.executors.items,
+            workspace.fnkviewers.items,
+            workspace.fnkboxes.items,
+        }) |things| {
+            for (things) |*e| {
+                if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
+                    e.deinit(gpa);
+                } else {
+                    e.garland.deinit(gpa);
+                }
+            }
         }
         {
             var it = workspace.known_fnks.iterator();
@@ -1574,6 +1586,7 @@ const Workspace = struct {
         workspace.garlands.deinit();
         workspace.executors.deinit();
         workspace.fnkviewers.deinit();
+        workspace.fnkboxes.deinit();
         workspace.known_fnks.deinit();
     }
 
