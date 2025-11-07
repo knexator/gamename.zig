@@ -1206,9 +1206,9 @@ const Fnkbox = struct {
     testcases: std.ArrayListUnmanaged(TestCase),
     // TODO: scroll: f32 = 0,
 
-    const relative_fnkname_point: Point = .{ .pos = .new(-1, 0.5), .scale = 0.5, .turns = 0.25 };
-    const relative_garland_point: Point = .{ .pos = .new(1, 1.5) };
-    const relative_bottom_testcase_point: Point = .{ .pos = .new(1, 1.5) };
+    const relative_fnkname_point: Point = .{ .pos = .new(-1, 3), .scale = 0.5, .turns = 0.25 };
+    const relative_garland_point: Point = .{ .pos = .new(0, 3) };
+    const relative_bottom_testcase_point: Point = .{ .pos = .new(0, 1.5) };
 
     pub fn point(fnkbox: *const Fnkbox) Point {
         return .{ .pos = fnkbox.handle.pos };
@@ -1543,7 +1543,7 @@ const Workspace = struct {
         try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
 
         dst.fnkboxes = .init(mem.gpa);
-        try dst.fnkboxes.append(try .init(.{ .pos = .new(-10, -5) }, try mem.gpa.dupe(TestCase, &.{
+        try dst.fnkboxes.append(try .init(.{ .pos = .new(-10, 5) }, try mem.gpa.dupe(TestCase, &.{
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[1], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[2], .{}, false),
