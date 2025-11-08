@@ -126,6 +126,20 @@ pub fn eql(a: anytype, b: @TypeOf(a)) bool {
     }
 }
 
+/// can this be safely copied by value?
+pub fn isPlainOldData(T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => false,
+        .float, .int, .void, .bool, .@"enum" => true,
+        .@"struct" => |info| inline for (info.fields) |field_info| {
+            if (!isPlainOldData(field_info.type)) break false;
+        } else true,
+        inline .array, .vector => |info| isPlainOldData(info.child),
+        .error_union => |info| isPlainOldData(info.payload),
+        else => @compileError(std.fmt.comptimePrint("TODO: type {any}", .{T})),
+    };
+}
+
 const std = @import("std");
 const assert = std.debug.assert;
 

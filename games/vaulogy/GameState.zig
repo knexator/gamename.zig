@@ -321,11 +321,12 @@ const VeryPhysicalGarland = struct {
         return garland.handle;
     }
 
-    pub fn clone(original: VeryPhysicalGarland, res: std.mem.Allocator) !VeryPhysicalGarland {
-        const new_cases = try original.cases.clone(res);
-        for (new_cases.items) |*c| {
-            c.next = try c.next.clone(res);
+    pub fn clone(original: VeryPhysicalGarland, res: std.mem.Allocator, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalGarland {
+        var new_cases: @FieldType(VeryPhysicalGarland, "cases") = try .initCapacity(res, original.cases.items.len);
+        for (original.cases.items) |c| {
+            new_cases.appendAssumeCapacity(try c.clone(res, hover_pool));
         }
+        assert(new_cases.items.len == original.handles_for_new_cases_rest.items.len);
         return .{
             .handle = original.handle,
             .handles_for_new_cases_first = original.handles_for_new_cases_first,
@@ -591,6 +592,17 @@ const VeryPhysicalCase = struct {
         std.hash.autoHash(&hasher, case.fnk_name.value.hash());
         std.hash.autoHash(&hasher, case.next.hash());
         return @truncate(hasher.final());
+    }
+
+    pub fn clone(case: *const VeryPhysicalCase, res: std.mem.Allocator, hover_pool: *HoveredSexpr.Pool) error{OutOfMemory}!VeryPhysicalCase {
+        assert(kommon.meta.isPlainOldData(Handle));
+        return .{
+            .pattern = try case.pattern.clone(hover_pool),
+            .fnk_name = try case.fnk_name.clone(hover_pool),
+            .template = try case.template.clone(hover_pool),
+            .next = try case.next.clone(res, hover_pool),
+            .handle = case.handle,
+        };
     }
 
     pub fn fillVariables(case: *VeryPhysicalCase, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
@@ -886,6 +898,10 @@ const VeryPhysicalSexpr = struct {
         };
     }
 
+    pub fn clone(self: *const VeryPhysicalSexpr, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalSexpr {
+        return self.dupeSubValue(&.{}, hover_pool);
+    }
+
     pub fn dupeSubValue(
         self: *const VeryPhysicalSexpr,
         address: core.SexprAddress,
@@ -942,6 +958,10 @@ const Executor = struct {
     input: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
     handle: Handle,
+    spawned_by_fnkbox: ?struct {
+        fnkbox: usize,
+        testcase: usize,
+    },
 
     animation: ?struct {
         t: f32 = 0,
@@ -962,6 +982,7 @@ const Executor = struct {
             .handle = .{ .pos = pos },
             .garland = .init(pos.add(relative_input_point.pos)),
             .input = try .empty((Point{ .pos = pos }).applyToLocalPoint(relative_input_point), hover_pool, false),
+            .spawned_by_fnkbox = null,
         };
     }
 
@@ -1188,6 +1209,25 @@ pub const TestCase = struct {
     expected: VeryPhysicalSexpr,
     actual: VeryPhysicalSexpr,
     tested: bool = false,
+    play_button: PlayButton,
+
+    const PlayButton = struct {
+        hot_t: f32,
+        center: Vec2,
+        size: Vec2,
+
+        pub fn draw(button: *const PlayButton, drawer: *Drawer, camera: Rect) !void {
+            drawer.canvas.borderRect(camera, button.rect(), math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
+        }
+
+        pub fn rect(button: PlayButton) Rect {
+            return .fromCenterAndSize(button.center, button.size);
+        }
+
+        pub fn updateHot(button: *PlayButton, hot: bool, delta_seconds: f32) void {
+            math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
+        }
+    };
 
     const Part = enum { input, expected, actual };
 
@@ -1195,6 +1235,7 @@ pub const TestCase = struct {
         try testcase.input.draw(drawer, camera);
         try testcase.expected.draw(drawer, camera);
         try testcase.actual.draw(drawer, camera);
+        try testcase.play_button.draw(drawer, camera);
     }
 };
 
@@ -1210,6 +1251,7 @@ const Fnkbox = struct {
     const relative_garland_point: Point = .{ .pos = .new(0, 3) };
     const relative_bottom_testcase_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_input_point: Point = .{ .pos = .new(-5, 4.5) };
+    const relative_executor_point: Point = .{ .pos = .new(-7, 6.5) };
 
     pub fn point(fnkbox: *const Fnkbox) Point {
         return .{ .pos = fnkbox.handle.pos };
@@ -1249,6 +1291,8 @@ const Fnkbox = struct {
             t.input.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(-4, 0) }), 0.6, delta_seconds);
             t.expected.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(0, 0) }), 0.6, delta_seconds);
             t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
+            t.play_button.center.lerpTowards(center.applyToLocalPosition(.new(-6, 0)), 0.6, delta_seconds);
+            t.play_button.size.lerpTowards(.one, 0.6, delta_seconds);
         }
     }
 };
@@ -1354,6 +1398,25 @@ const Workspace = struct {
     const Focus = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
         grabbing: Target = .nothing,
+        ui_active: UiTarget = .nothing,
+
+        const UiTarget = struct {
+            kind: Kind,
+
+            pub const nothing: UiTarget = .{ .kind = .nothing };
+
+            pub const Kind = union(enum) {
+                nothing,
+                fnkbox_launch_testcase: struct {
+                    fnkbox: usize,
+                    testcase: usize,
+                },
+            };
+
+            pub fn equals(a: UiTarget, b: UiTarget) bool {
+                return std.meta.eql(a, b);
+            }
+        };
 
         const Target = struct {
             kind: Kind,
@@ -1451,6 +1514,10 @@ const Workspace = struct {
                 garland: VeryPhysicalGarland,
                 prev_pills: []Pill,
                 prev_old_bindings: []core.Binding,
+            },
+            fnkbox_launch_testcase: struct {
+                fnkbox: usize,
+                testcase: usize,
             },
         },
 
@@ -1551,6 +1618,7 @@ const Workspace = struct {
                 .input = try .fromSexpr(&dst.hover_pool, valid[1], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[2], .{}, false),
                 .actual = try .empty(.{}, &dst.hover_pool, false),
+                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
             },
         }), &dst.hover_pool));
     }
@@ -1751,6 +1819,20 @@ const Workspace = struct {
             .case_handle => |k| try workspace.cases.items[k.parent.case].draw(drawer, camera),
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
+    }
+
+    fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
+        for (workspace.fnkboxes.items, 0..) |fnkbox, fnkbox_index| {
+            for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
+                if (testcase.play_button.rect().contains(pos)) {
+                    return .{ .kind = .{ .fnkbox_launch_testcase = .{
+                        .fnkbox = fnkbox_index,
+                        .testcase = testcase_index,
+                    } } };
+                }
+            }
+        }
+        return .nothing;
     }
 
     fn findHoverableOrDropzoneAtPosition(workspace: *Workspace, pos: Vec2, res: std.mem.Allocator) !Focus.Target {
@@ -2128,8 +2210,11 @@ const Workspace = struct {
                         executor.enqueued_stack.clearRetainingCapacity();
                         executor.animation = null;
                         const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .dropped);
+                        assert(std.meta.activeTag(next_cmd.specific) == .dropped or std.meta.activeTag(next_cmd.specific) == .fnkbox_launch_testcase);
                         continue :again next_cmd.specific;
+                    },
+                    .fnkbox_launch_testcase => {
+                        _ = workspace.executors.pop().?;
                     },
                     .grabbed => |g| {
                         switch (g.from.kind) {
@@ -2264,12 +2349,16 @@ const Workspace = struct {
             .nothing => .nothing,
         };
 
+        const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
+
         // cursor
         platform.setCursor(
             if (workspace.focus.grabbing.kind != .nothing)
                 .grabbing
             else if (hovering.kind != .nothing)
                 .could_grab
+            else if (ui_hot.kind != .nothing or workspace.focus.ui_active.kind != .nothing)
+                .pointer
             else
                 .default,
         );
@@ -2374,6 +2463,17 @@ const Workspace = struct {
             };
             e.fnkname.hovered.update(hovered, 1.0, platform.delta_seconds);
             e.fnkname.updateIsPattern(platform.delta_seconds);
+        }
+
+        // update ui hotness
+        for (workspace.fnkboxes.items, 0..) |*funkbox, fnkbox_index| {
+            for (funkbox.testcases.items, 0..) |*testcase, testcase_index| {
+                const is_hot = switch (ui_hot.kind) {
+                    else => false,
+                    .fnkbox_launch_testcase => |thing| thing.fnkbox == fnkbox_index and thing.testcase == testcase_index,
+                };
+                testcase.play_button.updateHot(is_hot, platform.delta_seconds);
+            }
         }
 
         // TODO: reduce duplication?
@@ -2586,7 +2686,10 @@ const Workspace = struct {
 
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             switch (hovering.kind) {
-                .nothing => .noop,
+                .nothing => blk: {
+                    workspace.focus.ui_active = ui_hot;
+                    break :blk .noop;
+                },
                 .sexpr => |s| .{
                     .specific = .{
                         .grabbed = .{
@@ -2672,13 +2775,38 @@ const Workspace = struct {
                     },
                 },
             }
-        else
-            .noop;
+        else if (workspace.focus.ui_active.kind != .nothing and !mouse.cur.isDown(.left)) blk: {
+            const ui_active = workspace.focus.ui_active;
+            workspace.focus.ui_active = .nothing;
+            break :blk if (!ui_hot.equals(ui_active))
+                .noop
+            else switch (ui_active.kind) {
+                .nothing => unreachable,
+                .fnkbox_launch_testcase => |t| .{ .specific = .{ .fnkbox_launch_testcase = .{
+                    .fnkbox = t.fnkbox,
+                    .testcase = t.testcase,
+                } } },
+            };
+        } else .noop;
 
         // actually perform the action
         switch (action.specific) {
             .noop => {},
             .started_execution => unreachable,
+            .fnkbox_launch_testcase => |t| {
+                const fnkbox = workspace.fnkboxes.items[t.fnkbox];
+                const testcase = fnkbox.testcases.items[t.testcase];
+                try workspace.executors.append(.{
+                    .input = try testcase.input.dupeSubValue(&.{}, &workspace.hover_pool),
+                    .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
+                    .handle = .{ .pos = fnkbox.point().applyToLocalPoint(Fnkbox.relative_executor_point).pos },
+                    .spawned_by_fnkbox = .{
+                        .fnkbox = t.fnkbox,
+                        .testcase = t.testcase,
+                    },
+                    .animation = null,
+                });
+            },
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
@@ -2828,7 +2956,7 @@ const Workspace = struct {
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution = .{
                     .executor = k,
                     .input = e.input,
-                    .garland = try e.garland.clone(mem.gpa),
+                    .garland = try e.garland.clone(mem.gpa, &workspace.hover_pool),
                     .prev_pills = (try e.prev_pills.clone(mem.gpa)).items,
                     .prev_old_bindings = (try e.old_bindings.clone(mem.gpa)).items,
                 } } });
