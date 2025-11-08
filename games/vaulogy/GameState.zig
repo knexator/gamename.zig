@@ -1254,8 +1254,14 @@ const Fnkbox = struct {
     handle: Handle,
     fnkname: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
-    testcases: std.ArrayListUnmanaged(TestCase),
     // TODO: scroll: f32 = 0,
+    testcases: std.ArrayListUnmanaged(TestCase),
+    execution: ?struct {
+        testcase: usize,
+        executor: Executor,
+        t: f32 = 0,
+        state: enum { starting, executing, ending } = .starting,
+    } = null,
 
     const relative_fnkname_point: Point = .{ .pos = .new(-4, 3.5), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(0, 3) };
@@ -1285,14 +1291,18 @@ const Fnkbox = struct {
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
         try fnkbox.handle.draw(drawer, camera);
         try fnkbox.fnkname.draw(drawer, camera);
-        try fnkbox.garland.draw(drawer, camera);
         if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
         for (fnkbox.testcases.items) |t| {
             try t.draw(drawer, camera);
         }
+        if (fnkbox.execution) |e| {
+            try e.executor.draw(drawer, camera);
+        } else {
+            try fnkbox.garland.draw(drawer, camera);
+        }
     }
 
-    pub fn update(fnkbox: *Fnkbox, delta_seconds: f32) !void {
+    pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos, 0.6, delta_seconds);
         fnkbox.garland.update(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
@@ -1303,6 +1313,41 @@ const Fnkbox = struct {
             t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
             t.play_button.center.lerpTowards(center.applyToLocalPosition(.new(-6, 0)), 0.6, delta_seconds);
             t.play_button.size.lerpTowards(.one, 0.6, delta_seconds);
+        }
+        if (fnkbox.execution) |*execution| {
+            switch (execution.state) {
+                .starting => {
+                    execution.executor.input.point = .lerp(fnkbox.testcases.items[execution.testcase].input.point, execution.executor.inputPoint(), execution.t);
+                    execution.t += delta_seconds / 0.8;
+                    if (execution.t >= 1) {
+                        execution.state = .executing;
+                        execution.t = 0;
+                    }
+                },
+                .executing => {
+                    try execution.executor.update(mem, known_fnks, hover_pool, delta_seconds);
+                    if (execution.executor.animation == null) {
+                        fnkbox.testcases.items[execution.testcase].actual = try execution.executor.input.clone(hover_pool);
+                        execution.state = .ending;
+                        execution.t = 0;
+                    }
+                },
+                .ending => {
+                    std.log.debug("t: {d}", .{execution.t});
+                    fnkbox.testcases.items[execution.testcase].actual.point = .lerp(
+                        execution.executor.inputPoint(),
+                        fnkbox.testcases.items[execution.testcase].expected.point.applyToLocalPoint(.{ .pos = .new(4, 0) }),
+                        execution.t,
+                    );
+                    execution.t += delta_seconds / 0.8;
+                    if (execution.t >= 1) {
+                        fnkbox.execution = null;
+                    }
+                },
+            }
+
+            // TODO: this is ignored when the animation is active
+            // e.handle.pos.lerpTowards(fnkbox.point().applyToLocalPoint(relative_executor_point).pos, 0.6, delta_seconds);
         }
     }
 };
@@ -1834,6 +1879,7 @@ const Workspace = struct {
 
     fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
         for (workspace.fnkboxes.items, 0..) |fnkbox, fnkbox_index| {
+            if (fnkbox.execution != null) continue;
             for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
                 if (testcase.play_button.rect().contains(pos)) {
                     return .{ .kind = .{ .fnkbox_launch_testcase = .{
@@ -2225,8 +2271,9 @@ const Workspace = struct {
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped or std.meta.activeTag(next_cmd.specific) == .fnkbox_launch_testcase);
                         continue :again next_cmd.specific;
                     },
-                    .fnkbox_launch_testcase => {
-                        _ = workspace.executors.pop().?;
+                    .fnkbox_launch_testcase => |t| {
+                        const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                        fnkbox.execution = null;
                     },
                     .grabbed => |g| {
                         switch (g.from.kind) {
@@ -2693,7 +2740,7 @@ const Workspace = struct {
         }
 
         for (workspace.fnkboxes.items) |*e| {
-            try e.update(platform.delta_seconds);
+            try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
         }
 
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
@@ -2806,9 +2853,11 @@ const Workspace = struct {
             .noop => {},
             .started_execution => unreachable,
             .fnkbox_launch_testcase => |t| {
-                const fnkbox = workspace.fnkboxes.items[t.fnkbox];
-                const testcase = fnkbox.testcases.items[t.testcase];
-                try workspace.executors.append(.{
+                const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                const testcase = &fnkbox.testcases.items[t.testcase];
+                assert(fnkbox.execution == null);
+                testcase.actual = try .empty(testcase.actual.point, &workspace.hover_pool, false);
+                fnkbox.execution = .{ .testcase = t.testcase, .executor = .{
                     .input = try testcase.input.dupeSubValue(&.{}, &workspace.hover_pool),
                     .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
                     .handle = .{ .pos = fnkbox.point().applyToLocalPoint(Fnkbox.relative_executor_point).pos },
@@ -2817,7 +2866,7 @@ const Workspace = struct {
                         .testcase = t.testcase,
                     },
                     .animation = null,
-                });
+                } };
             },
             .grabbed => |g| {
                 switch (g.from.kind) {
