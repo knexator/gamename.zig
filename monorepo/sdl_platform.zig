@@ -164,9 +164,11 @@ pub fn main() !void {
     }));
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_FLAGS, c.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG));
 
-    if (true) {
+    if (@import("builtin").os.tag != .linux) {
         try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLEBUFFERS, 1));
         try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
+    } else {
+        std.log.err("TODO: don't skip multisampling on Linux", .{});
     }
 
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_STENCIL_SIZE, 8));
