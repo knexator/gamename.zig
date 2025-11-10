@@ -721,13 +721,7 @@ const VeryPhysicalSexpr = struct {
     }
 
     pub fn empty(point: Point, hover_pool: *HoveredSexpr.Pool, is_pattern: bool) !VeryPhysicalSexpr {
-        return .{
-            .hovered = try HoveredSexpr.store(hover_pool, .{ .next = null, .value = 0 }),
-            .point = point,
-            .value = Sexpr.builtin.empty,
-            .is_pattern = is_pattern,
-            .is_pattern_t = if (is_pattern) 1.0 else 0.0,
-        };
+        return .fromSexpr(hover_pool, Sexpr.builtin.empty, point, is_pattern);
     }
 
     pub fn isEmpty(sexpr: VeryPhysicalSexpr) bool {
@@ -1262,8 +1256,11 @@ const Fnkbox = struct {
         t: f32 = 0,
         state: enum { starting, executing, ending } = .starting,
     } = null,
+    text: []const u8,
 
-    const relative_fnkname_point: Point = .{ .pos = .new(-4, 3.5), .scale = 0.5, .turns = 0.25 };
+    // TODO NEXT: folded?????????
+
+    const relative_fnkname_point: Point = .{ .pos = .new(-2, -2), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(0, 3) };
     const relative_bottom_testcase_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_input_point: Point = .{ .pos = .new(-5, 4.5) };
@@ -1274,11 +1271,12 @@ const Fnkbox = struct {
     }
 
     /// takes ownership of testcases
-    pub fn init(base: Point, testcases: []TestCase, hover_pool: *HoveredSexpr.Pool) !Fnkbox {
+    pub fn init(text: []const u8, fnkname: *const Sexpr, base: Point, testcases: []TestCase, hover_pool: *HoveredSexpr.Pool) !Fnkbox {
         return .{
+            .text = text,
             .handle = .{ .pos = base.pos },
             .garland = .init(base.applyToLocalPoint(relative_garland_point).pos),
-            .fnkname = try .empty(base.applyToLocalPoint(relative_fnkname_point), hover_pool, false),
+            .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
             .testcases = .fromOwnedSlice(testcases),
         };
     }
@@ -1289,6 +1287,12 @@ const Fnkbox = struct {
     }
 
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
+        drawer.canvas.borderRect(camera, Rect.fromMeasureAndSizeV2(
+            .bottom_center,
+            fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(-0.25),
+            .new(16, 5),
+        ), 0.05, .inner, .black);
+        try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(-1)), 0.8, .black);
         try fnkbox.handle.draw(drawer, camera);
         try fnkbox.fnkname.draw(drawer, camera);
         if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
@@ -1669,7 +1673,9 @@ const Workspace = struct {
         try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
 
         dst.fnkboxes = .init(mem.gpa);
-        try dst.fnkboxes.append(try .init(.{ .pos = .new(-10, 5) }, try mem.gpa.dupe(TestCase, &.{
+        try dst.fnkboxes.append(try .init(
+            \\Get the lowercase version of each atom
+        , valid[0], .{ .pos = .new(-10, 5) }, try mem.gpa.dupe(TestCase, &.{
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[1], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[2], .{}, false),
