@@ -1259,6 +1259,7 @@ const Fnkbox = struct {
     text: []const u8,
     folded: bool,
     folded_t: f32,
+    fold_button: FoldButton = .{ .rect = .unit },
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
@@ -1275,6 +1276,20 @@ const Fnkbox = struct {
         const relative_executor_point: Point = relative_garland_point.inverseApplyToLocalPoint(.{ .pos = Executor.relative_garland_pos });
         return fnkbox.point().applyToLocalPoint(relative_executor_point).pos.addY(offset_y);
     }
+
+    const FoldButton = struct {
+        hot_t: f32 = 0,
+        rect: Rect,
+
+        pub fn draw(button: *const FoldButton, drawer: *Drawer, camera: Rect) !void {
+            drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
+            drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
+        }
+
+        pub fn updateHot(button: *FoldButton, hot: bool, delta_seconds: f32) void {
+            math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
+        }
+    };
 
     /// takes ownership of testcases
     pub fn init(text: []const u8, fnkname: *const Sexpr, base: Point, testcases: []TestCase, hover_pool: *HoveredSexpr.Pool) !Fnkbox {
@@ -1302,6 +1317,14 @@ const Fnkbox = struct {
         );
     }
 
+    pub fn foldButtonGoal(fnkbox: *const Fnkbox) Rect {
+        return .fromMeasureAndSizeV2(
+            .center,
+            fnkbox.point().pos.addY(0.75),
+            .half,
+        );
+    }
+
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
         if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
         const rect = fnkbox.box();
@@ -1323,9 +1346,11 @@ const Fnkbox = struct {
         } else {
             try fnkbox.garland.draw(drawer, camera);
         }
+        try fnkbox.fold_button.draw(drawer, camera);
     }
 
     pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
+        fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
         const offset_y = box_height * (1 - fnkbox.folded_t);
         Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(offset_y), 0.6, delta_seconds);
@@ -1486,6 +1511,7 @@ const Workspace = struct {
 
             pub const Kind = union(enum) {
                 nothing,
+                fnkbox_toggle_fold: usize,
                 fnkbox_launch_testcase: struct {
                     fnkbox: usize,
                     testcase: usize,
@@ -1599,6 +1625,7 @@ const Workspace = struct {
                 fnkbox: usize,
                 testcase: usize,
             },
+            fnkbox_toggle_fold: usize,
         },
 
         pub const noop: UndoableCommand = .{ .specific = .noop };
@@ -1905,6 +1932,9 @@ const Workspace = struct {
 
     fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
         for (workspace.fnkboxes.items, 0..) |fnkbox, fnkbox_index| {
+            if (fnkbox.fold_button.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
+            }
             if (fnkbox.execution != null) continue;
             for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
                 if (testcase.play_button.rect().contains(pos)) {
@@ -2280,12 +2310,6 @@ const Workspace = struct {
         }
 
         // state changes
-        if (platform.keyboard.wasPressed(.KeyQ)) {
-            for (workspace.fnkboxes.items) |*f| {
-                f.folded = !f.folded;
-            }
-        }
-
         if (platform.keyboard.wasPressed(.KeyZ)) {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
@@ -2306,6 +2330,10 @@ const Workspace = struct {
                     .fnkbox_launch_testcase => |t| {
                         const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
                         fnkbox.execution = null;
+                    },
+                    .fnkbox_toggle_fold => |k| {
+                        const fnkbox = &workspace.fnkboxes.items[k];
+                        fnkbox.folded = !fnkbox.folded;
                     },
                     .grabbed => |g| {
                         switch (g.from.kind) {
@@ -2557,8 +2585,12 @@ const Workspace = struct {
         }
 
         // update ui hotness
-        for (workspace.fnkboxes.items, 0..) |*funkbox, fnkbox_index| {
-            for (funkbox.testcases.items, 0..) |*testcase, testcase_index| {
+        for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
+            fnkbox.fold_button.updateHot(switch (ui_hot.kind) {
+                else => false,
+                .fnkbox_toggle_fold => |k| k == fnkbox_index,
+            }, platform.delta_seconds);
+            for (fnkbox.testcases.items, 0..) |*testcase, testcase_index| {
                 const is_hot = switch (ui_hot.kind) {
                     else => false,
                     .fnkbox_launch_testcase => |thing| thing.fnkbox == fnkbox_index and thing.testcase == testcase_index,
@@ -2873,6 +2905,7 @@ const Workspace = struct {
                 .noop
             else switch (ui_active.kind) {
                 .nothing => unreachable,
+                .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
                 .fnkbox_launch_testcase => |t| .{ .specific = .{ .fnkbox_launch_testcase = .{
                     .fnkbox = t.fnkbox,
                     .testcase = t.testcase,
@@ -2899,6 +2932,10 @@ const Workspace = struct {
                     },
                     .animation = null,
                 } };
+            },
+            .fnkbox_toggle_fold => |k| {
+                const fnkbox = &workspace.fnkboxes.items[k];
+                fnkbox.folded = !fnkbox.folded;
             },
             .grabbed => |g| {
                 switch (g.from.kind) {

@@ -942,6 +942,17 @@ pub const Rect = extern struct {
         };
     }
 
+    pub fn lerpTowardsPure(v: Rect, goal: Rect, ratio: f32, delta_seconds: f32) Rect {
+        return .{
+            .top_left = v.top_left.lerpTowardsPure(goal.top_left, ratio, delta_seconds),
+            .size = v.size.lerpTowardsPure(goal.size, ratio, delta_seconds),
+        };
+    }
+
+    pub fn lerpTowards(v: *Rect, goal: Rect, ratio: f32, delta_seconds: f32) void {
+        v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+    }
+
     pub fn intersect(a: Rect, b: Rect) ?Rect {
         // TODO NOW
         _ = b;
