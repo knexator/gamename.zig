@@ -1307,9 +1307,9 @@ const Fnkbox = struct {
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
-    const relative_bottom_testcase_point: Point = .{ .pos = .new(0, 4.5) };
+    const relative_bottom_testcase_point: Point = .{ .pos = .new(0, box_height - 0.5) };
     const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
-    const box_height: f32 = 5;
+    const box_height: f32 = 7;
 
     pub fn point(fnkbox: *const Fnkbox) Point {
         return .{ .pos = fnkbox.handle.pos };
@@ -1404,7 +1404,7 @@ const Fnkbox = struct {
         fnkbox.garland.update(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*t, k| {
-            const center = fnkbox.point().applyToLocalPoint(relative_bottom_testcase_point).applyToLocalPoint(.{ .pos = .new(0, -3 * tof32(k)) });
+            const center = fnkbox.point().applyToLocalPoint(relative_bottom_testcase_point).applyToLocalPoint(.{ .pos = .new(0, -2.5 * tof32(k)) });
             t.input.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(-4, 0) }), 0.6, delta_seconds);
             t.expected.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(0, 0) }), 0.6, delta_seconds);
             t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
@@ -1776,6 +1776,12 @@ const Workspace = struct {
                 .actual = try .empty(.{}, &dst.hover_pool, false),
                 .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
             },
+            .{
+                .input = try .fromSexpr(&dst.hover_pool, valid[3], .{}, false),
+                .expected = try .fromSexpr(&dst.hover_pool, valid[4], .{}, false),
+                .actual = try .empty(.{}, &dst.hover_pool, false),
+                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+            },
         }), &dst.hover_pool));
     }
 
@@ -1821,12 +1827,12 @@ const Workspace = struct {
         &Sexpr.doLit("planetFromOlympian"),
         &Sexpr.doLit("Hermes"),
         &Sexpr.doLit("Mercury"),
+        &Sexpr.doLit("Aphrodite"),
+        &Sexpr.doLit("Venus"),
         &Sexpr.doLit("Ares"),
         &Sexpr.doLit("Mars"),
         &Sexpr.doLit("Zeus"),
         &Sexpr.doLit("Jupiter"),
-        &Sexpr.doLit("Aphrodite"),
-        &Sexpr.doLit("Venus"),
         &.empty,
     };
 
