@@ -1063,7 +1063,7 @@ const Executor = struct {
                     animation.active_case.kinematicUpdate(case_point, .{
                         .pos = .new(template_t * 6, -2 * enqueueing_t),
                         .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
-                    }, .{ .pos = .new(-invoking_t * 3, 0) }, delta_seconds);
+                    }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{
                         .pos = .new(-template_t * 2, 0),
@@ -1171,7 +1171,7 @@ const Fnkviewer = struct {
     last_fnkname_hash: u32 = 0,
     // last_garland_hash: u32 = 0,
 
-    const relative_fnkname_point: Point = .{ .pos = .new(-1, 0.5), .scale = 0.5, .turns = 0.25 };
+    const relative_fnkname_point: Point = .{ .pos = .new(-1, 0), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1.5) };
 
     pub fn point(fnkviewer: *const Fnkviewer) Point {
@@ -1257,17 +1257,23 @@ const Fnkbox = struct {
         state: enum { starting, executing, ending } = .starting,
     } = null,
     text: []const u8,
+    folded: bool,
+    folded_t: f32,
 
-    // TODO NEXT: folded?????????
-
-    const relative_fnkname_point: Point = .{ .pos = .new(-2, -2), .scale = 0.5, .turns = 0.25 };
-    const relative_garland_point: Point = .{ .pos = .new(0, 3) };
-    const relative_bottom_testcase_point: Point = .{ .pos = .new(-1, 1.5) };
-    const relative_input_point: Point = .{ .pos = .new(-5, 4.5) };
-    const relative_executor_point: Point = relative_garland_point.inverseApplyToLocalPoint(.{ .pos = Executor.relative_garland_pos });
+    const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
+    const relative_garland_point: Point = .{ .pos = .new(1, 1) };
+    const relative_bottom_testcase_point: Point = .{ .pos = .new(0, 4.5) };
+    const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
+    const box_height: f32 = 5;
 
     pub fn point(fnkbox: *const Fnkbox) Point {
         return .{ .pos = fnkbox.handle.pos };
+    }
+
+    pub fn executorPos(fnkbox: *const Fnkbox) Vec2 {
+        const offset_y = box_height * (1 - fnkbox.folded_t);
+        const relative_executor_point: Point = relative_garland_point.inverseApplyToLocalPoint(.{ .pos = Executor.relative_garland_pos });
+        return fnkbox.point().applyToLocalPoint(relative_executor_point).pos.addY(offset_y);
     }
 
     /// takes ownership of testcases
@@ -1278,6 +1284,8 @@ const Fnkbox = struct {
             .garland = .init(base.applyToLocalPoint(relative_garland_point).pos),
             .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
             .testcases = .fromOwnedSlice(testcases),
+            .folded = false,
+            .folded_t = 0,
         };
     }
 
@@ -1286,18 +1294,29 @@ const Fnkbox = struct {
         fnkbox.garland.deinit(gpa);
     }
 
+    pub fn box(fnkbox: *const Fnkbox) Rect {
+        return .fromMeasureAndSizeV2(
+            .top_center,
+            fnkbox.point().pos.addY(0.75),
+            Vec2.new(16, box_height).scale(1.0 - fnkbox.folded_t),
+        );
+    }
+
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
-        drawer.canvas.borderRect(camera, Rect.fromMeasureAndSizeV2(
-            .bottom_center,
-            fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(-0.25),
-            .new(16, 5),
-        ), 0.05, .inner, .black);
-        try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(-1)), 0.8, .black);
-        try fnkbox.handle.draw(drawer, camera);
-        try fnkbox.fnkname.draw(drawer, camera);
         if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
-        for (fnkbox.testcases.items) |t| {
-            try t.draw(drawer, camera);
+        const rect = fnkbox.box();
+        drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
+        try fnkbox.fnkname.draw(drawer, camera);
+        try fnkbox.handle.draw(drawer, camera);
+        if (fnkbox.folded_t < 1) {
+            drawer.canvas.gl.startStencil();
+            drawer.canvas.fillRect(camera, rect, .white);
+            drawer.canvas.gl.doneStencil();
+            defer drawer.canvas.gl.stopStencil();
+            try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(2)), 0.8, .black);
+            for (fnkbox.testcases.items) |t| {
+                try t.draw(drawer, camera);
+            }
         }
         if (fnkbox.execution) |e| {
             try e.executor.draw(drawer, camera);
@@ -1307,7 +1326,9 @@ const Fnkbox = struct {
     }
 
     pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos, 0.6, delta_seconds);
+        math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
+        const offset_y = box_height * (1 - fnkbox.folded_t);
+        Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(offset_y), 0.6, delta_seconds);
         fnkbox.garland.update(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*t, k| {
@@ -1331,20 +1352,19 @@ const Fnkbox = struct {
                 .executing => {
                     try execution.executor.update(mem, known_fnks, hover_pool, delta_seconds);
                     if (execution.executor.animation == null) {
-                        fnkbox.testcases.items[execution.testcase].actual = try execution.executor.input.clone(hover_pool);
                         execution.state = .ending;
                         execution.t = 0;
                     }
                 },
                 .ending => {
-                    std.log.debug("t: {d}", .{execution.t});
-                    fnkbox.testcases.items[execution.testcase].actual.point = .lerp(
+                    execution.executor.input.point = .lerp(
                         execution.executor.inputPoint(),
                         fnkbox.testcases.items[execution.testcase].expected.point.applyToLocalPoint(.{ .pos = .new(4, 0) }),
                         execution.t,
                     );
                     execution.t += delta_seconds / 0.8;
                     if (execution.t >= 1) {
+                        fnkbox.testcases.items[execution.testcase].actual = try execution.executor.input.clone(hover_pool);
                         fnkbox.execution = null;
                     }
                 },
@@ -2258,7 +2278,13 @@ const Workspace = struct {
         if (drawer) |d| {
             try workspace.draw(platform, d, camera);
         }
+
         // state changes
+        if (platform.keyboard.wasPressed(.KeyQ)) {
+            for (workspace.fnkboxes.items) |*f| {
+                f.folded = !f.folded;
+            }
+        }
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
             if (workspace.undo_stack.pop()) |command| {
@@ -2866,7 +2892,7 @@ const Workspace = struct {
                 fnkbox.execution = .{ .testcase = t.testcase, .executor = .{
                     .input = try testcase.input.dupeSubValue(&.{}, &workspace.hover_pool),
                     .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
-                    .handle = .{ .pos = fnkbox.point().applyToLocalPoint(Fnkbox.relative_executor_point).pos },
+                    .handle = .{ .pos = fnkbox.executorPos() },
                     .spawned_by_fnkbox = .{
                         .fnkbox = t.fnkbox,
                         .testcase = t.testcase,
