@@ -1292,8 +1292,8 @@ const Fnkbox = struct {
     handle: Handle,
     fnkname: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
-    // TODO: scroll: f32 = 0,
     testcases: std.ArrayListUnmanaged(TestCase),
+    scroll_testcases: f32 = 0,
     execution: ?struct {
         testcase: usize,
         executor: Executor,
@@ -1309,7 +1309,10 @@ const Fnkbox = struct {
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
     const relative_bottom_testcase_point: Point = .{ .pos = .new(0, box_height - 0.5) };
     const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
-    const box_height: f32 = 7;
+    const text_height: f32 = 2;
+    const testcases_height: f32 = 2.5 * visible_testcases;
+    const box_height = text_height + testcases_height;
+    const visible_testcases = 2;
 
     pub fn point(fnkbox: *const Fnkbox) Point {
         return .{ .pos = fnkbox.handle.pos };
@@ -1361,6 +1364,22 @@ const Fnkbox = struct {
         );
     }
 
+    pub fn boxText(fnkbox: *const Fnkbox) Rect {
+        return .fromMeasureAndSizeV2(
+            .top_center,
+            fnkbox.point().pos.addY(0.75),
+            Vec2.new(16, text_height).scale(1.0 - fnkbox.folded_t),
+        );
+    }
+
+    pub fn boxTestcases(fnkbox: *const Fnkbox) Rect {
+        return .fromMeasureAndSizeV2(
+            .top_center,
+            fnkbox.boxText().get(.bottom_center),
+            Vec2.new(16, testcases_height).scale(1.0 - fnkbox.folded_t),
+        );
+    }
+
     pub fn foldButtonGoal(fnkbox: *const Fnkbox) Rect {
         return .fromMeasureAndSizeV2(
             .center,
@@ -1376,13 +1395,25 @@ const Fnkbox = struct {
         try fnkbox.fnkname.draw(drawer, camera);
         try fnkbox.handle.draw(drawer, camera);
         if (fnkbox.folded_t < 1) {
-            drawer.canvas.gl.startStencil();
-            drawer.canvas.fillRect(camera, rect, .white);
-            drawer.canvas.gl.doneStencil();
-            defer drawer.canvas.gl.stopStencil();
-            try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(2)), 0.8, .black);
-            for (fnkbox.testcases.items) |t| {
-                try t.draw(drawer, camera);
+            const box_text = fnkbox.boxText();
+            const box_testcases = fnkbox.boxTestcases();
+
+            {
+                drawer.canvas.gl.startStencil();
+                drawer.canvas.fillRect(camera, box_text, .white);
+                drawer.canvas.gl.doneStencil();
+                defer drawer.canvas.gl.stopStencil();
+                try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(2)), 0.8, .black);
+            }
+
+            {
+                drawer.canvas.gl.startStencil();
+                drawer.canvas.fillRect(camera, box_testcases, .white);
+                drawer.canvas.gl.doneStencil();
+                defer drawer.canvas.gl.stopStencil();
+                for (fnkbox.testcases.items) |t| {
+                    try t.draw(drawer, camera);
+                }
             }
         }
         if (fnkbox.execution) |e| {
@@ -1397,6 +1428,7 @@ const Fnkbox = struct {
     }
 
     pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
+        math.lerp_towards_range(&fnkbox.scroll_testcases, 0, tof32(fnkbox.testcases.items.len) - visible_testcases, 0.6, delta_seconds);
         fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
         const offset_y = box_height * (1 - fnkbox.folded_t);
@@ -1404,7 +1436,9 @@ const Fnkbox = struct {
         fnkbox.garland.update(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*t, k| {
-            const center = fnkbox.point().applyToLocalPoint(relative_bottom_testcase_point).applyToLocalPoint(.{ .pos = .new(0, -2.5 * tof32(k)) });
+            const center = fnkbox.point()
+                .applyToLocalPoint(relative_bottom_testcase_point)
+                .applyToLocalPoint(.{ .pos = .new(0, -2.5 * (tof32(k) - fnkbox.scroll_testcases)) });
             t.input.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(-4, 0) }), 0.6, delta_seconds);
             t.expected.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(0, 0) }), 0.6, delta_seconds);
             t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
@@ -1685,10 +1719,10 @@ const Workspace = struct {
 
         dst.known_fnks = .init(mem.gpa);
         try dst.known_fnks.put(valid[0], .{ .cases = .fromOwnedSlice(try mem.gpa.dupe(core.MatchCaseDefinition, &.{
-            .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.identity, .next = null },
-            .{ .pattern = valid[3], .template = valid[4], .fnk_name = Sexpr.builtin.identity, .next = null },
-            .{ .pattern = valid[5], .template = valid[6], .fnk_name = Sexpr.builtin.identity, .next = null },
-            .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.identity, .next = null },
+            .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[3], .template = valid[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[5], .template = valid[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
         })) });
 
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
@@ -1751,7 +1785,7 @@ const Workspace = struct {
             dst.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
                 .pattern = try mem.storeSexpr(.doLit(p[0])),
                 .template = try mem.storeSexpr(.doLit(p[1])),
-                .fnk_name = Sexpr.builtin.identity,
+                .fnk_name = Sexpr.builtin.empty,
             }, .{ .pos = dst.garlands.items[0].handle.pos.addY(1 + 2.5 * tof32(k)) }));
         }
         try dst.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
@@ -1779,6 +1813,18 @@ const Workspace = struct {
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[3], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[4], .{}, false),
+                .actual = try .empty(.{}, &dst.hover_pool, false),
+                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+            },
+            .{
+                .input = try .fromSexpr(&dst.hover_pool, valid[5], .{}, false),
+                .expected = try .fromSexpr(&dst.hover_pool, valid[6], .{}, false),
+                .actual = try .empty(.{}, &dst.hover_pool, false),
+                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+            },
+            .{
+                .input = try .fromSexpr(&dst.hover_pool, valid[7], .{}, false),
+                .expected = try .fromSexpr(&dst.hover_pool, valid[8], .{}, false),
                 .actual = try .empty(.{}, &dst.hover_pool, false),
                 .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
             },
@@ -1989,6 +2035,7 @@ const Workspace = struct {
                 return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
             }
             if (fnkbox.execution != null) continue;
+            if (!fnkbox.boxTestcases().contains(pos)) continue;
             for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
                 if (testcase.play_button.rect().contains(pos)) {
                     return .{ .kind = .{ .fnkbox_launch_testcase = .{
@@ -2363,6 +2410,16 @@ const Workspace = struct {
         }
 
         // state changes
+        // TODO: remove
+        for (workspace.fnkboxes.items) |*f| {
+            if (platform.keyboard.cur.isDown(.KeyE)) {
+                f.scroll_testcases -= platform.delta_seconds / 0.2;
+            }
+            if (platform.keyboard.cur.isDown(.KeyQ)) {
+                f.scroll_testcases += platform.delta_seconds / 0.2;
+            }
+        }
+
         if (platform.keyboard.wasPressed(.KeyZ)) {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
