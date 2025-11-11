@@ -2809,9 +2809,12 @@ const Workspace = struct {
 
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             switch (hovering.kind) {
-                .nothing => blk: {
-                    workspace.focus.ui_active = ui_hot;
-                    break :blk .noop;
+                .nothing => switch (ui_hot.kind) {
+                    .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
+                    .nothing, .fnkbox_launch_testcase => blk: {
+                        workspace.focus.ui_active = ui_hot;
+                        break :blk .noop;
+                    },
                 },
                 .sexpr => |s| .{
                     .specific = .{
