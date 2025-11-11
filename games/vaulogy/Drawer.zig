@@ -363,7 +363,7 @@ fn drawTemplateSexprClipped(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, 
     }
 }
 
-pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr) !void {
+pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr, alpha: f32) !void {
     assert(in01(sexpr.is_pattern));
     if (sexpr.is_pattern <= 0.5) {
         try drawer.drawTemplateSexpr(camera, sexpr.value, sexpr.pos.applyToLocalPoint(.{ .turns = remap(
@@ -372,7 +372,7 @@ pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr) !void {
             0,
             -0.25,
             0,
-        ) }));
+        ) }), alpha);
     } else {
         try drawer.drawPatternSexpr(camera, sexpr.value, sexpr.pos.applyToLocalPoint(.{ .turns = remap(
             sexpr.is_pattern,
@@ -380,7 +380,7 @@ pub fn drawSexpr(drawer: *Drawer, camera: Rect, sexpr: PhysicalSexpr) !void {
             1,
             0.25,
             0,
-        ) }));
+        ) }), alpha);
     }
 }
 
@@ -396,42 +396,42 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
     }
 }
 
-pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
+pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point, alpha: f32) !void {
     switch (sexpr.*) {
         .empty => {},
         .atom_lit => |lit| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
-            try drawer.drawTemplateAtom(camera, point, visuals);
+            try drawer.drawTemplateAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
-            try drawer.drawTemplateVariable(camera, point, visuals);
+            try drawer.drawTemplateVariable(camera, point, visuals, alpha);
         },
         .pair => |pair| {
-            try drawer.drawTemplatePairHolder(camera, point);
+            try drawer.drawTemplatePairHolder(camera, point, alpha);
             // try drawTemplateWildcardLinesNonRecursive(camera, pair.left, pair.right, world_point, .none);
-            try drawer.drawTemplateSexpr(camera, pair.left, point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT));
-            try drawer.drawTemplateSexpr(camera, pair.right, point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT));
+            try drawer.drawTemplateSexpr(camera, pair.left, point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_LEFT), alpha);
+            try drawer.drawTemplateSexpr(camera, pair.right, point.applyToLocalPoint(ViewHelper.OFFSET_TEMPLATE_PAIR_RIGHT), alpha);
         },
     }
 }
 
-pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point) !void {
+pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point, alpha: f32) !void {
     switch (sexpr.*) {
         .empty => {},
         .atom_lit => |lit| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
-            try drawer.drawPatternAtom(camera, point, visuals);
+            try drawer.drawPatternAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {
             const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
-            try drawer.drawPatternVariable(camera, point, visuals);
+            try drawer.drawPatternVariable(camera, point, visuals, alpha);
         },
         .pair => |pair| {
-            try drawer.drawPatternPairHolder(camera, point);
+            try drawer.drawPatternPairHolder(camera, point, alpha);
             // try drawPatternWildcardLinesNonRecursive(camera, pair.left, pair.right, world_point);
-            try drawer.drawPatternSexpr(camera, pair.left, point.applyToLocalPoint(ViewHelper.OFFSET_PATTERN_PAIR_LEFT));
-            try drawer.drawPatternSexpr(camera, pair.right, point.applyToLocalPoint(ViewHelper.OFFSET_PATTERN_PAIR_RIGHT));
+            try drawer.drawPatternSexpr(camera, pair.left, point.applyToLocalPoint(ViewHelper.OFFSET_PATTERN_PAIR_LEFT), alpha);
+            try drawer.drawPatternSexpr(camera, pair.right, point.applyToLocalPoint(ViewHelper.OFFSET_PATTERN_PAIR_RIGHT), alpha);
         },
     }
 }
@@ -441,21 +441,29 @@ fn pixelWidth(camera: Rect) f32 {
     return camera.size.y / 800.0;
 }
 
-pub fn drawPlaceholder(self: *Drawer, camera: Rect, world_point: Point, is_pattern: bool) !void {
+pub fn drawPlaceholder(self: *Drawer, camera: Rect, world_point: Point, is_pattern: bool, alpha: f32) !void {
     try self.drawShapeV3(camera, world_point, if (is_pattern)
         AtomVisuals.Geometry.pattern_placeholder
     else
-        AtomVisuals.Geometry.template_placeholder, FColor.white.withAlpha(0.5), null);
+        AtomVisuals.Geometry.template_placeholder, FColor.white.withAlpha(0.5), null, alpha);
 }
 
 // TODO: remove
-fn drawShapeV3(self: *Drawer, camera: Rect, parent_world_point: Point, shape: Canvas.PrecomputedShape, stroke: ?FColor, fill: ?FColor) !void {
+fn drawShapeV3(
+    self: *Drawer,
+    camera: Rect,
+    parent_world_point: Point,
+    shape: Canvas.PrecomputedShape,
+    stroke: ?FColor,
+    fill: ?FColor,
+    alpha: f32,
+) !void {
     if (fill) |col| {
         self.canvas.fillShape(
             camera,
             parent_world_point,
             shape,
-            col,
+            col.timesAlpha(alpha),
         );
     }
 
@@ -466,15 +474,23 @@ fn drawShapeV3(self: *Drawer, camera: Rect, parent_world_point: Point, shape: Ca
             dst.* = parent_world_point.applyToLocalPosition(p);
         }
         world_points[0] = world_points[world_points.len - 1];
-        self.canvas.line(camera, world_points, pixelWidth(camera), col);
+        self.canvas.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
     }
 }
 
-pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point) !void {
-    try drawShapeV3(drawer, camera, point, AtomVisuals.Geometry.template_pair_holder, .black, .gray(3.0 / 8.0));
+pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha: f32) !void {
+    try drawShapeV3(
+        drawer,
+        camera,
+        point,
+        AtomVisuals.Geometry.template_pair_holder,
+        .black,
+        .gray(3.0 / 8.0),
+        alpha,
+    );
 }
 
-fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
+fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
     // TODO: no alloc, precompute this
     var screen_positions: []Vec2 = try drawer.canvas.frame_arena.allocator().alloc(Vec2, visuals.geometry.template.local_points.len + 1);
 
@@ -487,36 +503,43 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
         camera,
         point,
         visuals.geometry.template,
-        visuals.color,
+        visuals.color.timesAlpha(alpha),
     );
 
-    drawer.canvas.line(camera, screen_positions, pixelWidth(camera), .black);
+    drawer.canvas.line(camera, screen_positions, pixelWidth(camera), .blackAlpha(alpha));
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(0.25, 0));
-        try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .black);
+        try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .blackAlpha(alpha));
     }
 }
 
-fn drawTemplateVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
-    try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.template_variable, .black, visuals.color);
+fn drawTemplateVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
+    try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.template_variable, .black, visuals.color, alpha);
 }
 
-pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point) !void {
-    try drawer.drawShapeV3(camera, world_point, AtomVisuals.Geometry.pattern_pair_holder, .black, .gray(3.0 / 8.0));
+pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point, alpha: f32) !void {
+    try drawer.drawShapeV3(
+        camera,
+        world_point,
+        AtomVisuals.Geometry.pattern_pair_holder,
+        .black,
+        .gray(3.0 / 8.0),
+        alpha,
+    );
 }
 
-fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
-    try drawer.drawShapeV3(camera, point, visuals.geometry.pattern, .black, visuals.color);
+fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
+    try drawer.drawShapeV3(camera, point, visuals.geometry.pattern, .black, visuals.color, alpha);
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(-0.25, 0));
-        try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .black);
+        try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .blackAlpha(alpha));
     }
 }
 
-fn drawPatternVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals) !void {
-    try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.pattern_variable, .black, visuals.color);
+fn drawPatternVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
+    try drawer.drawShapeV3(camera, point, AtomVisuals.Geometry.pattern_variable, .black, visuals.color, alpha);
 }
 
 pub fn drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Point, sexpr: *const Sexpr, bindings: BindingsState) !void {
@@ -598,13 +621,6 @@ pub fn endClip(drawer: *Drawer) void {
     std.log.err("TODO", .{});
     // TODO
     _ = drawer;
-}
-
-pub fn setTransparency(drawer: *Drawer, alpha: f32) void {
-    std.log.err("TODO", .{});
-    // TODO
-    _ = drawer;
-    _ = alpha;
 }
 
 fn drawTemplateWildcardLinesNonRecursive(

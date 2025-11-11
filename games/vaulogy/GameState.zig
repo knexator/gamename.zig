@@ -339,19 +339,34 @@ const VeryPhysicalGarland = struct {
         try garland.drawWithBindings(null, drawer, camera);
     }
 
-    pub fn drawWithBindings(garland: VeryPhysicalGarland, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) error{
+    pub fn drawWithAlpha(garland: VeryPhysicalGarland, alpha: f32, drawer: *Drawer, camera: Rect) !void {
+        try garland.drawWithBindingsAndAlpha(null, alpha, drawer, camera);
+    }
+
+    pub fn drawWithBindings(garland: VeryPhysicalGarland, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
+        try garland.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
+    }
+
+    pub fn drawWithBindingsAndAlpha(
+        garland: VeryPhysicalGarland,
+        bindings: ?BindingsState,
+        alpha: f32,
+        drawer: *Drawer,
+        camera: Rect,
+    ) error{
         InvalidUtf8,
         OutOfMemory,
         BadVertexOrder,
     }!void {
+        assert(math.in01(alpha));
         // TODO: Handle.draw
-        drawer.canvas.strokeCircle(128, camera, garland.handle.pos, handle_radius * (1 + garland.handle.hot_t * 0.2), 0.05, .black);
+        drawer.canvas.strokeCircle(128, camera, garland.handle.pos, handle_radius * (1 + garland.handle.hot_t * 0.2), 0.05, .blackAlpha(alpha));
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(&.{k});
-            drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.6), 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.6), 0.05, .blackAlpha(alpha));
         }
         // TODO: cable
-        for (garland.cases.items) |c| try c.drawWithBindings(bindings, drawer, camera);
+        for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
     }
 
     pub fn handleForNewCases(garland: *const VeryPhysicalGarland, address: core.CaseAddress) *const HandleForNewCase {
@@ -611,13 +626,23 @@ const VeryPhysicalCase = struct {
         try case.next.fillVariables(bindings, mem);
     }
 
-    pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
+    pub fn drawWithBindingsAndAlpha(
+        case: VeryPhysicalCase,
+        bindings: ?BindingsState,
+        alpha: f32,
+        drawer: *Drawer,
+        camera: Rect,
+    ) !void {
         // TODO: Handle.draw
-        drawer.canvas.strokeCircle(128, camera, case.handle.pos, handle_radius * (1 + case.handle.hot_t * 0.2), 0.05, .black);
-        try case.pattern.drawWithBindings(bindings, drawer, camera);
-        try case.template.drawWithBindings(bindings, drawer, camera);
-        try case.fnk_name.drawWithBindings(bindings, drawer, camera);
-        try case.next.drawWithBindings(bindings, drawer, camera);
+        drawer.canvas.strokeCircle(128, camera, case.handle.pos, handle_radius * (1 + case.handle.hot_t * 0.2), 0.05, .blackAlpha(alpha));
+        try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        try case.next.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+    }
+
+    pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
+        try case.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
     }
 
     pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
@@ -748,6 +773,7 @@ const VeryPhysicalSexpr = struct {
         is_pattern: bool,
         is_pattern_t: f32,
         maybe_bindings: ?BindingsState,
+        alpha: f32,
     ) !void {
         const actual_point = point.applyToLocalPoint(.lerp(.{}, .lerp(
             .{ .turns = -0.02, .pos = .new(0.5, 0) },
@@ -757,18 +783,18 @@ const VeryPhysicalSexpr = struct {
         switch (value.*) {
             .empty => {},
             .atom_lit, .atom_var => try if (is_pattern)
-                drawer.drawPatternSexpr(camera, value, actual_point)
+                drawer.drawPatternSexpr(camera, value, actual_point, alpha)
             else
-                drawer.drawTemplateSexpr(camera, value, actual_point),
+                drawer.drawTemplateSexpr(camera, value, actual_point, alpha),
             .pair => |pair| {
                 try if (is_pattern)
-                    drawer.drawPatternPairHolder(camera, actual_point)
+                    drawer.drawPatternPairHolder(camera, actual_point, alpha)
                 else
-                    drawer.drawTemplatePairHolder(camera, actual_point);
+                    drawer.drawTemplatePairHolder(camera, actual_point, alpha);
                 // try drawTemplateWildcardLinesNonRecursive(...);
                 const offset = if (is_pattern) ViewHelper.OFFSET_PATTERN else ViewHelper.OFFSET_TEMPLATE;
-                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t, maybe_bindings);
-                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t, maybe_bindings);
+                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t, maybe_bindings, alpha);
+                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t, maybe_bindings, alpha);
             },
         }
         if (maybe_bindings) |bindings| {
@@ -789,16 +815,14 @@ const VeryPhysicalSexpr = struct {
                                         .is_pattern = is_pattern_t,
                                         .value = binding.value,
                                         .pos = actual_point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
-                                    });
+                                    }, alpha);
                                     drawer.endClip();
 
-                                    drawer.setTransparency(1 - anim_t);
                                     try drawer.drawSexpr(camera, .{
                                         .is_pattern = is_pattern_t,
                                         .value = value,
                                         .pos = actual_point,
-                                    });
-                                    drawer.setTransparency(1);
+                                    }, alpha * (1 - anim_t));
 
                                     // TODO: uncomment
                                     // if (anim_t < 0.5) {
@@ -817,7 +841,7 @@ const VeryPhysicalSexpr = struct {
                                     .is_pattern = is_pattern_t,
                                     .value = binding.value,
                                     .pos = actual_point,
-                                });
+                                }, alpha);
                             }
                             break;
                         }
@@ -826,7 +850,7 @@ const VeryPhysicalSexpr = struct {
                             .is_pattern = is_pattern_t,
                             .value = value,
                             .pos = actual_point,
-                        });
+                        }, alpha);
                     }
                 },
             }
@@ -838,7 +862,17 @@ const VeryPhysicalSexpr = struct {
     }
 
     pub fn drawWithBindings(sexpr: VeryPhysicalSexpr, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
+        try sexpr.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
+    }
+    pub fn drawWithBindingsAndAlpha(
+        sexpr: VeryPhysicalSexpr,
+        bindings: ?BindingsState,
+        alpha: f32,
+        drawer: *Drawer,
+        camera: Rect,
+    ) !void {
         assert(math.in01(sexpr.is_pattern_t));
+        assert(math.in01(alpha));
         // TODO: use the actual bool?
         const base_point = if (!sexpr.is_pattern)
             sexpr.point.applyToLocalPoint(.{ .turns = math.remap(
@@ -858,9 +892,19 @@ const VeryPhysicalSexpr = struct {
             ) });
 
         if (sexpr.isEmpty()) {
-            try drawer.drawPlaceholder(camera, base_point, sexpr.is_pattern);
+            try drawer.drawPlaceholder(camera, base_point, sexpr.is_pattern, alpha);
         } else {
-            return _draw(drawer, camera, sexpr.value, sexpr.hovered, base_point, sexpr.is_pattern, sexpr.is_pattern_t, bindings);
+            return _draw(
+                drawer,
+                camera,
+                sexpr.value,
+                sexpr.hovered,
+                base_point,
+                sexpr.is_pattern,
+                sexpr.is_pattern_t,
+                bindings,
+                alpha,
+            );
         }
     }
 
@@ -1342,6 +1386,9 @@ const Fnkbox = struct {
             }
         }
         if (fnkbox.execution) |e| {
+            if (e.state == .ending) {
+                try fnkbox.garland.drawWithAlpha(math.smoothstep(e.t, 0.9, 1), drawer, camera);
+            }
             try e.executor.draw(drawer, camera);
         } else {
             try fnkbox.garland.draw(drawer, camera);

@@ -1415,6 +1415,14 @@ pub const FColor = extern struct {
         return new(v, v, v);
     }
 
+    pub fn whiteAlpha(a: f32) FColor {
+        return white.withAlpha(a);
+    }
+
+    pub fn blackAlpha(a: f32) FColor {
+        return black.withAlpha(a);
+    }
+
     pub fn toArray(c: FColor) [4]f32 {
         return .{ c.r, c.g, c.b, c.a };
     }
@@ -1425,6 +1433,10 @@ pub const FColor = extern struct {
 
     pub fn withAlpha(c: FColor, a: f32) FColor {
         return FColor{ .r = c.r, .g = c.g, .b = c.b, .a = a };
+    }
+
+    pub fn timesAlpha(c: FColor, a: f32) FColor {
+        return FColor{ .r = c.r, .g = c.g, .b = c.b, .a = c.a * a };
     }
 
     pub fn lerp(a: FColor, b: FColor, t: f32) FColor {
