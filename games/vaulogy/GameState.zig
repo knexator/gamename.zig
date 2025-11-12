@@ -1257,25 +1257,7 @@ pub const TestCase = struct {
     expected: VeryPhysicalSexpr,
     actual: VeryPhysicalSexpr,
     tested: bool = false,
-    play_button: PlayButton,
-
-    const PlayButton = struct {
-        hot_t: f32,
-        center: Vec2,
-        size: Vec2,
-
-        pub fn draw(button: *const PlayButton, drawer: *Drawer, camera: Rect) !void {
-            drawer.canvas.borderRect(camera, button.rect(), math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
-        }
-
-        pub fn rect(button: PlayButton) Rect {
-            return .fromCenterAndSize(button.center, button.size);
-        }
-
-        pub fn updateHot(button: *PlayButton, hot: bool, delta_seconds: f32) void {
-            math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
-        }
-    };
+    play_button: Button,
 
     const Part = enum { input, expected, actual };
 
@@ -1284,6 +1266,20 @@ pub const TestCase = struct {
         try testcase.expected.draw(drawer, camera);
         try testcase.actual.draw(drawer, camera);
         try testcase.play_button.draw(drawer, camera);
+    }
+};
+
+const Button = struct {
+    hot_t: f32 = 0,
+    rect: Rect,
+
+    pub fn draw(button: *const Button, drawer: *Drawer, camera: Rect) !void {
+        drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
+        drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
+    }
+
+    pub fn updateHot(button: *Button, hot: bool, delta_seconds: f32) void {
+        math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
     }
 };
 
@@ -1303,7 +1299,7 @@ const Fnkbox = struct {
     text: []const u8,
     folded: bool,
     folded_t: f32,
-    fold_button: FoldButton = .{ .rect = .unit },
+    fold_button: Button = .{ .rect = .unit },
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
@@ -1323,20 +1319,6 @@ const Fnkbox = struct {
         const relative_executor_point: Point = relative_garland_point.inverseApplyToLocalPoint(.{ .pos = Executor.relative_garland_pos });
         return fnkbox.point().applyToLocalPoint(relative_executor_point).pos.addY(offset_y);
     }
-
-    const FoldButton = struct {
-        hot_t: f32 = 0,
-        rect: Rect,
-
-        pub fn draw(button: *const FoldButton, drawer: *Drawer, camera: Rect) !void {
-            drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
-            drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
-        }
-
-        pub fn updateHot(button: *FoldButton, hot: bool, delta_seconds: f32) void {
-            math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
-        }
-    };
 
     /// takes ownership of testcases
     pub fn init(text: []const u8, fnkname: *const Sexpr, base: Point, testcases: []TestCase, hover_pool: *HoveredSexpr.Pool) !Fnkbox {
@@ -1442,8 +1424,7 @@ const Fnkbox = struct {
             t.input.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(-4, 0) }), 0.6, delta_seconds);
             t.expected.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(0, 0) }), 0.6, delta_seconds);
             t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
-            t.play_button.center.lerpTowards(center.applyToLocalPosition(.new(-6, 0)), 0.6, delta_seconds);
-            t.play_button.size.lerpTowards(.one, 0.6, delta_seconds);
+            t.play_button.rect.lerpTowards(.fromCenterAndSize(center.applyToLocalPosition(.new(-6, 0)), .one), 0.6, delta_seconds);
         }
         if (fnkbox.execution) |*execution| {
             switch (execution.state) {
@@ -1707,6 +1688,10 @@ const Workspace = struct {
                 testcase: usize,
             },
             fnkbox_toggle_fold: usize,
+            // fnkbox_scrolled: struct {
+            //     fnkbox: usize,
+            //     old_position: f32,
+            // },
         },
 
         pub const noop: UndoableCommand = .{ .specific = .noop };
@@ -1808,25 +1793,25 @@ const Workspace = struct {
                 .input = try .fromSexpr(&dst.hover_pool, valid[1], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[2], .{}, false),
                 .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+                .play_button = .{ .rect = .unit },
             },
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[3], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[4], .{}, false),
                 .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+                .play_button = .{ .rect = .unit },
             },
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[5], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[6], .{}, false),
                 .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+                .play_button = .{ .rect = .unit },
             },
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[7], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[8], .{}, false),
                 .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .hot_t = 0, .center = .zero, .size = .one },
+                .play_button = .{ .rect = .unit },
             },
         }), &dst.hover_pool));
     }
@@ -2037,7 +2022,7 @@ const Workspace = struct {
             if (fnkbox.execution != null) continue;
             if (!fnkbox.boxTestcases().contains(pos)) continue;
             for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
-                if (testcase.play_button.rect().contains(pos)) {
+                if (testcase.play_button.rect.contains(pos)) {
                     return .{ .kind = .{ .fnkbox_launch_testcase = .{
                         .fnkbox = fnkbox_index,
                         .testcase = testcase_index,
