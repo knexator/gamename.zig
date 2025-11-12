@@ -1300,6 +1300,8 @@ const Fnkbox = struct {
     folded: bool,
     folded_t: f32,
     fold_button: Button = .{ .rect = .unit },
+    scroll_button_up: Button = .{ .rect = .unit },
+    scroll_button_down: Button = .{ .rect = .unit },
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
@@ -1346,19 +1348,11 @@ const Fnkbox = struct {
         );
     }
 
-    pub fn boxText(fnkbox: *const Fnkbox) Rect {
+    pub fn testcasesBoxUnfolded(fnkbox: *const Fnkbox) Rect {
         return .fromMeasureAndSizeV2(
             .top_center,
-            fnkbox.point().pos.addY(0.75),
-            Vec2.new(16, text_height).scale(1.0 - fnkbox.folded_t),
-        );
-    }
-
-    pub fn boxTestcases(fnkbox: *const Fnkbox) Rect {
-        return .fromMeasureAndSizeV2(
-            .top_center,
-            fnkbox.boxText().get(.bottom_center),
-            Vec2.new(16, testcases_height).scale(1.0 - fnkbox.folded_t),
+            fnkbox.point().pos.addY(0.75).addY(text_height),
+            Vec2.new(16, testcases_height),
         );
     }
 
@@ -1377,25 +1371,24 @@ const Fnkbox = struct {
         try fnkbox.fnkname.draw(drawer, camera);
         try fnkbox.handle.draw(drawer, camera);
         if (fnkbox.folded_t < 1) {
-            const box_text = fnkbox.boxText();
-            const box_testcases = fnkbox.boxTestcases();
-
             {
                 drawer.canvas.gl.startStencil();
-                drawer.canvas.fillRect(camera, box_text, .white);
+                drawer.canvas.fillRect(camera, rect, .white);
                 drawer.canvas.gl.doneStencil();
                 defer drawer.canvas.gl.stopStencil();
                 try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(2)), 0.8, .black);
             }
 
-            {
+            if (rect.intersect(fnkbox.testcasesBoxUnfolded())) |r| {
                 drawer.canvas.gl.startStencil();
-                drawer.canvas.fillRect(camera, box_testcases, .white);
+                drawer.canvas.fillRect(camera, r, .white);
                 drawer.canvas.gl.doneStencil();
                 defer drawer.canvas.gl.stopStencil();
                 for (fnkbox.testcases.items) |t| {
                     try t.draw(drawer, camera);
                 }
+                try fnkbox.scroll_button_up.draw(drawer, camera);
+                try fnkbox.scroll_button_down.draw(drawer, camera);
             }
         }
         if (fnkbox.execution) |e| {
@@ -1409,9 +1402,33 @@ const Fnkbox = struct {
         try fnkbox.fold_button.draw(drawer, camera);
     }
 
+    pub fn updateUiHotness(fnkbox: *Fnkbox, fnkbox_index: usize, ui_hot: Workspace.Focus.UiTarget, delta_seconds: f32) void {
+        fnkbox.fold_button.updateHot(switch (ui_hot.kind) {
+            else => false,
+            .fnkbox_toggle_fold => |k| k == fnkbox_index,
+        }, delta_seconds);
+        fnkbox.scroll_button_up.updateHot(switch (ui_hot.kind) {
+            else => false,
+            .fnkbox_scroll => |t| t.fnkbox == fnkbox_index and t.direction == .up,
+        }, delta_seconds);
+        fnkbox.scroll_button_down.updateHot(switch (ui_hot.kind) {
+            else => false,
+            .fnkbox_scroll => |t| t.fnkbox == fnkbox_index and t.direction == .down,
+        }, delta_seconds);
+        for (fnkbox.testcases.items, 0..) |*testcase, testcase_index| {
+            const is_hot = switch (ui_hot.kind) {
+                else => false,
+                .fnkbox_launch_testcase => |thing| thing.fnkbox == fnkbox_index and thing.testcase == testcase_index,
+            };
+            testcase.play_button.updateHot(is_hot, delta_seconds);
+        }
+    }
+
     pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         math.lerp_towards_range(&fnkbox.scroll_testcases, 0, tof32(fnkbox.testcases.items.len) - visible_testcases, 0.6, delta_seconds);
         fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
+        fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .top_left).plusMargin(-0.1), 0.6, delta_seconds);
+        fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .bottom_left).plusMargin(-0.1), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
         const offset_y = box_height * (1 - fnkbox.folded_t);
         Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(offset_y), 0.6, delta_seconds);
@@ -1578,6 +1595,10 @@ const Workspace = struct {
                     fnkbox: usize,
                     testcase: usize,
                 },
+                fnkbox_scroll: struct {
+                    fnkbox: usize,
+                    direction: enum { up, down },
+                },
             };
 
             pub fn equals(a: UiTarget, b: UiTarget) bool {
@@ -1688,10 +1709,10 @@ const Workspace = struct {
                 testcase: usize,
             },
             fnkbox_toggle_fold: usize,
-            // fnkbox_scrolled: struct {
-            //     fnkbox: usize,
-            //     old_position: f32,
-            // },
+            fnkbox_scroll: struct {
+                fnkbox: usize,
+                old_position: f32,
+            },
         },
 
         pub const noop: UndoableCommand = .{ .specific = .noop };
@@ -2019,8 +2040,15 @@ const Workspace = struct {
             if (fnkbox.fold_button.rect.contains(pos)) {
                 return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
             }
+            if (fnkbox.scroll_button_up.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } } };
+            }
+            if (fnkbox.scroll_button_down.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } } };
+            }
             if (fnkbox.execution != null) continue;
-            if (!fnkbox.boxTestcases().contains(pos)) continue;
+            if (!fnkbox.box().contains(pos)) continue;
+            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
             for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
                 if (testcase.play_button.rect.contains(pos)) {
                     return .{ .kind = .{ .fnkbox_launch_testcase = .{
@@ -2395,16 +2423,6 @@ const Workspace = struct {
         }
 
         // state changes
-        // TODO: remove
-        for (workspace.fnkboxes.items) |*f| {
-            if (platform.keyboard.cur.isDown(.KeyE)) {
-                f.scroll_testcases -= platform.delta_seconds / 0.2;
-            }
-            if (platform.keyboard.cur.isDown(.KeyQ)) {
-                f.scroll_testcases += platform.delta_seconds / 0.2;
-            }
-        }
-
         if (platform.keyboard.wasPressed(.KeyZ)) {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
@@ -2429,6 +2447,10 @@ const Workspace = struct {
                     .fnkbox_toggle_fold => |k| {
                         const fnkbox = &workspace.fnkboxes.items[k];
                         fnkbox.folded = !fnkbox.folded;
+                    },
+                    .fnkbox_scroll => |t| {
+                        const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                        fnkbox.scroll_testcases = t.old_position;
                     },
                     .grabbed => |g| {
                         switch (g.from.kind) {
@@ -2681,17 +2703,7 @@ const Workspace = struct {
 
         // update ui hotness
         for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
-            fnkbox.fold_button.updateHot(switch (ui_hot.kind) {
-                else => false,
-                .fnkbox_toggle_fold => |k| k == fnkbox_index,
-            }, platform.delta_seconds);
-            for (fnkbox.testcases.items, 0..) |*testcase, testcase_index| {
-                const is_hot = switch (ui_hot.kind) {
-                    else => false,
-                    .fnkbox_launch_testcase => |thing| thing.fnkbox == fnkbox_index and thing.testcase == testcase_index,
-                };
-                testcase.play_button.updateHot(is_hot, platform.delta_seconds);
-            }
+            fnkbox.updateUiHotness(fnkbox_index, ui_hot, platform.delta_seconds);
         }
 
         // TODO: reduce duplication?
@@ -2881,6 +2893,17 @@ const Workspace = struct {
             },
         }
 
+        // apply ui-like dragging
+        switch (workspace.focus.ui_active.kind) {
+            else => {},
+            .fnkbox_scroll => |t| {
+                workspace.fnkboxes.items[t.fnkbox].scroll_testcases += platform.delta_seconds * @as(f32, switch (t.direction) {
+                    .up => 1,
+                    .down => -1,
+                }) / 0.2;
+            },
+        }
+
         // update cases & garlands spring positions
         for (workspace.cases.items) |*c| {
             c.update(platform.delta_seconds);
@@ -2906,6 +2929,13 @@ const Workspace = struct {
             switch (hovering.kind) {
                 .nothing => switch (ui_hot.kind) {
                     .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
+                    .fnkbox_scroll => |t| blk: {
+                        workspace.focus.ui_active = ui_hot;
+                        break :blk .{ .specific = .{ .fnkbox_scroll = .{
+                            .fnkbox = t.fnkbox,
+                            .old_position = workspace.fnkboxes.items[t.fnkbox].scroll_testcases,
+                        } } };
+                    },
                     .nothing, .fnkbox_launch_testcase => blk: {
                         workspace.focus.ui_active = ui_hot;
                         break :blk .noop;
@@ -3003,7 +3033,7 @@ const Workspace = struct {
                 .noop
             else switch (ui_active.kind) {
                 .nothing => unreachable,
-                .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
+                .fnkbox_toggle_fold, .fnkbox_scroll => .noop,
                 .fnkbox_launch_testcase => |t| .{ .specific = .{ .fnkbox_launch_testcase = .{
                     .fnkbox = t.fnkbox,
                     .testcase = t.testcase,
@@ -3034,6 +3064,9 @@ const Workspace = struct {
             .fnkbox_toggle_fold => |k| {
                 const fnkbox = &workspace.fnkboxes.items[k];
                 fnkbox.folded = !fnkbox.folded;
+            },
+            .fnkbox_scroll => {
+                // handled in the 'apply ui-like draggin' section
             },
             .grabbed => |g| {
                 switch (g.from.kind) {

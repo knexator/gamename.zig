@@ -954,9 +954,27 @@ pub const Rect = extern struct {
     }
 
     pub fn intersect(a: Rect, b: Rect) ?Rect {
-        // TODO NOW
-        _ = b;
-        return a;
+        const a_left = a.top_left.x;
+        const a_right = a.top_left.x + a.size.x;
+        const a_top = a.top_left.y;
+        const a_bottom = a.top_left.y + a.size.y;
+
+        const b_left = b.top_left.x;
+        const b_right = b.top_left.x + b.size.x;
+        const b_top = b.top_left.y;
+        const b_bottom = b.top_left.y + b.size.y;
+
+        const left = @max(a_left, b_left);
+        const right = @min(a_right, b_right);
+        const top = @max(a_top, b_top);
+        const bottom = @min(a_bottom, b_bottom);
+
+        if (left >= right or top >= bottom) {
+            return null;
+        } else return .{
+            .top_left = Vec2{ .x = left, .y = top },
+            .size = Vec2{ .x = right - left, .y = bottom - top },
+        };
     }
 
     pub fn getCenter(self: Rect) Vec2 {
