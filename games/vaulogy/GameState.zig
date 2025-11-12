@@ -244,8 +244,13 @@ const Handle = struct {
     hot_t: f32 = 0,
     pub const radius = 0.2;
 
-    pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect) !void {
-        drawer.canvas.strokeCircle(128, camera, handle.pos, radius * (1 + handle.hot_t * 0.2), 0.05, .black);
+    pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
+        try handle.drawCustom(drawer, camera, alpha, 1, 0.2);
+    }
+
+    pub fn drawCustom(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32, p1: f32, p2: f32) !void {
+        drawer.canvas.fillCircle(camera, handle.pos, p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha));
+        drawer.canvas.strokeCircle(128, camera, handle.pos, p1 * radius * (1 + handle.hot_t * p2), 0.05, .blackAlpha(alpha));
     }
 
     pub fn update(handle: *Handle, hot_target: f32, delta_seconds: f32) void {
@@ -360,10 +365,18 @@ const VeryPhysicalGarland = struct {
     }!void {
         assert(math.in01(alpha));
         // TODO: Handle.draw
+        var last_pos = garland.handle.pos;
+        for (0..garland.cases.items.len + 1) |k| {
+            const h = garland.handleForNewCases(&.{k});
+            const cur_pos = h.pos;
+            drawer.canvas.line(camera, &.{ last_pos, cur_pos }, 0.05, .blackAlpha(alpha));
+            last_pos = cur_pos;
+        }
+        try garland.handle.draw(drawer, camera, alpha);
         drawer.canvas.strokeCircle(128, camera, garland.handle.pos, handle_radius * (1 + garland.handle.hot_t * 0.2), 0.05, .blackAlpha(alpha));
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(&.{k});
-            drawer.canvas.strokeCircle(128, camera, h.pos, 0.5 * handle_radius * (1 + h.hot_t * 0.6), 0.05, .blackAlpha(alpha));
+            try h.drawCustom(drawer, camera, alpha, 0.5, 0.6);
         }
         // TODO: cable
         for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
@@ -477,8 +490,7 @@ const VeryPhysicalGarland = struct {
     }
 
     pub fn insertCase(parent: *VeryPhysicalGarland, mem: std.mem.Allocator, index: usize, case: VeryPhysicalCase) !void {
-        try parent.handles_for_new_cases_rest.insert(mem, index, .{ .pos = .zero });
-        // try parent.handles_for_new_cases_rest.insert(mem, index, .{ .pos = parent.handleForNewCases(&.{index}).pos });
+        try parent.handles_for_new_cases_rest.insert(mem, index, .{ .pos = parent.handleForNewCases(&.{index}).pos });
         try parent.cases.insert(mem, index, case);
     }
 
@@ -633,8 +645,7 @@ const VeryPhysicalCase = struct {
         drawer: *Drawer,
         camera: Rect,
     ) !void {
-        // TODO: Handle.draw
-        drawer.canvas.strokeCircle(128, camera, case.handle.pos, handle_radius * (1 + case.handle.hot_t * 0.2), 0.05, .blackAlpha(alpha));
+        try case.handle.draw(drawer, camera, alpha);
         try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
@@ -1032,7 +1043,7 @@ const Executor = struct {
     }
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
-        try executor.handle.draw(drawer, camera);
+        try executor.handle.draw(drawer, camera, 1);
         const bindings: BindingsState = if (executor.animation) |anim| .{
             .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
             .old = executor.old_bindings.items,
@@ -1234,7 +1245,7 @@ const Fnkviewer = struct {
     }
 
     pub fn draw(fnkviewer: Fnkviewer, drawer: *Drawer, camera: Rect) !void {
-        try fnkviewer.handle.draw(drawer, camera);
+        try fnkviewer.handle.draw(drawer, camera, 1);
         try fnkviewer.fnkname.draw(drawer, camera);
         try fnkviewer.garland.draw(drawer, camera);
     }
@@ -1372,7 +1383,7 @@ const Fnkbox = struct {
         const rect = fnkbox.box();
         drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
         try fnkbox.fnkname.draw(drawer, camera);
-        try fnkbox.handle.draw(drawer, camera);
+        try fnkbox.handle.draw(drawer, camera, 1);
         if (fnkbox.folded_t < 1) {
             {
                 drawer.canvas.gl.startStencil();
