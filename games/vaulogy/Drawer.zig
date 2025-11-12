@@ -609,18 +609,14 @@ fn _drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Po
     }
 }
 
-pub fn clipAtomRegion(drawer: *Drawer, camera: Rect, world_point: Point) void {
-    std.log.err("TODO", .{});
-    // TODO
-    _ = drawer;
-    _ = camera;
-    _ = world_point;
+pub fn clipAtomRegion(drawer: *Drawer, camera: Rect, world_point: Point) !void {
+    drawer.canvas.gl.startStencil();
+    try drawer.drawShapeV3(camera, world_point, AtomVisuals.Geometry.template_placeholder, .white, .white, 1);
+    drawer.canvas.gl.doneStencil();
 }
 
 pub fn endClip(drawer: *Drawer) void {
-    std.log.err("TODO", .{});
-    // TODO
-    _ = drawer;
+    drawer.canvas.gl.stopStencil();
 }
 
 fn drawTemplateWildcardLinesNonRecursive(

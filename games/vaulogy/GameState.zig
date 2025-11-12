@@ -809,7 +809,7 @@ const VeryPhysicalSexpr = struct {
                                 if (is_pattern) {
                                     // TODO
                                 } else {
-                                    drawer.clipAtomRegion(camera, actual_point);
+                                    try drawer.clipAtomRegion(camera, actual_point);
                                     const t = math.smoothstep(anim_t, 0, 0.4);
                                     try drawer.drawSexpr(camera, .{
                                         .is_pattern = is_pattern_t,
