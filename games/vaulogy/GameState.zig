@@ -807,7 +807,8 @@ const VeryPhysicalSexpr = struct {
                         if (bindings.anim_t) |anim_t| {
                             if (std.mem.eql(u8, binding.name, x.value)) {
                                 if (is_pattern) {
-                                    // TODO
+                                    const t = math.smoothstep(anim_t, 0, 0.1);
+                                    try drawer.drawEatingPattern(camera, actual_point, binding, t, alpha);
                                 } else {
                                     try drawer.clipAtomRegion(camera, actual_point);
                                     const t = math.smoothstep(anim_t, 0, 0.4);
@@ -835,7 +836,8 @@ const VeryPhysicalSexpr = struct {
                     } else for (bindings.old) |binding| {
                         if (std.mem.eql(u8, binding.name, x.value)) {
                             if (is_pattern) {
-                                // TODO
+                                const t = 1;
+                                try drawer.drawEatingPattern(camera, actual_point, binding, t, alpha);
                             } else {
                                 try drawer.drawSexpr(camera, .{
                                     .is_pattern = is_pattern_t,
@@ -864,6 +866,7 @@ const VeryPhysicalSexpr = struct {
     pub fn drawWithBindings(sexpr: VeryPhysicalSexpr, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
         try sexpr.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
     }
+
     pub fn drawWithBindingsAndAlpha(
         sexpr: VeryPhysicalSexpr,
         bindings: ?BindingsState,

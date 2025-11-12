@@ -478,6 +478,24 @@ fn drawShapeV3(
     }
 }
 
+pub fn drawEatingPattern(
+    drawer: *Drawer,
+    camera: Rect,
+    point: Point,
+    binding: core.Binding,
+    t: f32,
+    alpha: f32,
+) !void {
+    assert(in01(t));
+    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name);
+    try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
+    try drawer.drawSexpr(camera, .{
+        .is_pattern = 0,
+        .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
+        .value = binding.value,
+    }, alpha);
+}
+
 pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha: f32) !void {
     try drawShapeV3(
         drawer,
