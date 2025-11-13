@@ -645,6 +645,11 @@ const VeryPhysicalCase = struct {
         drawer: *Drawer,
         camera: Rect,
     ) !void {
+        // TODO: draw variables in the cable
+        drawer.canvas.line(camera, &.{
+            case.pattern.point.pos,
+            case.template.point.pos,
+        }, 0.05, .blackAlpha(alpha));
         try case.handle.draw(drawer, camera, alpha);
         try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
