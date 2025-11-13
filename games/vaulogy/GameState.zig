@@ -132,7 +132,7 @@ var COLORS: struct {
 usual: kommon.Usual,
 
 drawer: Drawer,
-camera: Rect = .fromCenterAndSize(.zero, .new(16, 9)),
+camera: Rect = .fromCenterAndSize(.new(100, 0), .new(16, 9)),
 
 core_mem: core.VeryPermamentGameStuff,
 scoring_run: core.ScoringRun,
@@ -1287,6 +1287,23 @@ pub const TestCase = struct {
     play_button: Button,
 
     const Part = enum { input, expected, actual };
+    pub const parts: [3]TestCase.Part = .{ .input, .expected, .actual };
+
+    pub fn partRef(testcase: *TestCase, part: Part) *VeryPhysicalSexpr {
+        return switch (part) {
+            .input => &testcase.input,
+            .expected => &testcase.expected,
+            .actual => &testcase.actual,
+        };
+    }
+
+    pub fn partConst(testcase: *const TestCase, part: Part) *const VeryPhysicalSexpr {
+        return switch (part) {
+            .input => &testcase.input,
+            .expected => &testcase.expected,
+            .actual => &testcase.actual,
+        };
+    }
 
     pub fn draw(testcase: *const TestCase, drawer: *Drawer, camera: Rect) !void {
         try testcase.input.draw(drawer, camera);
@@ -1713,10 +1730,15 @@ const Workspace = struct {
         executor_input: usize,
         fnkviewer_fnkname: usize,
         fnkbox_fnkname: usize,
+        fnkbox_testcase: struct {
+            fnkbox: usize,
+            testcase: usize,
+            part: TestCase.Part,
+        },
 
         pub fn immutable(place: BaseSexprPlace) bool {
             return switch (place) {
-                .fnkbox_fnkname => true,
+                .fnkbox_fnkname, .fnkbox_testcase => true,
                 .board, .case, .garland, .executor_input, .fnkviewer_fnkname => false,
             };
         }
@@ -1854,7 +1876,7 @@ const Workspace = struct {
         dst.fnkboxes = .init(mem.gpa);
         try dst.fnkboxes.append(try .init(
             \\Get the lowercase version of each atom
-        , valid[0], .{ .pos = .new(-10, 5) }, try mem.gpa.dupe(TestCase, &.{
+        , valid[0], .{ .pos = .new(100, 0) }, try mem.gpa.dupe(TestCase, &.{
             .{
                 .input = try .fromSexpr(&dst.hover_pool, valid[1], .{}, false),
                 .expected = try .fromSexpr(&dst.hover_pool, valid[2], .{}, false),
@@ -1952,6 +1974,7 @@ const Workspace = struct {
             .executor_input => |k| &workspace.executors.items[k].input,
             .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
+            .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
         };
     }
 
@@ -2259,6 +2282,7 @@ const Workspace = struct {
             }
 
             for (workspace.fnkboxes.items, 0..) |fnkbox, k| {
+                // TODO: change this if some part of fnkbox gets mutable
                 if (grabbed_tag != .nothing) continue;
                 if (try ViewHelper.overlapsSexpr(
                     // TODO: don't leak
@@ -2273,6 +2297,31 @@ const Workspace = struct {
                         .base = .{ .fnkbox_fnkname = k },
                         .local = address,
                     } } };
+                }
+                if (!fnkbox.box().contains(pos)) continue;
+                if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
+                for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
+                    inline for (TestCase.parts) |part| {
+                        const s = testcase.partConst(part);
+                        if (try ViewHelper.overlapsSexpr(
+                            // TODO: don't leak
+                            res,
+                            s.is_pattern,
+                            s.value,
+                            s.point,
+                            pos,
+                            grabbed_tag == .sexpr,
+                        )) |address| {
+                            return .{ .kind = .{ .sexpr = .{
+                                .base = .{ .fnkbox_testcase = .{
+                                    .fnkbox = k,
+                                    .testcase = testcase_index,
+                                    .part = part,
+                                } },
+                                .local = address,
+                            } } };
+                        }
+                    }
                 }
             }
         }
@@ -2761,15 +2810,33 @@ const Workspace = struct {
             e.fnkname.updateIsPattern(platform.delta_seconds);
         }
         for (workspace.fnkboxes.items, 0..) |*e, k| {
-            const hovered = switch (hovering.kind) {
-                else => null,
-                .sexpr => |sexpr| switch (sexpr.base) {
+            {
+                const hovered = switch (hovering.kind) {
                     else => null,
-                    .fnkbox_fnkname => |thing_index| if (thing_index == k) sexpr.local else null,
-                },
-            };
-            e.fnkname.hovered.update(hovered, 1.0, platform.delta_seconds);
-            e.fnkname.updateIsPattern(platform.delta_seconds);
+                    .sexpr => |sexpr| switch (sexpr.base) {
+                        else => null,
+                        .fnkbox_fnkname => |thing_index| if (thing_index == k) sexpr.local else null,
+                    },
+                };
+                e.fnkname.hovered.update(hovered, 1.0, platform.delta_seconds);
+                e.fnkname.updateIsPattern(platform.delta_seconds);
+            }
+
+            for (e.testcases.items, 0..) |*testcase, testcase_index| {
+                inline for (TestCase.parts) |part| {
+                    const hovered = switch (hovering.kind) {
+                        else => null,
+                        .sexpr => |sexpr| switch (sexpr.base) {
+                            else => null,
+                            .fnkbox_testcase => |t| if (t.fnkbox == k and
+                                t.testcase == testcase_index and
+                                t.part == part) sexpr.local else null,
+                        },
+                    };
+                    testcase.partRef(part).hovered.update(hovered, 1.0, platform.delta_seconds);
+                    testcase.partRef(part).updateIsPattern(platform.delta_seconds);
+                }
+            }
         }
 
         // update ui hotness
