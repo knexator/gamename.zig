@@ -1594,6 +1594,11 @@ const Workspace = struct {
             math.lerp_towards(&self.source_hot_t, if (part != null and part.? == .source) 1 else 0, 0.6, delta_seconds);
             math.lerp_towards(&self.target_hot_t, if (part != null and part.? == .target) 1 else 0, 0.6, delta_seconds);
         }
+
+        pub fn clone(self: *const Lens) Lens {
+            // not plain old data due to tmp_*, but that's not important
+            return self.*;
+        }
     };
 
     lenses: std.ArrayList(Lens),
@@ -2502,13 +2507,19 @@ const Workspace = struct {
                                 e.handle.pos = g.old_position;
                             },
                             .lens_handle => |h| {
-                                const lens = &workspace.lenses.items[h.index];
-                                lens.setHandlePos(h.part, g.old_position);
-                                assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
-                                assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
+                                if (g.duplicate) {
+                                    _ = workspace.lenses.pop().?;
+                                } else {
+                                    const lens = &workspace.lenses.items[h.index];
+                                    lens.setHandlePos(h.part, g.old_position);
+                                    assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
+                                    assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
+                                }
                             },
                             .garland_handle => |h| {
-                                if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
+                                if (g.duplicate) {
+                                    _ = workspace.garlands.pop().?;
+                                } else if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                                     const garland = &workspace.garlands.items[h.parent.garland];
                                     garland.handle.pos = g.old_position;
                                 } else {
@@ -2517,7 +2528,9 @@ const Workspace = struct {
                                 }
                             },
                             .case_handle => |h| {
-                                if (h.local.len == 0) {
+                                if (g.duplicate) {
+                                    _ = workspace.cases.pop().?;
+                                } else if (h.local.len == 0) {
                                     const case = &workspace.cases.items[h.parent.case];
                                     case.handle.pos = g.old_position;
                                 } else {
@@ -2885,10 +2898,7 @@ const Workspace = struct {
             // TODO: would be nice to unify all handle dragging
             .lens_handle => |p| {
                 const lens = &workspace.lenses.items[p.index];
-                switch (p.part) {
-                    .source => lens.source.addInPlace(mouse.deltaPos()),
-                    .target => lens.target.addInPlace(mouse.deltaPos()),
-                }
+                lens.setHandlePos(p.part, mouse.cur.position);
             },
             .executor_handle => |h| {
                 workspace.executors.items[h].handle.pos = mouse.cur.position;
@@ -3105,19 +3115,39 @@ const Workspace = struct {
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => {
-                        if (g.duplicate) std.log.err("TODO", .{});
-                        workspace.focus.grabbing = g.from;
+                    inline .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => |h, t| {
+                        if (g.duplicate) {
+                            switch (t) {
+                                else => std.log.err("TODO", .{}),
+                                .lens_handle => {
+                                    var lens_pair = workspace.lenses.items[h.index].clone();
+                                    lens_pair.source.addInPlace(.one);
+                                    lens_pair.target.addInPlace(.one);
+                                    try workspace.lenses.append(lens_pair);
+                                    // TODO: lens transform?
+                                    workspace.focus.grabbing = .{ .kind = .{
+                                        .lens_handle = .{
+                                            .index = workspace.lenses.items.len - 1,
+                                            .part = h.part,
+                                        },
+                                    }, .lens_transform = .identity };
+                                },
+                            }
+                        } else workspace.focus.grabbing = g.from;
                     },
                     .garland_handle => |h| {
-                        if (g.duplicate) std.log.err("TODO", .{});
-                        if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
+                        if (!g.duplicate and h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = g.from;
                         } else {
                             const place = workspace.garlandAt(h);
-                            const garland = place.*;
-                            try workspace.garlands.append(garland);
-                            place.* = .init(garland.handle.pos);
+                            if (g.duplicate) {
+                                const garland = try place.clone(mem.gpa, &workspace.hover_pool);
+                                try workspace.garlands.append(garland);
+                            } else {
+                                const garland = place.*;
+                                try workspace.garlands.append(garland);
+                                place.* = .init(garland.handle.pos);
+                            }
                             // TODO: lens transform?
                             workspace.focus.grabbing = .{ .kind = .{
                                 .garland_handle = .{
@@ -3128,17 +3158,32 @@ const Workspace = struct {
                         }
                     },
                     .case_handle => |h| {
-                        if (g.duplicate) std.log.err("TODO", .{});
                         assert(h.existing_case);
                         if (h.local.len == 0) {
                             assert(std.meta.activeTag(h.parent) == .case);
-                            workspace.focus.grabbing = g.from;
+                            if (g.duplicate) {
+                                const case = try workspace.cases.items[h.parent.case].clone(mem.gpa, &workspace.hover_pool);
+                                try workspace.cases.append(case);
+                                // TODO: lens transform?
+                                workspace.focus.grabbing = .{ .kind = .{
+                                    .case_handle = .{
+                                        .local = &.{},
+                                        .parent = .{ .case = workspace.cases.items.len - 1 },
+                                        .existing_case = true,
+                                    },
+                                }, .lens_transform = .identity };
+                            } else {
+                                workspace.focus.grabbing = g.from;
+                            }
                         } else {
                             const garland = switch (h.parent) {
                                 .garland => |garland_index| &workspace.garlands.items[garland_index],
                                 .case => |case_index| &workspace.cases.items[case_index].next,
                             };
-                            const case = garland.popCaseDeep(h.local);
+                            const case = if (g.duplicate)
+                                try garland.childCase(h.local).clone(mem.gpa, &workspace.hover_pool)
+                            else
+                                garland.popCaseDeep(h.local);
                             try workspace.cases.append(case);
                             // TODO: lens transform?
                             workspace.focus.grabbing = .{ .kind = .{
