@@ -1706,6 +1706,13 @@ const Workspace = struct {
         executor_input: usize,
         fnkviewer_fnkname: usize,
         fnkbox_fnkname: usize,
+
+        pub fn immutable(place: BaseSexprPlace) bool {
+            return switch (place) {
+                .fnkbox_fnkname => true,
+                .board, .case, .garland, .executor_input, .fnkviewer_fnkname => false,
+            };
+        }
     };
     const SexprPlace = struct {
         base: BaseSexprPlace,
@@ -2144,7 +2151,7 @@ const Workspace = struct {
             }
         }
 
-        // sexprs inside lenses and on the board and on cases and on garlands
+        // sexprs inside lenses and everywhere else
         if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
             const is_dropzone = grabbed_tag != .nothing;
             for (workspace.lenses.items) |lens| {
@@ -2247,6 +2254,24 @@ const Workspace = struct {
                 )) |address| {
                     return .{ .kind = .{ .sexpr = .{
                         .base = .{ .fnkviewer_fnkname = k },
+                        .local = address,
+                    } } };
+                }
+            }
+
+            for (workspace.fnkboxes.items, 0..) |fnkbox, k| {
+                if (grabbed_tag != .nothing) continue;
+                if (try ViewHelper.overlapsSexpr(
+                    // TODO: don't leak
+                    res,
+                    fnkbox.fnkname.is_pattern,
+                    fnkbox.fnkname.value,
+                    fnkbox.fnkname.point,
+                    pos,
+                    grabbed_tag == .sexpr,
+                )) |address| {
+                    return .{ .kind = .{ .sexpr = .{
+                        .base = .{ .fnkbox_fnkname = k },
                         .local = address,
                     } } };
                 }
@@ -2736,7 +2761,7 @@ const Workspace = struct {
             e.fnkname.hovered.update(hovered, 1.0, platform.delta_seconds);
             e.fnkname.updateIsPattern(platform.delta_seconds);
         }
-        for (workspace.fnkviewers.items, 0..) |*e, k| {
+        for (workspace.fnkboxes.items, 0..) |*e, k| {
             const hovered = switch (hovering.kind) {
                 else => null,
                 .sexpr => |sexpr| switch (sexpr.base) {
@@ -2989,7 +3014,7 @@ const Workspace = struct {
                     .specific = .{
                         .grabbed = .{
                             .from = hovering,
-                            .duplicate = mouse.wasPressed(.right),
+                            .duplicate = mouse.wasPressed(.right) or s.base.immutable(),
                             .old_position = workspace.sexprAtPlace(s.base).point.pos,
                             .old_ispattern = workspace.sexprAtPlace(s.base).is_pattern,
                         },
