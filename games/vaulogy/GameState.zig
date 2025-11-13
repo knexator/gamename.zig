@@ -266,6 +266,10 @@ const VeryPhysicalGarland = struct {
 
     handle: Handle,
     pub const handle_radius: f32 = 0.2;
+    pub const handle_drop_radius: f32 = 1.5;
+    pub const case_drop_preview_perc: f32 = 0.5;
+    pub const dist_between_cases_first: f32 = 1.5;
+    pub const dist_between_cases_rest: f32 = 2.5;
 
     const HandleForNewCase = Handle;
 
@@ -376,7 +380,7 @@ const VeryPhysicalGarland = struct {
         drawer.canvas.strokeCircle(128, camera, garland.handle.pos, handle_radius * (1 + garland.handle.hot_t * 0.2), 0.05, .blackAlpha(alpha));
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(&.{k});
-            try h.drawCustom(drawer, camera, alpha, 0.5, 0.6);
+            try h.drawCustom(drawer, camera, alpha, 0.5, 3.0);
         }
         // TODO: cable
         for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
@@ -418,33 +422,36 @@ const VeryPhysicalGarland = struct {
     pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, delta_seconds: f32) void {
         garland.handle.pos = center.pos;
         for (garland.cases.items, 0..) |*c, k| {
-            const target = center.applyToLocalPoint(.{ .pos = .new(0, 1.5 + 2.5 * tof32(k)) });
+            const target = center.applyToLocalPoint(.{ .pos = .new(0, dist_between_cases_first + dist_between_cases_rest * tof32(k)) });
             c.kinematicUpdate(target, null, null, delta_seconds);
         }
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCasesRef(&.{k});
             h.pos = if (k == 0)
-                garland.handle.pos.addY(1.5 / 2.0)
+                garland.handle.pos.addY(dist_between_cases_first / 2.0)
             else
-                garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) - 0.5));
+                garland.handle.pos.addY(dist_between_cases_first + dist_between_cases_rest * (tof32(k) - 0.5));
         }
     }
 
     pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, delta_seconds: f32) void {
         assert(math.in01(offset));
         assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
-        for (garland.cases.items, 0..) |*c, k| {
-            const target = garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) + offset));
-            Vec2.lerpTowards(&c.handle.pos, target, 0.6, delta_seconds);
-            c.update(delta_seconds);
-        }
-        for (0..garland.cases.items.len + 1) |k| {
-            const h = garland.handleForNewCasesRef(&.{k});
-            const target = if (k == 0)
-                garland.handle.pos.addY(1.5 / 2.0)
-            else
-                garland.handle.pos.addY(1.5 + 2.5 * (tof32(k) - 0.5 + offset));
-            Vec2.lerpTowards(&h.pos, target, 0.6, delta_seconds);
+        for (0..garland.cases.items.len * 2 + 1) |k| {
+            const dist = (if (k <= 1) dist_between_cases_first / 2.0 else dist_between_cases_rest / 2.0) +
+                (if (k == 1) offset * dist_between_cases_rest else 0);
+            if (k % 2 == 0) {
+                const handle = garland.handleForNewCasesRef(&.{@divExact(k, 2)});
+                const prev_pos = if (k == 0) garland.handle.pos else garland.cases.items[@divExact(k - 2, 2)].handle.pos;
+                const target = prev_pos.addY(dist + handle.hot_t * dist * case_drop_preview_perc);
+                Vec2.lerpTowards(&handle.pos, target, 0.6, delta_seconds);
+            } else {
+                const case = &garland.cases.items[@divExact(k - 1, 2)];
+                const prev_handle = garland.handleForNewCases(&.{@divExact(k - 1, 2)});
+                const target = prev_handle.pos.addY(dist + prev_handle.hot_t * dist * case_drop_preview_perc);
+                Vec2.lerpTowards(&case.handle.pos, target, 0.6, delta_seconds);
+                case.update(delta_seconds);
+            }
         }
     }
 
@@ -480,7 +487,15 @@ const VeryPhysicalGarland = struct {
 
     pub fn popCase(parent: *VeryPhysicalGarland, index: usize) VeryPhysicalCase {
         _ = parent.handles_for_new_cases_rest.orderedRemove(index);
-        return parent.cases.orderedRemove(index);
+        const case = parent.cases.orderedRemove(index);
+        parent.handleForNewCasesRef(&.{index}).pos = case.handle.pos;
+        return case;
+    }
+
+    pub fn popFirstCaseForExecution(parent: *VeryPhysicalGarland) VeryPhysicalCase {
+        _ = parent.handles_for_new_cases_rest.orderedRemove(0);
+        const case = parent.cases.orderedRemove(0);
+        return case;
     }
 
     pub fn insertCaseDeep(parent: *VeryPhysicalGarland, mem: std.mem.Allocator, address: core.CaseAddress, case: VeryPhysicalCase) !void {
@@ -1181,7 +1196,7 @@ const Executor = struct {
         }
 
         if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
-            const case = executor.garland.popCase(0);
+            const case = executor.garland.popFirstCaseForExecution();
             var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
             const matching = try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings);
             const invoked_fnk: ?VeryPhysicalGarland = if (!matching)
@@ -1198,7 +1213,7 @@ const Executor = struct {
                         .pattern = c.pattern,
                         .fnk_name = c.fnk_name,
                         .template = c.template,
-                    }, .{ .pos = invoked.handle.pos.addY(2.5 * tof32(k)) }));
+                    }, .{ .pos = invoked.handle.pos.addY(VeryPhysicalGarland.dist_between_cases_first + VeryPhysicalGarland.dist_between_cases_rest * tof32(k)) }));
                 }
                 break :blk invoked;
             };
@@ -2349,7 +2364,7 @@ const Workspace = struct {
                 var it = garland.newHandlesAddressIterator(res);
                 while (try it.next()) |address| {
                     const handle = garland.handleForNewCases(address);
-                    if (pos.distTo(handle.pos) < VeryPhysicalCase.handle_radius) {
+                    if (pos.distTo(handle.pos) < VeryPhysicalGarland.handle_drop_radius) {
                         return .{ .kind = .{
                             .case_handle = .{
                                 .parent = .{ .garland = garland_index },
@@ -2365,7 +2380,7 @@ const Workspace = struct {
                 var it = parent.next.newHandlesAddressIterator(res);
                 while (try it.next()) |address| {
                     const handle = parent.next.handleForNewCases(address);
-                    if (pos.distTo(handle.pos) < VeryPhysicalCase.handle_radius) {
+                    if (pos.distTo(handle.pos) < VeryPhysicalGarland.handle_drop_radius) {
                         return .{ .kind = .{ .case_handle = .{
                             .parent = .{ .case = k },
                             .local = address,
