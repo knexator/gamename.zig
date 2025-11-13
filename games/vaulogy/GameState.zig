@@ -132,7 +132,7 @@ var COLORS: struct {
 usual: kommon.Usual,
 
 drawer: Drawer,
-camera: Rect = .fromCenterAndSize(.new(100, 0), .new(16, 9)),
+camera: Rect = .fromCenterAndSize(.new(100, 0), Vec2.new(16, 9).scale(2)),
 
 core_mem: core.VeryPermamentGameStuff,
 scoring_run: core.ScoringRun,
@@ -1316,10 +1316,19 @@ pub const TestCase = struct {
 const Button = struct {
     hot_t: f32 = 0,
     rect: Rect,
+    kind: enum { unknown, launch_testcase } = .unknown,
 
     pub fn draw(button: *const Button, drawer: *Drawer, camera: Rect) !void {
         drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
         drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
+        switch (button.kind) {
+            .unknown => {},
+            .launch_testcase => drawer.canvas.line(camera, &.{
+                button.rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
+                button.rect.getCenter().add(.new(0, 0)).addX(0.15),
+                button.rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
+            }, 0.05, .black),
+        }
     }
 
     pub fn updateHot(button: *Button, hot: bool, delta_seconds: f32) void {
@@ -1351,7 +1360,7 @@ const Fnkbox = struct {
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
     const relative_bottom_testcase_point: Point = .{ .pos = .new(0, box_height - 0.5) };
     const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
-    const text_height: f32 = 2;
+    const text_height: f32 = 3;
     const testcases_height: f32 = 2.5 * visible_testcases;
     const box_height = text_height + testcases_height;
     const visible_testcases = 2;
@@ -1366,14 +1375,23 @@ const Fnkbox = struct {
         return fnkbox.point().applyToLocalPoint(relative_executor_point).pos.addY(offset_y);
     }
 
-    /// takes ownership of testcases
-    pub fn init(text: []const u8, fnkname: *const Sexpr, base: Point, testcases: []TestCase, hover_pool: *HoveredSexpr.Pool) !Fnkbox {
+    pub fn init(text: []const u8, fnkname: *const Sexpr, base: Point, testcases_values: []const struct { input: *const Sexpr, expected: *const Sexpr }, hover_pool: *HoveredSexpr.Pool, mem: *core.VeryPermamentGameStuff) !Fnkbox {
+        var testcases: @FieldType(Fnkbox, "testcases") = try .initCapacity(mem.gpa, testcases_values.len);
+        for (testcases_values) |v| {
+            testcases.appendAssumeCapacity(.{
+                // TODO: better default pos
+                .input = try .fromSexpr(hover_pool, v.input, base, false),
+                .expected = try .fromSexpr(hover_pool, v.expected, base, false),
+                .actual = try .empty(base, hover_pool, false),
+                .play_button = .{ .rect = .unit, .kind = .launch_testcase },
+            });
+        }
         return .{
             .text = text,
             .handle = .{ .pos = base.pos },
             .garland = .init(base.applyToLocalPoint(relative_garland_point).pos),
             .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
-            .testcases = .fromOwnedSlice(testcases),
+            .testcases = testcases,
             .folded = false,
             .folded_t = 0,
         };
@@ -1421,6 +1439,11 @@ const Fnkbox = struct {
                 drawer.canvas.gl.doneStencil();
                 defer drawer.canvas.gl.stopStencil();
                 try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(2)), 0.8, .black);
+
+                const testcases_labels_center = fnkbox.testcasesBoxUnfolded().get(.top_center).addY(-0.25).addX(0.85);
+                try drawer.canvas.drawText(0, camera, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
+                try drawer.canvas.drawText(0, camera, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
+                try drawer.canvas.drawText(0, camera, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
             }
 
             if (rect.intersect(fnkbox.testcasesBoxUnfolded())) |r| {
@@ -1876,32 +1899,12 @@ const Workspace = struct {
         dst.fnkboxes = .init(mem.gpa);
         try dst.fnkboxes.append(try .init(
             \\Get the lowercase version of each atom
-        , valid[0], .{ .pos = .new(100, 0) }, try mem.gpa.dupe(TestCase, &.{
-            .{
-                .input = try .fromSexpr(&dst.hover_pool, valid[1], .{}, false),
-                .expected = try .fromSexpr(&dst.hover_pool, valid[2], .{}, false),
-                .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .rect = .unit },
-            },
-            .{
-                .input = try .fromSexpr(&dst.hover_pool, valid[3], .{}, false),
-                .expected = try .fromSexpr(&dst.hover_pool, valid[4], .{}, false),
-                .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .rect = .unit },
-            },
-            .{
-                .input = try .fromSexpr(&dst.hover_pool, valid[5], .{}, false),
-                .expected = try .fromSexpr(&dst.hover_pool, valid[6], .{}, false),
-                .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .rect = .unit },
-            },
-            .{
-                .input = try .fromSexpr(&dst.hover_pool, valid[7], .{}, false),
-                .expected = try .fromSexpr(&dst.hover_pool, valid[8], .{}, false),
-                .actual = try .empty(.{}, &dst.hover_pool, false),
-                .play_button = .{ .rect = .unit },
-            },
-        }), &dst.hover_pool));
+        , valid[0], .{ .pos = .new(100, 0) }, &.{
+            .{ .input = valid[1], .expected = valid[2] },
+            .{ .input = valid[3], .expected = valid[4] },
+            .{ .input = valid[5], .expected = valid[6] },
+            .{ .input = valid[7], .expected = valid[8] },
+        }, &dst.hover_pool, mem));
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
