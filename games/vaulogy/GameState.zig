@@ -1092,7 +1092,7 @@ const Executor = struct {
     }
 
     // try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
-    pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
+    pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
         var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
@@ -1204,18 +1204,11 @@ const Executor = struct {
             else if (case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
                 null
             else blk: {
-                const fnk_body = known_fnks.get(case.fnk_name.value) orelse @panic("TODO: handle this");
                 const offset = 3.0;
                 const function_point = executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
-                var invoked: VeryPhysicalGarland = .init(function_point.pos);
-                for (fnk_body.cases.items, 0..) |c, k| {
-                    try invoked.insertCase(mem.gpa, k, try .fromValues(hover_pool, .{
-                        .pattern = c.pattern,
-                        .fnk_name = c.fnk_name,
-                        .template = c.template,
-                    }, .{ .pos = invoked.handle.pos.addY(VeryPhysicalGarland.dist_between_cases_first + VeryPhysicalGarland.dist_between_cases_rest * tof32(k)) }));
-                }
-                break :blk invoked;
+                if (try getGarlandForFnk(known_fnks, case.fnk_name.value, function_point, mem, hover_pool)) |garland| {
+                    break :blk garland;
+                } else @panic("TODO: handle this");
             };
             executor.animation = .{
                 .active_case = case,
@@ -1270,7 +1263,7 @@ const Fnkviewer = struct {
         try fnkviewer.garland.draw(drawer, camera);
     }
 
-    pub fn update(fnkviewer: *Fnkviewer, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
+    pub fn update(fnkviewer: *Fnkviewer, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         Vec2.lerpTowards(&fnkviewer.garland.handle.pos, fnkviewer.point().applyToLocalPoint(relative_garland_point).pos, 0.6, delta_seconds);
         fnkviewer.garland.update(delta_seconds);
         fnkviewer.fnkname.point.lerp_towards(fnkviewer.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
@@ -1279,8 +1272,8 @@ const Fnkviewer = struct {
         const cur_fnkname_hash = fnkviewer.fnkname.value.hash();
         if (cur_fnkname_hash != fnkviewer.last_fnkname_hash) {
             fnkviewer.last_fnkname_hash = cur_fnkname_hash;
-            if (known_fnks.get(fnkviewer.fnkname.value)) |definition| {
-                fnkviewer.garland = try .fromDefinition(fnkviewer.point().applyToLocalPoint(relative_garland_point), definition, mem, hover_pool);
+            if (try getGarlandForFnk(known_fnks, fnkviewer.fnkname.value, fnkviewer.point().applyToLocalPoint(relative_garland_point), mem, hover_pool)) |garland| {
+                fnkviewer.garland = garland;
             }
         }
     }
@@ -1458,7 +1451,7 @@ const Fnkbox = struct {
         }
     }
 
-    pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: *const core.FnkCollection, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
+    pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         math.lerp_towards_range(&fnkbox.scroll_testcases, 0, tof32(fnkbox.testcases.items.len) - visible_testcases, 0.6, delta_seconds);
         fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
         fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .top_left).plusMargin(-0.1), 0.6, delta_seconds);
@@ -1513,6 +1506,22 @@ const Fnkbox = struct {
         }
     }
 };
+
+pub fn getGarlandForFnk(
+    known_fnks: []const Fnkbox,
+    fnkname: *const Sexpr,
+    new_point: Point,
+    mem: *core.VeryPermamentGameStuff,
+    hover_pool: *HoveredSexpr.Pool,
+) !?VeryPhysicalGarland {
+    for (known_fnks) |k| {
+        if (k.fnkname.value.equals(fnkname)) {
+            var garland = try k.garland.clone(mem.gpa, hover_pool);
+            garland.kinematicUpdate(new_point, undefined);
+            return garland;
+        }
+    } else return null;
+}
 
 const Workspace = struct {
     pub const Lens = struct {
@@ -1608,8 +1617,6 @@ const Workspace = struct {
     executors: std.ArrayList(Executor),
     fnkviewers: std.ArrayList(Fnkviewer),
     fnkboxes: std.ArrayList(Fnkbox),
-
-    known_fnks: core.FnkCollection,
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -1768,14 +1775,6 @@ const Workspace = struct {
         dst.* = kommon.meta.initDefaultFields(Workspace);
 
         dst.undo_stack = .init(mem.gpa);
-
-        dst.known_fnks = .init(mem.gpa);
-        try dst.known_fnks.put(valid[0], .{ .cases = .fromOwnedSlice(try mem.gpa.dupe(core.MatchCaseDefinition, &.{
-            .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[3], .template = valid[4], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[5], .template = valid[6], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
-        })) });
 
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
@@ -2983,15 +2982,15 @@ const Workspace = struct {
         }
 
         for (workspace.executors.items) |*e| {
-            try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
+            try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
         }
 
         for (workspace.fnkviewers.items) |*e| {
-            try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
+            try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
         }
 
         for (workspace.fnkboxes.items) |*e| {
-            try e.update(mem, &workspace.known_fnks, &workspace.hover_pool, platform.delta_seconds);
+            try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
         }
 
         const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
