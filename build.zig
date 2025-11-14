@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "vaulogy";
+const active_folder = "cc25";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
