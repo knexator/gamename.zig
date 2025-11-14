@@ -1369,6 +1369,7 @@ const Fnkbox = struct {
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
         if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
         const rect = fnkbox.box();
+        drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(0.65));
         drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
         try fnkbox.fnkname.draw(drawer, camera);
         try fnkbox.handle.draw(drawer, camera, 1);
