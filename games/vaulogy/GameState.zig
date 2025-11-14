@@ -3009,18 +3009,11 @@ const Workspace = struct {
                 assert(g.local.len == 0);
                 const grabbed = workspace.sexprAtPlace(g.base);
                 const target: Point = switch (dropzone.kind) {
-                    .sexpr => |s| switch (s.base) {
-                        else => ViewHelper.sexprChildView(
-                            grabbed.is_pattern,
-                            dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base).point),
-                            s.local,
-                        ),
-                        .executor_input => |k| ViewHelper.sexprChildView(
-                            false,
-                            workspace.executors.items[k].inputPoint(),
-                            s.local,
-                        ),
-                    },
+                    .sexpr => |s| ViewHelper.sexprChildView(
+                        grabbed.is_pattern,
+                        dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base).point),
+                        s.local,
+                    ),
                     .nothing => .{
                         .pos = mouse.cur.position,
                         .scale = 1,
