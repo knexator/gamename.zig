@@ -5,6 +5,8 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 const core = @import("core.zig");
 const Drawer = @import("Drawer.zig");
 
+const EXECUTOR_MOVES_LEFT = false;
+
 comptime {
     std.testing.refAllDecls(@import("execution_tree.zig"));
 }
@@ -254,6 +256,9 @@ const VeryPhysicalGarland = struct {
     handles_for_new_cases_first: HandleForNewCase,
     handles_for_new_cases_rest: std.ArrayListUnmanaged(HandleForNewCase),
 
+    /// only present on invoked fnks, always as pattern
+    fnkname: ?VeryPhysicalSexpr = null,
+
     handle: Handle,
     pub const handle_radius: f32 = 0.2;
     pub const handle_drop_radius: f32 = 1.5;
@@ -358,21 +363,21 @@ const VeryPhysicalGarland = struct {
         BadVertexOrder,
     }!void {
         assert(math.in01(alpha));
-        // TODO: Handle.draw
+        if (garland.fnkname) |f| try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         var last_pos = garland.handle.pos;
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(&.{k});
             const cur_pos = h.pos;
+            // TODO: cable with wildcard info
             drawer.canvas.line(camera, &.{ last_pos, cur_pos }, 0.05, .blackAlpha(alpha));
             last_pos = cur_pos;
         }
         try garland.handle.draw(drawer, camera, alpha);
-        drawer.canvas.strokeCircle(128, camera, garland.handle.pos, handle_radius * (1 + garland.handle.hot_t * 0.2), 0.05, .blackAlpha(alpha));
+        try garland.handle.draw(drawer, camera, alpha);
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(&.{k});
             try h.drawCustom(drawer, camera, alpha, 0.5, 3.0);
         }
-        // TODO: cable
         for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
     }
 
@@ -405,6 +410,9 @@ const VeryPhysicalGarland = struct {
     // TODO: maybe remove delta_seconds
     pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, delta_seconds: f32) void {
         garland.handle.pos = center.pos;
+        if (garland.fnkname) |*f| {
+            f.point = center.applyToLocalPoint(Fnkviewer.fnkname_from_garland_pattern);
+        }
         for (garland.cases.items, 0..) |*c, k| {
             const target = center.applyToLocalPoint(.{ .pos = .new(0, dist_between_cases_first + dist_between_cases_rest * tof32(k)) });
             c.kinematicUpdate(target, null, null, delta_seconds);
@@ -948,10 +956,14 @@ const VeryPhysicalSexpr = struct {
 const Pill = struct {
     input: VeryPhysicalSexpr,
     pattern: VeryPhysicalSexpr,
+    fnkname_call: VeryPhysicalSexpr,
+    fnkname_response: ?VeryPhysicalSexpr,
 
     pub fn draw(pill: Pill, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
         try pill.input.drawWithBindings(bindings, drawer, camera);
         try pill.pattern.drawWithBindings(bindings, drawer, camera);
+        try pill.fnkname_call.drawWithBindings(bindings, drawer, camera);
+        if (pill.fnkname_response) |r| try r.drawWithBindings(bindings, drawer, camera);
     }
 };
 
@@ -979,8 +991,6 @@ const Executor = struct {
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_pos: Vec2 = .new(4, 0);
-
-    pub const MOVING_LEFT = false;
 
     pub fn init(pos: Vec2, hover_pool: *HoveredSexpr.Pool) !Executor {
         return .{
@@ -1050,7 +1060,7 @@ const Executor = struct {
                 const discarded_t = anim_t;
                 pill_offset = enqueueing_t;
 
-                if (!MOVING_LEFT) {
+                if (!EXECUTOR_MOVES_LEFT) {
                     executor.handle.pos = animation.original_pos.addX(enqueueing_t * 5);
                 }
 
@@ -1090,13 +1100,19 @@ const Executor = struct {
             }
             if (animation.t >= 1) {
                 if (animation.matching) {
-                    try executor.prev_pills.append(mem.gpa, .{ .pattern = animation.active_case.pattern, .input = executor.input });
+                    try executor.prev_pills.append(mem.gpa, .{
+                        .pattern = animation.active_case.pattern,
+                        .input = executor.input,
+                        .fnkname_call = animation.active_case.fnk_name,
+                        .fnkname_response = if (animation.invoked_fnk) |f| f.fnkname else null,
+                    });
                     pill_offset -= 1;
                     try animation.active_case.fillVariables(animation.new_bindings, mem);
                     executor.input = animation.active_case.template;
 
-                    if (animation.invoked_fnk) |fnk| {
-                        executor.garland = fnk;
+                    if (animation.invoked_fnk) |*fnk| {
+                        fnk.fnkname = null;
+                        executor.garland = fnk.*;
                         if (animation.active_case.next.cases.items.len > 0) {
                             try executor.enqueued_stack.append(mem.gpa, animation.active_case.next);
                         }
@@ -1122,6 +1138,8 @@ const Executor = struct {
             const pill_input_pos = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5 * (tof32(executor.prev_pills.items.len - k) + pill_offset), 0) });
             pill.input.point.lerp_towards(pill_input_pos, 0.6, delta_seconds);
             pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), 0.6, delta_seconds);
+            // TODO: move pill fnknames
+            // pill.fnkname_call.point.lerp_towards(goal: Point, ratio: f32, delta_seconds: f32)
         }
 
         if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
@@ -1174,6 +1192,8 @@ const Fnkviewer = struct {
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 0), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1.5) };
+    const fnkname_from_garland_template: Point = Point.inverseApplyGetLocal(relative_garland_point, relative_fnkname_point);
+    const fnkname_from_garland_pattern: Point = fnkname_from_garland_template.applyToLocalPoint(.{ .pos = .new(3, 0) });
 
     pub fn point(fnkviewer: *const Fnkviewer) Point {
         return .{ .pos = fnkviewer.handle.pos };
@@ -1489,6 +1509,7 @@ pub fn getGarlandForFnk(
     for (known_fnks) |k| {
         if (k.fnkname.value.equals(fnkname)) {
             var garland = try k.garland.clone(mem.gpa, hover_pool);
+            garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
             garland.kinematicUpdate(new_point, undefined);
             return garland;
         }
