@@ -252,6 +252,8 @@ pub fn main() !void {
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
             .loadTextureDataFromFilename = loadTextureDataFromFilename,
             .startStencil = startStencil,
+            .whiteStencil = whiteStencil,
+            .blackStencil = blackStencil,
             .doneStencil = doneStencil,
             .stopStencil = stopStencil,
         };
@@ -261,7 +263,16 @@ pub fn main() !void {
             gl.Clear(gl.STENCIL_BUFFER_BIT);
             gl.Enable(gl.STENCIL_TEST);
             gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
+            whiteStencil();
+        }
+
+        fn whiteStencil() void {
             gl.StencilFunc(gl.ALWAYS, 1, 0xFF);
+            gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        }
+
+        fn blackStencil() void {
+            gl.StencilFunc(gl.ALWAYS, 0, 0xFF);
             gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
         }
 

@@ -89,6 +89,8 @@ useInstancedRenderable: *const fn (
 ) void,
 
 startStencil: *const fn () void,
+whiteStencil: *const fn () void,
+blackStencil: *const fn () void,
 doneStencil: *const fn () void,
 stopStencil: *const fn () void,
 

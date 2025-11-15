@@ -597,6 +597,8 @@ const web_gl = struct {
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
         .loadTextureDataFromFilename = loadTextureDataFromFilename,
         .startStencil = startStencil,
+        .whiteStencil = whiteStencil,
+        .blackStencil = blackStencil,
         .doneStencil = doneStencil,
         .stopStencil = stopStencil,
     };
@@ -606,7 +608,16 @@ const web_gl = struct {
         js.webgl2.clear(.{ .STENCIL_BUFFER_BIT = true });
         js.webgl2.enable(.STENCIL_TEST);
         js.webgl2.colorMask(false, false, false, false);
+        whiteStencil();
+    }
+
+    fn whiteStencil() void {
         js.webgl2.stencilFunc(.ALWAYS, 1, 0xFF);
+        js.webgl2.stencilOp(.KEEP, .KEEP, .REPLACE);
+    }
+
+    fn blackStencil() void {
+        js.webgl2.stencilFunc(.ALWAYS, 0, 0xFF);
         js.webgl2.stencilOp(.KEEP, .KEEP, .REPLACE);
     }
 

@@ -29,6 +29,28 @@ const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
 
 usual: kommon.Usual,
 
+pieces: [3]PieceThing = .{
+    .{
+        .window = .{ .top_left = .zero, .size = .new(2, 2) },
+        .handle = .{ .top_left = .new(2, 0), .size = .new(1, 2) },
+    },
+    .{
+        .window = .{ .top_left = .zero, .size = .new(2, 2) },
+        .handle = .{ .top_left = .new(0, 2), .size = .new(2, 1) },
+    },
+    .{
+        .window = .{ .top_left = .zero, .size = .new(2, 2) },
+        .handle = .{ .top_left = .new(2, 0), .size = .new(1, 2) },
+    },
+},
+active_piece: ?*PieceThing = null,
+
+const PieceThing = struct {
+    window: Rect,
+    handle: Rect,
+    hot_t: f32 = 0,
+};
+
 pub fn init(
     dst: *GameState,
     gpa: std.mem.Allocator,
@@ -68,9 +90,41 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
 
     const mouse = platform.getMouse(camera);
-    _ = mouse;
 
+    const hot_piece: ?*PieceThing = for (&self.pieces) |*p| {
+        if (p.handle.contains(mouse.cur.position)) break p;
+        if (!p.window.contains(mouse.cur.position)) break null;
+    } else null;
+
+    if (self.active_piece == null and mouse.wasPressed(.left)) {
+        self.active_piece = hot_piece;
+    } else if (self.active_piece != null and !mouse.cur.isDown(.left)) {
+        self.active_piece = null;
+    } else if (self.active_piece) |active| {
+        active.handle = active.handle.move(mouse.deltaPos());
+        active.window = active.window.move(mouse.deltaPos());
+    }
+
+    for (&self.pieces) |*p| {
+        math.lerp_towards(&p.hot_t, if (p == hot_piece) 1 else 0, 0.6, platform.delta_seconds);
+    }
+
+    const canvas = &self.usual.canvas;
     platform.gl.clear(COLORS.black);
+
+    for (0..self.pieces.len) |k| {
+        canvas.fillRect(camera, camera, COLORS.black.withAlpha(0.25));
+        const p: *const PieceThing = &self.pieces[self.pieces.len - k - 1];
+        canvas.gl.startStencil();
+        canvas.fillRect(camera, camera, .white);
+        canvas.gl.blackStencil();
+        canvas.fillRect(camera, p.window, .black);
+        canvas.gl.doneStencil();
+        canvas.fillRect(camera, camera, COLORS.orange);
+        canvas.gl.stopStencil();
+        canvas.borderRect(camera, p.window, 0.1, .inner, COLORS.orange);
+        canvas.fillRect(camera, p.handle.plusMargin(0.05 * p.hot_t - 0.1), COLORS.blue);
+    }
 
     return false;
 }
