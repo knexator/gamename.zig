@@ -2382,6 +2382,18 @@ const Workspace = struct {
                             if (!fnkbox.box().contains(pos)) continue;
                             if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
                         },
+                        .case => |t| switch (t.parent) {
+                            else => {},
+                            .garland => |g| switch (g.parent.parent) {
+                                else => {},
+                                .fnkbox => |k| {
+                                    if (workspace.fnkboxes.items[k].execution != null) continue;
+                                },
+                                .executor => |k| {
+                                    if (workspace.executors.items[k].animating()) continue;
+                                },
+                            },
+                        },
                         else => {},
                     }
 
