@@ -333,6 +333,40 @@ pub const MatchCaseDefinition = struct {
     }
 };
 
+// TODO: maybe remove
+pub const FnkBodyV2 = struct {
+    cases: MatchCasesV2,
+    pub fn format(value: FnkBodyV2, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: std.io.AnyWriter) !void {
+        std.debug.assert(std.mem.eql(u8, fmt, ""));
+        std.debug.assert(std.meta.eql(options, .{}));
+        for (value.cases) |case| {
+            try writer.print("{any}\n", .{case});
+        }
+    }
+};
+pub const MatchCasesV2 = []const MatchCaseDefinitionV2;
+pub const MatchCaseDefinitionV2 = struct {
+    pattern: *const Sexpr,
+    fnk_name: *const Sexpr,
+    template: *const Sexpr,
+    next: ?MatchCasesV2,
+
+    pub fn format(value: MatchCaseDefinitionV2, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: std.io.AnyWriter) !void {
+        std.debug.assert(std.mem.eql(u8, fmt, ""));
+        std.debug.assert(std.meta.eql(options, .{}));
+        if (value.fnk_name.equals(Sexpr.builtin.identity)) {
+            try writer.print("{any} -> {any}", .{ value.pattern, value.template });
+        } else {
+            try writer.print("{any} -> {any}: {any}", .{ value.pattern, value.fnk_name, value.template });
+        }
+        if (value.next) |next| {
+            try writer.print(" {{\n{any}}}", .{FnkBody{ .cases = next }});
+        } else {
+            try writer.writeAll(";");
+        }
+    }
+};
+
 pub const Binding = struct {
     name: []const u8,
     value: *const Sexpr,

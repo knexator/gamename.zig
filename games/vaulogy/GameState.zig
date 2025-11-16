@@ -293,11 +293,11 @@ const VeryPhysicalGarland = struct {
         return @truncate(hasher.final());
     }
 
-    pub fn fromDefinition(base: Point, definition: core.FnkBody, mem: *core.VeryPermamentGameStuff, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalGarland {
+    pub fn fromDefinition(base: Point, definition: core.FnkBodyV2, mem: *core.VeryPermamentGameStuff, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalGarland {
         var result: VeryPhysicalGarland = .init(base.pos);
-        try result.cases.ensureUnusedCapacity(mem.gpa, definition.cases.items.len);
-        try result.handles_for_new_cases_rest.ensureUnusedCapacity(mem.gpa, definition.cases.items.len);
-        for (definition.cases.items, 0..) |case, k| {
+        try result.cases.ensureUnusedCapacity(mem.gpa, definition.cases.len);
+        try result.handles_for_new_cases_rest.ensureUnusedCapacity(mem.gpa, definition.cases.len);
+        for (definition.cases, 0..) |case, k| {
             try result.insertCase(mem.gpa, k, try .fromValues(hover_pool, .{
                 .pattern = case.pattern,
                 .fnk_name = case.fnk_name,
@@ -972,10 +972,7 @@ const Executor = struct {
     input: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
     handle: Handle,
-    spawned_by_fnkbox: ?struct {
-        fnkbox: usize,
-        testcase: usize,
-    },
+    spawned_by_fnkbox: ?usize,
 
     animation: ?struct {
         t: f32 = 0,
@@ -1286,19 +1283,24 @@ const Button = struct {
     }
 };
 
-// TODO: undoing a testcase launch doesnt undo the 'actual'
+// TODO: leave execution trace behind
 // reel + definition + explanation
 const Fnkbox = struct {
     handle: Handle,
+    input: VeryPhysicalSexpr,
     fnkname: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
     testcases: std.ArrayListUnmanaged(TestCase),
     scroll_testcases: f32 = 0,
     execution: ?struct {
-        testcase: usize,
-        executor: Executor,
-        t: f32 = 0,
+        source: union(enum) {
+            testcase: usize,
+            input,
+        },
+        /// if source is input, this is ignored
         state: enum { starting, executing, ending } = .starting,
+        state_t: f32 = 0,
+        executor: Executor,
     } = null,
     text: []const u8,
     folded: bool,
@@ -1310,6 +1312,7 @@ const Fnkbox = struct {
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
     const relative_garland_point: Point = .{ .pos = .new(1, 1) };
     const relative_bottom_testcase_point: Point = .{ .pos = .new(0, box_height - 0.5) };
+    // TODO: hide inside inputPoint()
     const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
     const text_height: f32 = 3;
     const testcases_height: f32 = 2.5 * visible_testcases;
@@ -1326,7 +1329,20 @@ const Fnkbox = struct {
         return fnkbox.point().applyToLocalPoint(relative_executor_point).pos.addY(offset_y);
     }
 
-    pub fn init(text: []const u8, fnkname: *const Sexpr, base: Point, testcases_values: []const struct { input: *const Sexpr, expected: *const Sexpr }, hover_pool: *HoveredSexpr.Pool, mem: *core.VeryPermamentGameStuff) !Fnkbox {
+    pub fn inputPoint(fnkbox: *const Fnkbox) Point {
+        const offset_y = box_height * (1 - fnkbox.folded_t);
+        return fnkbox.point().applyToLocalPoint(relative_input_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
+    }
+
+    pub fn init(
+        text: []const u8,
+        fnkname: *const Sexpr,
+        base: Point,
+        testcases_values: []const struct { input: *const Sexpr, expected: *const Sexpr },
+        initial_definition: ?core.FnkBodyV2,
+        hover_pool: *HoveredSexpr.Pool,
+        mem: *core.VeryPermamentGameStuff,
+    ) !Fnkbox {
         var testcases: @FieldType(Fnkbox, "testcases") = try .initCapacity(mem.gpa, testcases_values.len);
         for (testcases_values) |v| {
             testcases.appendAssumeCapacity(.{
@@ -1340,7 +1356,11 @@ const Fnkbox = struct {
         return .{
             .text = text,
             .handle = .{ .pos = base.pos },
-            .garland = .init(base.applyToLocalPoint(relative_garland_point).pos),
+            .input = try .empty(base.applyToLocalPoint(relative_input_point), hover_pool, false),
+            .garland = if (initial_definition) |def|
+                try .fromDefinition(base.applyToLocalPoint(relative_garland_point), def, mem, hover_pool)
+            else
+                .init(base.applyToLocalPoint(relative_garland_point).pos),
             .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
             .testcases = testcases,
             .folded = false,
@@ -1412,11 +1432,12 @@ const Fnkbox = struct {
         }
         if (fnkbox.execution) |e| {
             if (e.state == .ending) {
-                try fnkbox.garland.drawWithAlpha(math.smoothstep(e.t, 0.9, 1), drawer, camera);
+                try fnkbox.garland.drawWithAlpha(math.smoothstep(e.state_t, 0.9, 1), drawer, camera);
             }
             try e.executor.draw(drawer, camera);
         } else {
             try fnkbox.garland.draw(drawer, camera);
+            try fnkbox.input.draw(drawer, camera);
         }
         try fnkbox.fold_button.draw(drawer, camera);
     }
@@ -1450,6 +1471,7 @@ const Fnkbox = struct {
         fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .bottom_left).plusMargin(-0.1), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
         const offset_y = box_height * (1 - fnkbox.folded_t);
+        fnkbox.input.point.lerp_towards(fnkbox.inputPoint(), 0.6, delta_seconds);
         Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(offset_y), 0.6, delta_seconds);
         fnkbox.garland.update(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
@@ -1463,32 +1485,41 @@ const Fnkbox = struct {
             t.play_button.rect.lerpTowards(.fromCenterAndSize(center.applyToLocalPosition(.new(-6, 0)), .one), 0.6, delta_seconds);
         }
         if (fnkbox.execution) |*execution| {
-            switch (execution.state) {
-                .starting => {
-                    execution.executor.input.point = .lerp(fnkbox.testcases.items[execution.testcase].input.point, execution.executor.inputPoint(), execution.t);
-                    execution.t += delta_seconds / 0.8;
-                    if (execution.t >= 1) {
-                        execution.state = .executing;
-                        execution.t = 0;
-                    }
+            switch (execution.source) {
+                .testcase => |testcase_index| switch (execution.state) {
+                    .starting => {
+                        execution.executor.input.point = .lerp(fnkbox.testcases.items[testcase_index].input.point, execution.executor.inputPoint(), execution.state_t);
+                        execution.state_t += delta_seconds / 0.8;
+                        if (execution.state_t >= 1) {
+                            execution.state = .executing;
+                            execution.state_t = 0;
+                        }
+                    },
+                    .executing => {
+                        try execution.executor.update(mem, known_fnks, hover_pool, delta_seconds);
+                        if (execution.executor.animation == null) {
+                            execution.state = .ending;
+                            execution.state_t = 0;
+                        }
+                    },
+                    .ending => {
+                        execution.executor.input.point = .lerp(
+                            execution.executor.inputPoint(),
+                            fnkbox.testcases.items[testcase_index].expected.point.applyToLocalPoint(.{ .pos = .new(4, 0) }),
+                            execution.state_t,
+                        );
+                        execution.state_t += delta_seconds / 0.8;
+                        if (execution.state_t >= 1) {
+                            fnkbox.testcases.items[testcase_index].actual = try execution.executor.input.clone(hover_pool);
+                            fnkbox.execution = null;
+                        }
+                    },
                 },
-                .executing => {
+                .input => {
                     try execution.executor.update(mem, known_fnks, hover_pool, delta_seconds);
                     if (execution.executor.animation == null) {
-                        execution.state = .ending;
-                        execution.t = 0;
-                    }
-                },
-                .ending => {
-                    execution.executor.input.point = .lerp(
-                        execution.executor.inputPoint(),
-                        fnkbox.testcases.items[execution.testcase].expected.point.applyToLocalPoint(.{ .pos = .new(4, 0) }),
-                        execution.t,
-                    );
-                    execution.t += delta_seconds / 0.8;
-                    if (execution.t >= 1) {
-                        fnkbox.testcases.items[execution.testcase].actual = try execution.executor.input.clone(hover_pool);
                         fnkbox.execution = null;
+                        fnkbox.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
                     }
                 },
             }
@@ -1727,6 +1758,7 @@ const Workspace = struct {
         executor_input: usize,
         fnkviewer_fnkname: usize,
         fnkbox_fnkname: usize,
+        fnkbox_input: usize,
         fnkbox_testcase: struct {
             fnkbox: usize,
             testcase: usize,
@@ -1736,7 +1768,12 @@ const Workspace = struct {
         pub fn immutable(place: BaseSexprPlace) bool {
             return switch (place) {
                 .fnkbox_fnkname, .fnkbox_testcase => true,
-                .board, .case, .executor_input, .fnkviewer_fnkname => false,
+                .board,
+                .case,
+                .executor_input,
+                .fnkviewer_fnkname,
+                .fnkbox_input,
+                => false,
             };
         }
 
@@ -1782,6 +1819,10 @@ const Workspace = struct {
                 /// not always used
                 old_ispattern: bool,
             },
+            started_execution_fnkbox_from_input: struct {
+                fnkbox: usize,
+                input: VeryPhysicalSexpr,
+            },
             started_execution: struct {
                 executor: usize,
                 input: VeryPhysicalSexpr,
@@ -1793,6 +1834,7 @@ const Workspace = struct {
             fnkbox_launch_testcase: struct {
                 fnkbox: usize,
                 testcase: usize,
+                old_actual: VeryPhysicalSexpr,
             },
             fnkbox_toggle_fold: usize,
             fnkbox_scroll: struct {
@@ -1892,7 +1934,12 @@ const Workspace = struct {
             .{ .input = valid[3], .expected = valid[4] },
             .{ .input = valid[5], .expected = valid[6] },
             .{ .input = valid[7], .expected = valid[8] },
-        }, &dst.hover_pool, mem));
+        }, .{ .cases = &.{
+            .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[3], .template = valid[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[5], .template = valid[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } }, &dst.hover_pool, mem));
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
@@ -2011,6 +2058,7 @@ const Workspace = struct {
             },
             .fnkbox_handle => |k| {
                 try result.append(res, .{ .fnkbox_fnkname = k });
+                try result.append(res, .{ .fnkbox_input = k });
                 const parent_fnkbox = &workspace.fnkboxes.items[k];
                 for (parent_fnkbox.testcases.items, 0..) |_, testcase_index| {
                     inline for (TestCase.parts) |part| {
@@ -2124,6 +2172,7 @@ const Workspace = struct {
             .executor_input => |k| &workspace.executors.items[k].input,
             .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
+            .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
             .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
         };
     }
@@ -2382,6 +2431,10 @@ const Workspace = struct {
                             if (!fnkbox.box().contains(pos)) continue;
                             if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
                         },
+                        .fnkbox_input => |k| {
+                            const fnkbox = &workspace.fnkboxes.items[k];
+                            if (fnkbox.execution != null) continue;
+                        },
                         .case => |t| switch (t.parent) {
                             else => {},
                             .garland => |g| switch (g.parent.parent) {
@@ -2520,13 +2573,22 @@ const Workspace = struct {
                         executor.enqueued_stack.clearRetainingCapacity();
                         executor.animation = null;
                         executor.handle.pos = g.prev_pos;
+                        if (executor.spawned_by_fnkbox) |k| workspace.fnkboxes.items[k].execution = null;
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped or std.meta.activeTag(next_cmd.specific) == .fnkbox_launch_testcase);
                         continue :again next_cmd.specific;
                     },
+                    .started_execution_fnkbox_from_input => |g| {
+                        const fnkbox = &workspace.fnkboxes.items[g.fnkbox];
+                        fnkbox.input = g.input;
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        assert(std.meta.activeTag(next_cmd.specific) == .dropped);
+                        continue :again next_cmd.specific;
+                    },
                     .fnkbox_launch_testcase => |t| {
+                        // execution has already been undoed
                         const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
-                        fnkbox.execution = null;
+                        fnkbox.testcases.items[t.testcase].actual = t.old_actual;
                     },
                     .fnkbox_toggle_fold => |k| {
                         const fnkbox = &workspace.fnkboxes.items[k];
@@ -2961,6 +3023,7 @@ const Workspace = struct {
                 .fnkbox_launch_testcase => |t| .{ .specific = .{ .fnkbox_launch_testcase = .{
                     .fnkbox = t.fnkbox,
                     .testcase = t.testcase,
+                    .old_actual = try workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].actual.clone(&workspace.hover_pool),
                 } } },
             };
         } else .noop;
@@ -2968,20 +3031,17 @@ const Workspace = struct {
         // actually perform the action
         switch (action.specific) {
             .noop => {},
-            .started_execution => unreachable,
+            .started_execution, .started_execution_fnkbox_from_input => unreachable,
             .fnkbox_launch_testcase => |t| {
                 const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
                 const testcase = &fnkbox.testcases.items[t.testcase];
                 assert(fnkbox.execution == null);
                 testcase.actual = try .empty(testcase.actual.point, &workspace.hover_pool, false);
-                fnkbox.execution = .{ .testcase = t.testcase, .executor = .{
+                fnkbox.execution = .{ .source = .{ .testcase = t.testcase }, .executor = .{
                     .input = try testcase.input.dupeSubValue(&.{}, &workspace.hover_pool),
                     .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
                     .handle = .{ .pos = fnkbox.executorPos() },
-                    .spawned_by_fnkbox = .{
-                        .fnkbox = t.fnkbox,
-                        .testcase = t.testcase,
-                    },
+                    .spawned_by_fnkbox = t.fnkbox,
                     .animation = null,
                 } };
             },
@@ -3145,6 +3205,21 @@ const Workspace = struct {
             try workspace.undo_stack.append(action);
         }
 
+        for (workspace.fnkboxes.items, 0..) |*fnkbox, k| {
+            if (fnkbox.execution == null and !fnkbox.input.isEmpty() and fnkbox.garland.cases.items.len > 0) {
+                fnkbox.execution = .{ .source = .input, .state = undefined, .state_t = undefined, .executor = .{
+                    .input = fnkbox.input,
+                    .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
+                    .handle = .{ .pos = fnkbox.executorPos() },
+                    .spawned_by_fnkbox = null,
+                    .animation = null,
+                } };
+                try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
+                    .fnkbox = k,
+                    .input = fnkbox.input,
+                } } });
+            }
+        }
         for (workspace.executors.items, 0..) |e, k| {
             if (e.startedExecution()) {
                 assert(e.enqueued_stack.items.len == 0);
