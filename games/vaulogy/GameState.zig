@@ -134,7 +134,6 @@ var COLORS: struct {
 usual: kommon.Usual,
 
 drawer: Drawer,
-camera: Rect = .fromCenterAndSize(.new(100, 0), Vec2.new(16, 9).scale(2)),
 core_mem: core.VeryPermamentGameStuff,
 workspace: Workspace,
 
@@ -1653,6 +1652,7 @@ const Workspace = struct {
     hover_pool: HoveredSexpr.Pool,
 
     focus: Focus = .{},
+    camera: Rect = .fromCenterAndSize(.new(100, 0), Vec2.new(16, 9).scale(2)),
 
     undo_stack: std.ArrayList(UndoableCommand),
 
@@ -2249,7 +2249,9 @@ const Workspace = struct {
         }
     }
 
-    fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer, camera: Rect) !void {
+    fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
+        const camera = workspace.camera;
+
         // TODO: remove duplication
         for (workspace.sexprs.items, 0..) |s, k| {
             if (isGrabbedSexpr(.{ .board = k }, workspace.focus.grabbing)) continue;
@@ -2530,8 +2532,9 @@ const Workspace = struct {
         return .nothing;
     }
 
-    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, camera: Rect, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
+    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
+        const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         // set lenses data
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
@@ -2564,7 +2567,7 @@ const Workspace = struct {
 
         // drawing
         if (drawer) |d| {
-            try workspace.draw(platform, d, camera);
+            try workspace.draw(platform, d);
         }
 
         // state changes
@@ -3036,6 +3039,20 @@ const Workspace = struct {
             };
         } else .noop;
 
+        // camera controls
+        {
+            const hovering_fnkbox_testcases: ?usize = for (workspace.fnkboxes.items, 0..) |f, k| {
+                if (f.box().contains(mouse.cur.position) and
+                    f.testcasesBoxUnfolded().contains(mouse.cur.position)) break k;
+            } else null;
+
+            if (hovering_fnkbox_testcases) |k| {
+                workspace.fnkboxes.items[k].scroll_testcases += mouse.cur.scrolled.toNumber() * platform.delta_seconds / 0.05;
+            }
+
+            workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, hovering_fnkbox_testcases == null);
+        }
+
         // actually perform the action
         switch (action.specific) {
             .noop => {},
@@ -3315,28 +3332,24 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
-    // const mem = &self.usual.mem;
-    // const canvas = &self.usual.canvas;
-
-    const camera = self.camera.withAspectRatio(platform.aspect_ratio, .grow, .top_left);
-    const mouse = platform.getMouse(camera);
-    defer self.camera = moveCamera(self.camera, platform.delta_seconds, platform.keyboard, mouse);
 
     platform.gl.clear(COLORS.bg);
-    try self.workspace.update(platform, &self.drawer, self.camera, &self.core_mem, self.drawer.canvas.frame_arena.allocator());
+    try self.workspace.update(platform, &self.drawer, &self.core_mem, self.drawer.canvas.frame_arena.allocator());
 
     return false;
 }
 
-fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse) Rect {
+fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse, allow_zoom: bool) Rect {
     var result = camera;
     const mouse_pos = mouse.cur.position;
 
-    result = result.zoom(mouse_pos, switch (mouse.cur.scrolled) {
-        .none => 1.0,
-        .down => 1.1,
-        .up => 0.9,
-    });
+    if (allow_zoom) {
+        result = result.zoom(mouse_pos, switch (mouse.cur.scrolled) {
+            .none => 1.0,
+            .down => 1.1,
+            .up => 0.9,
+        });
+    }
 
     inline for (KeyboardButton.directional_keys) |kv| {
         for (kv.keys) |key| {
