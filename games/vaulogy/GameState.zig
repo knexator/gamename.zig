@@ -428,6 +428,10 @@ const VeryPhysicalGarland = struct {
     pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, delta_seconds: f32) void {
         assert(math.in01(offset));
         assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
+        if (garland.fnkname) |*f| {
+            const center: Point = .{ .pos = garland.handle.pos };
+            f.point.lerp_towards(center.applyToLocalPoint(Fnkviewer.fnkname_from_garland_pattern), 0.6, delta_seconds);
+        }
         for (0..garland.cases.items.len * 2 + 1) |k| {
             const dist = (if (k <= 1) dist_between_cases_first / 2.0 else dist_between_cases_rest / 2.0) +
                 (if (k == 1) offset * dist_between_cases_rest else 0);
@@ -1215,12 +1219,14 @@ const Fnkviewer = struct {
         fnkviewer.garland.update(delta_seconds);
         fnkviewer.fnkname.point.lerp_towards(fnkviewer.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
 
-        // TODO: some way to modify fnks
+        // TODO: better invocation anim
         const cur_fnkname_hash = fnkviewer.fnkname.value.hash();
         if (cur_fnkname_hash != fnkviewer.last_fnkname_hash) {
             fnkviewer.last_fnkname_hash = cur_fnkname_hash;
             if (try getGarlandForFnk(known_fnks, fnkviewer.fnkname.value, fnkviewer.point().applyToLocalPoint(relative_garland_point), mem, hover_pool)) |garland| {
                 fnkviewer.garland = garland;
+                // TODO: handle this better
+                fnkviewer.garland.fnkname = null;
             }
         }
     }
