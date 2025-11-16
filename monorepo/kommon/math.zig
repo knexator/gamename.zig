@@ -1705,6 +1705,10 @@ pub const Point = extern struct {
         };
     }
 
+    pub fn applyToLocalPointInPlace(parent: *Point, local: Point) void {
+        parent.* = parent.applyToLocalPoint(local);
+    }
+
     pub fn expectApproxEqRel(expected: Point, actual: Point, tolerance: anytype) !void {
         try std.testing.expectApproxEqRel(expected.scale, actual.scale, tolerance);
         try std.testing.expectApproxEqRel(expected.turns, actual.turns, tolerance);
