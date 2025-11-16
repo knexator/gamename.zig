@@ -1415,9 +1415,6 @@ const Fnkbox = struct {
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
         const rect = fnkbox.box();
         drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(0.65));
-        drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
-        try fnkbox.fnkname.draw(drawer, camera);
-        try fnkbox.handle.draw(drawer, camera, 1);
         if (fnkbox.folded_t < 1) {
             {
                 drawer.canvas.gl.startStencil();
@@ -1444,6 +1441,9 @@ const Fnkbox = struct {
                 try fnkbox.scroll_button_down.draw(drawer, camera);
             }
         }
+        drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
+        try fnkbox.fnkname.draw(drawer, camera);
+        try fnkbox.handle.draw(drawer, camera, 1);
         if (fnkbox.execution) |e| {
             if (e.state == .ending) {
                 try fnkbox.garland.drawWithAlpha(math.smoothstep(e.state_t, 0.9, 1), drawer, camera);
@@ -1943,7 +1943,7 @@ const Workspace = struct {
         dst.fnkboxes = .init(mem.gpa);
         try dst.fnkboxes.append(try .init(
             \\Get the lowercase version of each atom
-        , valid[0], .{ .pos = .new(100, 0) }, &.{
+        , valid[0], .{ .pos = .new(100, -6) }, &.{
             .{ .input = valid[1], .expected = valid[2] },
             .{ .input = valid[3], .expected = valid[4] },
             .{ .input = valid[5], .expected = valid[6] },
