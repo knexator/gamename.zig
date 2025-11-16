@@ -1321,7 +1321,7 @@ const Fnkbox = struct {
     }
 
     pub fn executorPoint(fnkbox: *const Fnkbox) Point {
-        const relative_executor_point: Point = .{ .pos = .new(-4, 2.5) };
+        const relative_executor_point: Point = .{ .pos = .new(-3, 1) };
         const offset_y = box_height * (1 - fnkbox.folded_t);
         return fnkbox.point().applyToLocalPoint(relative_executor_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
     }
