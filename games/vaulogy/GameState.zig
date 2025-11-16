@@ -987,7 +987,7 @@ const Executor = struct {
     old_bindings: std.ArrayListUnmanaged(core.Binding) = .empty,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
-    const relative_garland_pos: Vec2 = .new(4, 0);
+    const relative_garland_point: Point = .{ .pos = .new(4, 0) };
 
     pub fn init(pos: Vec2, hover_pool: *HoveredSexpr.Pool) !Executor {
         return .{
@@ -1029,7 +1029,7 @@ const Executor = struct {
 
     // try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        Vec2.lerpTowards(&executor.garland.handle.pos, executor.handle.pos.add(Executor.relative_garland_pos), 0.6, delta_seconds);
+        Vec2.lerpTowards(&executor.garland.handle.pos, executor.garlandPoint().pos, 0.6, delta_seconds);
         var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
             animation.t += delta_seconds;
@@ -1065,7 +1065,7 @@ const Executor = struct {
                     .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
                 );
 
-                executor.garland.kinematicUpdate((Point{ .pos = executor.handle.pos.add(relative_garland_pos) })
+                executor.garland.kinematicUpdate(executor.garlandPoint()
                     .applyToLocalPoint(.{ .pos = .new(0, 2.5) })
                     .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t)), delta_seconds);
                 if (animation.invoked_fnk) |*invoked| {
@@ -1174,7 +1174,8 @@ const Executor = struct {
     }
 
     pub fn garlandPoint(executor: Executor) Point {
-        return .{ .pos = executor.handle.pos.add(relative_garland_pos) };
+        const center: Point = .{ .pos = executor.handle.pos };
+        return center.applyToLocalPoint(Executor.relative_garland_point);
     }
 };
 
@@ -1310,10 +1311,7 @@ const Fnkbox = struct {
     scroll_button_down: Button = .{ .rect = .unit },
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
-    const relative_garland_point: Point = .{ .pos = .new(1, 1) };
     const relative_bottom_testcase_point: Point = .{ .pos = .new(0, box_height - 0.5) };
-    // TODO: hide inside inputPoint()
-    const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
     const text_height: f32 = 3;
     const testcases_height: f32 = 2.5 * visible_testcases;
     const box_height = text_height + testcases_height;
@@ -1323,15 +1321,24 @@ const Fnkbox = struct {
         return .{ .pos = fnkbox.handle.pos };
     }
 
-    pub fn executorPos(fnkbox: *const Fnkbox) Vec2 {
+    pub fn executorPoint(fnkbox: *const Fnkbox) Point {
+        const relative_executor_point: Point = .{ .pos = .new(-4, 2.5) };
         const offset_y = box_height * (1 - fnkbox.folded_t);
-        const relative_executor_point: Point = relative_garland_point.inverseApplyToLocalPoint(.{ .pos = Executor.relative_garland_pos });
-        return fnkbox.point().applyToLocalPoint(relative_executor_point).pos.addY(offset_y);
+        return fnkbox.point().applyToLocalPoint(relative_executor_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
     }
 
     pub fn inputPoint(fnkbox: *const Fnkbox) Point {
-        const offset_y = box_height * (1 - fnkbox.folded_t);
-        return fnkbox.point().applyToLocalPoint(relative_input_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
+        return fnkbox.executorPoint().applyToLocalPoint(Executor.relative_input_point);
+        // const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
+        // const offset_y = box_height * (1 - fnkbox.folded_t);
+        // return fnkbox.point().applyToLocalPoint(relative_input_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
+    }
+
+    pub fn garlandPoint(fnkbox: *const Fnkbox) Point {
+        return fnkbox.executorPoint().applyToLocalPoint(Executor.relative_garland_point);
+        // const relative_garland_point: Point = .{ .pos = .new(1, 1) };
+        // const offset_y = box_height * (1 - fnkbox.folded_t);
+        // return fnkbox.point().applyToLocalPoint(relative_garland_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
     }
 
     pub fn init(
@@ -1343,6 +1350,9 @@ const Fnkbox = struct {
         hover_pool: *HoveredSexpr.Pool,
         mem: *core.VeryPermamentGameStuff,
     ) !Fnkbox {
+        var geo: Fnkbox = undefined;
+        geo.folded = false;
+        geo.folded_t = 0;
         var testcases: @FieldType(Fnkbox, "testcases") = try .initCapacity(mem.gpa, testcases_values.len);
         for (testcases_values) |v| {
             testcases.appendAssumeCapacity(.{
@@ -1356,11 +1366,11 @@ const Fnkbox = struct {
         return .{
             .text = text,
             .handle = .{ .pos = base.pos },
-            .input = try .empty(base.applyToLocalPoint(relative_input_point), hover_pool, false),
+            .input = try .empty(geo.inputPoint(), hover_pool, false),
             .garland = if (initial_definition) |def|
-                try .fromDefinition(base.applyToLocalPoint(relative_garland_point), def, mem, hover_pool)
+                try .fromDefinition(geo.garlandPoint(), def, mem, hover_pool)
             else
-                .init(base.applyToLocalPoint(relative_garland_point).pos),
+                .init(geo.garlandPoint().pos),
             .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
             .testcases = testcases,
             .folded = false,
@@ -1398,7 +1408,6 @@ const Fnkbox = struct {
     }
 
     pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
-        if (false) try drawer.drawPlaceholder(camera, fnkbox.point().applyToLocalPoint(relative_input_point), false);
         const rect = fnkbox.box();
         drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(0.65));
         drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
@@ -1470,9 +1479,8 @@ const Fnkbox = struct {
         fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .top_left).plusMargin(-0.1), 0.6, delta_seconds);
         fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .bottom_left).plusMargin(-0.1), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
-        const offset_y = box_height * (1 - fnkbox.folded_t);
         fnkbox.input.point.lerp_towards(fnkbox.inputPoint(), 0.6, delta_seconds);
-        Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.point().applyToLocalPoint(relative_garland_point).pos.addY(offset_y), 0.6, delta_seconds);
+        Vec2.lerpTowards(&fnkbox.garland.handle.pos, fnkbox.garlandPoint().pos, 0.6, delta_seconds);
         fnkbox.garland.update(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*t, k| {
@@ -3040,7 +3048,7 @@ const Workspace = struct {
                 fnkbox.execution = .{ .source = .{ .testcase = t.testcase }, .executor = .{
                     .input = try testcase.input.dupeSubValue(&.{}, &workspace.hover_pool),
                     .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
-                    .handle = .{ .pos = fnkbox.executorPos() },
+                    .handle = .{ .pos = fnkbox.executorPoint().pos },
                     .spawned_by_fnkbox = t.fnkbox,
                     .animation = null,
                 } };
@@ -3210,7 +3218,7 @@ const Workspace = struct {
                 fnkbox.execution = .{ .source = .input, .state = undefined, .state_t = undefined, .executor = .{
                     .input = fnkbox.input,
                     .garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool),
-                    .handle = .{ .pos = fnkbox.executorPos() },
+                    .handle = .{ .pos = fnkbox.executorPoint().pos },
                     .spawned_by_fnkbox = null,
                     .animation = null,
                 } };
