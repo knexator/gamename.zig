@@ -970,7 +970,7 @@ const Pill = struct {
     }
 };
 
-/// limited lifetime, basically particles
+/// limited lifetime, basically particles, but the last_input remains (TODO: redesign)
 const ExecutionTrace = struct {
     pills: std.ArrayListUnmanaged(Pill),
     last_input: ?VeryPhysicalSexpr,
@@ -1001,7 +1001,7 @@ const ExecutionTrace = struct {
     pub fn draw(execution_trace: ExecutionTrace, drawer: *Drawer, camera: Rect) !void {
         const alpha: f32 = math.smoothstep(execution_trace.remaining_lifetime, 0, 0.4);
         for (execution_trace.pills.items) |p| try p.draw(null, alpha, drawer, camera);
-        if (execution_trace.last_input) |f| try f.drawWithBindingsAndAlpha(null, alpha, drawer, camera);
+        if (execution_trace.last_input) |f| try f.drawWithBindingsAndAlpha(null, 1, drawer, camera);
     }
 
     pub fn update(execution_trace: *ExecutionTrace, delta_seconds: f32) void {
@@ -1363,6 +1363,7 @@ const Fnkbox = struct {
         state: enum { starting, executing, ending } = .starting,
         state_t: f32 = 0,
         executor: Executor,
+        final_result: VeryPhysicalSexpr = undefined,
     } = null,
     text: []const u8,
     folded: bool,
@@ -1503,8 +1504,10 @@ const Fnkbox = struct {
         if (fnkbox.execution) |e| {
             if (e.state == .ending) {
                 try fnkbox.garland.drawWithAlpha(math.smoothstep(e.state_t, 0.9, 1), drawer, camera);
+                try e.final_result.draw(drawer, camera);
+            } else {
+                try e.executor.draw(drawer, camera);
             }
-            try e.executor.draw(drawer, camera);
         } else {
             try fnkbox.garland.draw(drawer, camera);
             try fnkbox.input.draw(drawer, camera);
@@ -1570,19 +1573,20 @@ const Fnkbox = struct {
                         if (execution.executor.animation == null) {
                             execution.state = .ending;
                             execution.state_t = 0;
+                            execution.final_result = try execution.executor.input.clone(hover_pool);
+                            result = try .fromExecutor(execution.executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
+                            execution.executor = undefined;
                         }
                     },
                     .ending => {
-                        execution.executor.input.point = .lerp(
-                            execution.executor.inputPoint(),
+                        execution.final_result.point = .lerp(
+                            fnkbox.inputPoint(),
                             fnkbox.testcases.items[testcase_index].expected.point.applyToLocalPoint(.{ .pos = .new(4, 0) }),
                             execution.state_t,
                         );
                         execution.state_t += delta_seconds / 0.8;
                         if (execution.state_t >= 1) {
-                            fnkbox.testcases.items[testcase_index].actual = try execution.executor.input.clone(hover_pool);
-                            // TODO: maybe spawn the trace at the .ending start
-                            result = try .fromExecutor(execution.executor.prev_pills.items, null, .new(0, 0), 0.5, mem, hover_pool);
+                            fnkbox.testcases.items[testcase_index].actual = execution.final_result;
                             fnkbox.execution = null;
                         }
                     },
@@ -1590,7 +1594,7 @@ const Fnkbox = struct {
                 .input => {
                     try execution.executor.update(mem, known_fnks, hover_pool, delta_seconds);
                     if (execution.executor.animation == null) {
-                        result = try .fromExecutor(execution.executor.prev_pills.items, &execution.executor.input, .new(-5, 0), 0.5, mem, hover_pool);
+                        result = try .fromExecutor(execution.executor.prev_pills.items, &execution.executor.input, .new(-5, 0), 0.75, mem, hover_pool);
                         fnkbox.execution = null;
                         fnkbox.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
                     }
@@ -2856,7 +2860,7 @@ const Workspace = struct {
                         else => null,
                         .sexpr => |sexpr| blk: {
                             // special case: no hover anim for base values
-                            if (std.meta.activeTag(sexpr.base) == .board and sexpr.local.len == 0) break :blk null;
+                            // if (std.meta.activeTag(sexpr.base) == .board and sexpr.local.len == 0) break :blk null;
                             break :blk if (sexpr.base.equals(base)) sexpr.local else null;
                         },
                     };
@@ -2990,7 +2994,8 @@ const Workspace = struct {
             var k: usize = 0;
             while (k < workspace.traces.items.len) {
                 if (workspace.traces.items[k].remaining_lifetime <= 0) {
-                    _ = workspace.traces.swapRemove(k);
+                    const old = workspace.traces.swapRemove(k);
+                    if (old.last_input) |l| try workspace.sexprs.append(l);
                 } else k += 1;
             }
         }
@@ -3323,8 +3328,8 @@ const Workspace = struct {
             if (fnkbox.execution == null and !fnkbox.input.isEmpty() and fnkbox.garland.cases.items.len > 0) {
                 var garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool);
                 assert(garland.fnkname == null);
-                garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
-                fnkbox.execution = .{ .source = .input, .state = undefined, .state_t = undefined, .executor = .{
+                if (fnkbox.folded) garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
+                fnkbox.execution = .{ .source = .input, .state = .executing, .state_t = undefined, .executor = .{
                     .input = fnkbox.input,
                     .garland = garland,
                     .handle = .{ .pos = fnkbox.executorPoint().pos },
