@@ -137,14 +137,14 @@ drawer: Drawer,
 core_mem: core.VeryPermamentGameStuff,
 workspace: Workspace,
 
-const HoveredSexpr = struct {
+pub const HoveredSexpr = struct {
     next: ?struct {
         left: *HoveredSexpr,
         right: *HoveredSexpr,
     },
     value: f32,
 
-    const Pool = std.heap.MemoryPool(HoveredSexpr);
+    pub const Pool = std.heap.MemoryPool(HoveredSexpr);
 
     pub fn fromSexpr(pool: *Pool, value: *const Sexpr) !*HoveredSexpr {
         return store(pool, .{ .value = 0, .next = switch (value.*) {
@@ -701,6 +701,30 @@ const VeryPhysicalSexpr = struct {
     value: *const Sexpr,
     is_pattern: bool,
     is_pattern_t: f32,
+
+    pub fn save(sexpr: *const VeryPhysicalSexpr, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        try writeEnum(out, SerializedTag, .VeryPhysicalSexpr, .little);
+        try out.writeStructEndian(sexpr.point, .little);
+        try out.writeByte(if (sexpr.is_pattern) 1 else 0);
+        var asdf: std.ArrayList(u8) = .init(scratch);
+        defer asdf.deinit();
+        // TODO: improve
+        try sexpr.value.format("", .{}, asdf.writer().any());
+        try out.writeInt(u32, @intCast(asdf.items.len), .little);
+        try out.writeAll(asdf.items);
+    }
+
+    pub fn load(dst: *VeryPhysicalSexpr, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
+        assert(version == 0);
+        const point: Point = try in.readStructEndian(Point, .little);
+        const is_pattern: bool = (try in.readByte()) != 0;
+        const value_len: u32 = try in.readInt(u32, .little);
+        // TODO: who clears this memory?
+        const value_bytes = try mem.gpa.alloc(u8, value_len);
+        assert(try in.readAll(value_bytes) == value_len);
+        const value = try core.parsing.parseSingleSexpr(value_bytes, &mem.pool_for_sexprs);
+        dst.* = try .fromSexpr(&mem.hover_pool, value, point, is_pattern);
+    }
 
     pub fn getBoardPos(sexpr: VeryPhysicalSexpr) Vec2 {
         return sexpr.point.pos;
@@ -1625,6 +1649,10 @@ pub fn getGarlandForFnk(
     } else return null;
 }
 
+pub const SerializedTag = enum(u32) {
+    VeryPhysicalSexpr,
+};
+
 const Workspace = struct {
     pub const Lens = struct {
         source: Vec2,
@@ -2060,6 +2088,47 @@ const Workspace = struct {
         workspace.fnkviewers.deinit();
         workspace.fnkboxes.deinit();
         workspace.known_fnks.deinit();
+    }
+
+    pub fn save(workspace: *const Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        const version: u32 = 0;
+        try out.writeInt(u32, version, .little);
+        try out.writeStructEndian(workspace.camera, .little);
+        for (workspace.sexprs.items) |s| {
+            try s.save(out, scratch);
+        }
+    }
+
+    pub fn load(dst: *Workspace, in: std.io.AnyReader, mem: *core.VeryPermamentGameStuff) !void {
+        dst.* = kommon.meta.initDefaultFields(Workspace);
+        dst.undo_stack = .init(mem.gpa);
+        dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
+        dst.lenses = .init(mem.gpa);
+        dst.sexprs = .init(mem.gpa);
+        dst.cases = .init(mem.gpa);
+        dst.garlands = .init(mem.gpa);
+        dst.executors = .init(mem.gpa);
+        dst.fnkviewers = .init(mem.gpa);
+        dst.fnkboxes = .init(mem.gpa);
+        dst.traces = .init(mem.gpa);
+
+        const version = try in.readInt(u32, .little);
+        assert(version == 0);
+
+        dst.camera = try in.readStructEndian(Rect, .little);
+
+        while (in.readEnum(SerializedTag, .little) catch |err| switch (err) {
+            error.EndOfStream => null,
+            else => return err,
+        }) |tag| {
+            switch (tag) {
+                .VeryPhysicalSexpr => {
+                    var x: VeryPhysicalSexpr = undefined;
+                    try x.load(in, version, mem);
+                    try dst.sexprs.append(x);
+                },
+            }
+        }
     }
 
     const valid: []const *const Sexpr = &.{
@@ -3430,6 +3499,14 @@ pub fn afterHotReload(self: *GameState) !void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
 
+    if (false and platform.keyboard.wasPressed(.KeyQ)) {
+        var asdf: std.ArrayList(u8) = .init(platform.gpa);
+        defer asdf.deinit();
+        try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
+        var fbs = std.io.fixedBufferStream(asdf.items);
+        try self.workspace.load(fbs.reader().any(), &self.core_mem);
+    }
+
     platform.gl.clear(COLORS.bg);
     try self.workspace.update(platform, &self.drawer, &self.core_mem, self.drawer.canvas.frame_arena.allocator());
 
@@ -3461,6 +3538,11 @@ fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse
     }
 
     return result;
+}
+
+pub fn writeEnum(out: std.io.AnyWriter, T: type, value: T, endian: std.builtin.Endian) !void {
+    const type_info = @typeInfo(T).@"enum";
+    try out.writeInt(type_info.tag_type, @intFromEnum(value), endian);
 }
 
 const std = @import("std");

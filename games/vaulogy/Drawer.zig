@@ -400,7 +400,11 @@ pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poi
     switch (sexpr.*) {
         .empty => {},
         .atom_lit => |lit| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
+            // const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
+            const visuals = drawer.atom_visuals_cache.getAtomVisuals(lit.value) catch {
+                std.log.err("missing visuals for atom literal: {s}", .{lit.value});
+                return;
+            };
             try drawer.drawTemplateAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {

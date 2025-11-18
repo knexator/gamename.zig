@@ -1,7 +1,7 @@
 const std = @import("std");
 const MemoryPool = std.heap.MemoryPool;
 
-const parsing = @import("parsing.zig");
+pub const parsing = @import("parsing.zig");
 
 const indexOfString = @import("kommon").funktional.indexOfString;
 
@@ -425,12 +425,14 @@ fn fnkSize(fnk: FnkBody) usize {
     return res;
 }
 
+const HoveredSexpr = @import("GameState.zig").HoveredSexpr;
 pub const VeryPermamentGameStuff = struct {
     pool_for_sexprs: MemoryPool(Sexpr),
     arena_for_cases: std.heap.ArenaAllocator,
     arena_for_bindings: std.heap.ArenaAllocator,
     allocator_for_stack: std.mem.Allocator,
     gpa: std.mem.Allocator,
+    hover_pool: HoveredSexpr.Pool,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -438,6 +440,7 @@ pub const VeryPermamentGameStuff = struct {
         const pool_for_sexprs = MemoryPool(Sexpr).init(allocator);
         const arena_for_cases = std.heap.ArenaAllocator.init(allocator);
         const arena_for_bindings = std.heap.ArenaAllocator.init(allocator);
+        const hover_pool: HoveredSexpr.Pool = .init(allocator);
 
         return VeryPermamentGameStuff{
             .pool_for_sexprs = pool_for_sexprs,
@@ -445,6 +448,7 @@ pub const VeryPermamentGameStuff = struct {
             .arena_for_bindings = arena_for_bindings,
             .allocator_for_stack = allocator,
             .gpa = allocator,
+            .hover_pool = hover_pool,
         };
     }
 
@@ -452,6 +456,7 @@ pub const VeryPermamentGameStuff = struct {
         this.pool_for_sexprs.deinit();
         this.arena_for_cases.deinit();
         this.arena_for_bindings.deinit();
+        this.hover_pool.deinit();
     }
 
     pub fn storeSexpr(this: *VeryPermamentGameStuff, s: Sexpr) !*const Sexpr {
