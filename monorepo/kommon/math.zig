@@ -5,6 +5,10 @@ pub fn inRange(value: anytype, min_inclusive: anytype, max_exclusive: anytype) b
     return min_inclusive <= value and value < max_exclusive;
 }
 
+pub fn inRangeClosed(value: anytype, min_inclusive: anytype, max_inclusive: anytype) bool {
+    return min_inclusive <= value and value <= max_inclusive;
+}
+
 pub fn projectToRange(value: anytype, min_inclusive: anytype, max_inclusive: anytype) @TypeOf(value, min_inclusive, max_inclusive) {
     if (value < min_inclusive) return min_inclusive;
     if (value > max_inclusive) return max_inclusive;
@@ -45,6 +49,15 @@ pub fn towards(v: *f32, goal: f32, max_delta: f32) void {
         v.* += max_delta;
     } else {
         v.* -= max_delta;
+    }
+}
+
+pub fn towards_range(v: *f32, min: f32, max: f32, max_delta: f32) void {
+    assert(min <= max);
+    if (v.* < min) {
+        towards(v, min, max_delta);
+    } else if (v.* > max) {
+        towards(v, min, max_delta);
     }
 }
 
