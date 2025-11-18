@@ -312,6 +312,23 @@ const VeryPhysicalGarland = struct {
         return result;
     }
 
+    pub fn toDefinition(garland: *const VeryPhysicalGarland, mem: *core.VeryPermamentGameStuff) !core.FnkBody {
+        // TODO: leaks
+        var cases: core.MatchCases = .empty;
+        for (garland.cases.items) |c| {
+            try cases.append(mem.gpa, .{
+                .pattern = c.pattern.value,
+                .fnk_name = c.fnk_name.value,
+                .template = c.template.value,
+                .next = if (c.next.cases.items.len > 0)
+                    (try c.next.toDefinition(mem)).cases
+                else
+                    null,
+            });
+        }
+        return .{ .cases = cases };
+    }
+
     pub fn fillVariables(garland: *VeryPhysicalGarland, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) error{
         OutOfMemory,
         BAD_INPUT,
@@ -1460,7 +1477,7 @@ const Fnkbox = struct {
                 .play_button = .{ .rect = .unit, .kind = .launch_testcase },
             });
         }
-        var result: Fnkbox = .{
+        const result: Fnkbox = .{
             .text = text,
             .handle = .{ .pos = base.pos },
             .input = try .empty(geo.inputPoint(), hover_pool, false),
@@ -1474,7 +1491,6 @@ const Fnkbox = struct {
             .folded_t = 0,
             .status = undefined,
         };
-        try result.updateStatus();
         return result;
     }
 
@@ -1603,8 +1619,34 @@ const Fnkbox = struct {
         }
     }
 
-    pub fn updateStatus(fnkbox: *Fnkbox) !void {
+    pub fn updateStatus(fnkbox: *Fnkbox, known_fnks: []const Fnkbox, mem: *core.VeryPermamentGameStuff) !void {
         // TODO NOW: improve somehow
+        // TODO: leaks
+        var all_fnks: FnkCollection = .init(mem.gpa);
+        for (known_fnks) |k| {
+            try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem));
+        }
+        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, mem);
+        for (fnkbox.testcases.items) |*t| {
+            var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
+            defer exec.deinit();
+
+            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true) catch |err| switch (err) {
+                // TODO: "NoMatchingCase" is no longer an error
+                error.FnkNotFound, error.NoMatchingCase => Sexpr.builtin.empty,
+                error.OutOfMemory => return err,
+                // TODO: check what are the other errors
+                else => return err,
+            };
+            if (!actual_output.equals(t.actual.value) and fnkbox.execution == null) {
+                t.actual = try VeryPhysicalSexpr.fromSexpr(
+                    &mem.hover_pool,
+                    actual_output,
+                    t.actual.point,
+                    false,
+                );
+            }
+        }
         for (fnkbox.testcases.items, 0..) |t, k| {
             if (!t.actual.value.equals(t.expected.value)) {
                 fnkbox.status = .{ .unsolved = k };
@@ -1692,7 +1734,7 @@ const Fnkbox = struct {
                             fnkbox.testcases.items[testcase_index].actual = execution.final_result;
                             fnkbox.execution = null;
                             // TODO: call this somewhere else
-                            try fnkbox.updateStatus();
+                            try fnkbox.updateStatus(known_fnks, mem);
                         }
                     },
                 },
@@ -2127,11 +2169,13 @@ const Workspace = struct {
         }, .{ .cases = &.{
             .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[5], .template = valid[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[5], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
         } }, &dst.hover_pool, mem));
 
         dst.traces = .init(mem.gpa);
+
+        try dst.canonizeAfterChanges(mem);
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
@@ -2211,6 +2255,8 @@ const Workspace = struct {
                 },
             }
         }
+
+        try dst.canonizeAfterChanges(mem);
     }
 
     const valid: []const *const Sexpr = &.{
@@ -2725,6 +2771,9 @@ const Workspace = struct {
                         .executor => |k| {
                             if (workspace.executors.items[k].animating()) continue;
                         },
+                        .fnkbox => |k| {
+                            if (workspace.fnkboxes.items[k].execution != null) continue;
+                        },
                         else => {},
                     }
 
@@ -2743,6 +2792,20 @@ const Workspace = struct {
                 if (isGrabbedCase(base, grabbed)) continue;
                 const handle = workspace.caseHandleRef(base);
 
+                // some special cases
+                switch (base) {
+                    .board => {},
+                    .garland => |t| switch (t.parent.parent) {
+                        else => {},
+                        .fnkbox => |k| {
+                            if (workspace.fnkboxes.items[k].execution != null) continue;
+                        },
+                        .executor => |k| {
+                            if (workspace.executors.items[k].animating()) continue;
+                        },
+                    },
+                }
+
                 // picking
                 if (base.exists() and grabbed_tag == .nothing) {
                     if (pos.distTo(handle.pos) < VeryPhysicalCase.handle_radius) {
@@ -2760,6 +2823,12 @@ const Workspace = struct {
         }
 
         return .nothing;
+    }
+
+    pub fn canonizeAfterChanges(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
+        for (workspace.fnkboxes.items) |*fnkbox| {
+            try fnkbox.updateStatus(workspace.fnkboxes.items, mem);
+        }
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
@@ -2963,6 +3032,7 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                 }
+                try workspace.canonizeAfterChanges(mem);
             }
         }
 
@@ -3484,6 +3554,7 @@ const Workspace = struct {
         }
         if (action.specific != .noop) {
             try workspace.undo_stack.append(action);
+            try workspace.canonizeAfterChanges(mem);
         }
 
         for (workspace.fnkboxes.items, 0..) |*fnkbox, k| {
@@ -3502,6 +3573,7 @@ const Workspace = struct {
                     .fnkbox = k,
                     .input = fnkbox.input,
                 } } });
+                try workspace.canonizeAfterChanges(mem);
             }
         }
         for (workspace.executors.items, 0..) |e, k| {
@@ -3515,6 +3587,7 @@ const Workspace = struct {
                     .prev_old_bindings = (try e.old_bindings.clone(mem.gpa)).items,
                     .prev_pos = e.handle.pos,
                 } } });
+                try workspace.canonizeAfterChanges(mem);
             }
         }
     }

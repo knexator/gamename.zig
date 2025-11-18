@@ -399,6 +399,7 @@ pub const FnkCollection = std.HashMap(*const Sexpr, FnkBody, struct {
 }, std.hash_map.default_max_load_percentage);
 
 const builtin_fnks = [_]struct { name: *const Sexpr, fnk: fn (v: *const Sexpr) *const Sexpr }{
+    .{ .name = Sexpr.builtin.empty, .fnk = builtin_fnk_identity },
     .{ .name = Sexpr.builtin.identity, .fnk = builtin_fnk_identity },
     .{ .name = Sexpr.builtin.@"eqAtoms?", .fnk = @"builtin_fnk_eqAtoms?" },
 };
@@ -524,7 +525,10 @@ pub const ScoringRun = struct {
             }
             return fnk;
         } else switch (name.*) {
-            .atom_lit, .atom_var, .empty => return error.FnkNotFound,
+            .atom_lit, .atom_var, .empty => {
+                std.log.err("Fnk not found: {any}", .{name});
+                return error.FnkNotFound;
+            },
             .pair => |p| {
                 // try to compile it!
                 var exec = try ExecutionThread.init(p.right, p.left, this);
@@ -774,6 +778,10 @@ pub const ExecutionThread = struct {
     }
 
     pub fn advanceStep(this: *ExecutionThread, scoring_run: *ScoringRun) !?*const Sexpr {
+        return try this.advanceStepV2(scoring_run, false);
+    }
+
+    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool) !?*const Sexpr {
         var permanent_stuff = scoring_run.mem;
         if (this.stack.items.len > 0) {
             const last_stack_ptr: *StackThing = &this.stack.items[this.stack.items.len - 1];
@@ -807,7 +815,12 @@ pub const ExecutionThread = struct {
 
                 return null;
             }
-            return error.NoMatchingCase;
+            if (allow_no_cases) {
+                _ = this.stack.pop();
+                return null;
+            } else {
+                return error.NoMatchingCase;
+            }
         } else {
             return this.active_value;
         }
@@ -822,9 +835,13 @@ pub const ExecutionThread = struct {
     }
 
     pub fn getFinalResultBounded(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize) !*const Sexpr {
+        return this.getFinalResultBoundedV2(scoring_run, max_steps, true);
+    }
+
+    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool) !*const Sexpr {
         if (max_steps) |max| {
             for (0..max) |_| {
-                if (try this.advanceStep(scoring_run)) |res| {
+                if (try this.advanceStepV2(scoring_run, allow_no_cases)) |res| {
                     return res;
                 }
             } else return error.TookTooLong;
