@@ -1365,24 +1365,37 @@ pub const TestCase = struct {
 
 const Button = struct {
     hot_t: f32 = 0,
+    active_t: f32 = 0,
     rect: Rect,
     kind: enum { unknown, launch_testcase } = .unknown,
 
     pub fn draw(button: *const Button, drawer: *Drawer, camera: Rect) !void {
-        drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
-        drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
         switch (button.kind) {
-            .unknown => {},
-            .launch_testcase => drawer.canvas.line(camera, &.{
-                button.rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
-                button.rect.getCenter().add(.new(0, 0)).addX(0.15),
-                button.rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
-            }, 0.05, .black),
+            .unknown => {
+                drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
+                drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
+            },
+            .launch_testcase => {
+                drawer.canvas.fillRect(camera, button.rect, .gray(0.4));
+                const rect = button.rect.move(Vec2.new(-1, -1).scale((1 - button.hot_t) * 0.05 + (1 - @min(button.active_t, button.hot_t)) * 0.1));
+                drawer.canvas.fillRect(camera, rect, COLORS.bg);
+                drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
+                drawer.canvas.line(camera, &.{
+                    rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
+                    rect.getCenter().add(.new(0, 0)).addX(0.15),
+                    rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
+                }, 0.05, .black);
+            },
         }
     }
 
-    pub fn updateHot(button: *Button, hot: bool, delta_seconds: f32) void {
+    pub fn updateHot(button: *Button, self: Workspace.Focus.UiTarget.Kind, hot: Workspace.Focus.UiTarget, active: Workspace.Focus.UiTarget, delta_seconds: f32) void {
+        button.updateHot2(hot.equals(.{ .kind = self }), active.equals(.{ .kind = self }), delta_seconds);
+    }
+
+    pub fn updateHot2(button: *Button, hot: bool, active: bool, delta_seconds: f32) void {
         math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
+        math.lerp_towards(&button.active_t, if (active) 1 else 0, 0.6, delta_seconds);
     }
 };
 
@@ -1542,7 +1555,7 @@ const Fnkbox = struct {
                 defer drawer.canvas.gl.stopStencil();
                 try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(0.75 + text_height / 2.0)), 0.8, .black);
 
-                drawer.canvas.fillRect(camera, fnkbox.statusBarGoal(), .gray(0.4 - 0.05 * fnkbox.status_bar_t));
+                drawer.canvas.fillRect(camera, fnkbox.statusBarGoal(), .gray(0.95 - 0.05 * fnkbox.status_bar_t));
                 switch (fnkbox.status) {
                     .solved => {
                         try drawer.canvas.drawText(0, camera, "Solved!", .centeredAt(fnkbox.statusBarGoal().getCenter()), 0.8, .black);
@@ -1589,33 +1602,18 @@ const Fnkbox = struct {
         try fnkbox.fold_button.draw(drawer, camera);
     }
 
-    pub fn updateUiHotness(fnkbox: *Fnkbox, fnkbox_index: usize, ui_hot: Workspace.Focus.UiTarget, delta_seconds: f32) void {
-        fnkbox.fold_button.updateHot(switch (ui_hot.kind) {
-            else => false,
-            .fnkbox_toggle_fold => |k| k == fnkbox_index,
-        }, delta_seconds);
+    pub fn updateUiHotness(fnkbox: *Fnkbox, fnkbox_index: usize, ui_hot: Workspace.Focus.UiTarget, ui_active: Workspace.Focus.UiTarget, delta_seconds: f32) void {
+        fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
+        // TODO: status bar as button
         math.lerp_towards(&fnkbox.status_bar_t, if (switch (ui_hot.kind) {
             else => false,
             .fnkbox_see_failing_case => |k| k == fnkbox_index,
         }) 1 else 0, 0.6, delta_seconds);
-        fnkbox.fold_button.updateHot(switch (ui_hot.kind) {
-            else => false,
-            .fnkbox_toggle_fold => |k| k == fnkbox_index,
-        }, delta_seconds);
-        fnkbox.scroll_button_up.updateHot(switch (ui_hot.kind) {
-            else => false,
-            .fnkbox_scroll => |t| t.fnkbox == fnkbox_index and t.direction == .up,
-        }, delta_seconds);
-        fnkbox.scroll_button_down.updateHot(switch (ui_hot.kind) {
-            else => false,
-            .fnkbox_scroll => |t| t.fnkbox == fnkbox_index and t.direction == .down,
-        }, delta_seconds);
+        fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
+        fnkbox.scroll_button_up.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } }, ui_hot, ui_active, delta_seconds);
+        fnkbox.scroll_button_down.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } }, ui_hot, ui_active, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*testcase, testcase_index| {
-            const is_hot = switch (ui_hot.kind) {
-                else => false,
-                .fnkbox_launch_testcase => |thing| thing.fnkbox == fnkbox_index and thing.testcase == testcase_index,
-            };
-            testcase.play_button.updateHot(is_hot, delta_seconds);
+            testcase.play_button.updateHot(.{ .fnkbox_launch_testcase = .{ .fnkbox = fnkbox_index, .testcase = testcase_index } }, ui_hot, ui_active, delta_seconds);
         }
     }
 
@@ -3117,7 +3115,7 @@ const Workspace = struct {
 
         // update ui hotness
         for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
-            fnkbox.updateUiHotness(fnkbox_index, ui_hot, platform.delta_seconds);
+            fnkbox.updateUiHotness(fnkbox_index, ui_hot, workspace.focus.ui_active, platform.delta_seconds);
         }
 
         // TODO: reduce duplication?
