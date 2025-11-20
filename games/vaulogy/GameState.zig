@@ -2204,6 +2204,53 @@ const Workspace = struct {
             .{ .pattern = valid[12], .template = valid[11], .fnk_name = Sexpr.builtin.empty, .next = null },
         } }, &dst.hover_pool, mem));
 
+        try dst.fnkboxes.append(try .init(
+            \\Return true if the input letter is a vowel
+        , valid2.isVowel, .{ .pos = .new(144, -6) }, &.{
+            .{ .input = valid[2], .expected = Sexpr.builtin.true },
+            .{ .input = valid[4], .expected = Sexpr.builtin.false },
+            .{ .input = valid[6], .expected = Sexpr.builtin.false },
+            .{ .input = valid[8], .expected = Sexpr.builtin.false },
+            .{ .input = valid[10], .expected = Sexpr.builtin.true },
+            .{ .input = valid[12], .expected = Sexpr.builtin.false },
+            .{ .input = valid[1], .expected = Sexpr.builtin.true },
+            .{ .input = valid[3], .expected = Sexpr.builtin.false },
+            .{ .input = valid[5], .expected = Sexpr.builtin.false },
+            .{ .input = valid[7], .expected = Sexpr.builtin.false },
+            .{ .input = valid[9], .expected = Sexpr.builtin.true },
+            .{ .input = valid[11], .expected = Sexpr.builtin.false },
+        }, .{ .cases = &.{
+            .{ .pattern = valid[2], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[10], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = try mem.storeSexpr(.doVar("other")), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+        } }, &dst.hover_pool, mem));
+
+        try dst.fnkboxes.append(try .init(
+            \\Swap both values
+        , valid2.swap, .{ .pos = .new(164, -5) }, &.{
+            .{
+                .input = try mem.storeSexpr(.doPair(valid[1], valid[2])),
+                .expected = try mem.storeSexpr(.doPair(valid[2], valid[1])),
+            },
+            .{
+                .input = try mem.storeSexpr(.doPair(valid[1], valid[6])),
+                .expected = try mem.storeSexpr(.doPair(valid[6], valid[1])),
+            },
+            .{
+                .input = try mem.storeSexpr(.doPair(valid[3], valid[9])),
+                .expected = try mem.storeSexpr(.doPair(valid[9], valid[3])),
+            },
+        }, .{ .cases = &.{
+            .{ .pattern = valid[2], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[10], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{
+                .pattern = try mem.storeSexpr(.doPair(valid[1], try mem.storeSexpr(.doVar("down")))),
+                .template = try mem.storeSexpr(.doPair(try mem.storeSexpr(.doVar("down")), valid[1])),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+        } }, &dst.hover_pool, mem));
+
         dst.traces = .init(mem.gpa);
 
         try dst.canonizeAfterChanges(mem);
@@ -2309,6 +2356,8 @@ const Workspace = struct {
 
     const valid2 = .{
         .toUpperCase = &Sexpr.doLit("toUpperCase"),
+        .isVowel = &Sexpr.doLit("isVowel"),
+        .swap = &Sexpr.doLit("swap"),
     };
 
     fn randomSexpr(mem: *core.VeryPermamentGameStuff, random: std.Random, max_depth: usize) !*const Sexpr {
