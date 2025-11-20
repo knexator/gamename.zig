@@ -2200,8 +2200,8 @@ const Workspace = struct {
             .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[5], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Sexpr.builtin.empty, .template = valid[9], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[12], .template = valid[11], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Sexpr.builtin.empty, .template = valid[10], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[11], .template = valid[12], .fnk_name = Sexpr.builtin.empty, .next = null },
         } }, &dst.hover_pool, mem));
 
         try dst.fnkboxes.append(try .init(
@@ -2241,8 +2241,6 @@ const Workspace = struct {
                 .expected = try mem.storeSexpr(.doPair(valid[9], valid[3])),
             },
         }, .{ .cases = &.{
-            .{ .pattern = valid[2], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[10], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
             .{
                 .pattern = try mem.storeSexpr(.doPair(valid[1], try mem.storeSexpr(.doVar("down")))),
                 .template = try mem.storeSexpr(.doPair(try mem.storeSexpr(.doVar("down")), valid[1])),
