@@ -2174,12 +2174,16 @@ const Workspace = struct {
             .{ .input = valid[6], .expected = valid[5] },
             .{ .input = valid[2], .expected = valid[1] },
             .{ .input = valid[8], .expected = valid[7] },
+            .{ .input = valid[12], .expected = valid[11] },
+            .{ .input = valid[10], .expected = valid[9] },
             .{ .input = valid[4], .expected = valid[3] },
         }, .{ .cases = &.{
             .{ .pattern = valid[2], .template = valid[1], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[6], .template = valid[5], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[8], .template = valid[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[10], .template = valid[9], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[12], .template = valid[11], .fnk_name = Sexpr.builtin.empty, .next = null },
         } }, &dst.hover_pool, mem));
 
         try dst.fnkboxes.append(try .init(
@@ -2188,12 +2192,16 @@ const Workspace = struct {
             .{ .input = valid[5], .expected = valid[6] },
             .{ .input = valid[1], .expected = valid[2] },
             .{ .input = valid[7], .expected = valid[8] },
+            .{ .input = valid[11], .expected = valid[12] },
+            .{ .input = valid[9], .expected = valid[10] },
             .{ .input = valid[3], .expected = valid[4] },
         }, .{ .cases = &.{
             .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[5], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Sexpr.builtin.empty, .template = valid[9], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[12], .template = valid[11], .fnk_name = Sexpr.builtin.empty, .next = null },
         } }, &dst.hover_pool, mem));
 
         dst.traces = .init(mem.gpa);
@@ -2292,6 +2300,10 @@ const Workspace = struct {
         &Sexpr.doLit("c"),
         &Sexpr.doLit("D"),
         &Sexpr.doLit("d"),
+        &Sexpr.doLit("E"),
+        &Sexpr.doLit("e"),
+        &Sexpr.doLit("F"),
+        &Sexpr.doLit("f"),
         &.empty,
     };
 

@@ -157,7 +157,7 @@ const AtomVisualCache = struct {
 
     const HardcodedAtomVisuals = struct {
         profile: ?[]const Vec2,
-        color: FColor,
+        color: ?FColor,
         display: ?[]const u8 = null,
     };
     const hardcoded_visuals = .{
@@ -261,6 +261,26 @@ const AtomVisualCache = struct {
             .profile = null,
             .display = "d",
         },
+        .E = HardcodedAtomVisuals{
+            .color = null,
+            .profile = null,
+            .display = "E",
+        },
+        .e = HardcodedAtomVisuals{
+            .color = null,
+            .profile = null,
+            .display = "e",
+        },
+        .F = HardcodedAtomVisuals{
+            .color = null,
+            .profile = null,
+            .display = "F",
+        },
+        .f = HardcodedAtomVisuals{
+            .color = null,
+            .profile = null,
+            .display = "f",
+        },
     };
 
     pub fn init(arena: std.mem.Allocator) !AtomVisualCache {
@@ -273,7 +293,7 @@ const AtomVisualCache = struct {
             const atom_name = field.name;
             const input = @field(hardcoded_visuals, field.name);
             const atom_visuals: AtomVisuals = try .build(arena, .{
-                .color = input.color,
+                .color = input.color orelse newAtomColor(atom_name),
                 .profile = input.profile orelse try res.newAtomProfile(atom_name),
                 .display = input.display,
             });
