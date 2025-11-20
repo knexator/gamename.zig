@@ -1367,7 +1367,8 @@ const Button = struct {
     hot_t: f32 = 0,
     active_t: f32 = 0,
     rect: Rect,
-    kind: enum { unknown, launch_testcase } = .unknown,
+    enabled: bool = true,
+    kind: enum { unknown, launch_testcase, see_failing_case } = .unknown,
 
     pub fn draw(button: *const Button, drawer: *Drawer, camera: Rect) !void {
         switch (button.kind) {
@@ -1385,6 +1386,14 @@ const Button = struct {
                     rect.getCenter().add(.new(0, 0)).addX(0.15),
                     rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
                 }, 0.05, .black);
+            },
+            .see_failing_case => {
+                if (button.enabled) {
+                    drawer.canvas.rectGradient(camera, button.rect, .gray(0.9 + button.hot_t * 0.05 - button.active_t * 0.05), .gray(0.95 - button.hot_t * 0.05 - button.active_t * 0.05));
+                } else {
+                    drawer.canvas.fillRect(camera, button.rect, .gray(0.7));
+                    return;
+                }
             },
         }
     }
@@ -1421,7 +1430,7 @@ const Fnkbox = struct {
     } = null,
     text: []const u8,
     status: Status,
-    status_bar_t: f32 = 0,
+    status_bar: Button = .{ .rect = .unit, .kind = .see_failing_case },
     folded: bool,
     folded_t: f32,
     fold_button: Button = .{ .rect = .unit },
@@ -1555,7 +1564,7 @@ const Fnkbox = struct {
                 defer drawer.canvas.gl.stopStencil();
                 try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.pos.addY(0.75 + text_height / 2.0)), 0.8, .black);
 
-                drawer.canvas.fillRect(camera, fnkbox.statusBarGoal(), .gray(0.95 - 0.05 * fnkbox.status_bar_t));
+                try fnkbox.status_bar.draw(drawer, camera);
                 switch (fnkbox.status) {
                     .solved => {
                         try drawer.canvas.drawText(0, camera, "Solved!", .centeredAt(fnkbox.statusBarGoal().getCenter()), 0.8, .black);
@@ -1604,11 +1613,7 @@ const Fnkbox = struct {
 
     pub fn updateUiHotness(fnkbox: *Fnkbox, fnkbox_index: usize, ui_hot: Workspace.Focus.UiTarget, ui_active: Workspace.Focus.UiTarget, delta_seconds: f32) void {
         fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
-        // TODO: status bar as button
-        math.lerp_towards(&fnkbox.status_bar_t, if (switch (ui_hot.kind) {
-            else => false,
-            .fnkbox_see_failing_case => |k| k == fnkbox_index,
-        }) 1 else 0, 0.6, delta_seconds);
+        fnkbox.status_bar.updateHot(.{ .fnkbox_see_failing_case = fnkbox_index }, ui_hot, ui_active, delta_seconds);
         fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
         fnkbox.scroll_button_up.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } }, ui_hot, ui_active, delta_seconds);
         fnkbox.scroll_button_down.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } }, ui_hot, ui_active, delta_seconds);
@@ -1658,6 +1663,11 @@ const Fnkbox = struct {
         var result: ?ExecutionTrace = null;
         math.lerp_towards_range(&fnkbox.scroll_testcases, 0, tof32(fnkbox.testcases.items.len) - visible_testcases, 0.6, delta_seconds);
         fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
+        fnkbox.status_bar.rect.lerpTowards(fnkbox.statusBarGoal(), 0.6, delta_seconds);
+        fnkbox.status_bar.enabled = switch (fnkbox.status) {
+            .solved => false,
+            .unsolved => true,
+        };
         fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .top_left).plusMargin(-0.1), 0.6, delta_seconds);
         fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .bottom_left).plusMargin(-0.1), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
