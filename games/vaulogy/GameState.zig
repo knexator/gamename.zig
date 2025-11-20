@@ -2268,15 +2268,15 @@ const Workspace = struct {
     }
 
     const valid: []const *const Sexpr = &.{
-        &Sexpr.doLit("planetFromOlympian"),
-        &Sexpr.doLit("Hermes"),
-        &Sexpr.doLit("Mercury"),
-        &Sexpr.doLit("Aphrodite"),
-        &Sexpr.doLit("Venus"),
-        &Sexpr.doLit("Ares"),
-        &Sexpr.doLit("Mars"),
-        &Sexpr.doLit("Zeus"),
-        &Sexpr.doLit("Jupiter"),
+        &Sexpr.doLit("toLowerCase"),
+        &Sexpr.doLit("A"),
+        &Sexpr.doLit("a"),
+        &Sexpr.doLit("B"),
+        &Sexpr.doLit("b"),
+        &Sexpr.doLit("C"),
+        &Sexpr.doLit("c"),
+        &Sexpr.doLit("D"),
+        &Sexpr.doLit("d"),
         &.empty,
     };
 

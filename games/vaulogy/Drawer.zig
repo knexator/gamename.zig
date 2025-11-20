@@ -191,13 +191,12 @@ const AtomVisualCache = struct {
             .profile = &.{ .new(1.0 / 6.0, 0.2), .new(0.5, -0.2), .new(5.0 / 6.0, 0.2) },
         },
 
-        //  Zeus -> Jupiter;
-        .Hermes = HardcodedAtomVisuals{
+        .A = HardcodedAtomVisuals{
             .color = .fromHex("#FA00FF"),
             .profile = null,
             .display = "A",
         },
-        .Mercury = HardcodedAtomVisuals{
+        .a = HardcodedAtomVisuals{
             .color = .fromHex("#FF8EEC"),
             .profile = &.{
                 .new(1.224892e-1, 1.97281936e-1),
@@ -208,12 +207,12 @@ const AtomVisualCache = struct {
             },
             .display = "a",
         },
-        .Aphrodite = HardcodedAtomVisuals{
+        .B = HardcodedAtomVisuals{
             .color = .fromHex("#FFB600"),
             .profile = null,
             .display = "B",
         },
-        .Venus = HardcodedAtomVisuals{
+        .b = HardcodedAtomVisuals{
             .color = .fromHex("#FFE18E"),
             .profile = &.{
                 .new(0.7142284e-1, 1.6622247e-1),
@@ -231,22 +230,22 @@ const AtomVisualCache = struct {
             },
             .display = "b",
         },
-        .Ares = HardcodedAtomVisuals{
+        .C = HardcodedAtomVisuals{
             .color = .fromHex("#00E5FF"),
             .profile = null,
             .display = "C",
         },
-        .Mars = HardcodedAtomVisuals{
+        .c = HardcodedAtomVisuals{
             .color = .fromHex("#9EFFF2"),
             .profile = null,
             .display = "c",
         },
-        .Zeus = HardcodedAtomVisuals{
+        .D = HardcodedAtomVisuals{
             .color = .fromHex("#97F200"),
             .profile = null,
             .display = "D",
         },
-        .Jupiter = HardcodedAtomVisuals{
+        .d = HardcodedAtomVisuals{
             .color = .fromHex("#C8ED8F"),
             .profile = null,
             .display = "d",
