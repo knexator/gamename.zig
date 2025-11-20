@@ -191,19 +191,30 @@ const AtomVisualCache = struct {
             .profile = &.{ .new(1.0 / 6.0, 0.2), .new(0.5, -0.2), .new(5.0 / 6.0, 0.2) },
         },
 
+        // TODO: better profiles
         .A = HardcodedAtomVisuals{
             .color = .fromHex("#FA00FF"),
-            .profile = null,
-            .display = "A",
-        },
-        .a = HardcodedAtomVisuals{
-            .color = .fromHex("#FF8EEC"),
             .profile = &.{
                 .new(1.224892e-1, 1.97281936e-1),
                 .new(4.2850158e-1, -7.022254e-2),
                 .new(5.059528e-1, -1.8252338e-1),
                 .new(6.5015405e-1, -1.3726442e-1),
                 .new(8.53909e-1, -3.479591e-2),
+            },
+            .display = "A",
+        },
+        .a = HardcodedAtomVisuals{
+            .color = .fromHex("#FF8EEC"),
+            .profile = &.{
+                .new(0.2, 0.1),
+                .new(0.4, -0.1),
+                .new(0.47, -0.05),
+                .new(0.6, 0.1),
+                .new(0.67, 0.04),
+                .new(0.87, -0.1),
+                .new(0.9, -0.08),
+                .new(0.92, -0.06),
+                .new(0.98, -0.01),
             },
             .display = "a",
         },

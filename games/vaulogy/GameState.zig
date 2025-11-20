@@ -2167,9 +2167,24 @@ const Workspace = struct {
         try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
 
         dst.fnkboxes = .init(mem.gpa);
+
+        try dst.fnkboxes.append(try .init(
+            \\Get the uppercase version of each atom
+        , valid[0], .{ .pos = .new(100, -6) }, &.{
+            .{ .input = valid[6], .expected = valid[5] },
+            .{ .input = valid[2], .expected = valid[1] },
+            .{ .input = valid[8], .expected = valid[7] },
+            .{ .input = valid[4], .expected = valid[3] },
+        }, .{ .cases = &.{
+            .{ .pattern = valid[2], .template = valid[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[6], .template = valid[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = valid[8], .template = valid[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } }, &dst.hover_pool, mem));
+
         try dst.fnkboxes.append(try .init(
             \\Get the lowercase version of each atom
-        , valid[0], .{ .pos = .new(100, -6) }, &.{
+        , valid2.toUpperCase, .{ .pos = .new(120, -5) }, &.{
             .{ .input = valid[5], .expected = valid[6] },
             .{ .input = valid[1], .expected = valid[2] },
             .{ .input = valid[7], .expected = valid[8] },
@@ -2278,6 +2293,10 @@ const Workspace = struct {
         &Sexpr.doLit("D"),
         &Sexpr.doLit("d"),
         &.empty,
+    };
+
+    const valid2 = .{
+        .toUpperCase = &Sexpr.doLit("toUpperCase"),
     };
 
     fn randomSexpr(mem: *core.VeryPermamentGameStuff, random: std.Random, max_depth: usize) !*const Sexpr {
@@ -3667,6 +3686,7 @@ pub fn beforeHotReload(self: *GameState) !void {
 
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator());
+    self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator());
 }
 
 /// returns true if should quit
