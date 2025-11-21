@@ -1900,6 +1900,7 @@ const Workspace = struct {
     fnkviewers: std.ArrayList(Fnkviewer),
     fnkboxes: std.ArrayList(Fnkbox),
     traces: std.ArrayList(ExecutionTrace),
+    toolbar_variable: VeryPhysicalSexpr,
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -2025,9 +2026,11 @@ const Workspace = struct {
             testcase: usize,
             part: TestCase.Part,
         },
+        toolbar_variable,
 
         pub fn immutable(place: BaseSexprPlace) bool {
             return switch (place) {
+                .toolbar_variable => true,
                 .fnkbox_fnkname, .fnkbox_testcase => true,
                 .board,
                 .case,
@@ -2272,6 +2275,8 @@ const Workspace = struct {
 
         dst.traces = .init(mem.gpa);
 
+        dst.toolbar_variable = try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doVar("TODO_change")), .{}, true);
+
         try dst.canonizeAfterChanges(mem);
     }
 
@@ -2394,9 +2399,13 @@ const Workspace = struct {
                 workspace.garlands.items.len +
                 workspace.executors.items.len +
                 workspace.fnkviewers.items.len +
-                workspace.fnkboxes.items.len,
+                workspace.fnkboxes.items.len +
+                // for toolbar variable
+                1,
             // TODO: traces
         );
+
+        result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{ .base = .toolbar_variable, .local = &.{} } } });
 
         for (workspace.sexprs.items, 0..) |_, k| {
             result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = &.{} } } });
@@ -2556,6 +2565,7 @@ const Workspace = struct {
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
             .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
             .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
+            .toolbar_variable => &workspace.toolbar_variable,
         };
     }
 
@@ -2684,6 +2694,8 @@ const Workspace = struct {
                 .black,
             );
         }
+
+        try workspace.toolbar_variable.draw(drawer, camera);
 
         switch (workspace.focus.grabbing.kind) {
             else => {},
@@ -2817,6 +2829,7 @@ const Workspace = struct {
                     if (isGrabbedSexpr(base, grabbed)) continue;
 
                     // some special cases
+                    if (grabbed_tag != .nothing and base.immutable()) continue;
                     switch (base) {
                         .executor_input => |k| {
                             if (workspace.executors.items[k].animating()) continue;
@@ -2951,6 +2964,8 @@ const Workspace = struct {
 
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
+
+        workspace.toolbar_variable.point = .{ .pos = camera.get(.bottom_right).add(.new(-2, -2)) };
 
         // set lenses data
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
@@ -3619,6 +3634,16 @@ const Workspace = struct {
                             .base = .{ .board = grabbed },
                             .local = &.{},
                         } } };
+
+                        // TODO: undoable
+                        if (h.base == .toolbar_variable) {
+                            const S = struct {
+                                var random_instance: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
+                            };
+                            const new_name = try mem.gpa.alloc(u8, 10);
+                            math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
+                            workspace.toolbar_variable.value = try mem.storeSexpr(Sexpr.doVar(new_name));
+                        }
                     },
                 }
             },
