@@ -886,6 +886,9 @@ const VeryPhysicalSexpr = struct {
         drawer: *Drawer,
         camera: Rect,
     ) !void {
+        // dont draw out of bounds sexprs
+        if (!camera.plusMargin(sexpr.point.scale * 3).contains(sexpr.point.pos)) return;
+
         assert(math.in01(sexpr.is_pattern_t));
         assert(math.in01(alpha));
         // TODO: use the actual bool?
@@ -2682,6 +2685,19 @@ const Workspace = struct {
             .case_handle => |t| try workspace.cases.items[t.board].draw(drawer, camera),
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
+
+        if (false) try drawer.canvas.drawText(
+            0,
+            camera,
+            try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
+            .{
+                .pos = workspace.camera.top_left.add(.new(0.5, 0.5)),
+                .hor = .left,
+                .ver = .ascender,
+            },
+            1,
+            .black,
+        );
     }
 
     fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {

@@ -623,22 +623,7 @@ pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha
 }
 
 fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    // TODO: no alloc, precompute this
-    var screen_positions: []Vec2 = try drawer.canvas.frame_arena.allocator().alloc(Vec2, visuals.geometry.template.local_points.len + 1);
-
-    for (screen_positions[0 .. screen_positions.len - 1], visuals.geometry.template.local_points) |*dst, p| {
-        dst.* = point.applyToLocalPosition(p);
-    }
-    screen_positions[screen_positions.len - 1] = screen_positions[0];
-
-    drawer.canvas.fillShape(
-        camera,
-        point,
-        visuals.geometry.template,
-        visuals.color.timesAlpha(alpha),
-    );
-
-    drawer.canvas.line(camera, screen_positions, pixelWidth(camera), .blackAlpha(alpha));
+    try drawer.drawShapeV3(camera, point, visuals.geometry.template, .black, visuals.color, alpha);
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(0.25, 0));
