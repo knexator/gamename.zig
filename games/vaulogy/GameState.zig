@@ -842,8 +842,8 @@ const VeryPhysicalSexpr = struct {
                                     //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
                                     // }
                                 }
+                                break;
                             }
-                            break;
                         }
                     } else for (bindings.old) |binding| {
                         if (std.mem.eql(u8, binding.name, x.value)) {
