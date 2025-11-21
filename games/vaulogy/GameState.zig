@@ -1628,14 +1628,14 @@ const Fnkbox = struct {
 
     pub fn updateStatus(fnkbox: *Fnkbox, known_fnks: []const Fnkbox, mem: *core.VeryPermamentGameStuff) !void {
         // TODO NOW: improve somehow
-        // TODO: leaks
+        // TODO: leaks?
         var all_fnks: FnkCollection = .init(mem.scratch.allocator());
         for (known_fnks) |k| {
             try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem.scratch.allocator()));
         }
-        // var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
-        // defer temp_mem.deinit();
-        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, mem);
+        var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
+        defer temp_mem.deinit();
+        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
         defer scoring_run.deinit(false);
         for (fnkbox.testcases.items) |*t| {
             var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
@@ -1651,7 +1651,7 @@ const Fnkbox = struct {
             if (!actual_output.equals(t.actual.value) and fnkbox.execution == null) {
                 t.actual = try VeryPhysicalSexpr.fromSexpr(
                     &mem.hover_pool,
-                    actual_output,
+                    try mem.deepCloneSexpr(actual_output),
                     t.actual.point,
                     false,
                 );

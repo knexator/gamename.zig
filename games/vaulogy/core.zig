@@ -467,6 +467,19 @@ pub const VeryPermamentGameStuff = struct {
     pub fn storeSexpr(this: *VeryPermamentGameStuff, s: Sexpr) !*const Sexpr {
         return storeSexprInPool(&this.pool_for_sexprs, s);
     }
+
+    /// doesn't clone the strings!
+    pub fn deepCloneSexpr(this: *VeryPermamentGameStuff, s: *const Sexpr) !*const Sexpr {
+        return switch (s.*) {
+            .atom_lit => |a| try this.storeSexpr(.{ .atom_lit = .{ .value = a.value } }),
+            .atom_var => |a| try this.storeSexpr(.{ .atom_var = .{ .value = a.value } }),
+            .empty => Sexpr.builtin.empty,
+            .pair => |p| try this.storeSexpr(.{ .pair = .{
+                .left = try this.deepCloneSexpr(p.left),
+                .right = try this.deepCloneSexpr(p.right),
+            } }),
+        };
+    }
 };
 
 pub fn storeSexprInPool(pool: *MemoryPool(Sexpr), s: Sexpr) !*const Sexpr {
