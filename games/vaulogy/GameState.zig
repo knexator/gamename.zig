@@ -1633,9 +1633,9 @@ const Fnkbox = struct {
         for (known_fnks) |k| {
             try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem.scratch.allocator()));
         }
-        var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
-        defer temp_mem.deinit();
-        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
+        // var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
+        // defer temp_mem.deinit();
+        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, mem);
         defer scoring_run.deinit(false);
         for (fnkbox.testcases.items) |*t| {
             var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
