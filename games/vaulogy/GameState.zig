@@ -1652,10 +1652,14 @@ const Fnkbox = struct {
 
             const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true) catch |err| switch (err) {
                 // TODO: "NoMatchingCase" is no longer an error
-                error.FnkNotFound, error.NoMatchingCase => Sexpr.builtin.empty,
+                error.FnkNotFound,
+                error.NoMatchingCase,
+                error.UsedUndefinedVariable,
+                error.InvalidMetaFnk,
+                error.TookTooLong,
+                => Sexpr.builtin.empty,
                 error.OutOfMemory => return err,
-                // TODO: check what are the other errors
-                else => return err,
+                error.BAD_INPUT => @panic("panic"),
             };
             if (!actual_output.equals(t.actual.value) and fnkbox.execution == null) {
                 t.actual = try VeryPhysicalSexpr.fromSexpr(
