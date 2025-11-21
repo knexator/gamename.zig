@@ -308,7 +308,7 @@ const AtomVisualCache = struct {
             .display = "d",
         },
         .E = HardcodedAtomVisuals{
-            .color = .fromHex("#8000FF"),
+            .color = .fromHex("#AD32FF"),
             .profile = &.{
                 .new(0.17830753, -0.13791077),
                 .new(0.41116619, -0.26240891),
