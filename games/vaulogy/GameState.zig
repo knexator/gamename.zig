@@ -1393,7 +1393,12 @@ const Button = struct {
             },
             .see_failing_case => {
                 if (button.enabled) {
-                    drawer.canvas.rectGradient(camera, button.rect, .gray(0.9 + button.hot_t * 0.05 - button.active_t * 0.05), .gray(0.95 - button.hot_t * 0.05 - button.active_t * 0.05));
+                    drawer.canvas.rectGradient(
+                        camera,
+                        button.rect,
+                        .gray(0.75 + button.hot_t * 0.2 - button.active_t * 0.1),
+                        .gray(0.95 - button.hot_t * 0.2 - button.active_t * 0.1),
+                    );
                 } else {
                     drawer.canvas.fillRect(camera, button.rect, .gray(0.7));
                     return;
