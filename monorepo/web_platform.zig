@@ -1175,6 +1175,8 @@ pub const std_options = std.Options{
     // wasm-freestanding has no stderr, so we have to override this function
     .logFn = myLogFn,
     .log_scope_levels = &.{.{ .scope = .load_save_bug, .level = .info }},
+    // TODO: remove before release
+    .log_level = .debug,
 };
 fn myLogFn(
     comptime message_level: std.log.Level,

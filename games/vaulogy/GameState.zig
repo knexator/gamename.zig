@@ -1499,6 +1499,7 @@ const Fnkbox = struct {
         mem: *core.VeryPermamentGameStuff,
     ) !Fnkbox {
         var geo: Fnkbox = undefined;
+        geo.handle = .{ .pos = base.pos };
         geo.folded = false;
         geo.folded_t = 0;
         var testcases: @FieldType(Fnkbox, "testcases") = try .initCapacity(mem.gpa, testcases_values.len);
