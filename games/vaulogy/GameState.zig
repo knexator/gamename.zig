@@ -1039,6 +1039,10 @@ const ExecutionTrace = struct {
         };
     }
 
+    pub fn deinit(execution_trace: *ExecutionTrace, gpa: std.mem.Allocator) void {
+        execution_trace.pills.deinit(gpa);
+    }
+
     pub fn draw(execution_trace: ExecutionTrace, drawer: *Drawer, camera: Rect) !void {
         const alpha: f32 = math.smoothstep(execution_trace.remaining_lifetime, 0, 0.4);
         for (execution_trace.pills.items) |p| try p.draw(null, alpha, drawer, camera);
@@ -1629,7 +1633,9 @@ const Fnkbox = struct {
         for (known_fnks) |k| {
             try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem.scratch.allocator()));
         }
-        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, mem);
+        var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
+        defer temp_mem.deinit();
+        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
         defer scoring_run.deinit(false);
         for (fnkbox.testcases.items) |*t| {
             var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
@@ -1741,6 +1747,7 @@ const Fnkbox = struct {
                         execution.state_t += delta_seconds / 0.8;
                         if (execution.state_t >= 1) {
                             fnkbox.testcases.items[testcase_index].actual = execution.final_result;
+                            // TODO: memory leak here
                             fnkbox.execution = null;
                             // TODO: call this somewhere else
                             try fnkbox.updateStatus(known_fnks, mem);
@@ -2266,6 +2273,7 @@ const Workspace = struct {
             workspace.executors.items,
             workspace.fnkviewers.items,
             workspace.fnkboxes.items,
+            workspace.traces.items,
         }) |things| {
             for (things) |*e| {
                 if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
@@ -3303,7 +3311,8 @@ const Workspace = struct {
             var k: usize = 0;
             while (k < workspace.traces.items.len) {
                 if (workspace.traces.items[k].remaining_lifetime <= 0) {
-                    const old = workspace.traces.swapRemove(k);
+                    var old = workspace.traces.swapRemove(k);
+                    old.deinit(mem.gpa);
                     if (old.last_input) |l| try workspace.sexprs.append(l);
                 } else k += 1;
             }
