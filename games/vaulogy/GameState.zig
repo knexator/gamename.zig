@@ -85,7 +85,7 @@ test "fuzz example" {
                     test_platform.keyboard.cur.keys.KeyZ = cur_input.z_down;
                     test_platform.mouse.cur.buttons.left = cur_input.mouse_left_down;
                     test_platform.mouse.cur.position = cur_input.mouse_pos;
-                    try workspace.update(test_platform.getGives(1.0 / 60.0), null, .fromCenterAndSize(.zero, .new(16, 9)), &mem, frame_arena.allocator());
+                    try workspace.update(test_platform.getGives(1.0 / 60.0), null, &mem, frame_arena.allocator());
                     _ = frame_arena.reset(.retain_capacity);
                 }
             }
@@ -312,16 +312,16 @@ const VeryPhysicalGarland = struct {
         return result;
     }
 
-    pub fn toDefinition(garland: *const VeryPhysicalGarland, mem: *core.VeryPermamentGameStuff) !core.FnkBody {
+    pub fn toDefinition(garland: *const VeryPhysicalGarland, res: std.mem.Allocator) !core.FnkBody {
         // TODO: leaks
-        var cases: core.MatchCases = .empty;
+        var cases: core.MatchCases = try .initCapacity(res, garland.cases.items.len);
         for (garland.cases.items) |c| {
-            try cases.append(mem.gpa, .{
+            cases.appendAssumeCapacity(.{
                 .pattern = c.pattern.value,
                 .fnk_name = c.fnk_name.value,
                 .template = c.template.value,
                 .next = if (c.next.cases.items.len > 0)
-                    (try c.next.toDefinition(mem)).cases
+                    (try c.next.toDefinition(res)).cases
                 else
                     null,
             });
@@ -1625,11 +1625,12 @@ const Fnkbox = struct {
     pub fn updateStatus(fnkbox: *Fnkbox, known_fnks: []const Fnkbox, mem: *core.VeryPermamentGameStuff) !void {
         // TODO NOW: improve somehow
         // TODO: leaks
-        var all_fnks: FnkCollection = .init(mem.gpa);
+        var all_fnks: FnkCollection = .init(mem.scratch.allocator());
         for (known_fnks) |k| {
-            try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem));
+            try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem.scratch.allocator()));
         }
         var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, mem);
+        defer scoring_run.deinit(false);
         for (fnkbox.testcases.items) |*t| {
             var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
             defer exec.deinit();
@@ -2274,12 +2275,6 @@ const Workspace = struct {
                 }
             }
         }
-        {
-            var it = workspace.known_fnks.iterator();
-            while (it.next()) |kv| {
-                kv.value_ptr.cases.deinit(gpa);
-            }
-        }
         workspace.lenses.deinit();
         workspace.sexprs.deinit();
         workspace.cases.deinit();
@@ -2289,7 +2284,7 @@ const Workspace = struct {
         workspace.executors.deinit();
         workspace.fnkviewers.deinit();
         workspace.fnkboxes.deinit();
-        workspace.known_fnks.deinit();
+        workspace.traces.deinit();
     }
 
     pub fn save(workspace: *const Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
@@ -2918,6 +2913,8 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
+        _ = mem.scratch.reset(.retain_capacity);
+
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
@@ -3021,7 +3018,9 @@ const Workspace = struct {
                             },
                             .garland_handle => |h| {
                                 if (g.duplicate) {
-                                    _ = workspace.garlands.pop().?;
+                                    // TODO: better memory management?
+                                    var old = workspace.garlands.pop().?;
+                                    old.deinit(mem.gpa);
                                 } else if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                                     const garland = &workspace.garlands.items[h.parent.garland];
                                     garland.handle.pos = g.old_position;
@@ -3735,8 +3734,9 @@ pub fn init(
 
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
-    _ = gpa;
     self.usual.deinit(undefined);
+    self.core_mem.deinit();
+    self.workspace.deinit(gpa);
 }
 
 pub fn beforeHotReload(self: *GameState) !void {

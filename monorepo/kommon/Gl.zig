@@ -291,6 +291,8 @@ const Stub = struct {
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
         .loadTextureDataFromFilename = loadTextureDataFromFilename,
         .startStencil = startStencil,
+        .whiteStencil = whiteStencil,
+        .blackStencil = blackStencil,
         .doneStencil = doneStencil,
         .stopStencil = stopStencil,
     };
@@ -298,6 +300,8 @@ const Stub = struct {
     fn startStencil() void {}
     fn doneStencil() void {}
     fn stopStencil() void {}
+    fn whiteStencil() void {}
+    fn blackStencil() void {}
     fn clear(_: FColor) void {}
 
     fn loadTextureDataFromBase64(_: []const u8) *const anyopaque {
