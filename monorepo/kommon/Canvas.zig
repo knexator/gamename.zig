@@ -341,6 +341,7 @@ pub fn deinit(self: *Canvas, gl: Gl, gpa: std.mem.Allocator) void {
     self.DEFAULT_SHAPES.deinit(gpa);
     for (self.text_renderers) |*t| t.deinit();
     gpa.free(self.text_renderers);
+    self.frame_arena.deinit();
     _ = gl;
 }
 

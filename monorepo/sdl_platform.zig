@@ -126,6 +126,9 @@ fn embedAsset(comptime path: []const u8) []const u8 {
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
+    // TODO: remove this and always use gpa
+    // this allocator is allowed to leak memory, as a quick hack
+    const leaking_allocator = if (@import("builtin").os.tag == .wasi) std.heap.wasm_allocator else std.heap.smp_allocator;
     const gpa, const is_debug = gpa: {
         if (@import("builtin").os.tag == .wasi) break :gpa .{ std.heap.wasm_allocator, false };
         break :gpa switch (@import("builtin").mode) {
@@ -134,10 +137,9 @@ pub fn main() !void {
         };
     };
     defer if (is_debug) {
-        // TODO: uncomment
-        // assert(debug_allocator.deinit() == .ok);
+        assert(debug_allocator.deinit() == .ok);
     };
-    global_gpa_BAD = gpa;
+    global_gpa_BAD = leaking_allocator;
 
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
 
@@ -231,7 +233,7 @@ pub fn main() !void {
 
     try errify(c.SDL_BindAudioStreams(audio_device, @ptrCast(audio_streams.ptr), @intCast(audio_streams.len)));
 
-    zstbi.init(gpa);
+    zstbi.init(leaking_allocator);
     // TODO: uncomment next line
     // defer zstbi.deinit();
     // TODO: defer unloading images
