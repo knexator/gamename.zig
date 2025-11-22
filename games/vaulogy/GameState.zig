@@ -2716,8 +2716,12 @@ const Workspace = struct {
             try c.draw(drawer, camera);
         }
 
+        for (workspace.garlands.items, 0..) |c, k| {
+            if (isGrabbedGarland(.{ .local = &.{}, .parent = .{ .garland = k } }, workspace.focus.grabbing)) continue;
+            try c.draw(drawer, camera);
+        }
+
         inline for (.{
-            workspace.garlands.items,
             workspace.fnkboxes.items,
             workspace.executors.items,
             workspace.fnkviewers.items,
@@ -2769,6 +2773,7 @@ const Workspace = struct {
 
         switch (workspace.focus.grabbing.kind) {
             else => {},
+            .garland_handle => |t| try workspace.garlandAt(t).draw(drawer, camera),
             .case_handle => |t| try workspace.cases.items[t.board].draw(drawer, camera),
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
