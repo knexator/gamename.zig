@@ -2965,7 +2965,10 @@ const Workspace = struct {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        workspace.toolbar_variable.point = .{ .pos = camera.get(.bottom_right).add(.new(-2, -2)) };
+        workspace.toolbar_variable.point = .{
+            .pos = camera.get(.bottom_right).add(Vec2.new(-1, -1.25).scale(camera.size.y * 0.075)),
+            .scale = camera.size.y * 0.075,
+        };
 
         // set lenses data
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
