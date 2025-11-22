@@ -9,7 +9,7 @@ const indexOfString = @import("kommon").funktional.indexOfString;
 // Design decision 2: Sexprs are never released :(
 
 const DEBUG = false;
-const OoM = error{ OutOfMemory, BAD_INPUT };
+pub const OoM = error{ OutOfMemory, BAD_INPUT };
 
 pub const Atom = struct {
     value: []const u8,

@@ -138,6 +138,15 @@ pub fn reverseRange(comptime T: type, min_inclusive: T, max_inclusive: T) Revers
     return .init(min_inclusive, max_inclusive);
 }
 
+pub fn toArray(T: type, allocator: std.mem.Allocator, it: anytype) ![]T {
+    var result: std.ArrayListUnmanaged(T) = .empty;
+    var it_local = it;
+    while (it_local.next()) |item| {
+        try result.append(allocator, item);
+    }
+    return try result.toOwnedSlice(allocator);
+}
+
 pub fn argMin(it: anytype) usize {
     var best_value = it.next().?;
     var best_index: usize = 0;

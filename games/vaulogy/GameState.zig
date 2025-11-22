@@ -792,6 +792,8 @@ const VeryPhysicalSexpr = struct {
             .{ .turns = 0.02, .pos = .new(-0.5, 0) },
             is_pattern_t,
         ), hovered.value / 2.0));
+        // TODO: use the actual screen resolution
+        if (actual_point.scale * 1000 < camera.size.y) return;
         switch (value.*) {
             .empty => {},
             .atom_lit, .atom_var => try if (is_pattern)
@@ -1493,7 +1495,7 @@ const Fnkbox = struct {
         text: []const u8,
         fnkname: *const Sexpr,
         base: Point,
-        testcases_values: []const struct { input: *const Sexpr, expected: *const Sexpr },
+        testcases_values: []const Sample,
         initial_definition: ?core.FnkBodyV2,
         hover_pool: *HoveredSexpr.Pool,
         mem: *core.VeryPermamentGameStuff,
@@ -1598,9 +1600,14 @@ const Fnkbox = struct {
                 drawer.canvas.fillRect(camera, r, .white);
                 drawer.canvas.gl.doneStencil();
                 defer drawer.canvas.gl.stopStencil();
-                for (fnkbox.testcases.items) |t| {
-                    try t.draw(drawer, camera);
+                const min_k: usize = @intFromFloat(@max(0, fnkbox.scroll_testcases - 5));
+                const max_k: usize = @min(fnkbox.testcases.items.len, @as(usize, @intFromFloat(fnkbox.scroll_testcases + visible_testcases + 5)));
+                for (min_k..max_k) |k| {
+                    try fnkbox.testcases.items[k].draw(drawer, camera);
                 }
+                // for (fnkbox.testcases.items) |t| {
+                //     try t.draw(drawer, camera);
+                // }
                 try fnkbox.scroll_button_up.draw(drawer, camera);
                 try fnkbox.scroll_button_down.draw(drawer, camera);
             }
@@ -2224,86 +2231,28 @@ const Workspace = struct {
 
         dst.fnkboxes = .init(mem.gpa);
 
-        try dst.fnkboxes.append(try .init(
-            \\Get the uppercase version of each atom
-        , valid[0], .{ .pos = .new(100, -6) }, &.{
-            .{ .input = valid[6], .expected = valid[5] },
-            .{ .input = valid[2], .expected = valid[1] },
-            .{ .input = valid[8], .expected = valid[7] },
-            .{ .input = valid[12], .expected = valid[11] },
-            .{ .input = valid[10], .expected = valid[9] },
-            .{ .input = valid[4], .expected = valid[3] },
-        }, .{ .cases = &.{
-            .{ .pattern = valid[2], .template = valid[1], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[6], .template = valid[5], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[8], .template = valid[7], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[10], .template = valid[9], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[12], .template = valid[11], .fnk_name = Sexpr.builtin.empty, .next = null },
-        } }, &dst.hover_pool, mem));
-
-        try dst.fnkboxes.append(try .init(
-            \\Get the lowercase version of each atom
-        , valid2.toUpperCase, .{ .pos = .new(120, -5) }, &.{
-            .{ .input = valid[5], .expected = valid[6] },
-            .{ .input = valid[1], .expected = valid[2] },
-            .{ .input = valid[7], .expected = valid[8] },
-            .{ .input = valid[11], .expected = valid[12] },
-            .{ .input = valid[9], .expected = valid[10] },
-            .{ .input = valid[3], .expected = valid[4] },
-        }, .{ .cases = &.{
-            .{ .pattern = valid[1], .template = valid[2], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[4], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[5], .template = valid[3], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[7], .template = valid[8], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Sexpr.builtin.empty, .template = valid[10], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[11], .template = valid[12], .fnk_name = Sexpr.builtin.empty, .next = null },
-        } }, &dst.hover_pool, mem));
-
-        try dst.fnkboxes.append(try .init(
-            \\Return true if the input letter is a vowel
-        , valid2.isVowel, .{ .pos = .new(144, -6) }, &.{
-            .{ .input = valid[2], .expected = Sexpr.builtin.true },
-            .{ .input = valid[4], .expected = Sexpr.builtin.false },
-            .{ .input = valid[6], .expected = Sexpr.builtin.false },
-            .{ .input = valid[8], .expected = Sexpr.builtin.false },
-            .{ .input = valid[10], .expected = Sexpr.builtin.true },
-            .{ .input = valid[12], .expected = Sexpr.builtin.false },
-            .{ .input = valid[1], .expected = Sexpr.builtin.true },
-            .{ .input = valid[3], .expected = Sexpr.builtin.false },
-            .{ .input = valid[5], .expected = Sexpr.builtin.false },
-            .{ .input = valid[7], .expected = Sexpr.builtin.false },
-            .{ .input = valid[9], .expected = Sexpr.builtin.true },
-            .{ .input = valid[11], .expected = Sexpr.builtin.false },
-        }, .{ .cases = &.{
-            .{ .pattern = valid[2], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = valid[10], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = try mem.storeSexpr(.doVar("other")), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
-        } }, &dst.hover_pool, mem));
-
-        try dst.fnkboxes.append(try .init(
-            \\Swap both values
-        , valid2.swap, .{ .pos = .new(164, -5) }, &.{
-            .{
-                .input = try mem.storeSexpr(.doPair(valid[1], valid[2])),
-                .expected = try mem.storeSexpr(.doPair(valid[2], valid[1])),
-            },
-            .{
-                .input = try mem.storeSexpr(.doPair(valid[1], valid[6])),
-                .expected = try mem.storeSexpr(.doPair(valid[6], valid[1])),
-            },
-            .{
-                .input = try mem.storeSexpr(.doPair(valid[3], valid[9])),
-                .expected = try mem.storeSexpr(.doPair(valid[9], valid[3])),
-            },
-        }, .{ .cases = &.{
-            .{
-                .pattern = try mem.storeSexpr(.doPair(valid[1], try mem.storeSexpr(.doVar("down")))),
-                .template = try mem.storeSexpr(.doPair(try mem.storeSexpr(.doVar("down")), valid[1])),
-                .fnk_name = Sexpr.builtin.empty,
-                .next = null,
-            },
-        } }, &dst.hover_pool, mem));
+        const levels = @import("levels_new.zig").levels;
+        for (levels, 0..) |level, k| {
+            const samples = blk: {
+                var samples_it = level.samplesIterator();
+                var samples: std.ArrayListUnmanaged(Sample) = .empty;
+                while (try samples_it.next(&mem.pool_for_sexprs, mem.scratch.allocator())) |item| {
+                    try samples.append(mem.gpa, item);
+                }
+                break :blk try samples.toOwnedSlice(mem.gpa);
+            };
+            try dst.fnkboxes.append(
+                try .init(
+                    level.description,
+                    level.fnk_name,
+                    .{ .pos = .new(100 + 20 * tof32(k), if (k % 2 == 0) -6 else -5) },
+                    samples,
+                    level.initial_definition,
+                    &dst.hover_pool,
+                    mem,
+                ),
+            );
+        }
 
         dst.traces = .init(mem.gpa);
 
@@ -2778,7 +2727,7 @@ const Workspace = struct {
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
 
-        if (false) try drawer.canvas.drawText(
+        if (true) try drawer.canvas.drawText(
             0,
             camera,
             try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
@@ -4003,3 +3952,4 @@ const parsing = @import("parsing.zig");
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
 const BindingsState = @import("physical.zig").BindingsState;
+const Sample = @import("levels_new.zig").Sample;
