@@ -3265,7 +3265,12 @@ const Workspace = struct {
         const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
 
         // TODO: should maybe be a Focus.Target as a dropzone
-        const hovering_toolbar_trash: bool = workspace.toolbar_trash.rect.contains(mouse.cur.position);
+        const hovering_toolbar_trash: bool = switch (workspace.focus.grabbing.kind) {
+            .sexpr, .case_handle, .garland_handle => workspace.toolbar_trash.rect.contains(mouse.cur.position),
+            .nothing => false,
+            // TODO: trash should handle everything
+            else => false,
+        };
 
         // cursor
         platform.setCursor(
@@ -3336,6 +3341,8 @@ const Workspace = struct {
         for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
             fnkbox.updateUiHotness(fnkbox_index, ui_hot, workspace.focus.ui_active, platform.delta_seconds);
         }
+
+        math.lerp_towards(&workspace.toolbar_trash.hot_t, if (hovering_toolbar_trash) 1 else 0, 0.6, platform.delta_seconds);
 
         // TODO: reduce duplication?
         // update hover_t for other kinds of handles
