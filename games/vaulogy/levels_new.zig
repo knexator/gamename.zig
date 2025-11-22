@@ -168,11 +168,35 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-};
-
-const TODO = &.{
     .{
         .fnk_name = &Sexpr.doLit("firstAsUppercase"),
+        .description = "Get the uppercase version of the pair's top half.",
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = &.doPair(Vals.lowercase[0], &.doVar("other")),
+                .template = Vals.uppercase[0],
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(Vals.lowercase[1], &.doVar("other")),
+                .template = Vals.uppercase[1],
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(Vals.lowercase[2], &.doVar("other")),
+                .template = Vals.lowercase[2],
+                .fnk_name = &.doLit("uppercase"),
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(Vals.lowercase[3], &.doVar("other")),
+                .template = Vals.lowercase[3],
+                .fnk_name = &.doLit("uppercase"),
+                .next = null,
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
@@ -180,7 +204,7 @@ const TODO = &.{
                 if (k2 < Vals.lowercase.len) {
                     return .{
                         .input = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.lowercase[k2])),
-                        .output = Vals.uppercase[k1],
+                        .expected = Vals.uppercase[k1],
                     };
                 } else return null;
             }
@@ -188,6 +212,28 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("startWithB"),
+        .description = "Check if pair's top half is a B.",
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = &.doPair(&.doVar("left"), &.doVar("right")),
+                .template = &.doVar("left"),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = &.{
+                    .{
+                        .pattern = Vals.lowercase[1],
+                        .template = Sexpr.builtin.true,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                    .{
+                        .pattern = &.doVar("else"),
+                        .template = Sexpr.builtin.false,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                },
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const both = Vals.lowercase ++ Vals.uppercase;
@@ -196,7 +242,7 @@ const TODO = &.{
                 if (k2 < both.len) {
                     return .{
                         .input = try store(pool, Sexpr.doPair(both[k1], both[k2])),
-                        .output = Sexpr.fromBool(Helpers.isB(both[k1])),
+                        .expected = Sexpr.fromBool(Helpers.isB(both[k1])),
                     };
                 } else return null;
             }
@@ -204,13 +250,35 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("uppercaseIfVowel"),
+        .description = "Make vowels uppercase; leave the rest the same.",
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = &.doVar("letter"),
+                .template = &.doVar("letter"),
+                .fnk_name = &.doLit("isVowel"),
+                .next = &.{
+                    .{
+                        .pattern = Sexpr.builtin.true,
+                        .template = &.doVar("letter"),
+                        .fnk_name = &.doLit("uppercase"),
+                        .next = null,
+                    },
+                    .{
+                        .pattern = Sexpr.builtin.false,
+                        .template = &.doVar("letter"),
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                },
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < Vals.lowercase.len) {
                     const in = Vals.lowercase[k];
                     return .{
                         .input = in,
-                        .output = if (Helpers.isVowel(in))
+                        .expected = if (Helpers.isVowel(in))
                             Vals.uppercase[k]
                         else
                             in,
@@ -220,7 +288,42 @@ const TODO = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("firstToUppercase"),
+        .fnk_name = &Sexpr.doLit("withFirstUppercased"),
+        .description = "Change the top half to be uppercase.",
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = &.doPair(Vals.lowercase[0], Vals.lowercase[0]),
+                .template = &.doPair(Vals.uppercase[0], Vals.lowercase[0]),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(Vals.lowercase[0], Vals.lowercase[1]),
+                .template = Vals.lowercase[0],
+                .fnk_name = &.doLit("uppercase"),
+                .next = &.{
+                    .{
+                        .pattern = Vals.uppercase[0],
+                        .template = &.doPair(Vals.uppercase[0], Vals.lowercase[1]),
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                },
+            },
+            .{
+                .pattern = &.doPair(&.doVar("first"), Vals.lowercase[2]),
+                .template = &.doVar("first"),
+                .fnk_name = &.doLit("uppercase"),
+                .next = &.{
+                    .{
+                        .pattern = &.doVar("FIRST"),
+                        .template = &.doPair(&.doVar("FIRST"), Vals.lowercase[2]),
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                },
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
@@ -228,7 +331,7 @@ const TODO = &.{
                 if (k2 < Vals.lowercase.len) {
                     return .{
                         .input = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.lowercase[k2])),
-                        .output = try store(pool, Sexpr.doPair(Vals.uppercase[k1], Vals.lowercase[k2])),
+                        .expected = try store(pool, Sexpr.doPair(Vals.uppercase[k1], Vals.lowercase[k2])),
                     };
                 } else return null;
             }
@@ -236,6 +339,8 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("pairToUppercase"),
+        .description = "Make both halves into uppercase.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
@@ -243,12 +348,15 @@ const TODO = &.{
                 if (k2 < Vals.lowercase.len) {
                     return .{
                         .input = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.lowercase[k2])),
-                        .output = try store(pool, Sexpr.doPair(Vals.uppercase[k1], Vals.uppercase[k2])),
+                        .expected = try store(pool, Sexpr.doPair(Vals.uppercase[k1], Vals.uppercase[k2])),
                     };
                 } else return null;
             }
         }.generate_sample,
     },
+};
+
+const TODO = &.{
     .{
         .fnk_name = &Sexpr.doLit("changeCase"),
         .generate_sample = struct {
