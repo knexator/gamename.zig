@@ -301,6 +301,11 @@ pub const Vec2 = extern struct {
     pub const xneg = new(-1, 0);
     pub const yneg = new(0, -1);
 
+    pub const xpos_ypos = new(1, 1);
+    pub const xneg_ypos = new(-1, 1);
+    pub const xpos_yneg = new(1, -1);
+    pub const xneg_yneg = new(-1, -1);
+
     pub const Coord = enum { x, y };
     pub const coords: [2]Coord = .{ .x, .y };
 

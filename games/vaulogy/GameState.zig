@@ -1784,6 +1784,26 @@ const Fnkbox = struct {
     }
 };
 
+const ToolbarTrash = struct {
+    rect: Rect,
+    hot_t: f32 = 0,
+
+    pub fn draw(trash: *const ToolbarTrash, drawer: *Drawer, camera: Rect) !void {
+        const line_width = camera.size.y * 0.003;
+        drawer.canvas.fillRect(camera, trash.rect, COLORS.bg);
+        drawer.canvas.borderRect(camera, trash.rect, line_width * (1 + trash.hot_t), .inner, .black);
+        const center = trash.rect.getCenter();
+        drawer.canvas.line(camera, &.{
+            center.add(Vec2.xneg_yneg.scale(line_width * 10)),
+            center.add(Vec2.xpos_ypos.scale(line_width * 10)),
+        }, line_width * 3, .black);
+        drawer.canvas.line(camera, &.{
+            center.add(Vec2.xneg_ypos.scale(line_width * 10)),
+            center.add(Vec2.xpos_yneg.scale(line_width * 10)),
+        }, line_width * 3, .black);
+    }
+};
+
 pub fn getGarlandForFnk(
     known_fnks: []const Fnkbox,
     fnkname: *const Sexpr,
@@ -1901,6 +1921,7 @@ const Workspace = struct {
     fnkboxes: std.ArrayList(Fnkbox),
     traces: std.ArrayList(ExecutionTrace),
     toolbar_variable: VeryPhysicalSexpr,
+    toolbar_trash: ToolbarTrash,
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -1961,6 +1982,13 @@ const Workspace = struct {
                     return kommon.meta.eql(a, b);
                 }
             };
+        };
+
+        const Value = union(enum) {
+            sexpr: VeryPhysicalSexpr,
+            case: VeryPhysicalCase,
+            garland: VeryPhysicalGarland,
+            // TODO: lenses, etc
         };
     };
 
@@ -2062,6 +2090,10 @@ const Workspace = struct {
     const UndoableCommand = struct {
         specific: union(enum) {
             noop,
+            deleted: struct {
+                old_place: Focus.Target,
+                value: Focus.Value,
+            },
             dropped: struct {
                 at: Focus.Target,
                 /// only used when 'at' is of kind sexpr
@@ -2276,6 +2308,7 @@ const Workspace = struct {
         dst.traces = .init(mem.gpa);
 
         dst.toolbar_variable = try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doVar("TODO_change")), .{}, true);
+        dst.toolbar_trash = .{ .rect = .unit };
 
         try dst.canonizeAfterChanges(mem);
     }
@@ -2612,7 +2645,21 @@ const Workspace = struct {
         return &items[k];
     }
 
-    fn popSexprAt(workspace: *Workspace, p: SexprPlace, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !?VeryPhysicalSexpr {
+    pub fn popAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
+        return switch (target.kind) {
+            .sexpr => |p| return .{ .sexpr = try workspace.popSexprAt(p, &mem.hover_pool, mem) },
+            else => @panic("TODO"),
+        };
+    }
+
+    pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
+        return switch (target.kind) {
+            .sexpr => |p| return workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
+            else => @panic("TODO"),
+        };
+    }
+
+    fn popSexprAt(workspace: *Workspace, p: SexprPlace, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !VeryPhysicalSexpr {
         if (p.local.len == 0) switch (p.base) {
             else => {},
             .board => |k| return workspace.sexprs.orderedRemove(k),
@@ -2696,6 +2743,7 @@ const Workspace = struct {
         }
 
         try workspace.toolbar_variable.draw(drawer, camera);
+        try workspace.toolbar_trash.draw(drawer, camera);
 
         switch (workspace.focus.grabbing.kind) {
             else => {},
@@ -2965,10 +3013,12 @@ const Workspace = struct {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
+        const ui_px = camera.size.y * 0.075;
         workspace.toolbar_variable.point = .{
-            .pos = camera.get(.bottom_right).add(Vec2.new(-1, -1.25).scale(camera.size.y * 0.075)),
-            .scale = camera.size.y * 0.075,
+            .pos = camera.get(.bottom_right).add(Vec2.new(-1, -1.25).scale(ui_px)),
+            .scale = ui_px,
         };
+        workspace.toolbar_trash.rect = camera.withSize(.both(ui_px * 2.5), .bottom_left).move(Vec2.new(1, -1).scale(ui_px * 0.25));
 
         // set lenses data
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
@@ -3009,6 +3059,11 @@ const Workspace = struct {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
                     .noop => {},
+                    .deleted => |d| {
+                        try workspace.unpopAt(d.old_place, d.value, mem);
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        continue :again next_cmd.specific;
+                    },
                     .started_execution => |g| {
                         const executor = &workspace.executors.items[g.executor];
                         executor.input = g.input;
@@ -3186,6 +3241,9 @@ const Workspace = struct {
         };
 
         const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
+
+        // TODO: should maybe be a Focus.Target as a dropzone
+        const hovering_toolbar_trash: bool = workspace.toolbar_trash.rect.contains(mouse.cur.position);
 
         // cursor
         platform.setCursor(
@@ -3378,7 +3436,8 @@ const Workspace = struct {
             }
         }
 
-        const action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
+        // 'var' since the deleted command gets completed at execution
+        var action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             switch (hovering.kind) {
                 .nothing => switch (ui_hot.kind) {
                     .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
@@ -3414,7 +3473,12 @@ const Workspace = struct {
                 } },
             }
         else if (workspace.focus.grabbing.kind != .nothing and !mouse.cur.isDown(.left) and !mouse.cur.isDown(.right))
-            switch (workspace.focus.grabbing.kind) {
+            if (hovering_toolbar_trash)
+                .{ .specific = .{ .deleted = .{
+                    .old_place = workspace.focus.grabbing,
+                    .value = undefined,
+                } } }
+            else switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
                 .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => .{ .specific = .{
                     .dropped = .{
@@ -3541,6 +3605,10 @@ const Workspace = struct {
             .fnkbox_scroll => {
                 // handled in the 'apply ui-like draggin' section
             },
+            .deleted => |*d| {
+                workspace.focus.grabbing = .nothing;
+                d.value = try workspace.popAt(d.old_place, mem);
+            },
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
@@ -3619,7 +3687,7 @@ const Workspace = struct {
                         const original = if (g.duplicate)
                             try workspace.sexprAtPlace(h.base).dupeSubValue(h.local, &workspace.hover_pool)
                         else
-                            (try workspace.popSexprAt(h, &workspace.hover_pool, mem)).?;
+                            try workspace.popSexprAt(h, &workspace.hover_pool, mem);
 
                         try workspace.sexprs.append(.{
                             .hovered = try original.hovered.clone(&workspace.hover_pool),
@@ -3651,31 +3719,28 @@ const Workspace = struct {
                 }
             },
             .dropped => |g| {
+                workspace.focus.grabbing = .nothing;
                 switch (g.at.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => workspace.focus.grabbing = .nothing,
+                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => {},
                     .garland_handle => |h| {
-                        if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
-                            workspace.focus.grabbing = .nothing;
-                        } else {
+                        if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {} else {
                             const place = workspace.garlandAt(h);
                             const k = g.old_grabbed_position.kind.garland_handle.parent.garland;
                             assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
                             const garland = workspace.garlands.items[k];
                             place.* = garland;
                             _ = workspace.garlands.orderedRemove(k);
-                            workspace.focus.grabbing = .nothing;
                         }
                     },
                     .case_handle => |h| {
                         const old_k = g.old_grabbed_position.kind.case_handle.board;
                         switch (h) {
-                            .board => workspace.focus.grabbing = .nothing,
+                            .board => {},
                             .garland => |t| {
                                 const garland = garlandAt(workspace, t.parent);
                                 try garland.insertCase(mem.gpa, t.local, workspace.cases.items[old_k]);
                                 _ = workspace.cases.orderedRemove(old_k);
-                                workspace.focus.grabbing = .nothing;
                             },
                         }
                     },
@@ -3694,8 +3759,6 @@ const Workspace = struct {
                             );
                             _ = workspace.sexprs.orderedRemove(k);
                         }
-
-                        workspace.focus.grabbing = .nothing;
                     },
                 }
             },
