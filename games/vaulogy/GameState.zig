@@ -2647,14 +2647,22 @@ const Workspace = struct {
 
     pub fn popAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
         return switch (target.kind) {
-            .sexpr => |p| return .{ .sexpr = try workspace.popSexprAt(p, &mem.hover_pool, mem) },
+            .sexpr => |p| .{ .sexpr = try workspace.popSexprAt(p, &mem.hover_pool, mem) },
+            .case_handle => |c| switch (c) {
+                .board => |k| .{ .case = workspace.cases.orderedRemove(k) },
+                .garland => |t| .{ .case = workspace.garlandAt(t.parent).popCase(t.local) },
+            },
             else => @panic("TODO"),
         };
     }
 
     pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
         return switch (target.kind) {
-            .sexpr => |p| return workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
+            .sexpr => |p| workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
+            .case_handle => |c| switch (c) {
+                .board => |k| try workspace.cases.insert(k, value.case),
+                .garland => |t| workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
+            },
             else => @panic("TODO"),
         };
     }
