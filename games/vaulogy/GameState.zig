@@ -2652,19 +2652,33 @@ const Workspace = struct {
                 .board => |k| .{ .case = workspace.cases.orderedRemove(k) },
                 .garland => |t| .{ .case = workspace.garlandAt(t.parent).popCase(t.local) },
             },
+            .garland_handle => |g| .{ .garland = if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland)
+                workspace.garlands.orderedRemove(g.parent.garland)
+            else blk: {
+                const place = workspace.garlandAt(g);
+                const garland = place.*;
+                place.* = .init(garland.handle.pos);
+                break :blk garland;
+            } },
             else => @panic("TODO"),
         };
     }
 
     pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
-        return switch (target.kind) {
-            .sexpr => |p| workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
+        switch (target.kind) {
+            .sexpr => |p| try workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
             .case_handle => |c| switch (c) {
                 .board => |k| try workspace.cases.insert(k, value.case),
-                .garland => |t| workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
+                .garland => |t| try workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
+            },
+            .garland_handle => |g| if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland) {
+                try workspace.garlands.insert(g.parent.garland, value.garland);
+            } else {
+                const place = workspace.garlandAt(g);
+                place.* = value.garland;
             },
             else => @panic("TODO"),
-        };
+        }
     }
 
     fn popSexprAt(workspace: *Workspace, p: SexprPlace, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !VeryPhysicalSexpr {
