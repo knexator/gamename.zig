@@ -1084,7 +1084,6 @@ const Executor = struct {
     input: VeryPhysicalSexpr,
     garland: VeryPhysicalGarland,
     handle: Handle,
-    spawned_by_fnkbox: ?usize,
 
     animation: ?struct {
         t: f32 = 0,
@@ -1108,7 +1107,6 @@ const Executor = struct {
             .handle = .{ .pos = pos },
             .garland = .init(pos.add(relative_input_point.pos)),
             .input = try .empty((Point{ .pos = pos }).applyToLocalPoint(relative_input_point), hover_pool, false),
-            .spawned_by_fnkbox = null,
         };
     }
 
@@ -1701,7 +1699,7 @@ const Fnkbox = struct {
         fnkbox.status = .solved;
     }
 
-    pub fn update(fnkbox: *Fnkbox, fnkbox_index: usize, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !?ExecutionTrace {
+    pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !?ExecutionTrace {
         var result: ?ExecutionTrace = null;
         math.lerp_towards_range(&fnkbox.scroll_testcases, 0, @max(0, tof32(fnkbox.testcases.items.len) - visible_testcases), 0.6, delta_seconds);
         fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
@@ -1741,7 +1739,6 @@ const Fnkbox = struct {
                                 .input = try fnkbox.testcases.items[testcase_index].input.dupeSubValue(&.{}, hover_pool),
                                 .garland = try fnkbox.garland.clone(mem.gpa, hover_pool),
                                 .handle = .{ .pos = fnkbox.executorPoint().pos },
-                                .spawned_by_fnkbox = fnkbox_index,
                                 .animation = null,
                             };
                             execution.executor.input.point = fnkbox.testcases.items[testcase_index].input.point;
@@ -2112,6 +2109,13 @@ const Workspace = struct {
     const UndoableCommand = struct {
         specific: union(enum) {
             noop,
+            // TODO: rethink/remove
+            spawned_trace,
+            // TODO: rethink/remove
+            despawned_trace: struct {
+                trace: ExecutionTrace,
+                spawned_sexpr: bool,
+            },
             deleted: struct {
                 old_place: Focus.Target,
                 value: Focus.Value,
@@ -3056,6 +3060,17 @@ const Workspace = struct {
                         const next_cmd = workspace.undo_stack.pop().?;
                         continue :again next_cmd.specific;
                     },
+                    .spawned_trace => {
+                        _ = workspace.traces.pop().?;
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        continue :again next_cmd.specific;
+                    },
+                    .despawned_trace => |t| {
+                        try workspace.traces.append(t.trace);
+                        if (t.spawned_sexpr) _ = workspace.sexprs.pop().?;
+                        const next_cmd = workspace.undo_stack.pop().?;
+                        continue :again next_cmd.specific;
+                    },
                     .started_execution => |g| {
                         const executor = &workspace.executors.items[g.executor];
                         executor.input = g.input;
@@ -3065,7 +3080,6 @@ const Workspace = struct {
                         executor.enqueued_stack.clearRetainingCapacity();
                         executor.animation = null;
                         executor.handle.pos = g.prev_pos;
-                        if (executor.spawned_by_fnkbox) |k| workspace.fnkboxes.items[k].execution = null;
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped or std.meta.activeTag(next_cmd.specific) == .fnkbox_launch_testcase);
                         continue :again next_cmd.specific;
@@ -3073,14 +3087,15 @@ const Workspace = struct {
                     .started_execution_fnkbox_from_input => |g| {
                         const fnkbox = &workspace.fnkboxes.items[g.fnkbox];
                         fnkbox.input = g.input;
+                        fnkbox.execution = null;
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped);
                         continue :again next_cmd.specific;
                     },
                     .fnkbox_launch_testcase => |t| {
-                        // execution has already been undoed
                         const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
                         fnkbox.testcases.items[t.testcase].actual = t.old_actual;
+                        fnkbox.execution = null;
                     },
                     .fnkbox_toggle_fold => |k| {
                         const fnkbox = &workspace.fnkboxes.items[k];
@@ -3412,9 +3427,14 @@ const Workspace = struct {
             var k: usize = 0;
             while (k < workspace.traces.items.len) {
                 if (workspace.traces.items[k].remaining_lifetime <= 0) {
-                    var old = workspace.traces.swapRemove(k);
-                    old.deinit(mem.gpa);
+                    const old = workspace.traces.swapRemove(k);
+                    // TODO: call this on undo_stack deinit
+                    // old.deinit(mem.gpa);
                     if (old.last_input) |l| try workspace.sexprs.append(l);
+                    try workspace.undo_stack.append(.{ .specific = .{ .despawned_trace = .{
+                        .trace = old,
+                        .spawned_sexpr = old.last_input != null,
+                    } } });
                 } else k += 1;
             }
         }
@@ -3427,11 +3447,12 @@ const Workspace = struct {
             try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
         }
 
-        for (workspace.fnkboxes.items, 0..) |*e, k| {
+        for (workspace.fnkboxes.items) |*e| {
             // TODO: revise
-            const added_trace = try e.update(k, mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
+            const added_trace = try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
             if (added_trace) |trace| {
                 try workspace.traces.append(trace);
+                try workspace.undo_stack.append(.{ .specific = .spawned_trace });
             }
         }
 
@@ -3584,7 +3605,11 @@ const Workspace = struct {
         // actually perform the action
         switch (action.specific) {
             .noop => {},
-            .started_execution, .started_execution_fnkbox_from_input => unreachable,
+            .started_execution,
+            .started_execution_fnkbox_from_input,
+            .spawned_trace,
+            .despawned_trace,
+            => unreachable,
             .fnkbox_launch_testcase => |t| {
                 const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
                 const testcase = &fnkbox.testcases.items[t.testcase];
@@ -3776,7 +3801,6 @@ const Workspace = struct {
                     .input = fnkbox.input,
                     .garland = garland,
                     .handle = .{ .pos = fnkbox.executorPoint().pos },
-                    .spawned_by_fnkbox = null,
                     .animation = null,
                 } };
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
