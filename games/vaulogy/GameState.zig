@@ -2231,7 +2231,8 @@ const Workspace = struct {
 
         dst.fnkboxes = .init(mem.gpa);
 
-        const levels = @import("levels_new.zig").levels;
+        // TODO: use all levels
+        const levels = @import("levels_new.zig").levels[0..5];
         for (levels, 0..) |level, k| {
             const samples = blk: {
                 var samples_it = level.samplesIterator();
