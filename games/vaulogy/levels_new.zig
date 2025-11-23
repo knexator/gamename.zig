@@ -105,8 +105,8 @@ pub const levels: []const Level = &.{
         .description = "Return true if the input letter is a vowel",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[5], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = &Sexpr.doLit("other"), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[4], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &Sexpr.doVar("other"), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {

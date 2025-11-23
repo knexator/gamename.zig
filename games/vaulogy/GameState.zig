@@ -261,7 +261,7 @@ const VeryPhysicalGarland = struct {
     handle: Handle,
     pub const handle_radius: f32 = 0.2;
     pub const handle_drop_radius: f32 = 1.5;
-    pub const case_drop_preview_perc: f32 = 0.5;
+    pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
     pub const dist_between_cases_first: f32 = 1.5;
     pub const dist_between_cases_rest: f32 = 2.5;
 
@@ -420,17 +420,18 @@ const VeryPhysicalGarland = struct {
     }
 
     pub fn update(garland: *VeryPhysicalGarland, delta_seconds: f32) void {
-        garland.updateWithOffset(0, delta_seconds);
+        garland.updateWithOffset(0, null, delta_seconds);
     }
 
     // TODO: maybe remove delta_seconds
-    pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, delta_seconds: f32) void {
+    // TODO: maybe remove this method
+    pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, first_ghost: ?*const VeryPhysicalCase, delta_seconds: f32) void {
         garland.handle.pos = center.pos;
         if (garland.fnkname) |*f| {
             f.point = center.applyToLocalPoint(Fnkviewer.fnkname_from_garland_pattern);
         }
         for (garland.cases.items, 0..) |*c, k| {
-            const target = center.applyToLocalPoint(.{ .pos = .new(0, dist_between_cases_first + dist_between_cases_rest * tof32(k)) });
+            const target = center.applyToLocalPoint(.{ .pos = .new(0, (if (first_ghost) |f| 2.5 + f.next.getExtraHeight() else 0) + dist_between_cases_first + dist_between_cases_rest * tof32(k)) });
             c.kinematicUpdate(target, null, null, delta_seconds);
         }
         for (0..garland.cases.items.len + 1) |k| {
@@ -442,7 +443,17 @@ const VeryPhysicalGarland = struct {
         }
     }
 
-    pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, delta_seconds: f32) void {
+    fn getExtraHeight(garland: *const VeryPhysicalGarland) f32 {
+        var result: f32 = 0;
+        for (garland.cases.items) |case| {
+            // if (k != garland.cases.items.len - 1) result += case.next.getExtraHeight();
+            result += case.next.getExtraHeight();
+            result += dist_between_cases_rest;
+        }
+        return @max(0, result - 1);
+    }
+
+    pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, offset_ghost: ?*const VeryPhysicalCase, delta_seconds: f32) void {
         assert(math.in01(offset));
         assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
         if (garland.fnkname) |*f| {
@@ -451,16 +462,17 @@ const VeryPhysicalGarland = struct {
         }
         for (0..garland.cases.items.len * 2 + 1) |k| {
             const dist = (if (k <= 1) dist_between_cases_first / 2.0 else dist_between_cases_rest / 2.0) +
-                (if (k == 1) offset * dist_between_cases_rest else 0);
+                (if (k == 1 and offset_ghost != null) offset * dist_between_cases_rest + offset * offset_ghost.?.next.getExtraHeight() else 0) +
+                (if (k > 1 and k % 2 == 0) garland.cases.items[@divExact(k, 2) - 1].next.getExtraHeight() else 0);
             if (k % 2 == 0) {
                 const handle = garland.handleForNewCasesRef(@divExact(k, 2));
                 const prev_pos = if (k == 0) garland.handle.pos else garland.cases.items[@divExact(k - 2, 2)].handle.pos;
-                const target = prev_pos.addY(dist + handle.hot_t * dist * case_drop_preview_perc);
+                const target = prev_pos.addY(dist + handle.hot_t * case_drop_preview_dist);
                 Vec2.lerpTowards(&handle.pos, target, 0.6, delta_seconds);
             } else {
                 const case = &garland.cases.items[@divExact(k - 1, 2)];
                 const prev_handle = garland.handleForNewCases(&.{@divExact(k - 1, 2)});
-                const target = prev_handle.pos.addY(dist + prev_handle.hot_t * dist * case_drop_preview_perc);
+                const target = prev_handle.pos.addY(dist + prev_handle.hot_t * case_drop_preview_dist);
                 Vec2.lerpTowards(&case.handle.pos, target, 0.6, delta_seconds);
                 case.update(delta_seconds);
             }
@@ -700,7 +712,7 @@ const VeryPhysicalCase = struct {
         case.pattern.point = center.applyToLocalPoint(.{ .pos = .xneg });
         case.template.point = center.applyToLocalPoint(.{ .pos = .xpos });
         case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset).applyToLocalPoint(fnk_name_extra orelse .{});
-        case.next.kinematicUpdate(center.applyToLocalPoint(.{ .pos = next_garland_offset }).applyToLocalPoint(next_point_extra orelse .{}), delta_seconds);
+        case.next.kinematicUpdate(center.applyToLocalPoint(.{ .pos = next_garland_offset }).applyToLocalPoint(next_point_extra orelse .{}), null, delta_seconds);
     }
 
     pub fn sexprAt(case: *VeryPhysicalCase, part: core.CasePart) *VeryPhysicalSexpr {
@@ -1149,7 +1161,7 @@ const Executor = struct {
                     .{ .pos = .new(6, -2), .scale = 0, .turns = -0.2 },
                     flyaway_t,
                 ));
-                executor.garland.updateWithOffset(offset_t, delta_seconds);
+                executor.garland.updateWithOffset(offset_t, &animation.active_case, delta_seconds);
                 animation.active_case.kinematicUpdate(case_floating_away, null, null, delta_seconds);
                 executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
                 if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
@@ -1170,14 +1182,17 @@ const Executor = struct {
                     .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
                 );
 
-                executor.garland.kinematicUpdate(executor.garlandPoint()
-                    .applyToLocalPoint(.{ .pos = .new(0, 2.5) })
-                    .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t)), delta_seconds);
+                executor.garland.kinematicUpdate(
+                    executor.garlandPoint()
+                        .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t)),
+                    &animation.active_case,
+                    delta_seconds,
+                );
                 if (animation.invoked_fnk) |*invoked| {
                     const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
                     const function_point = executor.garlandPoint()
                         .applyToLocalPoint(.{ .pos = .new(2 * offset + 6 - match_t - enqueueing_t * 5, 6 * offset) });
-                    invoked.kinematicUpdate(function_point, delta_seconds);
+                    invoked.kinematicUpdate(function_point, null, delta_seconds);
 
                     animation.active_case.kinematicUpdate(case_point, .{
                         .pos = .new(template_t * 6, -2 * enqueueing_t),
@@ -1194,7 +1209,7 @@ const Executor = struct {
                             x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
                                 .pos = .new(tt * 6 + 2 - template_t * 2, -2 * et),
                                 .turns = math.lerp(0, -0.1, math.smoothstepEased(et, 0, 1, .easeInOutCubic)),
-                            }), delta_seconds);
+                            }), null, delta_seconds);
                         } else @panic("TODO");
                     }
                 }
@@ -1822,7 +1837,7 @@ pub fn getGarlandForFnk(
         if (k.fnkname.value.equals(fnkname)) {
             var garland = try k.garland.clone(mem.gpa, hover_pool);
             garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
-            garland.kinematicUpdate(new_point, undefined);
+            garland.kinematicUpdate(new_point, null, undefined);
             return garland;
         }
     } else return null;
