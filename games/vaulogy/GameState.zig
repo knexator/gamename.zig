@@ -2743,7 +2743,7 @@ const Workspace = struct {
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
 
-        if (true) try drawer.canvas.drawText(
+        if (false) try drawer.canvas.drawText(
             0,
             camera,
             try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
