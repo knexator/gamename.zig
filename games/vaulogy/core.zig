@@ -1609,7 +1609,7 @@ fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr
 fn externalFromInternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     return switch (s.*) {
         .atom_var => |v| storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.@"var", try storeSexprInPool(pool, Sexpr.doLit(v.value)))),
-        .atom_lit => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.atom, s)),
+        .atom_lit, .empty => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.atom, s)),
         .pair => |p| storeSexprInPool(pool, Sexpr.doPair(
             try externalFromInternal(p.left, pool),
             try externalFromInternal(p.right, pool),

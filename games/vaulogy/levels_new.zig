@@ -354,22 +354,21 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-};
-
-const TODO = &.{
     .{
         .fnk_name = &Sexpr.doLit("changeCase"),
+        .description = "Change the casing of the given letter.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < Vals.lowercase.len) {
                     return .{
                         .input = Vals.lowercase[k],
-                        .output = Vals.uppercase[k],
+                        .expected = Vals.uppercase[k],
                     };
                 } else if (k < Vals.lowercase.len * 2) {
                     return .{
                         .input = Vals.uppercase[k - Vals.lowercase.len],
-                        .output = Vals.lowercase[k - Vals.lowercase.len],
+                        .expected = Vals.lowercase[k - Vals.lowercase.len],
                     };
                 } else return null;
             }
@@ -377,18 +376,20 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("letterToBothCases"),
+        .description = "Get the lowercase and uppercase versions of the given letter.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < Vals.lowercase.len) {
                     return .{
                         .input = Vals.lowercase[k],
-                        .output = try store(pool, Sexpr.doPair(Vals.lowercase[k], Vals.uppercase[k])),
+                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k], Vals.uppercase[k])),
                     };
                 } else if (k < Vals.lowercase.len * 2) {
                     const k2 = k - Vals.lowercase.len;
                     return .{
                         .input = Vals.uppercase[k2],
-                        .output = try store(pool, Sexpr.doPair(Vals.lowercase[k2], Vals.uppercase[k2])),
+                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k2], Vals.uppercase[k2])),
                     };
                 } else return null;
             }
@@ -396,6 +397,28 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("hasSomeB"),
+        // intro to recursion
+        .description = "Check if the input has a 'B' anywhere.",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[1], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[2], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[3], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[4], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[5], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{
+                .pattern = &.doPair(&.doVar("any"), Vals.lowercase[1]),
+                .template = Sexpr.builtin.true,
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(Vals.lowercase[1], &.doVar("any")),
+                .template = Sexpr.builtin.true,
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < 100) {
@@ -404,7 +427,7 @@ const TODO = &.{
                     const input = try randomSexpr(pool, &Vals.lowercase, random, 5);
                     return .{
                         .input = input,
-                        .output = Sexpr.fromBool(Helpers.hasSomeB(input)),
+                        .expected = Sexpr.fromBool(Helpers.hasSomeB(input)),
                     };
                 } else return null;
             }
@@ -412,6 +435,40 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("second"),
+        // simplest intro to lists
+        .description = "Get the second element of the list.",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = &.doPair(
+                Vals.lowercase[0],
+                &.doPair(
+                    Vals.lowercase[1],
+                    Sexpr.builtin.nil,
+                ),
+            ), .template = Vals.uppercase[0], .fnk_name = Vals.lowercase[1], .next = null },
+            .{ .pattern = &.doPair(
+                Vals.lowercase[0],
+                &.doPair(
+                    Vals.lowercase[1],
+                    &.doPair(
+                        Vals.lowercase[2],
+                        Sexpr.builtin.nil,
+                    ),
+                ),
+            ), .template = Vals.uppercase[0], .fnk_name = Vals.lowercase[1], .next = null },
+            .{ .pattern = &.doPair(
+                Vals.lowercase[0],
+                &.doPair(
+                    Vals.lowercase[1],
+                    &.doPair(
+                        Vals.lowercase[2],
+                        &.doPair(
+                            Vals.lowercase[3],
+                            Sexpr.builtin.nil,
+                        ),
+                    ),
+                ),
+            ), .template = Vals.uppercase[0], .fnk_name = Vals.lowercase[1], .next = null },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < 100) {
@@ -422,7 +479,7 @@ const TODO = &.{
                     const rest = try randomList(pool, &Vals.lowercase, random, random.intRangeAtMost(usize, 0, 7));
                     return .{
                         .input = try toListWithSentinel(pool, &.{ first, second }, rest),
-                        .output = second,
+                        .expected = second,
                     };
                 } else return null;
             }
@@ -430,12 +487,23 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("listHasSomeB"),
+        // real intro to lists
+        .description = "Check if the given list has a 'B' anywhere.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                // TODO: builtin samples:
+                // nil -> false;
+                // (f . nil) -> false;
+                // (a . (b . nil)) -> true;
+                // (c . (d . (e . nil))) -> false;
+                // // The first element of this list is '(b . b)',
+                // // which is not 'b'!
+                // ((b . b) . (a . nil)) -> false;
                 if (k == 0) {
                     return .{
                         .input = Sexpr.builtin.nil,
-                        .output = Sexpr.builtin.false,
+                        .expected = Sexpr.builtin.false,
                     };
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
@@ -455,7 +523,7 @@ const TODO = &.{
                     }
                     return .{
                         .input = input,
-                        .output = Sexpr.fromBool(has_b),
+                        .expected = Sexpr.fromBool(has_b),
                     };
                 } else return null;
             }
@@ -463,12 +531,14 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("uppercaseEachElement"),
+        .description = "Uppercase each element in the list.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k == 0) {
                     return .{
                         .input = Sexpr.builtin.nil,
-                        .output = Sexpr.builtin.nil,
+                        .expected = Sexpr.builtin.nil,
                     };
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
@@ -485,7 +555,7 @@ const TODO = &.{
                     }
                     return .{
                         .input = input,
-                        .output = output,
+                        .expected = output,
                     };
                 } else return null;
             }
@@ -493,12 +563,14 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("hasAnyVowel"),
+        .description = "Return true if the list contains any vowel",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k == 0) {
                     return .{
                         .input = Sexpr.builtin.nil,
-                        .output = Sexpr.builtin.false,
+                        .expected = Sexpr.builtin.false,
                     };
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
@@ -515,7 +587,7 @@ const TODO = &.{
                     }
                     return .{
                         .input = input,
-                        .output = Sexpr.fromBool(output),
+                        .expected = Sexpr.fromBool(output),
                     };
                 } else return null;
             }
@@ -523,12 +595,14 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("reverse"),
+        .description = "Reverse the given list.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
                 if (k == 0) {
                     return .{
                         .input = Sexpr.builtin.nil,
-                        .output = Sexpr.builtin.nil,
+                        .expected = Sexpr.builtin.nil,
                     };
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
@@ -545,7 +619,7 @@ const TODO = &.{
                     }
                     return .{
                         .input = input,
-                        .output = try toList(pool, output.items),
+                        .expected = try toList(pool, output.items),
                     };
                 } else return null;
             }
@@ -553,32 +627,34 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("mostCommonBoolean"),
+        .description = "Return the most common element of the list.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
                 const t = Sexpr.builtin.true;
                 const f = Sexpr.builtin.false;
-                const premade_samples: []const struct { input: []const *const Sexpr, output: *const Sexpr } = &.{
+                const premade_samples: []const struct { input: []const *const Sexpr, expected: *const Sexpr } = &.{
                     .{
                         .input = &.{ t, f, t },
-                        .output = t,
+                        .expected = t,
                     },
                     .{
                         .input = &.{ t, f, f, t, f },
-                        .output = f,
+                        .expected = f,
                     },
                     .{
                         .input = &.{ t, t, t, f, f, f, f },
-                        .output = f,
+                        .expected = f,
                     },
                     .{
                         .input = &.{ t, f, t, f, t, f, t },
-                        .output = t,
+                        .expected = t,
                     },
                 };
                 if (k < premade_samples.len) {
                     return .{
                         .input = try toList(pool, premade_samples[k].input),
-                        .output = premade_samples[k].output,
+                        .expected = premade_samples[k].expected,
                     };
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
@@ -606,7 +682,7 @@ const TODO = &.{
                     }
                     return .{
                         .input = try toList(pool, all_elements),
-                        .output = Sexpr.fromBool(num_true > num_false),
+                        .expected = Sexpr.fromBool(num_true > num_false),
                     };
                 } else return null;
             }
@@ -614,6 +690,8 @@ const TODO = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("brainfuck"),
+        .description = "Implement a BrainF*ck interpreter.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 // TODO: infinite samples
@@ -663,7 +741,7 @@ const TODO = &.{
                             try toList(pool, sample.code),
                             try toListOfPeano(pool, sample.stdin),
                         )),
-                        .output = try toListOfPeano(pool, sample.output),
+                        .expected = try toListOfPeano(pool, sample.output),
                     };
                 } else return null;
             }
@@ -672,6 +750,8 @@ const TODO = &.{
     .{
         // TODO
         .fnk_name = &Sexpr.doLit("interpreter"),
+        .description = "Implement a Vaulogy interpreter.",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
                 if (k != 0) return null;
@@ -702,7 +782,7 @@ const TODO = &.{
                             try toList(pool, &.{fnk_def_sexpr}),
                         )),
                     )),
-                    .output = output,
+                    .expected = output,
                 };
             }
         }.generate_sample,

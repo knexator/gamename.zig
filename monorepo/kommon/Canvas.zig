@@ -12,6 +12,8 @@ instanced_rounded_lines_renderable: Gl.InstancedRenderable,
 instanced_colored_separated_rounded_lines_renderable: Gl.InstancedRenderable,
 fill_shape_renderable: Gl.Renderable,
 fill_shape_vertex_colors_renderable: Gl.Renderable,
+/// takes world positions directly
+fill_shapes_renderable: Gl.Renderable,
 // TODO: instancing
 sprite_renderable: Gl.Renderable,
 text_renderers: []TextRenderer,
@@ -332,6 +334,35 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
                 .{ .name = "u_width", .kind = .f32 },
             },
         ),
+        .fill_shapes_renderable = try gl.buildRenderable(
+            \\precision highp float;
+            \\uniform vec4 u_camera; // as top_left, size
+            \\
+            \\in vec2 a_position;
+            \\in vec4 a_color;
+            \\out vec4 v_color;
+            \\void main() {
+            \\  vec2 world_position = a_position;
+            \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+            \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+            \\  v_color = a_color;
+            \\}
+        ,
+            \\precision highp float;
+            \\out vec4 out_color;
+            \\in vec4 v_color;
+            \\void main() {
+            \\  out_color = v_color;
+            \\}
+        ,
+            .{ .attribs = &.{
+                .{ .name = "a_position", .kind = .Vec2 },
+                .{ .name = "a_color", .kind = .FColor },
+            } },
+            &.{
+                .{ .name = "u_camera", .kind = .Rect },
+            },
+        ),
         .DEFAULT_SHAPES = try .init(gpa),
         .text_renderers = text_renderers,
     };
@@ -384,6 +415,52 @@ pub fn drawDirty(
         asdf.texture,
     );
 }
+
+pub const ShapesBatch = struct {
+    const VertexData = extern struct {
+        a_position: Vec2,
+        a_color: FColor,
+    };
+    const IndexType = u32;
+
+    canvas: *Canvas,
+    vertices: std.ArrayListUnmanaged(VertexData) = .empty,
+    triangles: std.ArrayListUnmanaged([3]IndexType) = .empty,
+
+    pub fn add(self: *ShapesBatch, parent_world_point: Point, shape: PrecomputedShape, fill: FColor) !void {
+        const base_index: IndexType = @intCast(self.vertices.items.len);
+        try self.vertices.ensureUnusedCapacity(self.canvas.frame_arena.allocator(), shape.local_points.len);
+        for (shape.local_points) |p| {
+            self.vertices.appendAssumeCapacity(.{
+                .a_color = fill,
+                .a_position = parent_world_point.applyToLocalPosition(p),
+            });
+        }
+        try self.triangles.ensureUnusedCapacity(self.canvas.frame_arena.allocator(), shape.triangles.len * 3);
+        for (shape.triangles) |t| {
+            self.triangles.appendAssumeCapacity(.{
+                t[0] + base_index,
+                t[1] + base_index,
+                t[2] + base_index,
+            });
+        }
+    }
+
+    pub fn draw(self: *ShapesBatch, camera: Rect) void {
+        self.canvas.gl.useRenderable(
+            self.canvas.fill_shapes_renderable,
+            self.vertices.items.ptr,
+            self.vertices.items.len * @sizeOf(VertexData),
+            self.triangles.items,
+            &.{
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            },
+            null,
+        );
+        self.triangles.clearRetainingCapacity();
+        self.vertices.clearRetainingCapacity();
+    }
+};
 
 pub fn fillShapeWithVertexColors(
     self: *Canvas,

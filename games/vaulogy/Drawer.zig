@@ -573,6 +573,10 @@ fn drawShapeV3(
     alpha: f32,
 ) !void {
     if (fill) |col| {
+        // TODO: what if each drawing uses a different camera? what about stencils?
+        // var batch: Canvas.ShapesBatch = .{ .canvas = self.canvas };
+        // try batch.add(parent_world_point, shape, col.timesAlpha(alpha));
+        // batch.draw(camera);
         self.canvas.fillShape(
             camera,
             parent_world_point,

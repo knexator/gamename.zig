@@ -1688,7 +1688,7 @@ const Fnkbox = struct {
 
     pub fn update(fnkbox: *Fnkbox, fnkbox_index: usize, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !?ExecutionTrace {
         var result: ?ExecutionTrace = null;
-        math.lerp_towards_range(&fnkbox.scroll_testcases, 0, tof32(fnkbox.testcases.items.len) - visible_testcases, 0.6, delta_seconds);
+        math.lerp_towards_range(&fnkbox.scroll_testcases, 0, @max(0, tof32(fnkbox.testcases.items.len) - visible_testcases), 0.6, delta_seconds);
         fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
         fnkbox.status_bar.rect.lerpTowards(fnkbox.statusBarGoal(), 0.6, delta_seconds);
         fnkbox.status_bar.enabled = switch (fnkbox.status) {
@@ -2245,7 +2245,7 @@ const Workspace = struct {
                 try .init(
                     level.description,
                     level.fnk_name,
-                    .{ .pos = .new(100 + 20 * tof32(k), if (k % 2 == 0) -6 else -5) },
+                    .{ .pos = .new(100 + 40 * tof32(k), if (k % 2 == 0) -6 else -5) },
                     samples,
                     level.initial_definition,
                     &dst.hover_pool,
