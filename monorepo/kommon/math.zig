@@ -1681,6 +1681,10 @@ pub const Point = extern struct {
     turns: f32 = 0,
     scale: f32 = 1,
 
+    pub fn withPos(original: Point, new_pos: Vec2) Point {
+        return .{ .pos = new_pos, .turns = original.turns, .scale = original.scale };
+    }
+
     pub fn lerp(a: Point, b: Point, t: f32) Point {
         // TODO: properly handle rotation
         return .{
