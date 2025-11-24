@@ -2309,9 +2309,9 @@ const Workspace = struct {
                 var samples_it = level.samplesIterator();
                 var samples: std.ArrayListUnmanaged(Sample) = .empty;
                 while (try samples_it.next(&mem.pool_for_sexprs, mem.scratch.allocator())) |item| {
-                    try samples.append(mem.gpa, item);
+                    try samples.append(mem.scratch.allocator(), item);
                 }
-                break :blk try samples.toOwnedSlice(mem.gpa);
+                break :blk try samples.toOwnedSlice(mem.scratch.allocator());
             };
             try dst.fnkboxes.append(
                 try .init(
