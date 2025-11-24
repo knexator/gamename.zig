@@ -1855,6 +1855,27 @@ const Fnkbox = struct {
     }
 };
 
+// in-world notes/tutorials
+// TODO: player should be able to draw on these, freehand
+pub const Postit = struct {
+    button: Button,
+    text: []const u8,
+
+    pub fn fromText(text: []const u8, center: Vec2) Postit {
+        return .{
+            .button = .{
+                .rect = .fromCenterAndSize(center, .both(6)),
+            },
+            .text = text,
+        };
+    }
+
+    pub fn draw(postit: Postit, drawer: *Drawer, camera: Rect) !void {
+        try postit.button.draw(drawer, camera);
+        try drawer.canvas.drawText(0, camera, postit.text, .centeredAt(postit.button.rect.getCenter()), 0.8, .black);
+    }
+};
+
 const ToolbarTrash = struct {
     rect: Rect,
     hot_t: f32 = 0,
@@ -1993,6 +2014,7 @@ const Workspace = struct {
     traces: std.ArrayList(ExecutionTrace),
     toolbar_variable: VeryPhysicalSexpr,
     toolbar_trash: ToolbarTrash,
+    postits: std.ArrayList(Postit),
 
     hover_pool: HoveredSexpr.Pool,
 
@@ -2005,6 +2027,8 @@ const Workspace = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
         grabbing: Target = .nothing,
         ui_active: UiTarget = .nothing,
+        /// only used for postits
+        grabbing_offset: Vec2 = .zero,
 
         const UiTarget = struct {
             kind: Kind,
@@ -2048,6 +2072,7 @@ const Workspace = struct {
                 executor_handle: usize,
                 fnkviewer_handle: usize,
                 fnkbox_handle: usize,
+                postit: usize,
 
                 pub fn equals(a: Kind, b: Kind) bool {
                     return kommon.meta.eql(a, b);
@@ -2328,6 +2353,10 @@ const Workspace = struct {
 
         dst.traces = .init(mem.gpa);
 
+        dst.postits = .init(mem.gpa);
+        try dst.postits.append(.fromText("the assignment ->", .new(87, 0)));
+        try dst.postits.append(.fromText("the solution ->", .new(91, 7.5)));
+
         dst.toolbar_variable = try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doVar("TODO_change")), .{}, true);
         dst.toolbar_trash = .{ .rect = .unit };
 
@@ -2365,6 +2394,7 @@ const Workspace = struct {
         workspace.fnkviewers.deinit();
         workspace.fnkboxes.deinit();
         workspace.traces.deinit();
+        workspace.postits.deinit();
     }
 
     pub fn save(workspace: *const Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
@@ -2519,6 +2549,7 @@ const Workspace = struct {
             .lens_handle,
             .case_handle,
             .garland_handle,
+            .postit,
             => {},
         }
 
@@ -2548,7 +2579,7 @@ const Workspace = struct {
             .executor_handle => |k| .{ .executor = k },
             .fnkviewer_handle => |k| .{ .fnkviewer = k },
             .fnkbox_handle => |k| .{ .fnkbox = k },
-            .nothing, .lens_handle, .sexpr => null,
+            .nothing, .lens_handle, .sexpr, .postit => null,
         })) |parent_garland_handle| {
             const parent_garland = workspace.garlandAt(.{ .local = &.{}, .parent = parent_garland_handle });
             var it = parent_garland.childGarlandsAddressIterator(res);
@@ -2580,6 +2611,7 @@ const Workspace = struct {
             .nothing,
             .lens_handle,
             .sexpr,
+            .postit,
             => {},
         }
 
@@ -2747,6 +2779,7 @@ const Workspace = struct {
             workspace.executors.items,
             workspace.fnkviewers.items,
             workspace.traces.items,
+            workspace.postits.items,
         }) |things| {
             for (things) |g| {
                 try g.draw(drawer, camera);
@@ -2854,6 +2887,15 @@ const Workspace = struct {
                 }
                 if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
                     return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .target } } };
+                }
+            }
+        }
+
+        // postits
+        if (grabbed_tag == .nothing) {
+            for (workspace.postits.items, 0..) |postit, k| {
+                if (postit.button.rect.contains(pos)) {
+                    return .{ .kind = .{ .postit = k } };
                 }
             }
         }
@@ -3172,6 +3214,14 @@ const Workspace = struct {
                                 const e = &workspace.fnkboxes.items[h];
                                 e.handle.pos = g.old_position;
                             },
+                            .postit => |k| {
+                                if (g.duplicate) {
+                                    _ = workspace.postits.pop().?;
+                                } else {
+                                    const postit = &workspace.postits.items[k];
+                                    postit.button.rect.top_left = g.old_position;
+                                }
+                            },
                             .lens_handle => |h| {
                                 if (g.duplicate) {
                                     _ = workspace.lenses.pop().?;
@@ -3227,7 +3277,7 @@ const Workspace = struct {
                     .dropped => |g| {
                         switch (g.at.kind) {
                             .nothing => unreachable,
-                            .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => {
+                            .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => {
                                 workspace.focus.grabbing = g.at;
                             },
                             .garland_handle => |h| {
@@ -3379,6 +3429,16 @@ const Workspace = struct {
             fnkbox.updateUiHotness(fnkbox_index, ui_hot, workspace.focus.ui_active, platform.delta_seconds);
         }
 
+        for (workspace.postits.items, 0..) |*postit, k| {
+            postit.button.updateHot2(switch (hovering.kind) {
+                else => false,
+                .postit => |k2| k == k2,
+            }, switch (workspace.focus.grabbing.kind) {
+                else => false,
+                .postit => |k2| k == k2,
+            }, platform.delta_seconds);
+        }
+
         math.lerp_towards(&workspace.toolbar_trash.hot_t, if (hovering_toolbar_trash) 1 else 0, 0.6, platform.delta_seconds);
 
         // TODO: reduce duplication?
@@ -3416,6 +3476,9 @@ const Workspace = struct {
         switch (workspace.focus.grabbing.kind) {
             .nothing => {},
             // TODO: would be nice to unify all handle dragging
+            .postit => |k| {
+                workspace.postits.items[k].button.rect.top_left = mouse.cur.position.sub(workspace.focus.grabbing_offset);
+            },
             .lens_handle => |p| {
                 const lens = &workspace.lenses.items[p.index];
                 lens.setHandlePos(p.part, mouse.cur.position);
@@ -3552,7 +3615,7 @@ const Workspace = struct {
                 } } }
             else switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
-                .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => .{ .specific = .{
+                .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => .{ .specific = .{
                     .dropped = .{
                         .at = workspace.focus.grabbing,
                         .old_grabbed_position = workspace.focus.grabbing,
@@ -3688,7 +3751,11 @@ const Workspace = struct {
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
-                    inline .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => |h, t| {
+                    inline .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => |h, t| {
+                        workspace.focus.grabbing_offset = switch (t) {
+                            else => .zero,
+                            .postit => mouse.cur.position.sub(g.old_position),
+                        };
                         if (g.duplicate) {
                             switch (t) {
                                 else => std.log.err("TODO", .{}),
@@ -3798,7 +3865,7 @@ const Workspace = struct {
                 workspace.focus.grabbing = .nothing;
                 switch (g.at.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle => {},
+                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => {},
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {} else {
                             const place = workspace.garlandAt(h);
@@ -3881,6 +3948,7 @@ const Workspace = struct {
     fn positionOf(workspace: *Workspace, thing: Focus.Target) Vec2 {
         return switch (thing.kind) {
             .nothing => unreachable,
+            .postit => |k| workspace.postits.items[k].button.rect.top_left,
             .lens_handle => |h| workspace.lenses.items[h.index].handlePos(h.part),
             .executor_handle => |h| workspace.executors.items[h].handle.pos,
             .fnkviewer_handle => |h| workspace.fnkviewers.items[h].handle.pos,
