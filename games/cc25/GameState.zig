@@ -25,28 +25,39 @@ const COLORS: struct {
     black: FColor = .fromHex("#19011a"),
 } = .{};
 
-const BOARD_SIZE: Vec2 = .both(7);
-const ARM_START: Vec2 = .new(0, 3);
-const SLIDERS_N = 4;
-const ARMS_N = 4;
-const SLIDER_HALFSIZE = 3;
-
 const camera: Rect = .{ .top_left = .zero, .size = BOARD_SIZE.addY(SLIDERS_N) };
 
-usual: kommon.Usual,
+const BOARD_SIZE: Vec2 = .both(13);
+const SLIDERS_N = 4;
+const ARMS_N = 4;
+const SLIDER_HALFSIZE = 2;
 
-arms: [ARMS_N]ArmSegment = .{
-    .{ .base_length = 2, .dir = .yneg, .influence = .{ 1, 0, 0, -1 } },
-    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, 1, 0, 1 } },
-    .{ .base_length = 2, .dir = .ypos, .influence = .{ -1, 0, 1, 0 } },
-    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, -1, 1, 0 } },
-},
+arm_left: Arm = .{ .base = BOARD_SIZE.sub(.both(1)).mul(.new(0, 0.5)), .segments = .{
+    .{ .base_length = 2, .dir = .yneg, .influence = .{ 1, 0, 0, 0 } },
+    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, 1, 0, 0 } },
+    .{ .base_length = 2, .dir = .ypos, .influence = .{ 0, 0, 1, 0 } },
+    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, 0, 0, 1 } },
+} },
+arm_right: Arm = .{ .base = BOARD_SIZE.sub(.both(1)).mul(.new(1, 0.5)), .segments = .{
+    .{ .base_length = 2, .dir = .yneg, .influence = .{ 0, 1, 0, 0 } },
+    .{ .base_length = 2, .dir = .xneg, .influence = .{ 0, 0, 1, 0 } },
+    .{ .base_length = 2, .dir = .ypos, .influence = .{ 0, 0, 0, 1 } },
+    .{ .base_length = 2, .dir = .xneg, .influence = .{ 1, 0, 0, 0 } },
+} },
+
 sliders: [SLIDERS_N]Slider = @splat(.{}),
 active_slider: ?usize = null,
+
+usual: kommon.Usual,
 
 const Slider = struct {
     value: f32 = 0,
     hot_t: f32 = 0,
+};
+
+const Arm = struct {
+    base: Vec2,
+    segments: [ARMS_N]ArmSegment,
 };
 
 const ArmSegment = struct {
@@ -118,7 +129,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     } else if (self.active_slider != null and !mouse.cur.isDown(.left)) {
         self.active_slider = null;
     } else if (self.active_slider) |active| {
-        self.sliders[active].value = math.clamp(mouse.cur.position.x - 0.5 - SLIDER_HALFSIZE, -SLIDER_HALFSIZE, SLIDER_HALFSIZE);
+        self.sliders[active].value = math.clamp(mouse.cur.position.x - camera.size.x / 2, -SLIDER_HALFSIZE, SLIDER_HALFSIZE);
     }
 
     for (&self.sliders, 0..) |*p, k| {
@@ -135,11 +146,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         canvas.borderRect(camera, grid.getTileRect(.{ .size = BOARD_SIZE, .top_left = .zero }, p), 0.05, .inner, COLORS.white);
     }
 
-    var base_pos: Vec2 = ARM_START;
-    for (self.arms, 0..) |arm, k| {
-        const next_pos = base_pos.add(arm.dir.scale(arm.length(&self.sliders)));
-        canvas.line(camera, &.{ base_pos.add(.half), next_pos.add(.half) }, 0.5, if (k % 2 == 0) COLORS.blue else COLORS.orange);
-        base_pos = next_pos;
+    inline for (.{ self.arm_left, self.arm_right }) |arm| {
+        var base_pos: Vec2 = arm.base;
+        for (arm.segments, 0..) |segment, k| {
+            const next_pos = base_pos.add(segment.dir.scale(segment.length(&self.sliders)));
+            canvas.line(camera, &.{ base_pos.add(.half), next_pos.add(.half) }, 0.5, if (k % 2 == 0) COLORS.blue else COLORS.orange);
+            base_pos = next_pos;
+        }
     }
 
     for (self.sliders, 0..) |s, k| {
