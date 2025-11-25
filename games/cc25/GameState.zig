@@ -7,7 +7,7 @@ pub const stuff = .{
     .metadata = .{
         .name = "cc25",
         .author = "knexator",
-        .desired_aspect_ratio = 1.0 / 1.0,
+        .desired_aspect_ratio = BOARD_SIZE.addY(SLIDERS_N).aspectRatio(),
     },
     .sounds = .{},
     .loops = .{},
@@ -25,30 +25,42 @@ const COLORS: struct {
     black: FColor = .fromHex("#19011a"),
 } = .{};
 
-const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
+const BOARD_SIZE: Vec2 = .both(7);
+const ARM_START: Vec2 = .new(0, 3);
+const SLIDERS_N = 4;
+const ARMS_N = 4;
+const SLIDER_HALFSIZE = 3;
+
+const camera: Rect = .{ .top_left = .zero, .size = BOARD_SIZE.addY(SLIDERS_N) };
 
 usual: kommon.Usual,
 
-pieces: [3]PieceThing = .{
-    .{
-        .window = .{ .top_left = .zero, .size = .new(2, 2) },
-        .handle = .{ .top_left = .new(2, 0), .size = .new(1, 2) },
-    },
-    .{
-        .window = .{ .top_left = .zero, .size = .new(2, 2) },
-        .handle = .{ .top_left = .new(0, 2), .size = .new(2, 1) },
-    },
-    .{
-        .window = .{ .top_left = .zero, .size = .new(2, 2) },
-        .handle = .{ .top_left = .new(2, 0), .size = .new(1, 2) },
-    },
+arms: [ARMS_N]ArmSegment = .{
+    .{ .base_length = 2, .dir = .yneg, .influence = .{ 1, 0, 0, -1 } },
+    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, 1, 0, 1 } },
+    .{ .base_length = 2, .dir = .ypos, .influence = .{ -1, 0, 1, 0 } },
+    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, -1, 1, 0 } },
 },
-active_piece: ?*PieceThing = null,
+sliders: [SLIDERS_N]Slider = @splat(.{}),
+active_slider: ?usize = null,
 
-const PieceThing = struct {
-    window: Rect,
-    handle: Rect,
+const Slider = struct {
+    value: f32 = 0,
     hot_t: f32 = 0,
+};
+
+const ArmSegment = struct {
+    base_length: f32,
+    dir: Vec2,
+    influence: [SLIDERS_N]f32,
+
+    pub fn length(arm: *const ArmSegment, sliders: *const [SLIDERS_N]Slider) f32 {
+        var result: f32 = arm.base_length;
+        for (sliders, arm.influence) |s, i| {
+            result += i * s.value;
+        }
+        return result;
+    }
 };
 
 pub fn init(
@@ -85,45 +97,54 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
+fn sliderPos(k: usize, t: f32) Vec2 {
+    assert(math.inRangeClosed(t, -1, 1));
+    return BOARD_SIZE.mul(.new(0.5, 1)).addY(tof32(k) + 0.5).addX(t * SLIDER_HALFSIZE);
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
 
     const mouse = platform.getMouse(camera);
 
-    const hot_piece: ?*PieceThing = for (&self.pieces) |*p| {
-        if (p.handle.contains(mouse.cur.position)) break p;
-        if (!p.window.contains(mouse.cur.position)) break null;
+    const hot_slider: ?usize = for (self.sliders, 0..) |s, k| {
+        const handle = sliderPos(k, s.value / SLIDER_HALFSIZE);
+        if (handle.distTo(mouse.cur.position) < 0.5) break k;
     } else null;
 
-    if (self.active_piece == null and mouse.wasPressed(.left)) {
-        self.active_piece = hot_piece;
-    } else if (self.active_piece != null and !mouse.cur.isDown(.left)) {
-        self.active_piece = null;
-    } else if (self.active_piece) |active| {
-        active.handle = active.handle.move(mouse.deltaPos());
-        active.window = active.window.move(mouse.deltaPos());
+    if (self.active_slider == null and mouse.wasPressed(.left)) {
+        self.active_slider = hot_slider;
+    } else if (self.active_slider != null and !mouse.cur.isDown(.left)) {
+        self.active_slider = null;
+    } else if (self.active_slider) |active| {
+        self.sliders[active].value = math.clamp(mouse.cur.position.x - 0.5 - SLIDER_HALFSIZE, -SLIDER_HALFSIZE, SLIDER_HALFSIZE);
     }
 
-    for (&self.pieces) |*p| {
-        math.lerp_towards(&p.hot_t, if (p == hot_piece) 1 else 0, 0.6, platform.delta_seconds);
+    for (&self.sliders, 0..) |*p, k| {
+        math.lerp_towards(&p.hot_t, if (k == hot_slider) 1 else 0, 0.6, platform.delta_seconds);
+        if (k != self.active_slider) math.lerp_towards(&p.value, @round(p.value), 0.6, platform.delta_seconds);
     }
 
     const canvas = &self.usual.canvas;
     platform.gl.clear(COLORS.black);
 
-    for (0..self.pieces.len) |k| {
-        canvas.fillRect(camera, camera, COLORS.black.withAlpha(0.25));
-        const p: *const PieceThing = &self.pieces[self.pieces.len - k - 1];
-        canvas.gl.startStencil();
-        canvas.fillRect(camera, camera, .white);
-        canvas.gl.blackStencil();
-        canvas.fillRect(camera, p.window, .black);
-        canvas.gl.doneStencil();
-        canvas.fillRect(camera, camera, COLORS.orange);
-        canvas.gl.stopStencil();
-        canvas.borderRect(camera, p.window, 0.1, .inner, COLORS.orange);
-        canvas.fillRect(camera, p.handle.plusMargin(0.05 * p.hot_t - 0.1), COLORS.blue);
+    const grid: kommon.grid2D.Grid2D(void, BOARD_SIZE.toInt(usize)) = .initUndefinedV2(BOARD_SIZE.toInt(usize));
+    var it = grid.iterator();
+    while (it.next()) |p| {
+        canvas.borderRect(camera, grid.getTileRect(.{ .size = BOARD_SIZE, .top_left = .zero }, p), 0.05, .inner, COLORS.white);
+    }
+
+    var base_pos: Vec2 = ARM_START;
+    for (self.arms, 0..) |arm, k| {
+        const next_pos = base_pos.add(arm.dir.scale(arm.length(&self.sliders)));
+        canvas.line(camera, &.{ base_pos.add(.half), next_pos.add(.half) }, 0.5, if (k % 2 == 0) COLORS.blue else COLORS.orange);
+        base_pos = next_pos;
+    }
+
+    for (self.sliders, 0..) |s, k| {
+        const handle = sliderPos(k, s.value / SLIDER_HALFSIZE);
+        canvas.fillCircle(camera, handle, 0.5, COLORS.white);
     }
 
     return false;

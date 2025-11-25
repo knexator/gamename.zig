@@ -2,7 +2,7 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
-const active_folder = "vaulogy";
+const active_folder = "cc25";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
@@ -450,6 +450,7 @@ fn build_all_games_html(b: *std.Build) !void {
         "octopus",
         "snakanake",
         "tres_undos",
+        "cc25",
     }) |game_folder| {
         try html_index_contents.writer().print("<li><a href=\"{s}\">{s}</a></li>\n", .{ game_folder, game_folder });
         try _build_for_web(
