@@ -27,22 +27,22 @@ const COLORS: struct {
 
 const camera: Rect = .{ .top_left = .zero, .size = BOARD_SIZE.addY(SLIDERS_N) };
 
-const BOARD_SIZE: Vec2 = .both(13);
+const BOARD_SIZE: Vec2 = .both(11);
 const SLIDERS_N = 4;
 const ARMS_N = 4;
 const SLIDER_HALFSIZE = 2;
 
-arm_left: Arm = .{ .base = BOARD_SIZE.sub(.both(1)).mul(.new(0, 0.5)), .segments = .{
-    .{ .base_length = 2, .dir = .yneg, .influence = .{ 1, 0, 0, 0 } },
-    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, 1, 0, 0 } },
-    .{ .base_length = 2, .dir = .ypos, .influence = .{ 0, 0, 1, 0 } },
-    .{ .base_length = 2, .dir = .xpos, .influence = .{ 0, 0, 0, 1 } },
+arm_left: Arm = .{ .base = BOARD_SIZE.sub(.both(1)).mul(.new(0, 0.5)).addY(0), .segments = .{
+    .{ .base_length = 3, .dir = .yneg, .influence = .{ 1, 0, 0, 0 } },
+    .{ .base_length = 3, .dir = .xpos, .influence = .{ 0, 0, 1, 0 } },
+    .{ .base_length = 4, .dir = .ypos, .influence = .{ 0, -1, 0, 0 } },
+    .{ .base_length = 3, .dir = .xpos, .influence = .{ 0, 0, 0, -1 } },
 } },
-arm_right: Arm = .{ .base = BOARD_SIZE.sub(.both(1)).mul(.new(1, 0.5)), .segments = .{
-    .{ .base_length = 2, .dir = .yneg, .influence = .{ 0, 1, 0, 0 } },
-    .{ .base_length = 2, .dir = .xneg, .influence = .{ 0, 0, 1, 0 } },
-    .{ .base_length = 2, .dir = .ypos, .influence = .{ 0, 0, 0, 1 } },
-    .{ .base_length = 2, .dir = .xneg, .influence = .{ 1, 0, 0, 0 } },
+arm_right: Arm = .{ .base = BOARD_SIZE.sub(.both(1)).mul(.new(1, 0.5)).addY(0), .segments = .{
+    .{ .base_length = 3, .dir = .ypos, .influence = .{ 0, 0, -1, 0 } },
+    .{ .base_length = 3, .dir = .xneg, .influence = .{ 0, 1, 0, 0 } },
+    .{ .base_length = 4, .dir = .yneg, .influence = .{ 0, 0, 0, 1 } },
+    .{ .base_length = 3, .dir = .xneg, .influence = .{ 1, 0, 0, 0 } },
 } },
 
 sliders: [SLIDERS_N]Slider = @splat(.{}),
