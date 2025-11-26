@@ -497,31 +497,37 @@ const VeryPhysicalGarland = struct {
             math.lerp_towards(&segment.length, target_length, ratio, delta_seconds);
         }
 
-        // update case handles
-        var last_point: Point = center;
-        for (garland.cases.items, 0..) |*case, k| {
-            const prev_handle = garland.handleForNewCasesInner(&.{k});
-            const cur_point = last_point.applyToLocalPoint(.{ .pos = .new(0, prev_handle.length) });
-            last_point = cur_point;
-            Vec2.lerpTowards(&case.handle.pos, cur_point.pos, ratio, delta_seconds);
-            if (kinematic) {
-                case.kinematicUpdate(cur_point, null, null, delta_seconds);
+        // update handles, for new and existing cases
+        for (0..garland.cases.items.len * 2 + 1) |raw_k| {
+            if (raw_k % 2 == 0) {
+                // updating a segment
+                const k = @divExact(raw_k, 2);
+                const segment = garland.handleForNewCasesRefInner(k);
+                const reference_position = if (k == 0) garland.handle.pos else garland.cases.items[k - 1].handle.pos;
+                const y_offset = if (k == 0)
+                    0.5 * (dist_between_cases_first + case_drop_preview_dist * segment.handle.hot_t)
+                else
+                    segment.length - 0.5 * (dist_between_cases_rest + case_drop_preview_dist * segment.handle.hot_t);
+
+                const target = center.withPos(reference_position).applyToLocalPosition(.new(0, y_offset));
+                Vec2.lerpTowards(&segment.handle.pos, target, ratio, delta_seconds);
             } else {
-                case.update(delta_seconds);
+                // updating a case
+                const k = @divExact(raw_k - 1, 2);
+                const last_point: Point = if (k == 0)
+                    center
+                else
+                    .{ .pos = garland.cases.items[k - 1].handle.pos };
+                const prev_handle = garland.handleForNewCasesInner(&.{k});
+                const cur_point = last_point.applyToLocalPoint(.{ .pos = .new(0, prev_handle.length) });
+                const case = &garland.cases.items[k];
+                Vec2.lerpTowards(&case.handle.pos, cur_point.pos, ratio, delta_seconds);
+                if (kinematic) {
+                    case.kinematicUpdate(cur_point, null, null, delta_seconds);
+                } else {
+                    case.update(delta_seconds);
+                }
             }
-        }
-
-        // update newcase handles
-        for (0..garland.cases.items.len + 1) |k| {
-            const segment = garland.handleForNewCasesRefInner(k);
-            const reference_position = if (k == 0) garland.handle.pos else garland.cases.items[k - 1].handle.pos;
-            const y_offset = if (k == 0)
-                0.5 * (dist_between_cases_first + case_drop_preview_dist * segment.handle.hot_t)
-            else
-                segment.length - 0.5 * (dist_between_cases_rest + case_drop_preview_dist * segment.handle.hot_t);
-
-            const target = center.withPos(reference_position).applyToLocalPosition(.new(0, y_offset));
-            Vec2.lerpTowards(&segment.handle.pos, target, ratio, delta_seconds);
         }
     }
 
