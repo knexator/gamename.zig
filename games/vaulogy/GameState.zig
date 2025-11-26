@@ -497,19 +497,7 @@ const VeryPhysicalGarland = struct {
             math.lerp_towards(&segment.length, target_length, ratio, delta_seconds);
         }
 
-        // update newcase handles
-        for (0..garland.cases.items.len + 1) |k| {
-            const segment = garland.handleForNewCasesRefInner(k);
-            const reference_position = if (k == 0) garland.handle.pos else garland.cases.items[k - 1].handle.pos;
-            const y_offset = if (k == 0)
-                0.5 * (dist_between_cases_first + case_drop_preview_dist * segment.handle.hot_t)
-            else
-                segment.length - 0.5 * (dist_between_cases_rest + case_drop_preview_dist * segment.handle.hot_t);
-
-            const target = center.withPos(reference_position).applyToLocalPosition(.new(0, y_offset));
-            Vec2.lerpTowards(&segment.handle.pos, target, ratio, delta_seconds);
-        }
-
+        // update case handles
         var last_point: Point = center;
         for (garland.cases.items, 0..) |*case, k| {
             const prev_handle = garland.handleForNewCasesInner(&.{k});
@@ -521,6 +509,19 @@ const VeryPhysicalGarland = struct {
             } else {
                 case.update(delta_seconds);
             }
+        }
+
+        // update newcase handles
+        for (0..garland.cases.items.len + 1) |k| {
+            const segment = garland.handleForNewCasesRefInner(k);
+            const reference_position = if (k == 0) garland.handle.pos else garland.cases.items[k - 1].handle.pos;
+            const y_offset = if (k == 0)
+                0.5 * (dist_between_cases_first + case_drop_preview_dist * segment.handle.hot_t)
+            else
+                segment.length - 0.5 * (dist_between_cases_rest + case_drop_preview_dist * segment.handle.hot_t);
+
+            const target = center.withPos(reference_position).applyToLocalPosition(.new(0, y_offset));
+            Vec2.lerpTowards(&segment.handle.pos, target, ratio, delta_seconds);
         }
     }
 
