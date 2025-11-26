@@ -1225,7 +1225,6 @@ const Executor = struct {
             } else {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
-                const template_t = math.remapClamped(anim_t, 0.2, 1.0, 0, 1);
                 const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
                 const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
                 const discarded_t = anim_t;
@@ -1252,22 +1251,33 @@ const Executor = struct {
                     invoked.kinematicUpdate(function_point, null, delta_seconds);
 
                     animation.active_case.kinematicUpdate(case_point, .{
-                        .pos = .new(template_t * 6, -2 * enqueueing_t),
+                        .pos = .new(enqueueing_t * 6, -2 * enqueueing_t),
                         .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
                     }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
+
+                    for (executor.enqueued_stack.items, 0..) |*x, k| {
+                        x.kinematicUpdate(case_point
+                            .applyToLocalPoint(.{ .pos = VeryPhysicalCase.next_garland_offset })
+                            .applyToLocalPoint(.{ .pos = .new(anim_t * 12 + 6 * tof32(k), -2), .turns = -0.1 }), null, delta_seconds);
+                    }
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{
-                        .pos = .new(-template_t * 2, 0),
+                        .pos = .new(-enqueueing_t * 2, 0),
                     }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
-                        if (k == 0) {
-                            const tt = 1 - template_t;
-                            const et = 1 - enqueueing_t;
+                        const et = 1 - enqueueing_t;
+                        if (k + 1 == executor.enqueued_stack.items.len) {
                             x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
-                                .pos = .new(tt * 6 + 2 - template_t * 2, -2 * et),
+                                .pos = .new(et * 6 + 2 - enqueueing_t * 2, -2 * et),
                                 .turns = math.lerp(0, -0.1, math.smoothstepEased(et, 0, 1, .easeInOutCubic)),
                             }), null, delta_seconds);
-                        } else @panic("TODO");
+                        } else {
+                            // TODO NOW: bug here
+                            x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
+                                .pos = .new((1 - anim_t) * 12 + 2 + 6 * tof32(executor.enqueued_stack.items.len - k - 1), -2),
+                                .turns = -0.1,
+                            }), null, delta_seconds);
+                        }
                     }
                 }
                 executor.input.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
@@ -2026,7 +2036,7 @@ const Workspace = struct {
     hover_pool: HoveredSexpr.Pool,
 
     focus: Focus = .{},
-    camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
+    camera: Rect = .fromCenterAndSize(.new(60, 4), Vec2.new(16, 9).scale(2.75)),
 
     undo_stack: std.ArrayList(UndoableCommand),
 
@@ -2333,6 +2343,30 @@ const Workspace = struct {
         try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
 
         dst.fnkboxes = .init(mem.gpa);
+
+        const debug_fnk = try core.parsing.parseSingleFnk(
+            \\asdf {
+            \\ a -> asdf: b {
+            \\  B -> A; 
+            \\ }
+            \\ b -> asdf: c {
+            \\  C -> B;
+            \\ }
+            \\ c -> C;
+            \\}
+        , &mem.pool_for_sexprs, mem.scratch.allocator());
+
+        try dst.fnkboxes.append(
+            try .init(
+                "TODO: remove",
+                debug_fnk.name,
+                .{ .pos = .new(60, -6) },
+                &.{},
+                try debug_fnk.body.toV2(mem.scratch.allocator()),
+                &dst.hover_pool,
+                mem,
+            ),
+        );
 
         // TODO: use all levels
         const levels = @import("levels_new.zig").levels[0..5];

@@ -309,6 +309,22 @@ pub const FnkBody = struct {
             try writer.print("{any}\n", .{case});
         }
     }
+
+    pub fn toV2(self: FnkBody, res: std.mem.Allocator) !FnkBodyV2 {
+        const cases = try res.alloc(MatchCaseDefinitionV2, self.cases.items.len);
+        for (cases, self.cases.items) |*dst, src| {
+            dst.* = .{
+                .fnk_name = src.fnk_name,
+                .pattern = src.pattern,
+                .template = src.template,
+                .next = null,
+            };
+            if (src.next) |next| {
+                dst.next = (try FnkBody.toV2(.{ .cases = next }, res)).cases;
+            }
+        }
+        return .{ .cases = cases };
+    }
 };
 pub const MatchCases = std.ArrayListUnmanaged(MatchCaseDefinition);
 pub const MatchCaseDefinition = struct {

@@ -80,6 +80,16 @@ pub fn parseFnk(input: *[]const u8, pool: *MemoryPool(Sexpr), allocator_for_case
     return result.fnk;
 }
 
+pub fn parseSingleFnk(input: []const u8, pool: *MemoryPool(Sexpr), allocator_for_cases: std.mem.Allocator) !Fnk {
+    var result = try parseFnkTrue(input, pool, allocator_for_cases);
+    skipWhitespace(&result.rest);
+    if (result.rest.len > 0) {
+        std.log.err("unexpected remaining input: \"{s}\"", .{result.rest});
+        return error.TooMuchInput;
+    }
+    return result.fnk;
+}
+
 fn parseFnkTrue(input: []const u8, pool: *MemoryPool(Sexpr), allocator_for_cases: std.mem.Allocator) !struct { fnk: Fnk, rest: []const u8 } {
     var rest = input;
     skipWhitespace(&rest);
