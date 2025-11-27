@@ -2078,7 +2078,7 @@ const Workspace = struct {
     hover_pool: HoveredSexpr.Pool,
 
     focus: Focus = .{},
-    camera: Rect = .fromCenterAndSize(.new(60, 4), Vec2.new(16, 9).scale(2.75)),
+    camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
 
     undo_stack: std.ArrayList(UndoableCommand),
 
@@ -2385,27 +2385,29 @@ const Workspace = struct {
 
         dst.fnkboxes = .init(mem.gpa);
 
-        const debug_fnk = try core.parsing.parseSingleFnk(
-            \\asdf {
-            \\ (a . @x) -> asdf: (b . f) {
-            \\  B -> @x; 
-            \\ }
-            \\ (b . @x) -> B;
-            \\ (a . B) -> nil;
-            \\}
-        , &mem.pool_for_sexprs, mem.scratch.allocator());
+        if (false) {
+            const debug_fnk = try core.parsing.parseSingleFnk(
+                \\asdf {
+                \\ (a . @x) -> asdf: (b . f) {
+                \\  B -> @x; 
+                \\ }
+                \\ (b . @x) -> B;
+                \\ (a . B) -> nil;
+                \\}
+            , &mem.pool_for_sexprs, mem.scratch.allocator());
 
-        try dst.fnkboxes.append(
-            try .init(
-                "TODO: remove",
-                debug_fnk.name,
-                .{ .pos = .new(60, -6) },
-                &.{},
-                try debug_fnk.body.toV2(mem.scratch.allocator()),
-                &dst.hover_pool,
-                mem,
-            ),
-        );
+            try dst.fnkboxes.append(
+                try .init(
+                    "TODO: remove",
+                    debug_fnk.name,
+                    .{ .pos = .new(60, -6) },
+                    &.{},
+                    try debug_fnk.body.toV2(mem.scratch.allocator()),
+                    &dst.hover_pool,
+                    mem,
+                ),
+            );
+        }
 
         // TODO: use all levels
         const levels = @import("levels_new.zig").levels[0..5];
