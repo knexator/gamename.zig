@@ -1272,9 +1272,8 @@ const Executor = struct {
                                 .turns = math.lerp(0, -0.1, math.smoothstepEased(et, 0, 1, .easeInOutCubic)),
                             }), null, delta_seconds);
                         } else {
-                            // TODO NOW: bug here
                             x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
-                                .pos = .new((1 - anim_t) * 12 + 2 + 6 * tof32(executor.enqueued_stack.items.len - k - 1), -2),
+                                .pos = .new((1 - anim_t) * 6 + 2 + 6 * tof32(executor.enqueued_stack.items.len - k - 1), -2),
                                 .turns = -0.1,
                             }), null, delta_seconds);
                         }
