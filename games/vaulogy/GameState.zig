@@ -1078,8 +1078,14 @@ const Pill = struct {
     pattern: VeryPhysicalSexpr,
     fnkname_call: ?VeryPhysicalSexpr,
     fnkname_response: ?VeryPhysicalSexpr,
+    bindings: []const core.Binding,
 
-    pub fn draw(pill: Pill, bindings: ?BindingsState, alpha: f32, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(pill: Pill, alpha: f32, drawer: *Drawer, camera: Rect) !void {
+        const bindings: BindingsState = .{
+            .anim_t = null,
+            .new = &.{},
+            .old = pill.bindings,
+        };
         try pill.input.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try pill.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         if (pill.fnkname_call) |f| try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
@@ -1121,7 +1127,7 @@ const ExecutionTrace = struct {
 
     pub fn draw(execution_trace: ExecutionTrace, drawer: *Drawer, camera: Rect) !void {
         const alpha: f32 = math.smoothstep(execution_trace.remaining_lifetime, 0, 0.4);
-        for (execution_trace.pills.items) |p| try p.draw(null, alpha, drawer, camera);
+        for (execution_trace.pills.items) |p| try p.draw(alpha, drawer, camera);
         if (execution_trace.last_input) |f| try f.drawWithBindingsAndAlpha(null, 1, drawer, camera);
     }
 
@@ -1149,14 +1155,14 @@ const Executor = struct {
         active_case: VeryPhysicalCase,
         matching: bool,
         invoked_fnk: ?VeryPhysicalGarland,
+        parent_pill: ?usize,
         new_bindings: []const core.Binding,
         original_pos: Vec2,
         garland_fnkname: ?VeryPhysicalSexpr,
     } = null,
     // execution_trace: ExecutionTrace = .empty,
     prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
-    enqueued_stack: std.ArrayListUnmanaged(VeryPhysicalGarland) = .empty,
-    old_bindings: std.ArrayListUnmanaged(core.Binding) = .empty,
+    enqueued_stack: std.ArrayListUnmanaged(struct { garland: VeryPhysicalGarland, parent_pill: usize }) = .empty,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_point: Point = .{ .pos = .new(4, 0) };
@@ -1171,23 +1177,29 @@ const Executor = struct {
 
     pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera, 1);
-        const bindings: BindingsState = if (executor.animation) |anim| .{
+        // const bindings_anim_t: ?f32 = if (executor.animation) |anim| if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8) else null;
+        const bindings_active: BindingsState = if (executor.animation) |anim| .{
             .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
-            .old = executor.old_bindings.items,
+            .old = if (anim.parent_pill) |k| executor.prev_pills.items[k].bindings else &.{},
             .new = anim.new_bindings,
         } else .{
             .anim_t = null,
-            .old = executor.old_bindings.items,
+            .old = &.{},
             .new = &.{},
         };
-        try executor.input.drawWithBindings(bindings, drawer, camera);
+        try executor.input.drawWithBindings(bindings_active, drawer, camera);
         if (executor.animation) |anim| {
-            try anim.active_case.drawWithBindings(bindings, drawer, camera);
+            try anim.active_case.drawWithBindings(bindings_active, drawer, camera);
             if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
         }
-        for (executor.prev_pills.items) |p| try p.draw(bindings, 1, drawer, camera);
-        for (executor.enqueued_stack.items) |s| try s.drawWithBindings(bindings, drawer, camera);
+        for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
+        // TODO: revise that .new is correct
+        for (executor.enqueued_stack.items) |s| try s.garland.drawWithBindings(.{
+            .anim_t = bindings_active.anim_t,
+            .new = &.{},
+            .old = executor.prev_pills.items[s.parent_pill].bindings,
+        }, drawer, camera);
         try executor.garland.draw(drawer, camera);
     }
 
@@ -1203,6 +1215,8 @@ const Executor = struct {
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         Vec2.lerpTowards(&executor.garland.handle.pos, executor.garlandPoint().pos, 0.6, delta_seconds);
         var pill_offset: f32 = 0;
+        // var this_frame_ended_an_execution_without_direct_next: bool = false;
+        var parent_pill_index: ?usize = null;
         if (executor.animation) |*animation| {
             assert(executor.garland.fnkname == null);
             animation.t += delta_seconds;
@@ -1256,7 +1270,7 @@ const Executor = struct {
                     }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
 
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
-                        x.kinematicUpdate(case_point
+                        x.garland.kinematicUpdate(case_point
                             .applyToLocalPoint(.{ .pos = VeryPhysicalCase.next_garland_offset })
                             .applyToLocalPoint(.{ .pos = .new(anim_t * 12 + 6 * tof32(k), -2), .turns = -0.1 }), null, delta_seconds);
                     }
@@ -1267,12 +1281,12 @@ const Executor = struct {
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
                         const et = 1 - enqueueing_t;
                         if (k + 1 == executor.enqueued_stack.items.len) {
-                            x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
+                            x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
                                 .pos = .new(et * 6 + 2 - enqueueing_t * 2, -2 * et),
                                 .turns = math.lerp(0, -0.1, math.smoothstepEased(et, 0, 1, .easeInOutCubic)),
                             }), null, delta_seconds);
                         } else {
-                            x.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
+                            x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
                                 .pos = .new((1 - anim_t) * 6 + 2 + 6 * tof32(executor.enqueued_stack.items.len - k - 1), -2),
                                 .turns = -0.1,
                             }), null, delta_seconds);
@@ -1289,6 +1303,8 @@ const Executor = struct {
                         .input = executor.input,
                         .fnkname_call = animation.active_case.fnk_name,
                         .fnkname_response = animation.garland_fnkname,
+                        // TODO: should include previous bindings? not really, since they have now been merged
+                        .bindings = try mem.gpa.dupe(core.Binding, animation.new_bindings),
                     });
                     pill_offset -= 1;
                     try animation.active_case.fillVariables(animation.new_bindings, mem);
@@ -1297,12 +1313,16 @@ const Executor = struct {
                     if (animation.invoked_fnk) |*fnk| {
                         executor.garland = fnk.*;
                         if (animation.active_case.next.cases.items.len > 0) {
-                            try executor.enqueued_stack.append(mem.gpa, animation.active_case.next);
+                            try executor.enqueued_stack.append(mem.gpa, .{ .garland = animation.active_case.next, .parent_pill = executor.prev_pills.items.len - 1 });
                         }
                     } else if (animation.active_case.next.cases.items.len > 0) {
                         executor.garland = animation.active_case.next;
+                        // this_frame_ended_an_execution_without_direct_next = true;
+                        parent_pill_index = executor.prev_pills.items.len - 1;
                     } else if (executor.enqueued_stack.pop()) |g| {
-                        executor.garland = g;
+                        executor.garland = g.garland;
+                        // this_frame_ended_an_execution_without_direct_next = true;
+                        parent_pill_index = g.parent_pill;
                     } else {
                         executor.garland = .init(executor.garlandPoint().pos);
                     }
@@ -1310,7 +1330,6 @@ const Executor = struct {
                     assert(animation.new_bindings.len == 0);
                     executor.garland.fnkname = animation.garland_fnkname;
                 }
-                try executor.old_bindings.appendSlice(mem.gpa, animation.new_bindings);
                 executor.animation = null;
             }
         } else {
@@ -1350,6 +1369,7 @@ const Executor = struct {
                 .new_bindings = try new_bindings.toOwnedSlice(),
                 .original_pos = executor.handle.pos,
                 .garland_fnkname = garland_fnkname,
+                .parent_pill = parent_pill_index,
             };
         }
     }
@@ -1724,7 +1744,7 @@ const Fnkbox = struct {
     }
 
     pub fn updateStatus(fnkbox: *Fnkbox, known_fnks: []const Fnkbox, mem: *core.VeryPermamentGameStuff) !void {
-        // TODO NOW: improve somehow
+        // TODO: improve somehow
         // TODO: leaks?
         var all_fnks: FnkCollection = .init(mem.scratch.allocator());
         for (known_fnks) |k| {
@@ -2243,7 +2263,6 @@ const Workspace = struct {
                 input: VeryPhysicalSexpr,
                 garland: VeryPhysicalGarland,
                 prev_pills: []Pill,
-                prev_old_bindings: []core.Binding,
                 prev_pos: Vec2,
             },
             fnkbox_launch_testcase: struct {
@@ -2345,13 +2364,11 @@ const Workspace = struct {
 
         const debug_fnk = try core.parsing.parseSingleFnk(
             \\asdf {
-            \\ a -> asdf: b {
-            \\  B -> A; 
+            \\ (a . @x) -> asdf: (b . f) {
+            \\  B -> @x; 
             \\ }
-            \\ b -> asdf: c {
-            \\  C -> B;
-            \\ }
-            \\ c -> C;
+            \\ (b . @x) -> B;
+            \\ (a . B) -> nil;
             \\}
         , &mem.pool_for_sexprs, mem.scratch.allocator());
 
@@ -3210,7 +3227,6 @@ const Workspace = struct {
                         executor.input = g.input;
                         executor.garland = g.garland;
                         executor.prev_pills = .fromOwnedSlice(g.prev_pills);
-                        executor.old_bindings = .fromOwnedSlice(g.prev_old_bindings);
                         executor.enqueued_stack.clearRetainingCapacity();
                         executor.animation = null;
                         executor.handle.pos = g.prev_pos;
@@ -3977,7 +3993,6 @@ const Workspace = struct {
                     .input = e.input,
                     .garland = try e.garland.clone(mem.gpa, &workspace.hover_pool),
                     .prev_pills = (try e.prev_pills.clone(mem.gpa)).items,
-                    .prev_old_bindings = (try e.old_bindings.clone(mem.gpa)).items,
                     .prev_pos = e.handle.pos,
                 } } });
                 try workspace.canonizeAfterChanges(mem);
