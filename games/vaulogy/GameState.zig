@@ -202,6 +202,27 @@ pub const HoveredSexpr = struct {
         math.lerp_towards(&self.value, goal, 0.6, delta_seconds);
     }
 
+    pub fn fillVariables(hovered: *HoveredSexpr, original_value: *const Sexpr, bindings: []const core.Binding, pool: *Pool) !*HoveredSexpr {
+        switch (original_value.*) {
+            .atom_var => |templ| {
+                for (0..bindings.len) |k| {
+                    const bind = bindings[bindings.len - k - 1];
+                    if (std.mem.eql(u8, bind.name, templ.value)) {
+                        return try fromSexpr(pool, bind.value);
+                    }
+                }
+                return hovered;
+            },
+            .atom_lit, .empty => return hovered,
+            .pair => |templ| {
+                return store(pool, .{ .value = hovered.value, .next = .{
+                    .left = try fillVariables(hovered.next.?.left, templ.left, bindings, pool),
+                    .right = try fillVariables(hovered.next.?.right, templ.right, bindings, pool),
+                } });
+            },
+        }
+    }
+
     pub fn setAt(this: *const HoveredSexpr, pool: *Pool, address: core.SexprAddress, value: *HoveredSexpr) !*HoveredSexpr {
         if (address.len == 0) {
             return value;
@@ -840,6 +861,8 @@ const VeryPhysicalSexpr = struct {
     }
 
     pub fn fillVariables(sexpr: *VeryPhysicalSexpr, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
+        // TODO: make more efficient (don't replace the whole hovered if not needed)
+        sexpr.hovered = try sexpr.hovered.fillVariables(sexpr.value, bindings, &mem.hover_pool);
         sexpr.value = (try core.partiallyFillTemplateV2(sexpr.value, bindings, &mem.pool_for_sexprs)).result;
     }
 
