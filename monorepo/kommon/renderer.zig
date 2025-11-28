@@ -15,24 +15,69 @@ pub const PrecomputedShape = struct {
 
     local_points: []const Vec2,
     triangles: []const [3]IndexType,
+    fill_shape_renderable: ?Gl.Renderable,
 
     /// takes ownership of points
-    pub fn fromOwnedPoints(gpa: std.mem.Allocator, points: []const Vec2) !PrecomputedShape {
+    pub fn fromOwnedPoints(gpa: std.mem.Allocator, points: []const Vec2, gl: ?Gl) !PrecomputedShape {
         std.debug.assert(points.len >= 3);
         const triangles = try Triangulator.triangulate(IndexType, gpa, points, null);
         return .{
             .local_points = points,
             .triangles = triangles,
+            .fill_shape_renderable = if (gl) |g| blk: {
+                const asdf = try g.buildRenderable(
+                    Canvas.fill_shape_info.vertex,
+                    Canvas.fill_shape_info.fragment,
+                    .{ .attribs = &.{
+                        .{ .name = "a_position", .kind = .Vec2 },
+                    } },
+                    &.{
+                        .{ .name = "u_camera", .kind = .Rect },
+                        .{ .name = "u_point", .kind = .Point },
+                        .{ .name = "u_color", .kind = .FColor },
+                    },
+                );
+                g.setRenderableData(
+                    asdf,
+                    points.ptr,
+                    points.len * @sizeOf(Vec2),
+                    triangles,
+                    .static,
+                );
+                break :blk asdf;
+            } else null,
         };
     }
 
-    pub fn fromPoints(gpa: std.mem.Allocator, points: []const Vec2) !PrecomputedShape {
+    pub fn fromPoints(gpa: std.mem.Allocator, points: []const Vec2, gl: ?Gl) !PrecomputedShape {
         std.debug.assert(points.len >= 3);
         const triangles = try Triangulator.triangulate(IndexType, gpa, points, null);
         return .{
             // TODO: clarify ownership
             .local_points = try gpa.dupe(Vec2, points),
             .triangles = triangles,
+            .fill_shape_renderable = if (gl) |g| blk: {
+                const asdf = try g.buildRenderable(
+                    Canvas.fill_shape_info.vertex,
+                    Canvas.fill_shape_info.fragment,
+                    .{ .attribs = &.{
+                        .{ .name = "a_position", .kind = .Vec2 },
+                    } },
+                    &.{
+                        .{ .name = "u_camera", .kind = .Rect },
+                        .{ .name = "u_point", .kind = .Point },
+                        .{ .name = "u_color", .kind = .FColor },
+                    },
+                );
+                g.setRenderableData(
+                    asdf,
+                    points.ptr,
+                    points.len * @sizeOf(Vec2),
+                    triangles,
+                    .static,
+                );
+                break :blk asdf;
+            } else null,
         };
     }
 
@@ -46,3 +91,4 @@ const std = @import("std");
 const Vec2 = @import("math.zig").Vec2;
 const Triangulator = @import("triangulator.zig").Triangulator;
 const Gl = @import("Gl.zig");
+const Canvas = @import("Canvas.zig");

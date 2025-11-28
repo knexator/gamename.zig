@@ -590,7 +590,9 @@ const web_gl = struct {
     pub const vtable: Gl = .{
         .clear = clear,
         .buildRenderable = buildRenderable,
+        .setRenderableData = setRenderableData,
         .useRenderable = useRenderable,
+        .useRenderableWithExistingData = useRenderableWithExistingData,
         .buildTexture2D = buildTexture2D,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
@@ -745,28 +747,49 @@ const web_gl = struct {
         // TODO: multiple textures
         texture: ?Gl.Texture,
     ) void {
-        {
-            js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo)));
-            js.webgl2.bufferData(
-                .ARRAY_BUFFER,
-                @ptrCast(vertices_ptr),
-                vertices_len_bytes,
-                .DYNAMIC_DRAW,
-            );
-            js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
-        }
+        setRenderableData(renderable, vertices_ptr, vertices_len_bytes, triangles, .dynamic);
+        useRenderableWithExistingData(renderable, triangles.len, uniforms, texture);
+    }
 
-        {
-            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.ebo)));
-            js.webgl2.bufferData(
-                .ELEMENT_ARRAY_BUFFER,
-                @ptrCast(triangles.ptr),
-                @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
-                .DYNAMIC_DRAW,
-            );
-            js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
-        }
+    pub fn setRenderableData(
+        renderable: Gl.Renderable,
+        vertices_ptr: *const anyopaque,
+        vertices_len_bytes: usize,
+        triangles: []const [3]Gl.IndexType,
+        mode: Gl.UsageMode,
+    ) void {
+        js.webgl2.bindBuffer(.ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.vbo)));
+        js.webgl2.bufferData(
+            .ARRAY_BUFFER,
+            @ptrCast(vertices_ptr),
+            vertices_len_bytes,
+            switch (mode) {
+                .static => .STATIC_DRAW,
+                .dynamic => .DYNAMIC_DRAW,
+            },
+        );
+        js.webgl2.bindBuffer(.ARRAY_BUFFER, .null);
 
+        js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, @enumFromInt(@intFromEnum(renderable.ebo)));
+        js.webgl2.bufferData(
+            .ELEMENT_ARRAY_BUFFER,
+            @ptrCast(triangles.ptr),
+            @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
+            switch (mode) {
+                .static => .STATIC_DRAW,
+                .dynamic => .DYNAMIC_DRAW,
+            },
+        );
+        js.webgl2.bindBuffer(.ELEMENT_ARRAY_BUFFER, .null);
+    }
+
+    pub fn useRenderableWithExistingData(
+        renderable: Gl.Renderable,
+        n_triangles: usize,
+        uniforms: []const Gl.UniformInfo.Runtime,
+        // TODO: multiple textures
+        texture: ?Gl.Texture,
+    ) void {
         if (texture) |t| js.webgl2.bindTexture(.TEXTURE_2D, @enumFromInt(t.id));
         defer if (texture) |_| js.webgl2.bindTexture(.TEXTURE_2D, .null);
 
@@ -792,7 +815,7 @@ const web_gl = struct {
             }
         }
 
-        js.webgl2.drawElements(.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
+        js.webgl2.drawElements(.TRIANGLES, @intCast(3 * n_triangles), switch (Gl.IndexType) {
             u16 => .UNSIGNED_SHORT,
             u32 => .UNSIGNED_INT,
             else => @compileError("not implemented"),

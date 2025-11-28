@@ -1,15 +1,16 @@
 // FUTURE: would be nice if drawSexpr(is_pattern_t) gradually changed the geometry shape
 
 pub const Drawer = @This();
+pub const Gl = kommon.Gl;
 
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 
 pub fn init(usual: *kommon.Usual) !Drawer {
-    try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator());
+    try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator(), usual.canvas.gl);
     return .{
         .canvas = &usual.canvas,
-        .atom_visuals_cache = try .init(usual.mem.forever.allocator()),
+        .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
     };
 }
 
@@ -23,12 +24,12 @@ pub const AtomVisuals = struct {
         profile: []const Vec2,
         color: FColor,
         display: ?[]const u8 = null,
-    }) !AtomVisuals {
+    }, gl: kommon.Gl) !AtomVisuals {
         return .{
             .profile = params.profile,
             .color = params.color,
             .display = params.display,
-            .geometry = try .fromProfile(mem, params.profile),
+            .geometry = try .fromProfile(mem, params.profile, gl),
         };
     }
 
@@ -43,7 +44,7 @@ pub const AtomVisuals = struct {
         var template_pair_holder: Canvas.PrecomputedShape = undefined;
         var pattern_pair_holder: Canvas.PrecomputedShape = undefined;
 
-        pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2) !Geometry {
+        pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2, gl: kommon.Gl) !Geometry {
             const template: Canvas.PrecomputedShape = blk: {
                 const skeleton_positions = [1]Vec2{.new(2, -1)} ++
                     funk.fromCount(32, struct {
@@ -59,7 +60,7 @@ pub const AtomVisuals = struct {
                     local_positions[skeleton_positions.len + i] = Vec2.new(2.0 - pos.y, 1.0 - pos.x);
                     local_positions[skeleton_positions.len + profile.len * 2 - i - 1] = Vec2.new(2.0 + pos.y, -1.0 + pos.x);
                 }
-                break :blk try .fromOwnedPoints(mem, local_positions);
+                break :blk try .fromOwnedPoints(mem, local_positions, gl);
             };
 
             const pattern: Canvas.PrecomputedShape = blk: {
@@ -79,7 +80,7 @@ pub const AtomVisuals = struct {
                     local_positions[skeleton_positions.len + profile.len * 2 - i - 1] = Vec2.new(-1.0 + pos.y, -1.0 + pos.x);
                 }
 
-                break :blk try .fromOwnedPoints(mem, local_positions);
+                break :blk try .fromOwnedPoints(mem, local_positions, gl);
             };
 
             return .{
@@ -88,7 +89,7 @@ pub const AtomVisuals = struct {
             };
         }
 
-        pub fn initFixed(mem: std.mem.Allocator) !void {
+        pub fn initFixed(mem: std.mem.Allocator, gl: kommon.Gl) !void {
             Geometry.template_variable = try .fromPoints(mem, &(funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
@@ -97,7 +98,7 @@ pub const AtomVisuals = struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(0.5);
                 }
-            }.anon)));
+            }.anon)), gl);
 
             Geometry.pattern_variable = try .fromPoints(mem, &(funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
@@ -107,7 +108,7 @@ pub const AtomVisuals = struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).mul(.new(0.5, 1)).addX(-0.5);
                 }
-            }.anon)));
+            }.anon)), gl);
 
             Geometry.template_pair_holder = try .fromPoints(mem, &(funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
@@ -121,7 +122,7 @@ pub const AtomVisuals = struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.25, 0.75, math.tof32(k) / 32)).scale(0.5).add(.new(0.75, -0.5));
                 }
-            }.anon)));
+            }.anon)), gl);
 
             Geometry.pattern_pair_holder = try .fromPoints(mem, &(funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
@@ -135,18 +136,18 @@ pub const AtomVisuals = struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, -0.5));
                 }
-            }.anon)));
+            }.anon)), gl);
 
             Geometry.template_placeholder = try .fromPoints(mem, &([1]Vec2{.new(2, -1)} ++ funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
                 }
-            }.anon) ++ [1]Vec2{.new(2, 1)}));
+            }.anon) ++ [1]Vec2{.new(2, 1)}), gl);
             Geometry.pattern_placeholder = try .fromPoints(mem, &([1]Vec2{.new(-1, -1)} ++ funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
                 }
-            }.anon) ++ [1]Vec2{.new(-1, 1)}));
+            }.anon) ++ [1]Vec2{.new(-1, 1)}), gl);
         }
     };
 };
@@ -363,7 +364,7 @@ const AtomVisualCache = struct {
         },
     };
 
-    pub fn init(arena: std.mem.Allocator) !AtomVisualCache {
+    pub fn init(arena: std.mem.Allocator, gl: Gl) !AtomVisualCache {
         var res: AtomVisualCache = .{
             .visuals_cache = .init(arena),
             .arena = arena,
@@ -376,7 +377,7 @@ const AtomVisualCache = struct {
                 .color = input.color orelse newAtomColor(atom_name),
                 .profile = input.profile orelse try res.newAtomProfile(atom_name),
                 .display = input.display,
-            });
+            }, gl);
             try res.visuals_cache.put(atom_name, atom_visuals);
         }
 
@@ -409,13 +410,13 @@ const AtomVisualCache = struct {
         return rnd.fcolor();
     }
 
-    pub fn getAtomVisuals(cache: *AtomVisualCache, name: []const u8) !AtomVisuals {
+    pub fn getAtomVisuals(cache: *AtomVisualCache, name: []const u8, gl: Gl) !AtomVisuals {
         const v = try cache.visuals_cache.getOrPut(name);
         if (!v.found_existing) {
             v.value_ptr.* = try .build(cache.arena, .{
                 .color = newAtomColor(name),
                 .profile = try cache.newAtomProfile(name),
-            });
+            }, gl);
         }
         return v.value_ptr.*;
     }
@@ -511,14 +512,14 @@ pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poi
         .empty => {},
         .atom_lit => |lit| {
             // const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
-            const visuals = drawer.atom_visuals_cache.getAtomVisuals(lit.value) catch {
-                std.log.err("missing visuals for atom literal: {s}", .{lit.value});
+            const visuals = drawer.atom_visuals_cache.getAtomVisuals(lit.value, drawer.canvas.gl) catch {
+                std.log.err("error getting visuals for atom literal: {s}", .{lit.value});
                 return;
             };
             try drawer.drawTemplateAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value, drawer.canvas.gl);
             try drawer.drawTemplateVariable(camera, point, visuals, alpha);
         },
         .pair => |pair| {
@@ -534,11 +535,11 @@ pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poin
     switch (sexpr.*) {
         .empty => {},
         .atom_lit => |lit| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value, drawer.canvas.gl);
             try drawer.drawPatternAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value, drawer.canvas.gl);
             try drawer.drawPatternVariable(camera, point, visuals, alpha);
         },
         .pair => |pair| {
@@ -605,7 +606,7 @@ pub fn drawEatingPattern(
     alpha: f32,
 ) !void {
     assert(in01(t));
-    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name);
+    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name, drawer.canvas.gl);
     try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
     try drawer.drawSexpr(camera, .{
         .is_pattern = 0,

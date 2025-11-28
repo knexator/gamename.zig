@@ -403,6 +403,12 @@ const VeryPhysicalGarland = struct {
         InvalidUtf8,
         OutOfMemory,
         BadVertexOrder,
+
+        ShaderCreationError,
+        ProgramCreationError,
+        AttributeLocationError,
+        UniformLocationError,
+        TooManyUniforms,
     }!void {
         assert(math.in01(alpha));
         if (garland.fnkname) |f| try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
@@ -2410,7 +2416,8 @@ const Workspace = struct {
         }
 
         // TODO: use all levels
-        const levels = @import("levels_new.zig").levels[0..5];
+        const levels = @import("levels_new.zig").levels;
+        // const levels = @import("levels_new.zig").levels; //[0..5];
         for (levels, 0..) |level, k| {
             const samples = blk: {
                 var samples_it = level.samplesIterator();
@@ -4093,8 +4100,8 @@ pub fn beforeHotReload(self: *GameState) !void {
 }
 
 pub fn afterHotReload(self: *GameState) !void {
-    try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator());
-    self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator());
+    try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
+    self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
 }
 
 /// returns true if should quit

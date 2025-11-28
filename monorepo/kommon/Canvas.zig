@@ -33,24 +33,25 @@ DEFAULT_SHAPES: struct {
                     128,
                     false,
                 ),
-            )),
+            ), null),
             .circle_32 = try .fromPoints(gpa, &funk.map(
                 Vec2.fromTurns,
                 &funk.linspace01(
                     32,
                     false,
                 ),
-            )),
+            ), null),
             .circle_8 = try .fromPoints(gpa, &funk.map(
                 Vec2.fromTurns,
                 &funk.linspace01(
                     8,
                     false,
                 ),
-            )),
+            ), null),
             .square = .{
                 .local_points = &.{ .zero, .e1, .e2, .one },
                 .triangles = &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
+                .fill_shape_renderable = null,
             },
         };
     }
@@ -92,41 +93,41 @@ pub const sprite_renderable_frag_src =
 
 const Canvas = @This();
 
-pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const u8, font_atlases: []const *const anyopaque) !Canvas {
-    const fill_shape_info: RenderableInfo = .{
-        .VertexData = extern struct { position: Vec2 },
-        .IndexType = u16,
-        .UniformTypes = struct {
-            color: FColor,
-            rect: Rect,
-            point: Point,
-        },
-        .vertex =
-        \\precision highp float;
-        \\uniform vec4 u_camera; // as top_left, size
-        \\uniform vec4 u_point; // as pos, turns, scale
-        \\
-        \\in vec2 a_position;
-        \\#define TAU 6.283185307179586
-        \\void main() {
-        \\  float c = cos(u_point.z * TAU);
-        \\  float s = sin(u_point.z * TAU);
-        \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
-        \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
-        \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
-        \\}
-        ,
-        .fragment =
-        \\precision highp float;
-        \\out vec4 out_color;
-        \\
-        \\uniform vec4 u_color;
-        \\void main() {
-        \\  out_color = u_color;
-        \\}
-        ,
-    };
+pub const fill_shape_info: RenderableInfo = .{
+    .VertexData = extern struct { position: Vec2 },
+    .IndexType = u16,
+    .UniformTypes = struct {
+        color: FColor,
+        rect: Rect,
+        point: Point,
+    },
+    .vertex =
+    \\precision highp float;
+    \\uniform vec4 u_camera; // as top_left, size
+    \\uniform vec4 u_point; // as pos, turns, scale
+    \\
+    \\in vec2 a_position;
+    \\#define TAU 6.283185307179586
+    \\void main() {
+    \\  float c = cos(u_point.z * TAU);
+    \\  float s = sin(u_point.z * TAU);
+    \\  vec2 world_position = u_point.xy + u_point.w * (mat2x2(c,s,-s,c) * a_position);
+    \\  vec2 camera_position = (world_position - u_camera.xy) / u_camera.zw;
+    \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+    \\}
+    ,
+    .fragment =
+    \\precision highp float;
+    \\out vec4 out_color;
+    \\
+    \\uniform vec4 u_color;
+    \\void main() {
+    \\  out_color = u_color;
+    \\}
+    ,
+};
 
+pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const u8, font_atlases: []const *const anyopaque) !Canvas {
     assert(font_jsons.len == font_atlases.len);
     const text_renderers = try gpa.alloc(TextRenderer, font_jsons.len);
     inline for (font_jsons, font_atlases, text_renderers) |json, atlas, *dst| {
@@ -504,18 +505,31 @@ pub fn fillShape(
     shape: PrecomputedShape,
     color: FColor,
 ) void {
-    self.gl.useRenderable(
-        self.fill_shape_renderable,
-        shape.local_points.ptr,
-        shape.local_points.len * @sizeOf(Vec2),
-        shape.triangles,
-        &.{
-            .{ .name = "u_color", .value = .{ .FColor = color } },
-            .{ .name = "u_point", .value = .{ .Point = parent } },
-            .{ .name = "u_camera", .value = .{ .Rect = camera } },
-        },
-        null,
-    );
+    if (shape.fill_shape_renderable) |renderable| {
+        self.gl.useRenderableWithExistingData(
+            renderable,
+            shape.triangles.len,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = color } },
+                .{ .name = "u_point", .value = .{ .Point = parent } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            },
+            null,
+        );
+    } else {
+        self.gl.useRenderable(
+            self.fill_shape_renderable,
+            shape.local_points.ptr,
+            shape.local_points.len * @sizeOf(Vec2),
+            shape.triangles,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = color } },
+                .{ .name = "u_point", .value = .{ .Point = parent } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            },
+            null,
+        );
+    }
 }
 
 pub fn fillCircle(
@@ -936,6 +950,7 @@ pub fn fillRect(
                 .new(rect.size.x, rect.size.y),
             },
             .triangles = self.DEFAULT_SHAPES.square.triangles,
+            .fill_shape_renderable = null,
         },
         color,
     );
@@ -1244,6 +1259,7 @@ pub fn rectGradient(
                 .new(rect.size.x, rect.size.y),
             },
             .triangles = self.DEFAULT_SHAPES.square.triangles,
+            .fill_shape_renderable = null,
         },
         &.{ top, top, bottom, bottom },
     );
@@ -1264,7 +1280,7 @@ pub fn tmpShape(
     self: *Canvas,
     local_points: []const Vec2,
 ) !PrecomputedShape {
-    return try .fromPoints(self.frame_arena.allocator(), local_points);
+    return try .fromPoints(self.frame_arena.allocator(), local_points, null);
 }
 
 pub fn startFrame(self: *Canvas, gl: Gl) void {

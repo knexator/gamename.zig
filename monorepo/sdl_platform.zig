@@ -248,7 +248,9 @@ pub fn main() !void {
         pub const vtable: Gl = .{
             .clear = clear,
             .buildRenderable = buildRenderable,
+            .setRenderableData = setRenderableData,
             .useRenderable = useRenderable,
+            .useRenderableWithExistingData = useRenderableWithExistingData,
             .buildTexture2D = buildTexture2D,
             .buildInstancedRenderable = buildInstancedRenderable,
             .useInstancedRenderable = useInstancedRenderable,
@@ -415,6 +417,38 @@ pub fn main() !void {
             };
         }
 
+        pub fn setRenderableData(
+            renderable: Gl.Renderable,
+            vertices_ptr: *const anyopaque,
+            vertices_len_bytes: usize,
+            triangles: []const [3]Gl.IndexType,
+            mode: Gl.UsageMode,
+        ) void {
+            gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo));
+            gl.BufferData(
+                gl.ARRAY_BUFFER,
+                @intCast(vertices_len_bytes),
+                @ptrCast(vertices_ptr),
+                switch (mode) {
+                    .static => gl.STATIC_DRAW,
+                    .dynamic => gl.DYNAMIC_DRAW,
+                },
+            );
+            gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
+            gl.BufferData(
+                gl.ELEMENT_ARRAY_BUFFER,
+                @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
+                triangles.ptr,
+                switch (mode) {
+                    .static => gl.STATIC_DRAW,
+                    .dynamic => gl.DYNAMIC_DRAW,
+                },
+            );
+            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+        }
+
         pub fn useRenderable(
             renderable: Gl.Renderable,
             vertices_ptr: *const anyopaque,
@@ -426,28 +460,17 @@ pub fn main() !void {
             // TODO: multiple textures
             texture: ?Gl.Texture,
         ) void {
-            {
-                gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo));
-                gl.BufferData(
-                    gl.ARRAY_BUFFER,
-                    @intCast(vertices_len_bytes),
-                    @ptrCast(vertices_ptr),
-                    gl.DYNAMIC_DRAW,
-                );
-                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-            }
+            setRenderableData(renderable, vertices_ptr, vertices_len_bytes, triangles, .dynamic);
+            useRenderableWithExistingData(renderable, triangles.len, uniforms, texture);
+        }
 
-            {
-                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
-                gl.BufferData(
-                    gl.ELEMENT_ARRAY_BUFFER,
-                    @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
-                    triangles.ptr,
-                    gl.DYNAMIC_DRAW,
-                );
-                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-            }
-
+        pub fn useRenderableWithExistingData(
+            renderable: Gl.Renderable,
+            n_triangles: usize,
+            uniforms: []const Gl.UniformInfo.Runtime,
+            // TODO: multiple textures
+            texture: ?Gl.Texture,
+        ) void {
             if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t.id);
             defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
 
@@ -473,7 +496,7 @@ pub fn main() !void {
                 }
             }
 
-            gl.DrawElements(gl.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
+            gl.DrawElements(gl.TRIANGLES, @intCast(3 * n_triangles), switch (Gl.IndexType) {
                 u16 => gl.UNSIGNED_SHORT,
                 u32 => gl.UNSIGNED_INT,
                 else => @compileError("not implemented"),

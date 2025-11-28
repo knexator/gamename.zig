@@ -42,6 +42,14 @@ buildRenderable: *const fn (
     TooManyUniforms,
 }!Renderable,
 
+setRenderableData: *const fn (
+    renderable: Renderable,
+    vertices_ptr: *const anyopaque,
+    vertices_len_bytes: usize,
+    triangles: []const [3]Gl.IndexType,
+    mode: Gl.UsageMode,
+) void,
+
 // TODO: destroyRenderable
 
 useRenderable: *const fn (
@@ -53,6 +61,14 @@ useRenderable: *const fn (
     // TODO: make triangles optional, since they could be precomputed
     triangles: []const [3]IndexType,
     uniforms: []const UniformInfo.Runtime,
+    // TODO: multiple textures
+    texture: ?Texture,
+) void,
+
+useRenderableWithExistingData: *const fn (
+    renderable: Renderable,
+    n_triangles: usize,
+    uniforms: []const Gl.UniformInfo.Runtime,
     // TODO: multiple textures
     texture: ?Texture,
 ) void,
@@ -276,6 +292,8 @@ pub const Texture = struct {
     id: c_uint,
     resolution: UVec2,
 };
+
+pub const UsageMode = enum { static, dynamic };
 
 const Gl = @This();
 pub const stub = Stub.vtable;
