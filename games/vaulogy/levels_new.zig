@@ -754,6 +754,8 @@ pub const levels: []const Level = &.{
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                // TODO: should be an argument?
+                const strings_pool = pool.arena.allocator();
                 if (k != 0) return null;
                 var mem = core.VeryPermamentGameStuff.init(arena);
                 defer mem.deinit();
@@ -772,7 +774,12 @@ pub const levels: []const Level = &.{
                 const fnk_def = scoring.all_fnks.get(fnk_name).?;
                 const fnk_def_sexpr = try store(pool, Sexpr.doPair(
                     fnk_name,
-                    try core.sexprFromCases(fnk_def.cases.items, pool),
+                    try core.deepCloneSexpr(
+                        true,
+                        try core.sexprFromCases(fnk_def.cases.items, pool),
+                        pool,
+                        strings_pool,
+                    ),
                 ));
                 return .{
                     .input = try store(pool, Sexpr.doPair(

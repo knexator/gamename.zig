@@ -484,19 +484,25 @@ pub const VeryPermamentGameStuff = struct {
         return storeSexprInPool(&this.pool_for_sexprs, s);
     }
 
-    /// doesn't clone the strings!
-    pub fn deepCloneSexpr(this: *VeryPermamentGameStuff, s: *const Sexpr) !*const Sexpr {
-        return switch (s.*) {
-            .atom_lit => |a| try this.storeSexpr(.{ .atom_lit = .{ .value = a.value } }),
-            .atom_var => |a| try this.storeSexpr(.{ .atom_var = .{ .value = a.value } }),
-            .empty => Sexpr.builtin.empty,
-            .pair => |p| try this.storeSexpr(.{ .pair = .{
-                .left = try this.deepCloneSexpr(p.left),
-                .right = try this.deepCloneSexpr(p.right),
-            } }),
-        };
+    pub fn deepCloneSexpr(this: *VeryPermamentGameStuff, comptime include_strings: bool, s: *const Sexpr) !*const Sexpr {
+        // TODO: don't use this.gpa
+        return core.deepCloneSexpr(include_strings, s, &this.pool_for_sexprs, if (include_strings) this.gpa else {});
     }
 };
+
+const core = @This();
+
+pub fn deepCloneSexpr(comptime include_strings: bool, s: *const Sexpr, pool: *MemoryPool(Sexpr), strings_pool: if (include_strings) std.mem.Allocator else void) !*const Sexpr {
+    return switch (s.*) {
+        .atom_lit => |a| try storeSexprInPool(pool, .{ .atom_lit = .{ .value = if (include_strings) try strings_pool.dupe(u8, a.value) else a.value } }),
+        .atom_var => |a| try storeSexprInPool(pool, .{ .atom_var = .{ .value = if (include_strings) try strings_pool.dupe(u8, a.value) else a.value } }),
+        .empty => Sexpr.builtin.empty,
+        .pair => |p| try storeSexprInPool(pool, .{ .pair = .{
+            .left = try deepCloneSexpr(include_strings, p.left, pool, strings_pool),
+            .right = try deepCloneSexpr(include_strings, p.right, pool, strings_pool),
+        } }),
+    };
+}
 
 pub fn storeSexprInPool(pool: *MemoryPool(Sexpr), s: Sexpr) !*const Sexpr {
     const res = try pool.create();

@@ -1795,7 +1795,7 @@ const Fnkbox = struct {
             if (!actual_output.equals(t.actual.value) and fnkbox.execution == null) {
                 t.actual = try VeryPhysicalSexpr.fromSexpr(
                     &mem.hover_pool,
-                    try mem.deepCloneSexpr(actual_output),
+                    try mem.deepCloneSexpr(false, actual_output),
                     t.actual.point,
                     false,
                 );
