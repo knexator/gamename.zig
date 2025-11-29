@@ -76,6 +76,7 @@ fn build_game(b: *std.Build, comptime game_folder: []const u8) !void {
     ) orelse if (optimize == .Debug) .full else .no;
 
     const emit_llvm_ir = b.option(bool, "emit-llvm-ir", "Emit LLVM IR") orelse false;
+    const tracy_enable = b.option(bool, "tracy", "Enable profiling with tracy") orelse false;
 
     const web = b.option(bool, "web", "Target the web") orelse false;
 
@@ -110,6 +111,7 @@ fn build_game(b: *std.Build, comptime game_folder: []const u8) !void {
             .optimize = optimize,
             .hot_reloadable = hot_reloadable,
             .emit_llvm_ir = emit_llvm_ir,
+            .tracy_enable = tracy_enable,
         });
     }
 }
@@ -128,6 +130,7 @@ fn build_for_desktop(
         optimize: std.builtin.OptimizeMode,
         hot_reloadable: HotReloadableMode,
         emit_llvm_ir: bool,
+        tracy_enable: bool,
     },
 ) !void {
     const sdl_lib = b.dependency("sdl", .{
@@ -148,6 +151,16 @@ fn build_for_desktop(
         const run_kommon_unit_tests = b.addRunArtifact(kommon_unit_tests);
         steps.unit_test.dependOn(&run_kommon_unit_tests.step);
     }
+
+    if (options.tracy_enable and options.hot_reloadable != .no) {
+        @panic("TODO: support tracy + hot reload");
+    }
+
+    const tracy = b.dependency("zig_tracy", .{
+        .target = options.target,
+        .optimize = options.optimize,
+        .tracy_enable = options.tracy_enable,
+    });
 
     const game_module = b.createModule(.{
         .root_source_file = b.path("games/" ++ game_folder ++ "/GameState.zig"),
@@ -205,6 +218,11 @@ fn build_for_desktop(
     } else {
         build_options.addOption(?[]const u8, "game_dynlib_path", null);
     }
+
+    game_module.addImport("tracy", tracy.module("tracy"));
+    game_module.linkLibrary(tracy.artifact("tracy"));
+    // TODO: only if tracy is enabled?
+    game_module.link_libcpp = true;
 
     if (options.hot_reloadable == .only_lib) return;
 
@@ -322,6 +340,10 @@ fn _build_for_web(
             .root_source_file = b.path("fonts/compiled/" ++ font_name ++ ".json"),
         });
     }
+
+    game_module.addImport("tracy", b.createModule(.{
+        .root_source_file = b.path("monorepo/dummy_tracy.zig"),
+    }));
 
     const wasm_module = b.createModule(.{
         .root_source_file = b.path("monorepo/web_platform.zig"),

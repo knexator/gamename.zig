@@ -8,6 +8,8 @@ const c = @cImport({
     @cInclude("SDL3/SDL_main.h");
 });
 
+const tracy = GameState.tracy;
+
 const GameState = @import("GameState");
 const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 const stuff = GameState.stuff;
@@ -126,6 +128,9 @@ fn embedAsset(comptime path: []const u8) []const u8 {
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 pub fn main() !void {
+    tracy.setThreadName("Main");
+    defer tracy.message("Graceful main thread exit");
+
     // TODO: remove this and always use gpa
     // this allocator is allowed to leak memory, as a quick hack
     const leaking_allocator = if (@import("builtin").os.tag == .wasi) std.heap.wasm_allocator else std.heap.smp_allocator;
@@ -848,6 +853,7 @@ pub fn main() !void {
         }
 
         try errify(c.SDL_GL_SwapWindow(sdl_window));
+        tracy.frameMark();
     }
 }
 

@@ -5,6 +5,10 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 const core = @import("core.zig");
 const Drawer = @import("Drawer.zig");
 
+pub const tracy = @import("tracy");
+
+pub const display_fps = true;
+
 const EXECUTOR_MOVES_LEFT = true;
 
 comptime {
@@ -2845,6 +2849,9 @@ const Workspace = struct {
     }
 
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
+        const asdf = tracy.initZone(@src(), .{ .name = "draw" });
+        defer asdf.deinit();
+
         const camera = workspace.camera;
 
         // TODO: remove duplication
@@ -2921,16 +2928,16 @@ const Workspace = struct {
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
 
-        if (false) try drawer.canvas.drawText(
+        if (display_fps) try drawer.canvas.drawText(
             0,
             camera,
             try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
             .{
-                .pos = workspace.camera.top_left.add(.new(0.5, 0.5)),
+                .pos = workspace.camera.top_left,
                 .hor = .left,
                 .ver = .ascender,
             },
-            1,
+            workspace.camera.size.y * 0.05,
             .black,
         );
     }

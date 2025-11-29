@@ -24,6 +24,10 @@
             .url = "git+https://github.com/silversquirl/assetpack#17c6e5e1af3c7a9d9025232b30378405f8681e60",
             .hash = "assetpack-0.1.0-5DA2dxhAAACUESRirVFQSYMT6XfF8zT9cfKQQfCUvBAe",
         },
+        .zig_tracy = .{
+            .url = "git+https://github.com/cipharius/zig-tracy#fb0c7693726fc41a1d9e3ab2a897dc663d884584",
+            .hash = "zig_tracy-0.0.5-aOIqsQdyAADb7w5ji1KMsWBV6ek3SftSsY2yfTvUHycr",
+        },
     },
     .paths = .{
         "build.zig",
