@@ -30,6 +30,15 @@ fn parseSexprTrue(input: []const u8, pool: *MemoryPool(Sexpr)) error{ OutOfMemor
         const asdf = try parseSexprInsideParens(rest[1..], pool);
         return .{ .sexpr = asdf.sexpr, .rest = asdf.rest };
     }
+
+    // TODO: remove this special case
+    if (std.mem.startsWith(u8, input, "<empty>")) {
+        return .{
+            .sexpr = Sexpr.builtin.empty,
+            .rest = rest["<empty>".len..],
+        };
+    }
+
     const asdf = try parseAtom(rest);
     const res = try pool.create();
     if (asdf.is_var) {

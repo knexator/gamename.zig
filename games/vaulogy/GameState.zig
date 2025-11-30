@@ -277,6 +277,17 @@ const Handle = struct {
     pub fn overlapped(handle: *const Handle, pos: Vec2, comptime base_radius: f32) bool {
         return pos.distTo(handle.point.pos) < base_radius * handle.point.scale;
     }
+
+    pub fn save(handle: *const Handle, out: std.io.AnyWriter, _: std.mem.Allocator) !void {
+        try out.writeStructEndian(handle.point, .little);
+    }
+
+    pub fn load(dst: *Handle, in: std.io.AnyReader, version: u32, _: *core.VeryPermamentGameStuff) !void {
+        assert(version == 0);
+        dst.* = .{
+            .point = try in.readStructEndian(Point, .little),
+        };
+    }
 };
 
 const VeryPhysicalGarland = struct {
@@ -300,7 +311,57 @@ const VeryPhysicalGarland = struct {
         length: f32,
         // TODO: extract hot_t
         handle: Handle,
+
+        pub fn save(self: *const HandleForNewCase, out: std.io.AnyWriter, m: std.mem.Allocator) !void {
+            try self.handle.save(out, m);
+            try writeF32(out, self.length);
+        }
+
+        pub fn load(dst: *HandleForNewCase, in: std.io.AnyReader, version: u32, m: *core.VeryPermamentGameStuff) !void {
+            assert(version == 0);
+            dst.handle.load(in, version, m);
+            dst.length = try readF32(in);
+        }
     };
+
+    pub fn save(garland: *const VeryPhysicalGarland, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
+        try out.writeStructEndian(garland.handle.point, .little);
+        try out.writeInt(u32, @intCast(garland.cases.items.len), .little);
+        for (garland.cases.items) |case| {
+            try case.save(out, scratch);
+        }
+        try garland.handles_for_new_cases_first.save(out, scratch);
+        for (garland.handles_for_new_cases_rest.items) |c| {
+            try c.save(out, scratch);
+        }
+        if (garland.fnkname) |fnkname| {
+            try writeBool(out, true);
+            try fnkname.save(out, scratch);
+        } else {
+            try writeBool(out, false);
+        }
+    }
+
+    pub fn load(dst: *VeryPhysicalGarland, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
+        assert(version == 0);
+        dst.*.handle = .{ .point = try in.readStructEndian(Point, .little) };
+        const n_cases: usize = @intCast(try in.readInt(u32, .little));
+        dst.cases = .fromOwnedSlice(try mem.gpa.alloc(VeryPhysicalCase, n_cases));
+        for (dst.cases.items) |*c| {
+            try c.load(in, version, mem);
+        }
+        try dst.handles_for_new_cases_first.load(in, version, mem);
+        dst.handles_for_new_cases_rest = .fromOwnedSlice(try mem.gpa.alloc(HandleForNewCase, n_cases));
+        for (dst.handles_for_new_cases_rest.items) |*c| {
+            try c.load(in, version, mem);
+        }
+        if (try readBool(in)) {
+            dst.fnkname = undefined;
+            try dst.fnkname.?.load(in, version, mem);
+        } else {
+            dst.fnkname = null;
+        }
+    }
 
     pub fn init(point: Point) VeryPhysicalGarland {
         return .{
@@ -714,6 +775,23 @@ const VeryPhysicalCase = struct {
     const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
     const next_garland_offset: Vec2 = .new(8, -1.5);
 
+    pub fn save(case: *const VeryPhysicalCase, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        try case.handle.save(out, scratch);
+        try case.pattern.save(out, scratch);
+        try case.fnk_name.save(out, scratch);
+        try case.template.save(out, scratch);
+        try case.next.save(out, scratch);
+    }
+
+    pub fn load(dst: *VeryPhysicalCase, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
+        assert(version == 0);
+        try dst.handle.load(in, version, mem);
+        try dst.pattern.load(in, version, mem);
+        try dst.fnk_name.load(in, version, mem);
+        try dst.template.load(in, version, mem);
+        try dst.next.load(in, version, mem);
+    }
+
     pub fn getBoardPos(case: VeryPhysicalCase) Vec2 {
         return case.handle;
     }
@@ -824,9 +902,8 @@ const VeryPhysicalSexpr = struct {
     is_pattern_t: f32,
 
     pub fn save(sexpr: *const VeryPhysicalSexpr, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        try writeEnum(out, SerializedTag, .VeryPhysicalSexpr, .little);
         try out.writeStructEndian(sexpr.point, .little);
-        try out.writeByte(if (sexpr.is_pattern) 1 else 0);
+        try writeBool(out, sexpr.is_pattern);
         var asdf: std.ArrayList(u8) = .init(scratch);
         defer asdf.deinit();
         // TODO: improve
@@ -838,7 +915,7 @@ const VeryPhysicalSexpr = struct {
     pub fn load(dst: *VeryPhysicalSexpr, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
         assert(version == 0);
         const point: Point = try in.readStructEndian(Point, .little);
-        const is_pattern: bool = (try in.readByte()) != 0;
+        const is_pattern: bool = try readBool(in);
         const value_len: u32 = try in.readInt(u32, .little);
         // TODO: who clears this memory?
         const value_bytes = try mem.gpa.alloc(u8, value_len);
@@ -2010,6 +2087,8 @@ pub fn getGarlandForFnk(
 
 pub const SerializedTag = enum(u32) {
     VeryPhysicalSexpr,
+    VeryPhysicalCase,
+    VeryPhysicalGarland,
 };
 
 const Workspace = struct {
@@ -2551,7 +2630,17 @@ const Workspace = struct {
         const version: u32 = 0;
         try out.writeInt(u32, version, .little);
         try out.writeStructEndian(workspace.camera, .little);
+        // TODO: don't use tags
         for (workspace.sexprs.items) |s| {
+            try writeEnum(out, SerializedTag, .VeryPhysicalSexpr, .little);
+            try s.save(out, scratch);
+        }
+        for (workspace.cases.items) |s| {
+            try writeEnum(out, SerializedTag, .VeryPhysicalCase, .little);
+            try s.save(out, scratch);
+        }
+        for (workspace.garlands.items) |s| {
+            try writeEnum(out, SerializedTag, .VeryPhysicalGarland, .little);
             try s.save(out, scratch);
         }
     }
@@ -2568,6 +2657,9 @@ const Workspace = struct {
         dst.fnkviewers = .init(mem.gpa);
         dst.fnkboxes = .init(mem.gpa);
         dst.traces = .init(mem.gpa);
+        dst.postits = .init(mem.gpa);
+        dst.toolbar_case = try dst.freshToolbarCase(mem);
+        dst.toolbar_trash = .{ .rect = .unit };
 
         const version = try in.readInt(u32, .little);
         assert(version == 0);
@@ -2583,6 +2675,16 @@ const Workspace = struct {
                     var x: VeryPhysicalSexpr = undefined;
                     try x.load(in, version, mem);
                     try dst.sexprs.append(x);
+                },
+                .VeryPhysicalCase => {
+                    var x: VeryPhysicalCase = undefined;
+                    try x.load(in, version, mem);
+                    try dst.cases.append(x);
+                },
+                .VeryPhysicalGarland => {
+                    var x: VeryPhysicalGarland = undefined;
+                    try x.load(in, version, mem);
+                    try dst.garlands.append(x);
                 },
             }
         }
@@ -4249,6 +4351,28 @@ fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse
 pub fn writeEnum(out: std.io.AnyWriter, T: type, value: T, endian: std.builtin.Endian) !void {
     const type_info = @typeInfo(T).@"enum";
     try out.writeInt(type_info.tag_type, @intFromEnum(value), endian);
+}
+
+pub fn writeF32(out: std.io.AnyWriter, value: f32) !void {
+    comptime assert(@import("builtin").target.cpu.arch.endian() == .little);
+    try out.writeAll(std.mem.asBytes(&value));
+}
+
+pub fn readF32(in: std.io.AnyReader) !f32 {
+    comptime assert(@import("builtin").target.cpu.arch.endian() == .little);
+    return @bitCast(try in.readInt(u32, .little));
+}
+
+pub fn writeBool(out: std.io.AnyWriter, value: bool) !void {
+    try out.writeByte(if (value) 0xFF else 0x00);
+}
+
+pub fn readBool(in: std.io.AnyReader) !bool {
+    return switch (try in.readByte()) {
+        0x00 => false,
+        0xFF => true,
+        else => @panic("bad bool"),
+    };
 }
 
 const std = @import("std");
