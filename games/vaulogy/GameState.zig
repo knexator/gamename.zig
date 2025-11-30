@@ -2100,7 +2100,7 @@ const Workspace = struct {
     fnkviewers: std.ArrayList(Fnkviewer),
     fnkboxes: std.ArrayList(Fnkbox),
     traces: std.ArrayList(ExecutionTrace),
-    toolbar_variable: VeryPhysicalSexpr,
+    toolbar_case: VeryPhysicalCase,
     toolbar_trash: ToolbarTrash,
     postits: std.ArrayList(Postit),
 
@@ -2110,6 +2110,8 @@ const Workspace = struct {
     camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
 
     undo_stack: std.ArrayList(UndoableCommand),
+
+    random_instance: std.Random.DefaultPrng,
 
     const Focus = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
@@ -2165,6 +2167,17 @@ const Workspace = struct {
                 pub fn equals(a: Kind, b: Kind) bool {
                     return kommon.meta.eql(a, b);
                 }
+
+                pub fn immutable(kind: Kind) bool {
+                    return switch (kind) {
+                        else => false,
+                        .sexpr => |s| s.base.immutable(),
+                        .case_handle => |c| switch (c) {
+                            else => false,
+                            .toolbar => true,
+                        },
+                    };
+                }
             };
         };
 
@@ -2183,10 +2196,11 @@ const Workspace = struct {
             parent: GarlandHandle,
             existing_case: bool,
         },
+        toolbar,
 
         pub fn exists(case_handle: CaseHandle) bool {
             return switch (case_handle) {
-                .board => true,
+                .board, .toolbar => true,
                 .garland => |t| t.existing_case,
             };
         }
@@ -2238,14 +2252,15 @@ const Workspace = struct {
             testcase: usize,
             part: TestCase.Part,
         },
-        toolbar_variable,
 
         pub fn immutable(place: BaseSexprPlace) bool {
             return switch (place) {
-                .toolbar_variable => true,
                 .fnkbox_fnkname, .fnkbox_testcase => true,
+                .case => |c| switch (c.parent) {
+                    .toolbar => true,
+                    else => false,
+                },
                 .board,
-                .case,
                 .executor_input,
                 .fnkviewer_fnkname,
                 .fnkbox_input,
@@ -2332,8 +2347,10 @@ const Workspace = struct {
         pub const noop: UndoableCommand = .{ .specific = .noop };
     };
 
-    pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
+    pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff, random_seed: u64) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
+
+        dst.random_instance = .init(random_seed);
 
         dst.undo_stack = .init(mem.gpa);
 
@@ -2469,7 +2486,7 @@ const Workspace = struct {
         try dst.postits.append(.fromText("the assignment ->", .new(87, 0)));
         try dst.postits.append(.fromText("the solution ->", .new(91, 7.5)));
 
-        dst.toolbar_variable = try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doVar("TODO_change")), .{}, true);
+        dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
 
         try dst.canonizeAfterChanges(mem);
@@ -2507,6 +2524,19 @@ const Workspace = struct {
         workspace.fnkboxes.deinit();
         workspace.traces.deinit();
         workspace.postits.deinit();
+    }
+
+    fn freshToolbarCase(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !VeryPhysicalCase {
+        const new_name = try mem.gpa.alloc(u8, 10);
+        math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+        const var_value = try mem.storeSexpr(.doVar(new_name));
+
+        return .fromValues(&mem.hover_pool, .{
+            .pattern = var_value,
+            .fnk_name = Sexpr.builtin.empty,
+            .template = try mem.storeSexpr(.doPair(var_value, Sexpr.builtin.nil)),
+            .next = null,
+        }, .{});
     }
 
     pub fn save(workspace: *const Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
@@ -2601,7 +2631,7 @@ const Workspace = struct {
             // TODO: traces
         );
 
-        result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{ .base = .toolbar_variable, .local = &.{} } } });
+        result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .toolbar } });
 
         for (workspace.sexprs.items, 0..) |_, k| {
             result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = &.{} } } });
@@ -2686,7 +2716,10 @@ const Workspace = struct {
         var result: std.ArrayListUnmanaged(GarlandHandle) = .empty;
 
         if (@as(?GarlandHandle.Parent, switch (parent.kind) {
-            .case_handle => |case_handle| .{ .case = case_handle.board },
+            .case_handle => |case_handle| switch (case_handle) {
+                .board => |k| .{ .case = k },
+                else => null,
+            },
             .garland_handle => |garland_handle| .{ .garland = garland_handle.parent.garland },
             .executor_handle => |k| .{ .executor = k },
             .fnkviewer_handle => |k| .{ .fnkviewer = k },
@@ -2763,12 +2796,12 @@ const Workspace = struct {
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
             .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
             .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
-            .toolbar_variable => &workspace.toolbar_variable,
         };
     }
 
     fn caseHandleRef(workspace: *Workspace, place: CaseHandle) *Handle {
         return switch (place) {
+            .toolbar => &workspace.toolbar_case.handle,
             .board => |k| &workspace.cases.items[k].handle,
             .garland => |t| if (t.existing_case)
                 &garlandAt(workspace, t.parent).cases.items[t.local].handle
@@ -2796,6 +2829,7 @@ const Workspace = struct {
         return switch (place) {
             .board => |k| &workspace.cases.items[k],
             .garland => |t| &workspace.garlandAt(t.parent).cases.items[t.local],
+            .toolbar => &workspace.toolbar_case,
         };
     }
 
@@ -2814,6 +2848,7 @@ const Workspace = struct {
         return switch (target.kind) {
             .sexpr => |p| .{ .sexpr = try workspace.popSexprAt(p, &mem.hover_pool, mem) },
             .case_handle => |c| switch (c) {
+                .toolbar => unreachable,
                 .board => |k| .{ .case = workspace.cases.orderedRemove(k) },
                 .garland => |t| .{ .case = workspace.garlandAt(t.parent).popCase(t.local) },
             },
@@ -2833,6 +2868,7 @@ const Workspace = struct {
         switch (target.kind) {
             .sexpr => |p| try workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
             .case_handle => |c| switch (c) {
+                .toolbar => unreachable,
                 .board => |k| try workspace.cases.insert(k, value.case),
                 .garland => |t| try workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
             },
@@ -2937,7 +2973,7 @@ const Workspace = struct {
             );
         }
 
-        try workspace.toolbar_variable.draw(drawer, camera);
+        try workspace.toolbar_case.draw(drawer, camera);
         try workspace.toolbar_trash.draw(drawer, camera);
 
         switch (workspace.focus.grabbing.kind) {
@@ -3175,7 +3211,7 @@ const Workspace = struct {
 
                 // some special cases
                 switch (base) {
-                    .board => {},
+                    .board, .toolbar => {},
                     .garland => |t| switch (t.parent.parent) {
                         else => {},
                         .fnkbox => |k| {
@@ -3219,10 +3255,10 @@ const Workspace = struct {
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         const ui_px = camera.size.y * 0.075;
-        workspace.toolbar_variable.point = .{
-            .pos = camera.get(.bottom_right).add(Vec2.new(-1, -1.25).scale(ui_px)),
+        workspace.toolbar_case.kinematicUpdate(.{
+            .pos = camera.get(.bottom_right).add(Vec2.new(-2.75, -1.25).scale(ui_px)),
             .scale = ui_px,
-        };
+        }, null, null, undefined);
         workspace.toolbar_trash.rect = camera.withSize(.both(ui_px * 2.5), .bottom_left).move(Vec2.new(1, -1).scale(ui_px * 0.25));
 
         // set lenses data
@@ -3368,6 +3404,7 @@ const Workspace = struct {
                                 if (g.duplicate) {
                                     _ = workspace.cases.pop().?;
                                 } else switch (h) {
+                                    .toolbar => unreachable,
                                     .board => |k| {
                                         const case = &workspace.cases.items[k];
                                         case.handle.pos = g.old_position;
@@ -3415,6 +3452,7 @@ const Workspace = struct {
                             .case_handle => |h| {
                                 const old_k = g.old_grabbed_position.kind.case_handle.board;
                                 switch (h) {
+                                    .toolbar => unreachable,
                                     .board => {
                                         workspace.focus.grabbing = g.at;
                                     },
@@ -3720,7 +3758,7 @@ const Workspace = struct {
                 else => .{ .specific = .{
                     .grabbed = .{
                         .from = hovering,
-                        .duplicate = mouse.wasPressed(.right),
+                        .duplicate = mouse.wasPressed(.right) or hovering.kind.immutable(),
                         .old_position = workspace.positionOf(hovering),
                         .old_ispattern = undefined,
                     },
@@ -3962,6 +4000,15 @@ const Workspace = struct {
                                     .case_handle = .{ .board = workspace.cases.items.len - 1 },
                                 } };
                             },
+                            .toolbar => {
+                                assert(g.duplicate);
+                                try workspace.cases.append(workspace.toolbar_case);
+                                // TODO: undoable
+                                workspace.toolbar_case = try workspace.freshToolbarCase(mem);
+                                workspace.focus.grabbing = .{ .kind = .{
+                                    .case_handle = .{ .board = workspace.cases.items.len - 1 },
+                                } };
+                            },
                         }
                     },
                     .sexpr => |h| {
@@ -3986,16 +4033,6 @@ const Workspace = struct {
                             .base = .{ .board = grabbed },
                             .local = &.{},
                         } } };
-
-                        // TODO: undoable
-                        if (h.base == .toolbar_variable) {
-                            const S = struct {
-                                var random_instance: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
-                            };
-                            const new_name = try mem.gpa.alloc(u8, 10);
-                            math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
-                            workspace.toolbar_variable.value = try mem.storeSexpr(Sexpr.doVar(new_name));
-                        }
                     },
                 }
             },
@@ -4018,6 +4055,7 @@ const Workspace = struct {
                         const old_k = g.old_grabbed_position.kind.case_handle.board;
                         switch (h) {
                             .board => {},
+                            .toolbar => unreachable,
                             .garland => |t| {
                                 const garland = garlandAt(workspace, t.parent);
                                 try garland.insertCase(mem.gpa, t.local, workspace.cases.items[old_k]);
@@ -4135,7 +4173,7 @@ pub fn init(
 
     dst.drawer = try .init(&dst.usual);
     dst.core_mem = .init(gpa);
-    try dst.workspace.init(&dst.core_mem);
+    try dst.workspace.init(&dst.core_mem, random_seed);
 }
 
 // TODO: take gl parameter
