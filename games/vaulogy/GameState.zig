@@ -1670,6 +1670,25 @@ const Fnkbox = struct {
         fnkbox.garland.deinit(gpa);
     }
 
+    pub fn cloneAsEmpty(
+        original: *const Fnkbox,
+        new_fnkname: *const Sexpr,
+        mem: *core.VeryPermamentGameStuff,
+    ) !Fnkbox {
+        const result: Fnkbox = .{
+            .text = "custom fnk",
+            .handle = .{ .pos = original.handle.pos },
+            .input = try .empty(original.inputPoint(), &mem.hover_pool, false),
+            .garland = .init(original.garlandPoint().pos),
+            .fnkname = try .fromSexpr(&mem.hover_pool, new_fnkname, original.fnkname.point, true),
+            .testcases = .empty,
+            .folded = original.folded,
+            .folded_t = original.folded_t,
+            .status = undefined,
+        };
+        return result;
+    }
+
     pub fn box(fnkbox: *const Fnkbox) Rect {
         return .fromMeasureAndSizeV2(
             .top_center,
@@ -2885,7 +2904,7 @@ const Workspace = struct {
         for (workspace.lenses.items) |lens| {
             drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
 
-            if (true) {
+            if (camera.plusMargin(lens.target_radius + 1).contains(lens.target)) {
                 platform.gl.startStencil();
                 drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
                 platform.gl.doneStencil();
@@ -3306,8 +3325,13 @@ const Workspace = struct {
                                 e.handle.pos = g.old_position;
                             },
                             .fnkbox_handle => |h| {
-                                const e = &workspace.fnkboxes.items[h];
-                                e.handle.pos = g.old_position;
+                                if (g.duplicate) {
+                                    assert(h == workspace.fnkboxes.items.len - 1);
+                                    _ = workspace.fnkboxes.pop().?;
+                                } else {
+                                    const e = &workspace.fnkboxes.items[h];
+                                    e.handle.pos = g.old_position;
+                                }
                             },
                             .postit => |k| {
                                 if (g.duplicate) {
@@ -3854,6 +3878,25 @@ const Workspace = struct {
                         if (g.duplicate) {
                             switch (t) {
                                 else => std.log.err("TODO", .{}),
+                                .fnkbox_handle => {
+                                    const original = workspace.fnkboxes.items[h];
+
+                                    const S = struct {
+                                        var random_instance: std.Random.DefaultPrng = std.Random.DefaultPrng.init(1);
+                                    };
+                                    const new_name = try mem.gpa.alloc(u8, 10);
+                                    math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
+                                    while (for (workspace.fnkboxes.items) |fnkbox| {
+                                        if (fnkbox.fnkname.value.equals(&Sexpr.doLit(new_name))) break true;
+                                    } else false) {
+                                        math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
+                                    }
+
+                                    try workspace.fnkboxes.append(try original.cloneAsEmpty(try mem.storeSexpr(.doLit(new_name)), mem));
+                                    workspace.focus.grabbing = .{ .kind = .{
+                                        .fnkbox_handle = workspace.fnkboxes.items.len - 1,
+                                    } };
+                                },
                                 .lens_handle => {
                                     var lens_pair = workspace.lenses.items[h.index].clone();
                                     lens_pair.source.addInPlace(.one);
