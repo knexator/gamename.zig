@@ -266,7 +266,7 @@ const Handle = struct {
 
     pub fn drawCustom(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32, p1: f32, p2: f32) !void {
         drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha));
-        drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05, .blackAlpha(alpha));
+        drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha));
     }
 
     pub fn update(handle: *Handle, hot_target: f32, delta_seconds: f32) void {
@@ -852,7 +852,7 @@ const VeryPhysicalCase = struct {
         drawer.canvas.line(camera, &.{
             case.pattern.point.pos,
             case.template.point.pos,
-        }, 0.05, .blackAlpha(alpha));
+        }, 0.05 * case.handle.point.scale, .blackAlpha(alpha));
         try case.handle.draw(drawer, camera, alpha);
         try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
