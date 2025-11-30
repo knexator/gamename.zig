@@ -2596,6 +2596,7 @@ const Workspace = struct {
         // TODO: use all levels
         const levels = @import("levels_new.zig").levels;
         // const levels = @import("levels_new.zig").levels; //[0..5];
+        var x: f32 = 100;
         for (levels, 0..) |level, k| {
             const samples = blk: {
                 var samples_it = level.samplesIterator();
@@ -2609,13 +2610,14 @@ const Workspace = struct {
                 try .init(
                     level.description,
                     level.fnk_name,
-                    .{ .pos = .new(100 + 40 * tof32(k), if (k % 2 == 0) -6 else -5) },
+                    .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
                     samples,
                     level.initial_definition,
                     &dst.hover_pool,
                     mem,
                 ),
             );
+            x += if (k < 5) 25 else 35;
         }
 
         dst.traces = .init(mem.gpa);
