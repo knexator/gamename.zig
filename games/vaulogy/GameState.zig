@@ -911,7 +911,14 @@ const VeryPhysicalSexpr = struct {
                     drawer.drawPatternPairHolder(camera, actual_point, alpha)
                 else
                     drawer.drawTemplatePairHolder(camera, actual_point, alpha);
-                // try drawTemplateWildcardLinesNonRecursive(...);
+                try if (is_pattern)
+                    drawer.drawPatternWildcardLinesNonRecursive(camera, pair.left, pair.right, actual_point, alpha)
+                else
+                    drawer.drawTemplateWildcardLinesNonRecursive(camera, pair.left, pair.right, actual_point, maybe_bindings orelse .{
+                        .anim_t = null,
+                        .old = &.{},
+                        .new = &.{},
+                    }, alpha);
                 const offset = if (is_pattern) ViewHelper.OFFSET_PATTERN else ViewHelper.OFFSET_TEMPLATE;
                 try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t, maybe_bindings, alpha);
                 try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t, maybe_bindings, alpha);

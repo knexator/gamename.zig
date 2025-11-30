@@ -68,7 +68,7 @@ pub const Sexpr = union(enum) {
 
     pub fn getAllVarNames(self: *const Sexpr, res: *std.ArrayList([]const u8)) !void {
         switch (self.*) {
-            .atom_lit => return,
+            .atom_lit, .empty => return,
             .atom_var => |v| if (indexOfString(res.items, v.value) == null) try res.append(v.value),
             .pair => |p| {
                 try p.left.getAllVarNames(res);

@@ -741,13 +741,14 @@ pub fn endClip(drawer: *Drawer) void {
     drawer.canvas.gl.stopStencil();
 }
 
-fn drawTemplateWildcardLinesNonRecursive(
+pub fn drawTemplateWildcardLinesNonRecursive(
     drawer: *Drawer,
     camera: Rect,
     left: *const Sexpr,
     right: *const Sexpr,
     point: Point,
     bindings: BindingsState,
+    alpha: f32,
 ) !void {
     var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try left.getAllVarNames(&left_names);
@@ -757,7 +758,6 @@ fn drawTemplateWildcardLinesNonRecursive(
     try removeBoundNames(&left_names, bindings.old);
 
     var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
-    defer right_names.deinit();
     try right.getAllVarNames(&right_names);
     if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
         try removeBoundNames(&right_names, bindings.new);
@@ -772,7 +772,7 @@ fn drawTemplateWildcardLinesNonRecursive(
             pub fn anon(k: usize, p: Point) Vec2 {
                 return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 + 0.25 / 2.0, 0.75, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, 0.25)));
             }
-        }.anon, point)), left_names.items);
+        }.anon, point)), left_names.items, alpha);
 
         try drawer.drawWildcardsCable(camera, &([1]Vec2{
             point.applyToLocalPosition(.new(-0.5, 0)),
@@ -780,17 +780,52 @@ fn drawTemplateWildcardLinesNonRecursive(
             pub fn anon(k: usize, p: Point) Vec2 {
                 return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 - 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, -0.25)));
             }
-        }.anon, point)), right_names.items);
+        }.anon, point)), right_names.items, alpha);
     }
 }
 
-fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8) !void {
+pub fn drawPatternWildcardLinesNonRecursive(
+    drawer: *Drawer,
+    camera: Rect,
+    left: *const Sexpr,
+    right: *const Sexpr,
+    point: Point,
+    alpha: f32,
+) !void {
+    var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    try left.getAllVarNames(&left_names);
+    var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    try right.getAllVarNames(&right_names);
+
+    const magic_1 = @sqrt(2.0) * 2.0 / 4.0;
+    const magic_2 = @sqrt(2.0) * 3.0 / 4.0;
+    try drawer.drawWildcardsCable(camera, &(funk.fromCountAndCtx(32, struct {
+        pub fn anon(k: usize, p: Point) Vec2 {
+            return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(-0.25, -0.25 / 2.0, math.tof32(k) / 32)).scale(magic_1).add(.new(-0.75, -0.5)).addY(magic_1));
+        }
+    }.anon, point) ++ funk.fromCountAndCtx(32, struct {
+        pub fn anon(k: usize, p: Point) Vec2 {
+            return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.25 + 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(magic_2).add(.new(0.5, 0)).addY(-magic_2));
+        }
+    }.anon, point)), left_names.items, alpha);
+    try drawer.drawWildcardsCable(camera, &(funk.fromCountAndCtx(32, struct {
+        pub fn anon(k: usize, p: Point) Vec2 {
+            return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.25, 0.25 / 2.0, math.tof32(k) / 32)).scale(magic_1).add(.new(-0.75, 0.5)).addY(-magic_1));
+        }
+    }.anon, point) ++ funk.fromCountAndCtx(32, struct {
+        pub fn anon(k: usize, p: Point) Vec2 {
+            return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(-0.25 - 0.25 / 2.0, -0.25, math.tof32(k) / 32)).scale(magic_2).add(.new(0.5, 0)).addY(magic_2));
+        }
+    }.anon, point)), right_names.items, alpha);
+}
+
+fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
     var visuals: std.ArrayList(AtomVisuals) = try .initCapacity(drawer.canvas.frame_arena.allocator(), names.len);
     for (names) |name| {
-        visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name));
+        visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl));
     }
     for (visuals.items) |v| {
-        drawer.canvas.line(camera, points, pixelWidth(camera), v.color);
+        drawer.canvas.line(camera, points, pixelWidth(camera), v.color.timesAlpha(alpha));
     }
 }
 
