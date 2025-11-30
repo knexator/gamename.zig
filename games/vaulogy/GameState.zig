@@ -319,7 +319,7 @@ const VeryPhysicalGarland = struct {
 
         pub fn load(dst: *HandleForNewCase, in: std.io.AnyReader, version: u32, m: *core.VeryPermamentGameStuff) !void {
             assert(version == 0);
-            dst.handle.load(in, version, m);
+            try dst.handle.load(in, version, m);
             dst.length = try readF32(in);
         }
     };
@@ -908,18 +908,15 @@ const VeryPhysicalSexpr = struct {
         defer asdf.deinit();
         // TODO: improve
         try sexpr.value.format("", .{}, asdf.writer().any());
-        try out.writeInt(u32, @intCast(asdf.items.len), .little);
-        try out.writeAll(asdf.items);
+        try writeString(out, asdf.items);
     }
 
     pub fn load(dst: *VeryPhysicalSexpr, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
         assert(version == 0);
         const point: Point = try in.readStructEndian(Point, .little);
         const is_pattern: bool = try readBool(in);
-        const value_len: u32 = try in.readInt(u32, .little);
         // TODO: who clears this memory?
-        const value_bytes = try mem.gpa.alloc(u8, value_len);
-        assert(try in.readAll(value_bytes) == value_len);
+        const value_bytes = try readString(in, mem.gpa);
         const value = try core.parsing.parseSingleSexpr(value_bytes, &mem.pool_for_sexprs);
         dst.* = try .fromSexpr(&mem.hover_pool, value, point, is_pattern);
     }
@@ -1563,6 +1560,20 @@ pub const TestCase = struct {
     // tested: bool = false,
     play_button: Button,
 
+    pub fn save(testcase: *const TestCase, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
+        try testcase.input.save(out, scratch);
+        try testcase.expected.save(out, scratch);
+        try testcase.actual.save(out, scratch);
+    }
+
+    pub fn load(dst: *TestCase, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
+        assert(version == 0);
+        dst.play_button = .{ .kind = .launch_testcase, .rect = .unit };
+        try dst.input.load(in, version, mem);
+        try dst.expected.load(in, version, mem);
+        try dst.actual.load(in, version, mem);
+    }
+
     const Part = enum { input, expected, actual };
     pub const parts: [3]TestCase.Part = .{ .input, .expected, .actual };
 
@@ -1668,6 +1679,45 @@ const Fnkbox = struct {
     fold_button: Button = .{ .rect = .unit },
     scroll_button_up: Button = .{ .rect = .unit },
     scroll_button_down: Button = .{ .rect = .unit },
+
+    pub fn save(fnkbox: *const Fnkbox, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
+        try fnkbox.handle.save(out, scratch);
+        try fnkbox.input.save(out, scratch);
+        try fnkbox.fnkname.save(out, scratch);
+        try fnkbox.garland.save(out, scratch);
+        try writeString(out, fnkbox.text);
+        try writeBool(out, fnkbox.folded);
+
+        // TODO: don't save testcases for default fnks
+        try out.writeInt(u32, @intCast(fnkbox.testcases.items.len), .little);
+        for (fnkbox.testcases.items) |c| {
+            try c.save(out, scratch);
+        }
+    }
+
+    pub fn load(dst: *Fnkbox, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
+        assert(version == 0);
+        try dst.handle.load(in, version, mem);
+        try dst.input.load(in, version, mem);
+        try dst.fnkname.load(in, version, mem);
+        try dst.garland.load(in, version, mem);
+        dst.text = try readString(in, mem.gpa);
+        dst.folded = try readBool(in);
+        dst.folded_t = if (dst.folded) 1 else 0;
+        dst.execution = null;
+
+        // TODO: avoid jumping
+        dst.status_bar = .{ .rect = .unit, .kind = .see_failing_case };
+        dst.fold_button = .{ .rect = .unit };
+        dst.scroll_button_up = .{ .rect = .unit };
+        dst.scroll_button_down = .{ .rect = .unit };
+
+        const n_testcases: usize = @intCast(try in.readInt(u32, .little));
+        dst.testcases = .fromOwnedSlice(try mem.gpa.alloc(TestCase, n_testcases));
+        for (dst.testcases.items) |*c| {
+            try c.load(in, version, mem);
+        }
+    }
 
     pub const Status = union(enum) {
         /// index of the failing testcase
@@ -2089,6 +2139,7 @@ pub const SerializedTag = enum(u32) {
     VeryPhysicalSexpr,
     VeryPhysicalCase,
     VeryPhysicalGarland,
+    Fnkbox,
 };
 
 const Workspace = struct {
@@ -2643,6 +2694,10 @@ const Workspace = struct {
             try writeEnum(out, SerializedTag, .VeryPhysicalGarland, .little);
             try s.save(out, scratch);
         }
+        for (workspace.fnkboxes.items) |s| {
+            try writeEnum(out, SerializedTag, .Fnkbox, .little);
+            try s.save(out, scratch);
+        }
     }
 
     pub fn load(dst: *Workspace, in: std.io.AnyReader, mem: *core.VeryPermamentGameStuff) !void {
@@ -2685,6 +2740,11 @@ const Workspace = struct {
                     var x: VeryPhysicalGarland = undefined;
                     try x.load(in, version, mem);
                     try dst.garlands.append(x);
+                },
+                .Fnkbox => {
+                    var x: Fnkbox = undefined;
+                    try x.load(in, version, mem);
+                    try dst.fnkboxes.append(x);
                 },
             }
         }
@@ -4311,6 +4371,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
+        std.log.debug("save size in bytes: {d}", .{asdf.items.len});
         var fbs = std.io.fixedBufferStream(asdf.items);
         try self.workspace.load(fbs.reader().any(), &self.core_mem);
     }
@@ -4373,6 +4434,19 @@ pub fn readBool(in: std.io.AnyReader) !bool {
         0xFF => true,
         else => @panic("bad bool"),
     };
+}
+
+pub fn writeString(out: std.io.AnyWriter, value: []const u8) !void {
+    try out.writeInt(u32, @intCast(value.len), .little);
+    try out.writeAll(value);
+}
+
+pub fn readString(in: std.io.AnyReader, allocator: std.mem.Allocator) ![]u8 {
+    const len: usize = @intCast(try in.readInt(u32, .little));
+    const result = try allocator.alloc(u8, len);
+    const actual_len = try in.readAll(result);
+    if (actual_len != len) @panic("bad string");
+    return result;
 }
 
 const std = @import("std");
