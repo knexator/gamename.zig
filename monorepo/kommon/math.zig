@@ -468,6 +468,19 @@ pub const Vec2 = extern struct {
         try Vec2.expectApproxEqAbs(Vec2.e2, rotate(Vec2.e1, 0.25), 0.001);
     }
 
+    pub fn mirrorAroundSegment(v: Self, line_point_1: Self, line_point_2: Self) Self {
+        return v.mirrorAroundLine(line_point_1, Vec2.normalized(line_point_2.sub(line_point_1)));
+    }
+
+    pub fn mirrorAroundLine(v: Self, ray_origin: Self, ray_direction: Self) Self {
+        assert(ray_direction.isNormalized());
+        const v_local = v.sub(ray_origin);
+        const v_parallel = ray_direction.scale(Vec2.dot(v_local, ray_direction));
+        const v_orthogonal = v_local.sub(v_parallel);
+        const v_local_mirrored = v_parallel.sub(v_orthogonal);
+        return ray_origin.add(v_local_mirrored);
+    }
+
     pub fn rotateAround(v: Self, center: Self, turns: f32) Self {
         const delta = v.sub(center);
         const rotated_delta = delta.rotate(turns);
@@ -484,6 +497,10 @@ pub const Vec2 = extern struct {
 
     pub fn normalized(v: Self) Self {
         return v.scale(1 / v.mag());
+    }
+
+    pub fn isNormalized(v: Self) bool {
+        return std.math.approxEqAbs(f32, v.mag(), 1.0, 0.001);
     }
 
     pub fn mag(v: Self) Scalar {

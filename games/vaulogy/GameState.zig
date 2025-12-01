@@ -1606,10 +1606,29 @@ const Button = struct {
     active_t: f32 = 0,
     rect: Rect,
     enabled: bool = true,
-    kind: enum { unknown, launch_testcase, see_failing_case } = .unknown,
+    kind: enum { unknown, launch_testcase, see_failing_case, postit },
 
     pub fn draw(button: *const Button, drawer: *Drawer, camera: Rect) !void {
         switch (button.kind) {
+            .postit => {
+                // drawer.canvas.fillRect(camera, button.rect, .fromHex("#FFEBA1"));
+                const t: f32 = 2.0 + button.hot_t * 0.7 + button.active_t * 1.2;
+                drawer.canvas.fillShape(camera, .{ .pos = button.rect.getCenter(), .scale = button.rect.size.y / 2.0 }, try drawer.canvas.tmpShape(&.{
+                    .new(-1, -1),
+                    .new(1, -1),
+                    .new(1, 1 - t * 0.1),
+                    .new(1 - t * 0.25, 1),
+                    .new(-1, 1),
+                }), .fromHex("#FFEBA1"));
+                drawer.canvas.fillShape(camera, .{ .pos = button.rect.getCenter(), .scale = button.rect.size.y / 2.0 }, try drawer.canvas.tmpShape(&.{
+                    .new(1, 1 - t * 0.1),
+                    .new(1 - t * 0.25, 1),
+                    Vec2.new(1, 1).mirrorAroundSegment(
+                        .new(1, 1 - t * 0.1),
+                        .new(1 - t * 0.25, 1),
+                    ),
+                }), .fromHex("#d4bd68"));
+            },
             .unknown => {
                 drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
                 drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
@@ -1676,9 +1695,9 @@ const Fnkbox = struct {
     status_bar: Button = .{ .rect = .unit, .kind = .see_failing_case },
     folded: bool,
     folded_t: f32,
-    fold_button: Button = .{ .rect = .unit },
-    scroll_button_up: Button = .{ .rect = .unit },
-    scroll_button_down: Button = .{ .rect = .unit },
+    fold_button: Button = .{ .rect = .unit, .kind = .unknown },
+    scroll_button_up: Button = .{ .rect = .unit, .kind = .unknown },
+    scroll_button_down: Button = .{ .rect = .unit, .kind = .unknown },
 
     pub fn save(fnkbox: *const Fnkbox, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
         try fnkbox.handle.save(out, scratch);
@@ -2081,20 +2100,22 @@ const Fnkbox = struct {
 // TODO: player should be able to draw on these, freehand
 pub const Postit = struct {
     button: Button,
-    text: []const u8,
+    lines: []const []const u8,
 
-    pub fn fromText(text: []const u8, center: Vec2) Postit {
+    pub fn fromText(lines: []const []const u8, center: Vec2) Postit {
         return .{
-            .button = .{
-                .rect = .fromCenterAndSize(center, .both(6)),
-            },
-            .text = text,
+            .button = .{ .rect = .fromCenterAndSize(center, .both(6)), .kind = .postit },
+            .lines = lines,
         };
     }
 
     pub fn draw(postit: Postit, drawer: *Drawer, camera: Rect) !void {
         try postit.button.draw(drawer, camera);
-        try drawer.canvas.drawText(0, camera, postit.text, .centeredAt(postit.button.rect.getCenter()), 0.8, .black);
+        for (postit.lines, 0..) |line, k| {
+            try drawer.canvas.drawText(0, camera, line, .centeredAt(postit.button.rect.getCenter().addY(
+                (tof32(k) - (tof32(postit.lines.len) - 1) / 2.0) * 1,
+            )), 0.8, .black);
+        }
     }
 };
 
@@ -2623,8 +2644,9 @@ const Workspace = struct {
         dst.traces = .init(mem.gpa);
 
         dst.postits = .init(mem.gpa);
-        try dst.postits.append(.fromText("the assignment ->", .new(87, 0)));
-        try dst.postits.append(.fromText("the solution ->", .new(91, 7.5)));
+        try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, .new(81, 0)));
+        try dst.postits.append(.fromText(&.{"the assignment ->"}, .new(87, 0)));
+        try dst.postits.append(.fromText(&.{"the solution ->"}, .new(91, 7.5)));
 
         dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
@@ -3216,7 +3238,9 @@ const Workspace = struct {
 
         // postits
         if (grabbed_tag == .nothing) {
-            for (workspace.postits.items, 0..) |postit, k| {
+            for (0..workspace.postits.items.len) |k_rev| {
+                const k = workspace.postits.items.len - k_rev - 1;
+                const postit = workspace.postits.items[k];
                 if (postit.button.rect.contains(pos)) {
                     return .{ .kind = .{ .postit = k } };
                 }
