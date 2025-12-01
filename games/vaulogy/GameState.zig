@@ -2644,7 +2644,39 @@ const Workspace = struct {
         dst.traces = .init(mem.gpa);
 
         dst.postits = .init(mem.gpa);
-        try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, .new(81, 0)));
+        var postit_pos: Vec2 = .new(50, -20);
+        dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
+        try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
+        postit_pos.addInPlace(.new(12, 4));
+        try dst.postits.append(.fromText(&.{ "Move around", "with WASD", "or Arrow Keys" }, postit_pos));
+        postit_pos.addInPlace(.new(-15, 5));
+        try dst.postits.append(.fromText(&.{ "Left click", "to pick up", "Atoms ->" }, postit_pos));
+        postit_pos.addInPlace(.new(4.5, 1.25));
+        try dst.sexprs.append(try .fromSexpr(
+            &dst.hover_pool,
+            try mem.storeSexpr(.doLit("a")),
+            .{ .pos = postit_pos },
+            false,
+        ));
+        try dst.sexprs.append(try .fromSexpr(
+            &dst.hover_pool,
+            try mem.storeSexpr(.doLit("b")),
+            .{ .pos = postit_pos.add(.new(5, -1.5)) },
+            true,
+        ));
+        try dst.sexprs.append(try .fromSexpr(
+            &dst.hover_pool,
+            try mem.storeSexpr(.doLit("C")),
+            .{ .pos = postit_pos.add(.new(-2, 4)) },
+            false,
+        ));
+        postit_pos.addInPlace(.new(5.5, 5.5));
+        try dst.postits.append(.fromText(&.{ "Right click to", "duplicate them" }, postit_pos));
+        try dst.postits.append(.fromText(&.{"Z to undo"}, postit_pos.add(.new(6.5, 0.7))));
+
+        postit_pos.addInPlace(.new(19, -14));
+        try dst.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
+
         try dst.postits.append(.fromText(&.{"the assignment ->"}, .new(87, 0)));
         try dst.postits.append(.fromText(&.{"the solution ->"}, .new(91, 7.5)));
 
@@ -4387,6 +4419,7 @@ pub fn beforeHotReload(self: *GameState) !void {
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
+    // try self.workspace.init(&self.core_mem, 0);
 }
 
 /// returns true if should quit
