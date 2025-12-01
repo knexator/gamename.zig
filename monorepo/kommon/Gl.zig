@@ -303,6 +303,8 @@ const Stub = struct {
         .clear = clear,
         .buildRenderable = buildRenderable,
         .useRenderable = useRenderable,
+        .setRenderableData = setRenderableData,
+        .useRenderableWithExistingData = useRenderableWithExistingData,
         .buildTexture2D = buildTexture2D,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
@@ -348,6 +350,21 @@ const Stub = struct {
         _: *const anyopaque,
         _: usize,
         _: []const [3]Gl.IndexType,
+        _: []const Gl.UniformInfo.Runtime,
+        _: ?Gl.Texture,
+    ) void {}
+
+    pub fn setRenderableData(
+        _: Gl.Renderable,
+        _: *const anyopaque,
+        _: usize,
+        _: []const [3]Gl.IndexType,
+        _: Gl.UsageMode,
+    ) void {}
+
+    pub fn useRenderableWithExistingData(
+        _: Gl.Renderable,
+        _: usize,
         _: []const Gl.UniformInfo.Runtime,
         _: ?Gl.Texture,
     ) void {}

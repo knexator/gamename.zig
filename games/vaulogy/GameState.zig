@@ -71,18 +71,19 @@ test "fuzz example" {
 
     const Context = struct {
         fn testOne(context: @This(), input: []const u8) anyerror!void {
+            if (input.len < 8) return;
             _ = context;
             var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
             defer mem.deinit();
             var workspace: Workspace = undefined;
-            try workspace.init(&mem);
+            try workspace.init(&mem, std.mem.readInt(u64, input[0..8], .little));
             defer workspace.deinit(std.testing.allocator);
             var frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
             defer frame_arena.deinit();
 
             var test_platform: TestPlatform = .{};
 
-            var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
+            var it = std.mem.window(u8, input[8..], @sizeOf(FakeInput), @sizeOf(FakeInput));
             while (it.next()) |cur_input_raw| {
                 if (cur_input_raw.len == @sizeOf(FakeInput)) {
                     const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
@@ -102,7 +103,7 @@ test "No leaks on Workspace and Drawer" {
     var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
     defer mem.deinit();
     var workspace: Workspace = undefined;
-    try workspace.init(&mem);
+    try workspace.init(&mem, std.testing.random_seed);
     defer workspace.deinit(std.testing.allocator);
     var usual: kommon.Usual = undefined;
     usual.init(
@@ -2721,7 +2722,7 @@ const Workspace = struct {
     }
 
     fn freshToolbarCase(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !VeryPhysicalCase {
-        const new_name = try mem.gpa.alloc(u8, 10);
+        const new_name = try mem.arena_for_names.allocator().alloc(u8, 10);
         math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
         const var_value = try mem.storeSexpr(.doVar(new_name));
 

@@ -450,6 +450,7 @@ pub const VeryPermamentGameStuff = struct {
     allocator_for_stack: std.mem.Allocator,
     gpa: std.mem.Allocator,
     hover_pool: HoveredSexpr.Pool,
+    arena_for_names: std.heap.ArenaAllocator,
     scratch: std.heap.ArenaAllocator,
 
     pub fn init(
@@ -459,6 +460,7 @@ pub const VeryPermamentGameStuff = struct {
         const arena_for_cases = std.heap.ArenaAllocator.init(allocator);
         const arena_for_bindings = std.heap.ArenaAllocator.init(allocator);
         const hover_pool: HoveredSexpr.Pool = .init(allocator);
+        const arena_for_names: std.heap.ArenaAllocator = .init(allocator);
         const scratch: std.heap.ArenaAllocator = .init(allocator);
 
         return VeryPermamentGameStuff{
@@ -468,6 +470,7 @@ pub const VeryPermamentGameStuff = struct {
             .allocator_for_stack = allocator,
             .gpa = allocator,
             .hover_pool = hover_pool,
+            .arena_for_names = arena_for_names,
             .scratch = scratch,
         };
     }
@@ -477,6 +480,7 @@ pub const VeryPermamentGameStuff = struct {
         this.arena_for_cases.deinit();
         this.arena_for_bindings.deinit();
         this.hover_pool.deinit();
+        this.arena_for_names.deinit();
         this.scratch.deinit();
     }
 
