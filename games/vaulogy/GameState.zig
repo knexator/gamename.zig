@@ -2649,7 +2649,7 @@ const Workspace = struct {
         dst.traces = .init(mem.gpa);
 
         dst.postits = .init(mem.gpa);
-        var postit_pos: Vec2 = .new(50, -20);
+        var postit_pos: Vec2 = .new(40, -3);
         dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
         try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
         postit_pos.addInPlace(.new(12, 4));
@@ -2682,15 +2682,33 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(19, -14));
         try dst.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "The piece below,", "when active,", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
+        try dst.postits.append(.fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
         try dst.cases.append(try .fromValues(&dst.hover_pool, .{
             .pattern = try mem.storeSexpr(.doLit("a")),
             .template = try mem.storeSexpr(.doLit("b")),
             .fnk_name = Sexpr.builtin.empty,
-        }, .{ .pos = postit_pos.add(.new(0, 5)) }));
-
-        try dst.postits.append(.fromText(&.{"the assignment ->"}, .new(87, 0)));
-        try dst.postits.append(.fromText(&.{"the solution ->"}, .new(91, 7.5)));
+        }, .{ .pos = postit_pos.addY(5) }));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.postits.append(.fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
+        try dst.garlands.append(try .fromDefinition(.{ .pos = postit_pos.addY(5) }, .{ .cases = &.{
+            .{
+                .pattern = try mem.storeSexpr(.doLit("a")),
+                .template = try mem.storeSexpr(.doLit("b")),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = try mem.storeSexpr(.doLit("b")),
+                .template = try mem.storeSexpr(.doLit("a")),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+        } }, mem, &mem.hover_pool));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.postits.append(.fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
+        try dst.postits.append(.fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
+        postit_pos.addInPlace(.new(26, 1));
+        try dst.postits.append(.fromText(&.{ "Try the next one", "-->" }, postit_pos));
 
         dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
