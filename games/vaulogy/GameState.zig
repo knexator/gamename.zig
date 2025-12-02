@@ -1689,6 +1689,8 @@ const Fnkbox = struct {
             testcase: usize,
             input,
         },
+        /// only valid if source is testcase
+        old_testcase_actual_value: *const Sexpr,
         /// if source is input, this is ignored
         state: enum { scrolling_towards_case, starting, executing, ending },
         state_t: f32,
@@ -1964,6 +1966,7 @@ const Fnkbox = struct {
         defer temp_mem.deinit();
         var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
         defer scoring_run.deinit(false);
+        // Update 'actual' values
         for (fnkbox.testcases.items) |*t| {
             var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
             defer exec.deinit();
@@ -1988,8 +1991,19 @@ const Fnkbox = struct {
                 );
             }
         }
+        // Get the actual status
         for (fnkbox.testcases.items, 0..) |t, k| {
-            if (!t.actual.value.equals(t.expected.value)) {
+            const actual_value: *const Sexpr = if (fnkbox.execution) |execution|
+                switch (execution.source) {
+                    .testcase => |k_source| if (k == k_source)
+                        execution.old_testcase_actual_value
+                    else
+                        t.actual.value,
+                    .input => t.actual.value,
+                }
+            else
+                t.actual.value;
+            if (!actual_value.equals(t.expected.value)) {
                 fnkbox.status = .{ .unsolved = k };
                 return;
             }
@@ -4172,9 +4186,11 @@ const Workspace = struct {
                 const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
                 const testcase = &fnkbox.testcases.items[t.testcase];
                 assert(fnkbox.execution == null);
+                const old_actual = testcase.actual.value;
                 testcase.actual = try .empty(testcase.actual.point, &workspace.hover_pool, false);
                 fnkbox.execution = .{
                     .source = .{ .testcase = t.testcase },
+                    .old_testcase_actual_value = old_actual,
                     .executor = undefined,
                     .state_t = undefined,
                     .state = .scrolling_towards_case,
@@ -4378,12 +4394,18 @@ const Workspace = struct {
                 var garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool);
                 assert(garland.fnkname == null);
                 if (fnkbox.folded) garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
-                fnkbox.execution = .{ .source = .input, .state = .executing, .state_t = undefined, .executor = .{
-                    .input = fnkbox.input,
-                    .garland = garland,
-                    .handle = .{ .point = fnkbox.executorPoint() },
-                    .animation = null,
-                } };
+                fnkbox.execution = .{
+                    .source = .input,
+                    .state = .executing,
+                    .state_t = undefined,
+                    .old_testcase_actual_value = undefined,
+                    .executor = .{
+                        .input = fnkbox.input,
+                        .garland = garland,
+                        .handle = .{ .point = fnkbox.executorPoint() },
+                        .animation = null,
+                    },
+                };
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
                     .fnkbox = k,
                     .input = fnkbox.input,
