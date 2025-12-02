@@ -452,22 +452,23 @@ const VeryPhysicalGarland = struct {
         };
     }
 
-    pub fn draw(garland: VeryPhysicalGarland, drawer: *Drawer, camera: Rect) !void {
-        try garland.drawWithBindings(null, drawer, camera);
+    pub fn draw(garland: VeryPhysicalGarland, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
+        try garland.drawWithBindings(null, holding, drawer, camera);
     }
 
-    pub fn drawWithAlpha(garland: VeryPhysicalGarland, alpha: f32, drawer: *Drawer, camera: Rect) !void {
-        try garland.drawWithBindingsAndAlpha(null, alpha, drawer, camera);
+    pub fn drawWithAlpha(garland: VeryPhysicalGarland, alpha: f32, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
+        try garland.drawWithBindingsAndAlpha(null, alpha, holding, drawer, camera);
     }
 
-    pub fn drawWithBindings(garland: VeryPhysicalGarland, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
-        try garland.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
+    pub fn drawWithBindings(garland: VeryPhysicalGarland, bindings: ?BindingsState, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
+        try garland.drawWithBindingsAndAlpha(bindings, 1, holding, drawer, camera);
     }
 
     pub fn drawWithBindingsAndAlpha(
         garland: VeryPhysicalGarland,
         bindings: ?BindingsState,
         alpha: f32,
+        holding: VeryPhysicalCase.Holding,
         drawer: *Drawer,
         camera: Rect,
     ) error{
@@ -497,7 +498,7 @@ const VeryPhysicalGarland = struct {
             const h = garland.handleForNewCases(&.{k});
             try h.drawCustom(drawer, camera, alpha, 0.5, 3.0);
         }
-        for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
     }
 
     pub fn handleForNewCases(garland: *const VeryPhysicalGarland, address: core.CaseAddress) *const Handle {
@@ -842,10 +843,13 @@ const VeryPhysicalCase = struct {
         try case.next.fillVariables(bindings, mem);
     }
 
+    pub const Holding = enum { other, sexpr, case_or_garland };
+
     pub fn drawWithBindingsAndAlpha(
         case: VeryPhysicalCase,
         bindings: ?BindingsState,
         alpha: f32,
+        holding: Holding,
         drawer: *Drawer,
         camera: Rect,
     ) !void {
@@ -857,16 +861,16 @@ const VeryPhysicalCase = struct {
         try case.handle.draw(drawer, camera, alpha);
         try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        try case.next.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        if (holding == .sexpr or !case.fnk_name.isEmpty()) try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        if (holding == .case_or_garland or case.next.cases.items.len > 0) try case.next.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
     }
 
-    pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
-        try case.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
+    pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, holding: Holding, drawer: *Drawer, camera: Rect) !void {
+        try case.drawWithBindingsAndAlpha(bindings, 1, holding, drawer, camera);
     }
 
-    pub fn draw(case: VeryPhysicalCase, drawer: *Drawer, camera: Rect) !void {
-        try case.drawWithBindings(null, drawer, camera);
+    pub fn draw(case: VeryPhysicalCase, holding: Holding, drawer: *Drawer, camera: Rect) !void {
+        try case.drawWithBindings(null, holding, drawer, camera);
     }
 
     pub fn update(case: *VeryPhysicalCase, delta_seconds: f32) void {
@@ -1205,8 +1209,8 @@ const Pill = struct {
         };
         try pill.input.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try pill.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        if (pill.fnkname_call) |f| try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        if (pill.fnkname_response) |f| try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        if (pill.fnkname_call) |f| if (!f.isEmpty()) try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+        if (pill.fnkname_response) |f| if (!f.isEmpty()) try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
     }
 };
 
@@ -1292,7 +1296,7 @@ const Executor = struct {
         };
     }
 
-    pub fn draw(executor: Executor, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(executor: Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera, 1);
         // const bindings_anim_t: ?f32 = if (executor.animation) |anim| if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8) else null;
         const bindings_active: BindingsState = if (executor.animation) |anim| .{
@@ -1306,9 +1310,9 @@ const Executor = struct {
         };
         try executor.input.drawWithBindings(bindings_active, drawer, camera);
         if (executor.animation) |anim| {
-            try anim.active_case.drawWithBindings(bindings_active, drawer, camera);
+            try anim.active_case.drawWithBindings(bindings_active, holding, drawer, camera);
             if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
-            if (anim.invoked_fnk) |f| try f.draw(drawer, camera);
+            if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
         }
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
@@ -1316,8 +1320,8 @@ const Executor = struct {
             .anim_t = bindings_active.anim_t,
             .new = &.{},
             .old = executor.prev_pills.items[s.parent_pill].bindings,
-        }, drawer, camera);
-        try executor.garland.draw(drawer, camera);
+        }, holding, drawer, camera);
+        try executor.garland.draw(holding, drawer, camera);
     }
 
     pub fn animating(executor: Executor) bool {
@@ -1530,10 +1534,10 @@ const Fnkviewer = struct {
         };
     }
 
-    pub fn draw(fnkviewer: Fnkviewer, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(fnkviewer: Fnkviewer, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
         try fnkviewer.handle.draw(drawer, camera, 1);
         try fnkviewer.fnkname.draw(drawer, camera);
-        try fnkviewer.garland.draw(drawer, camera);
+        try fnkviewer.garland.draw(holding, drawer, camera);
     }
 
     pub fn update(fnkviewer: *Fnkviewer, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
@@ -1875,7 +1879,7 @@ const Fnkbox = struct {
         );
     }
 
-    pub fn draw(fnkbox: *const Fnkbox, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(fnkbox: *const Fnkbox, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
         const rect = fnkbox.box();
         drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(0.65));
         if (fnkbox.folded_t < 1) {
@@ -1924,15 +1928,15 @@ const Fnkbox = struct {
         try fnkbox.handle.draw(drawer, camera, 1);
         if (fnkbox.execution) |e| {
             if (e.state == .ending) {
-                try fnkbox.garland.drawWithAlpha(math.smoothstep(e.state_t, 0.9, 1), drawer, camera);
+                try fnkbox.garland.drawWithAlpha(math.smoothstep(e.state_t, 0.9, 1), holding, drawer, camera);
                 try e.final_result.draw(drawer, camera);
             } else if (e.state == .scrolling_towards_case) {
-                try fnkbox.garland.drawWithAlpha(1, drawer, camera);
+                try fnkbox.garland.drawWithAlpha(1, holding, drawer, camera);
             } else {
-                try e.executor.draw(drawer, camera);
+                try e.executor.draw(holding, drawer, camera);
             }
         } else {
-            try fnkbox.garland.draw(drawer, camera);
+            try fnkbox.garland.draw(holding, drawer, camera);
             try fnkbox.input.draw(drawer, camera);
         }
         try fnkbox.fold_button.draw(drawer, camera);
@@ -2677,6 +2681,13 @@ const Workspace = struct {
 
         postit_pos.addInPlace(.new(19, -14));
         try dst.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.postits.append(.fromText(&.{ "The piece below,", "when active,", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
+        try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+            .pattern = try mem.storeSexpr(.doLit("a")),
+            .template = try mem.storeSexpr(.doLit("b")),
+            .fnk_name = Sexpr.builtin.empty,
+        }, .{ .pos = postit_pos.add(.new(0, 5)) }));
 
         try dst.postits.append(.fromText(&.{"the assignment ->"}, .new(87, 0)));
         try dst.postits.append(.fromText(&.{"the solution ->"}, .new(91, 7.5)));
@@ -3142,20 +3153,33 @@ const Workspace = struct {
             try s.draw(drawer, camera);
         }
 
+        const holding: VeryPhysicalCase.Holding = switch (workspace.focus.grabbing.kind) {
+            .sexpr => .sexpr,
+            .garland_handle, .case_handle => .case_or_garland,
+            else => .other,
+        };
+
         for (workspace.cases.items, 0..) |c, k| {
             if (isGrabbedCase(.{ .board = k }, workspace.focus.grabbing)) continue;
-            try c.draw(drawer, camera);
+            try c.draw(holding, drawer, camera);
         }
 
         for (workspace.garlands.items, 0..) |c, k| {
             if (isGrabbedGarland(.{ .local = &.{}, .parent = .{ .garland = k } }, workspace.focus.grabbing)) continue;
-            try c.draw(drawer, camera);
+            try c.draw(holding, drawer, camera);
         }
 
         inline for (.{
             workspace.fnkboxes.items,
             workspace.executors.items,
             workspace.fnkviewers.items,
+        }) |things| {
+            for (things) |g| {
+                try g.draw(holding, drawer, camera);
+            }
+        }
+
+        inline for (.{
             workspace.traces.items,
             workspace.postits.items,
         }) |things| {
@@ -3200,13 +3224,13 @@ const Workspace = struct {
             );
         }
 
-        try workspace.toolbar_case.draw(drawer, camera);
+        try workspace.toolbar_case.draw(.other, drawer, camera);
         try workspace.toolbar_trash.draw(drawer, camera);
 
         switch (workspace.focus.grabbing.kind) {
             else => {},
-            .garland_handle => |t| try workspace.garlandAt(t).draw(drawer, camera),
-            .case_handle => |t| try workspace.cases.items[t.board].draw(drawer, camera),
+            .garland_handle => |t| try workspace.garlandAt(t).draw(.other, drawer, camera),
+            .case_handle => |t| try workspace.cases.items[t.board].draw(.other, drawer, camera),
             .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
         }
 
@@ -4420,7 +4444,7 @@ pub fn beforeHotReload(self: *GameState) !void {
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    // try self.workspace.init(&self.core_mem, 0);
+    try self.workspace.init(&self.core_mem, 0);
 }
 
 /// returns true if should quit
