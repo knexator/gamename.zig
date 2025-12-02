@@ -2268,14 +2268,14 @@ const Workspace = struct {
     toolbar_trash: ToolbarTrash,
     postits: std.ArrayList(Postit),
 
-    hover_pool: HoveredSexpr.Pool,
-
     focus: Focus = .{},
     camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
 
-    undo_stack: std.ArrayList(UndoableCommand),
+    toolbar_case_enabled: bool = false,
 
+    undo_stack: std.ArrayList(UndoableCommand),
     random_instance: std.Random.DefaultPrng,
+    hover_pool: HoveredSexpr.Pool,
 
     const Focus = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
@@ -2711,10 +2711,15 @@ const Workspace = struct {
         try dst.postits.append(.fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
         try dst.postits.append(.fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
-        postit_pos.addInPlace(.new(26, 1));
-        try dst.postits.append(.fromText(&.{ "Try the next one", "-->" }, postit_pos));
+        try dst.postits.append(.fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
+        postit_pos.addInPlace(.new(25, -2));
+        try dst.postits.append(.fromText(&.{"Your turn!"}, postit_pos));
+        try dst.postits.append(.fromText(&.{ "Click the", "'Unsolved!'", "button to see", "what requirements", "the machine", "fails at." }, postit_pos.add(.new(0.5, 6.5))));
         postit_pos.addInPlace(.new(25, 0));
+        postit_pos.addInPlace(.new(7, -6.1));
         try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
+        postit_pos.addInPlace(.new(25, 1));
+        try dst.postits.append(.fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
 
         try dst.canonizeAfterChanges(mem);
     }
@@ -3245,7 +3250,7 @@ const Workspace = struct {
             );
         }
 
-        try workspace.toolbar_case.draw(.other, drawer, camera);
+        if (workspace.toolbar_case_enabled) try workspace.toolbar_case.draw(.other, drawer, camera);
         try workspace.toolbar_trash.draw(drawer, camera);
 
         switch (workspace.focus.grabbing.kind) {
@@ -3414,6 +3419,7 @@ const Workspace = struct {
                         },
                         .case => |t| switch (t.parent) {
                             else => {},
+                            .toolbar => if (!workspace.toolbar_case_enabled) continue,
                             .garland => |g| switch (g.parent.parent) {
                                 else => {},
                                 .fnkbox => |k| {
@@ -3485,7 +3491,8 @@ const Workspace = struct {
 
                 // some special cases
                 switch (base) {
-                    .board, .toolbar => {},
+                    .board => {},
+                    .toolbar => if (!workspace.toolbar_case_enabled) continue,
                     .garland => |t| switch (t.parent.parent) {
                         else => {},
                         .fnkbox => |k| {
@@ -3520,6 +3527,10 @@ const Workspace = struct {
         for (workspace.fnkboxes.items) |*fnkbox| {
             try fnkbox.updateStatus(workspace.fnkboxes.items, mem);
         }
+        workspace.toolbar_case_enabled =
+            workspace.fnkboxes.items[0].status == .solved and
+            workspace.fnkboxes.items[1].status == .solved and
+            workspace.fnkboxes.items[2].status == .solved;
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
