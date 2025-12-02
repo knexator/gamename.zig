@@ -2521,102 +2521,108 @@ const Workspace = struct {
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
         dst.lenses = .init(mem.gpa);
-        try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
-            .{},
-            &.{ .right, .left },
-        ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
-        try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
-
         dst.sexprs = .init(mem.gpa);
-        var random: std.Random.DefaultPrng = .init(1);
-        if (true) {
-            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
-
-            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
-
-            for ([_][]const u8{
-                "Hermes",    "Mercury",
-                "Ares",      "Mars",
-                "Zeus",      "Jupiter",
-                "Aphrodite", "Venus",
-            }, 0..) |n, k| {
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) * 3, -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
-            }
-        } else {
-            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
-        }
-
         dst.cases = .init(mem.gpa);
-        try dst.cases.append(try .fromValues(&dst.hover_pool, .{
-            .pattern = Sexpr.builtin.true,
-            .template = Sexpr.builtin.false,
-            .fnk_name = Sexpr.builtin.identity,
-        }, .{ .pos = .new(0, 3) }));
-        try dst.cases.append(try .fromValues(&dst.hover_pool, .{
-            .pattern = Sexpr.builtin.vars.v1,
-            .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
-            .fnk_name = Sexpr.builtin.identity,
-        }, .{ .pos = .new(-7, 0) }));
-
         dst.garlands = .init(mem.gpa);
-        try dst.garlands.append(.{
-            .cases = try .initCapacity(mem.gpa, 4),
-            .handle = .{ .point = .{ .pos = .new(0, 5) } },
-            .handles_for_new_cases_first = .{ .handle = .{ .point = .{ .pos = .new(0, 5) } }, .length = 1 },
-            .handles_for_new_cases_rest = try .initCapacity(mem.gpa, 4),
-        });
-
-        for (0..4) |k| {
-            dst.garlands.items[0].handles_for_new_cases_rest.appendAssumeCapacity(.{ .handle = .{ .point = .{ .pos = .new(0, tof32(k + 1)) } }, .length = 1 });
-        }
-        for ([_][2][]const u8{
-            .{ "Hermes", "Mercury" },
-            .{ "Ares", "Mars" },
-            .{ "Zeus", "Jupiter" },
-            .{ "Aphrodite", "Venus" },
-        }, 0..) |p, k| {
-            dst.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
-                .pattern = try mem.storeSexpr(.doLit(p[0])),
-                .template = try mem.storeSexpr(.doLit(p[1])),
-                .fnk_name = Sexpr.builtin.empty,
-            }, dst.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(0, 1 + 2.5 * tof32(k)) })));
-        }
-        try dst.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
-            .pattern = Sexpr.builtin.true,
-            .template = valid[1],
-            .fnk_name = valid[0],
-        }, dst.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(6, 0) })));
-
         dst.executors = .init(mem.gpa);
-        try dst.executors.append(try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
-
         dst.fnkviewers = .init(mem.gpa);
-        try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
-
         dst.fnkboxes = .init(mem.gpa);
+        dst.traces = .init(mem.gpa);
+        dst.postits = .init(mem.gpa);
+        dst.toolbar_case = try dst.freshToolbarCase(mem);
+        dst.toolbar_trash = .{ .rect = .unit };
 
         if (false) {
-            const debug_fnk = try core.parsing.parseSingleFnk(
-                \\asdf {
-                \\ (a . @x) -> asdf: (b . f) {
-                \\  B -> @x; 
-                \\ }
-                \\ (b . @x) -> B;
-                \\ (a . B) -> nil;
-                \\}
-            , &mem.pool_for_sexprs, mem.scratch.allocator());
+            try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
+                .{},
+                &.{ .right, .left },
+            ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
+            try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
 
-            try dst.fnkboxes.append(
-                try .init(
-                    "TODO: remove",
-                    debug_fnk.name,
-                    .{ .pos = .new(60, -6) },
-                    &.{},
-                    try debug_fnk.body.toV2(mem.scratch.allocator()),
-                    &dst.hover_pool,
-                    mem,
-                ),
-            );
+            var random: std.Random.DefaultPrng = .init(1);
+            if (true) {
+                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
+
+                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
+
+                for ([_][]const u8{
+                    "Hermes",    "Mercury",
+                    "Ares",      "Mars",
+                    "Zeus",      "Jupiter",
+                    "Aphrodite", "Venus",
+                }, 0..) |n, k| {
+                    try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) * 3, -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
+                }
+            } else {
+                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
+            }
+
+            try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+                .pattern = Sexpr.builtin.true,
+                .template = Sexpr.builtin.false,
+                .fnk_name = Sexpr.builtin.identity,
+            }, .{ .pos = .new(0, 3) }));
+            try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+                .pattern = Sexpr.builtin.vars.v1,
+                .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
+                .fnk_name = Sexpr.builtin.identity,
+            }, .{ .pos = .new(-7, 0) }));
+
+            try dst.garlands.append(.{
+                .cases = try .initCapacity(mem.gpa, 4),
+                .handle = .{ .point = .{ .pos = .new(0, 5) } },
+                .handles_for_new_cases_first = .{ .handle = .{ .point = .{ .pos = .new(0, 5) } }, .length = 1 },
+                .handles_for_new_cases_rest = try .initCapacity(mem.gpa, 4),
+            });
+
+            for (0..4) |k| {
+                dst.garlands.items[0].handles_for_new_cases_rest.appendAssumeCapacity(.{ .handle = .{ .point = .{ .pos = .new(0, tof32(k + 1)) } }, .length = 1 });
+            }
+            for ([_][2][]const u8{
+                .{ "Hermes", "Mercury" },
+                .{ "Ares", "Mars" },
+                .{ "Zeus", "Jupiter" },
+                .{ "Aphrodite", "Venus" },
+            }, 0..) |p, k| {
+                dst.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
+                    .pattern = try mem.storeSexpr(.doLit(p[0])),
+                    .template = try mem.storeSexpr(.doLit(p[1])),
+                    .fnk_name = Sexpr.builtin.empty,
+                }, dst.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(0, 1 + 2.5 * tof32(k)) })));
+            }
+            try dst.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
+                .pattern = Sexpr.builtin.true,
+                .template = valid[1],
+                .fnk_name = valid[0],
+            }, dst.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(6, 0) })));
+
+            try dst.executors.append(try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
+
+            try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
+
+            if (false) {
+                const debug_fnk = try core.parsing.parseSingleFnk(
+                    \\asdf {
+                    \\ (a . @x) -> asdf: (b . f) {
+                    \\  B -> @x; 
+                    \\ }
+                    \\ (b . @x) -> B;
+                    \\ (a . B) -> nil;
+                    \\}
+                , &mem.pool_for_sexprs, mem.scratch.allocator());
+
+                try dst.fnkboxes.append(
+                    try .init(
+                        "TODO: remove",
+                        debug_fnk.name,
+                        .{ .pos = .new(60, -6) },
+                        &.{},
+                        try debug_fnk.body.toV2(mem.scratch.allocator()),
+                        &dst.hover_pool,
+                        mem,
+                    ),
+                );
+            }
         }
 
         // TODO: use all levels
@@ -2646,10 +2652,7 @@ const Workspace = struct {
             x += if (k < 5) 25 else 35;
         }
 
-        dst.traces = .init(mem.gpa);
-
-        dst.postits = .init(mem.gpa);
-        var postit_pos: Vec2 = .new(40, -3);
+        var postit_pos: Vec2 = .new(33, -3);
         dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
         try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
         postit_pos.addInPlace(.new(12, 4));
@@ -2706,12 +2709,12 @@ const Workspace = struct {
         } }, mem, &mem.hover_pool));
         postit_pos.addInPlace(.new(7, 0));
         try dst.postits.append(.fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
+        postit_pos.addInPlace(.new(7, 0));
         try dst.postits.append(.fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
         postit_pos.addInPlace(.new(26, 1));
         try dst.postits.append(.fromText(&.{ "Try the next one", "-->" }, postit_pos));
-
-        dst.toolbar_case = try dst.freshToolbarCase(mem);
-        dst.toolbar_trash = .{ .rect = .unit };
+        postit_pos.addInPlace(.new(25, 0));
+        try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones," }, postit_pos));
 
         try dst.canonizeAfterChanges(mem);
     }
