@@ -7,7 +7,7 @@ const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
 
-pub const display_fps = true;
+pub const display_fps = false;
 
 const EXECUTOR_MOVES_LEFT = true;
 
@@ -2714,7 +2714,7 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(26, 1));
         try dst.postits.append(.fromText(&.{ "Try the next one", "-->" }, postit_pos));
         postit_pos.addInPlace(.new(25, 0));
-        try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones," }, postit_pos));
+        try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
 
         try dst.canonizeAfterChanges(mem);
     }
