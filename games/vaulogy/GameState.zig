@@ -2728,10 +2728,11 @@ const Workspace = struct {
         try dst.postits.append(.fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
         postit_pos.addInPlace(.new(25, -2));
         try dst.postits.append(.fromText(&.{"Your turn!"}, postit_pos));
-        try dst.postits.append(.fromText(&.{ "Click the", "'Unsolved!'", "button to see", "what requirements", "the machine", "fails at." }, postit_pos.add(.new(0.5, 6.5))));
+        try dst.postits.append(.fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
         postit_pos.addInPlace(.new(25, 0));
         postit_pos.addInPlace(.new(7, -6.1));
         try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
+        try dst.postits.append(.fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
         postit_pos.addInPlace(.new(25, 1));
         try dst.postits.append(.fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
 
