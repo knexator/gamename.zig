@@ -550,6 +550,7 @@ pub const Vec2 = extern struct {
     }
 
     pub fn aspectRatio(v: Self) f32 {
+        assert(v.y != 0);
         return v.x / v.y;
     }
 
@@ -988,6 +989,43 @@ pub const Rect = extern struct {
         v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
     }
 
+    /// local_sub is in 0..1 space
+    pub fn subrect(real_parent: Rect, local_sub: Rect) Rect {
+        return .fromCorners(
+            real_parent.worldFromLocal(local_sub.top_left),
+            real_parent.worldFromLocal(local_sub.get(.bottom_right)),
+        );
+    }
+
+    /// returns real_sub
+    pub fn subrectAsIf(real_parent: Rect, ideal_sub: Rect, ideal_parent: Rect) Rect {
+        const local_sub: Rect = .fromCorners(
+            ideal_parent.localFromWorldPosition(ideal_sub.top_left),
+            ideal_parent.localFromWorldPosition(ideal_sub.get(.bottom_right)),
+        );
+        return real_parent.subrect(local_sub);
+    }
+
+    /// returns real_sub
+    pub fn positionAsIf(real_parent: Rect, ideal_sub: Vec2, ideal_parent: Rect) Rect {
+        return real_parent.worldFromLocal(ideal_parent.localFromWorldPosition(ideal_sub));
+    }
+
+    /// returns real_sub
+    pub fn pointAsIf(real_parent: Rect, ideal_sub: Point, ideal_parent: Rect) Point {
+        assert(std.math.approxEqAbs(
+            f32,
+            real_parent.size.aspectRatio(),
+            ideal_parent.size.aspectRatio(),
+            0.001,
+        ));
+        return .{
+            .pos = real_parent.worldFromLocal(ideal_parent.localFromWorldPosition(ideal_sub.pos)),
+            .turns = ideal_sub.turns,
+            .scale = ideal_sub.scale * real_parent.size.y / ideal_parent.size.y,
+        };
+    }
+
     pub fn intersect(a: Rect, b: Rect) ?Rect {
         const a_left = a.top_left.x;
         const a_right = a.top_left.x + a.size.x;
@@ -1291,6 +1329,10 @@ pub const Rect = extern struct {
             .top_left = original.top_left.add(delta),
             .size = original.size,
         };
+    }
+
+    pub fn moveRelative(original: Rect, delta: Vec2) Rect {
+        return original.move(delta.mul(original.size));
     }
 
     pub fn boundingOOP(comptime T: type, objs: []const T, comptime prop: []const u8) Rect {

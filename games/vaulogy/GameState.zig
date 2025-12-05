@@ -2285,6 +2285,8 @@ const Workspace = struct {
     focus: Focus = .{},
     camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
 
+    toolbar_left: f32 = 0,
+
     toolbar_case_enabled: bool = false,
 
     undo_stack: std.ArrayList(UndoableCommand),
@@ -2778,6 +2780,8 @@ const Workspace = struct {
         math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
         const var_value = try mem.storeSexpr(.doVar(new_name));
 
+        // TODO: change variable on each toolbar opening
+
         return .fromValues(&mem.hover_pool, .{
             .pattern = var_value,
             .fnk_name = Sexpr.builtin.empty,
@@ -3265,6 +3269,7 @@ const Workspace = struct {
             );
         }
 
+        drawer.canvas.fillRect(camera, workspace.leftToolbarRect(), .gray(0.4));
         if (workspace.toolbar_case_enabled) try workspace.toolbar_case.draw(.other, drawer, camera);
         try workspace.toolbar_trash.draw(drawer, camera);
 
@@ -3287,6 +3292,12 @@ const Workspace = struct {
             workspace.camera.size.y * 0.05,
             .black,
         );
+    }
+
+    const left_toolbar_rect_ideal: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
+    fn leftToolbarRect(workspace: *const Workspace) Rect {
+        return workspace.camera.withAspectRatio(left_toolbar_rect_ideal.size.aspectRatio(), .shrink, .center_left)
+            .moveRelative(.new(-0.9 * (1 - workspace.toolbar_left), 0));
     }
 
     fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
@@ -3330,17 +3341,6 @@ const Workspace = struct {
                 }
                 if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
                     return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .target } } };
-                }
-            }
-        }
-
-        // postits
-        if (grabbed_tag == .nothing) {
-            for (0..workspace.postits.items.len) |k_rev| {
-                const k = workspace.postits.items.len - k_rev - 1;
-                const postit = workspace.postits.items[k];
-                if (postit.button.rect.contains(pos)) {
-                    return .{ .kind = .{ .postit = k } };
                 }
             }
         }
@@ -3535,6 +3535,17 @@ const Workspace = struct {
             }
         }
 
+        // postits
+        if (grabbed_tag == .nothing) {
+            for (0..workspace.postits.items.len) |k_rev| {
+                const k = workspace.postits.items.len - k_rev - 1;
+                const postit = workspace.postits.items[k];
+                if (postit.button.rect.contains(pos)) {
+                    return .{ .kind = .{ .postit = k } };
+                }
+            }
+        }
+
         return .nothing;
     }
 
@@ -3554,12 +3565,14 @@ const Workspace = struct {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        const ui_px = camera.size.y * 0.075;
-        workspace.toolbar_case.kinematicUpdate(.{
-            .pos = camera.get(.bottom_right).add(Vec2.new(-2.75, -1.25).scale(ui_px)),
-            .scale = ui_px,
-        }, null, null, undefined);
-        workspace.toolbar_trash.rect = camera.withSize(.both(ui_px * 2.5), .bottom_left).move(Vec2.new(1, -1).scale(ui_px * 0.25));
+        workspace.toolbar_case.kinematicUpdate(workspace.leftToolbarRect().pointAsIf(
+            .{ .pos = .new(2.5, 5) },
+            left_toolbar_rect_ideal,
+        ), null, null, undefined);
+        workspace.toolbar_trash.rect = workspace.leftToolbarRect().subrectAsIf(
+            .{ .top_left = .half, .size = .both(3) },
+            left_toolbar_rect_ideal,
+        );
 
         // set lenses data
         for (workspace.lenses.items, 0..) |*lens, lens_index| {
@@ -3795,6 +3808,7 @@ const Workspace = struct {
         }
 
         const mouse = platform.getMouse(camera);
+
         const hovered_or_dropzone_thing = try workspace.findHoverableOrDropzoneAtPosition(mouse.cur.position, mem.gpa, frame_arena);
 
         const hovering: Focus.Target = switch (workspace.focus.grabbing.kind) {
@@ -3807,6 +3821,8 @@ const Workspace = struct {
         };
 
         const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
+
+        math.lerp_towards(&workspace.toolbar_left, if (workspace.leftToolbarRect().contains(mouse.cur.position)) 1 else 0, 0.3, platform.delta_seconds);
 
         // TODO: should maybe be a Focus.Target as a dropzone
         const hovering_toolbar_trash: bool = switch (workspace.focus.grabbing.kind) {
