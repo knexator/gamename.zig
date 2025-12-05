@@ -4542,7 +4542,7 @@ fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse
     }
 
     if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
-        result.top_left.addInPlace(mouse.deltaPos());
+        result.top_left.addInPlace(mouse.deltaPos().neg());
     }
 
     return result;
