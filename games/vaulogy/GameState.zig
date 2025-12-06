@@ -1316,7 +1316,11 @@ const Executor = struct {
             if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
         }
-        if (executor.crankHandle()) |c| drawer.canvas.fillCircleV2(camera, c, .white);
+        if (executor.crankHandle()) |c| {
+            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+            drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
+            drawer.canvas.fillCircleV2(camera, c, .white);
+        }
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
         for (executor.enqueued_stack.items) |s| try s.garland.drawWithBindings(.{
@@ -1329,9 +1333,13 @@ const Executor = struct {
 
     pub fn crankMovedTo(executor: *Executor, pos: Vec2) !void {
         assert(executor.animation != null);
+        executor.animation.?.paused = true;
         const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
         const relative_pos = crank_center.inverseApplyGetLocalPosition(pos);
-        executor.animation.?.t = relative_pos.getTurns();
+        const raw_t = relative_pos.getTurns();
+        const cur_t = executor.animation.?.t;
+        const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
+        executor.animation.?.t = target_t;
     }
 
     pub fn crankHandle(executor: *const Executor) ?math.Circle {

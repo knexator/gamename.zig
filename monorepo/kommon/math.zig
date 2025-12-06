@@ -96,6 +96,14 @@ pub fn clamp01(value: anytype) @TypeOf(value, 0.0) {
     return std.math.clamp(value, 0.0, 1.0);
 }
 
+pub fn mod(value: anytype, min: anytype, max: anytype) @TypeOf(value, min, max) {
+    return @mod(value - min, max - min) + min;
+}
+
+test "mod" {
+    try std.testing.expectApproxEqAbs(0.0, mod(@as(f32, 1), -0.5, 0.5), 0.0001);
+}
+
 pub fn smoothstep(x: anytype, edge0: anytype, edge1: anytype) @TypeOf(x, edge0, edge1) {
     const y = std.math.clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
     return y * y * (3.0 - 2.0 * y);
@@ -647,6 +655,13 @@ pub const Circle = struct {
         return .{
             .center = point.pos,
             .radius = point.scale,
+        };
+    }
+
+    pub fn scale(circle: Circle, factor: f32) Circle {
+        return .{
+            .center = circle.center,
+            .radius = circle.radius * factor,
         };
     }
 };
