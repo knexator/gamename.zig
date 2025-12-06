@@ -492,13 +492,13 @@ pub const Vec2 = extern struct {
     }
 
     pub fn getTurns(v: Self) f32 {
-        return remap(
-            std.math.atan2(v.y, v.x) / std.math.pi,
+        return @mod(remap(
+            std.math.atan2(v.y, v.x),
             -std.math.pi,
             std.math.pi,
-            -1,
-            1,
-        );
+            -0.5,
+            0.5,
+        ), 1);
     }
 
     test "getTurns" {
