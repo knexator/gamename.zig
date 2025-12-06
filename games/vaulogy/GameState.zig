@@ -1280,6 +1280,7 @@ const Executor = struct {
         new_bindings: []const core.Binding,
         original_point: Point,
         garland_fnkname: ?VeryPhysicalSexpr,
+        paused: bool = false,
     } = null,
     // execution_trace: ExecutionTrace = .empty,
     prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
@@ -1287,6 +1288,7 @@ const Executor = struct {
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_point: Point = .{ .pos = .new(4, 0) };
+    const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
 
     pub fn init(point: Point, hover_pool: *HoveredSexpr.Pool) !Executor {
         return .{
@@ -1314,6 +1316,7 @@ const Executor = struct {
             if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
         }
+        if (executor.crankHandle()) |c| drawer.canvas.fillCircleV2(camera, c, .white);
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
         for (executor.enqueued_stack.items) |s| try s.garland.drawWithBindings(.{
@@ -1322,6 +1325,23 @@ const Executor = struct {
             .old = executor.prev_pills.items[s.parent_pill].bindings,
         }, holding, drawer, camera);
         try executor.garland.draw(holding, drawer, camera);
+    }
+
+    pub fn crankMovedTo(executor: *Executor, pos: Vec2) !void {
+        assert(executor.animation != null);
+        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+        const relative_pos = crank_center.inverseApplyGetLocalPosition(pos);
+        executor.animation.?.t = relative_pos.getTurns();
+    }
+
+    pub fn crankHandle(executor: *const Executor) ?math.Circle {
+        if (executor.animation) |anim| {
+            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+            return .{
+                .center = crank_center.applyToLocalPosition(.fromPolar(1, anim.t)),
+                .radius = crank_center.scale * 0.2,
+            };
+        } else return null;
     }
 
     pub fn animating(executor: Executor) bool {
@@ -1340,7 +1360,7 @@ const Executor = struct {
         var parent_pill_index: ?usize = null;
         if (executor.animation) |*animation| {
             assert(executor.garland.fnkname == null);
-            animation.t += delta_seconds;
+            if (!animation.paused) animation.t += delta_seconds;
             const anim_t = math.clamp01(animation.t);
             if (!animation.matching) {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
@@ -2340,6 +2360,10 @@ const Workspace = struct {
                 case_handle: CaseHandle,
                 garland_handle: GarlandHandle,
                 executor_handle: usize,
+                executor_crank_handle: union(enum) {
+                    board: usize,
+                    fnkbox: usize,
+                },
                 fnkviewer_handle: usize,
                 fnkbox_handle: usize,
                 postit: usize,
@@ -2976,6 +3000,7 @@ const Workspace = struct {
             .case_handle,
             .garland_handle,
             .postit,
+            .executor_crank_handle,
             => {},
         }
 
@@ -3008,7 +3033,12 @@ const Workspace = struct {
             .executor_handle => |k| .{ .executor = k },
             .fnkviewer_handle => |k| .{ .fnkviewer = k },
             .fnkbox_handle => |k| .{ .fnkbox = k },
-            .nothing, .lens_handle, .sexpr, .postit => null,
+            .nothing,
+            .lens_handle,
+            .sexpr,
+            .postit,
+            .executor_crank_handle,
+            => null,
         })) |parent_garland_handle| {
             const parent_garland = workspace.garlandAt(.{ .local = &.{}, .parent = parent_garland_handle });
             var it = parent_garland.childGarlandsAddressIterator(res);
@@ -3035,6 +3065,7 @@ const Workspace = struct {
             },
             .garland_handle,
             .executor_handle,
+            .executor_crank_handle,
             .fnkviewer_handle,
             .fnkbox_handle,
             .nothing,
@@ -3349,9 +3380,29 @@ const Workspace = struct {
         // executors
         if (grabbed_tag == .nothing) {
             for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.animating()) continue;
-                if (executor.handle.overlapped(pos, Handle.radius)) {
-                    return .{ .kind = .{ .executor_handle = k } };
+                if (executor.animating()) {
+                    std.log.debug("hola, {any}, {any}", .{ pos, executor.crankHandle() });
+                    if (executor.crankHandle().?.contains(pos)) {
+                        return .{ .kind = .{ .executor_crank_handle = .{ .board = k } } };
+                    }
+                    continue;
+                } else {
+                    if (executor.handle.overlapped(pos, Handle.radius)) {
+                        return .{ .kind = .{ .executor_handle = k } };
+                    }
+                }
+            }
+        }
+
+        // executors in fnkboxes
+        if (grabbed_tag == .nothing) {
+            for (workspace.fnkboxes.items, 0..) |thing, k| {
+                if (thing.execution) |execution| {
+                    if (execution.executor.crankHandle()) |handle| {
+                        if (handle.contains(pos)) {
+                            return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } } };
+                        }
+                    }
                 }
             }
         }
@@ -3670,6 +3721,7 @@ const Workspace = struct {
                                 const e = &workspace.executors.items[h];
                                 e.handle.point = g.old_point;
                             },
+                            .executor_crank_handle => @panic("TODO"),
                             .fnkviewer_handle => |h| {
                                 const e = &workspace.fnkviewers.items[h];
                                 e.handle.point = g.old_point;
@@ -3747,6 +3799,7 @@ const Workspace = struct {
                     .dropped => |g| {
                         switch (g.at.kind) {
                             .nothing => unreachable,
+                            .executor_crank_handle => @panic("TODO"),
                             .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => {
                                 workspace.focus.grabbing = g.at;
                             },
@@ -3961,6 +4014,10 @@ const Workspace = struct {
             .executor_handle => |h| {
                 workspace.executors.items[h].handle.point = mouse_point;
             },
+            .executor_crank_handle => |h| switch (h) {
+                .fnkbox => |k| try workspace.fnkboxes.items[k].execution.?.executor.crankMovedTo(mouse_point.pos),
+                .board => |k| try workspace.executors.items[k].crankMovedTo(mouse_point.pos),
+            },
             .fnkviewer_handle => |h| {
                 workspace.fnkviewers.items[h].handle.point = mouse_point;
             },
@@ -4090,7 +4147,7 @@ const Workspace = struct {
                 } } }
             else switch (workspace.focus.grabbing.kind) {
                 .nothing => unreachable,
-                .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => .{ .specific = .{
+                .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit, .executor_crank_handle => .{ .specific = .{
                     .dropped = .{
                         .at = workspace.focus.grabbing,
                         .old_grabbed_position = workspace.focus.grabbing,
@@ -4228,7 +4285,7 @@ const Workspace = struct {
             .grabbed => |g| {
                 switch (g.from.kind) {
                     .nothing => unreachable,
-                    inline .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => |h, t| {
+                    inline .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit, .executor_crank_handle => |h, t| {
                         workspace.focus.grabbing_offset = switch (t) {
                             else => .zero,
                             .postit => mouse.cur.position.sub(g.old_point.pos),
@@ -4360,7 +4417,7 @@ const Workspace = struct {
                 workspace.focus.grabbing = .nothing;
                 switch (g.at.kind) {
                     .nothing => unreachable,
-                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => {},
+                    .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit, .executor_crank_handle => {},
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {} else {
                             const place = workspace.garlandAt(h);
@@ -4452,6 +4509,10 @@ const Workspace = struct {
             .postit => |k| .{ .pos = workspace.postits.items[k].button.rect.top_left, .scale = undefined },
             .lens_handle => |h| .{ .pos = workspace.lenses.items[h.index].handlePos(h.part) },
             .executor_handle => |h| workspace.executors.items[h].handle.point,
+            .executor_crank_handle => |h| switch (h) {
+                .board => |k| workspace.executors.items[k].crankHandle().?.asPoint(),
+                .fnkbox => |k| workspace.fnkboxes.items[k].execution.?.executor.crankHandle().?.asPoint(),
+            },
             .fnkviewer_handle => |h| workspace.fnkviewers.items[h].handle.point,
             .fnkbox_handle => |h| workspace.fnkboxes.items[h].handle.point,
             .case_handle => |h| workspace.caseHandleRef(h).point,

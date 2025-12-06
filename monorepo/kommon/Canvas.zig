@@ -532,6 +532,15 @@ pub fn fillShape(
     }
 }
 
+pub fn fillCircleV2(
+    self: Canvas,
+    camera: Rect,
+    circle: math.Circle,
+    color: FColor,
+) void {
+    return self.fillCircle(camera, circle.center, circle.radius, color);
+}
+
 pub fn fillCircle(
     self: Canvas,
     camera: Rect,

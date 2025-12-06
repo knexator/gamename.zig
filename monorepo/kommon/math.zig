@@ -491,6 +491,23 @@ pub const Vec2 = extern struct {
         return e1.rotate(turns);
     }
 
+    pub fn getTurns(v: Self) f32 {
+        return remap(
+            std.math.atan2(v.y, v.x) / std.math.pi,
+            -std.math.pi,
+            std.math.pi,
+            -1,
+            1,
+        );
+    }
+
+    test "getTurns" {
+        try std.testing.expectApproxEqAbs(0, Vec2.xpos.getTurns(), 0.001);
+        try std.testing.expectApproxEqAbs(0.25, Vec2.ypos.getTurns(), 0.001);
+        try std.testing.expectApproxEqAbs(0.5, Vec2.xneg.getTurns(), 0.001);
+        try std.testing.expectApproxEqAbs(0.75, Vec2.yneg.getTurns(), 0.001);
+    }
+
     pub fn fromPolar(length: f32, turns: f32) Self {
         return fromTurns(turns).scale(length);
     }
@@ -607,6 +624,30 @@ pub const Vec2 = extern struct {
         std.debug.assert(std.mem.eql(u8, fmt, ""));
         std.debug.assert(std.meta.eql(options, .{}));
         try writer.print("Vec2({d},{d})", .{ value.x, value.y });
+    }
+};
+
+pub const Circle = struct {
+    center: Vec2,
+    radius: f32,
+
+    /// inclusive
+    pub fn contains(circle: Circle, pos: Vec2) bool {
+        return pos.sub(circle.center).magSq() <= (circle.radius * circle.radius);
+    }
+
+    pub fn asPoint(circle: Circle) Point {
+        return .{
+            .pos = circle.center,
+            .scale = circle.radius,
+        };
+    }
+
+    pub fn fromPoint(point: Point) Circle {
+        return .{
+            .center = point.pos,
+            .radius = point.scale,
+        };
     }
 };
 
@@ -1007,7 +1048,7 @@ pub const Rect = extern struct {
     }
 
     /// returns real_sub
-    pub fn positionAsIf(real_parent: Rect, ideal_sub: Vec2, ideal_parent: Rect) Rect {
+    pub fn positionAsIf(real_parent: Rect, ideal_sub: Vec2, ideal_parent: Rect) Vec2 {
         return real_parent.worldFromLocal(ideal_parent.localFromWorldPosition(ideal_sub));
     }
 
