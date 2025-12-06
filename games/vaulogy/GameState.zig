@@ -2735,6 +2735,7 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(7, -6.1));
         try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
         try dst.postits.append(.fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
+        try dst.postits.append(.fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
         postit_pos.addInPlace(.new(25, 1));
         try dst.postits.append(.fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
 
