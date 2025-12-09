@@ -223,4 +223,34 @@ pub fn closure(
     return Closure(f, @TypeOf(capture)){ .capture = capture };
 }
 
+pub fn findFunctionMin(
+    comptime Ctx: type,
+    ctx: Ctx,
+    domain_min: f32,
+    domain_max: f32,
+    comptime n_samples: usize,
+    comptime precision: f32,
+) f32 {
+    if (domain_max - domain_min < precision) return (domain_max + domain_min) * 0.5;
+    var best_score_value: f32 = std.math.inf(f32);
+    var best_score_place: f32 = 0;
+    for (linspace01(n_samples, true)) |t| {
+        const x = std.math.lerp(domain_min, domain_max, t);
+        const v = ctx.score(x);
+        if (v < best_score_value) {
+            best_score_value = v;
+            best_score_place = x;
+        }
+    }
+    const step = (domain_max - domain_min) / @as(f32, @floatFromInt(n_samples - 1));
+    return findFunctionMin(
+        Ctx,
+        ctx,
+        @max(best_score_place - step, domain_min),
+        @min(best_score_place + step, domain_max),
+        n_samples,
+        precision,
+    );
+}
+
 const kommon = @import("./kommon.zig");
