@@ -2247,6 +2247,93 @@ const ToolbarTrash = struct {
     }
 };
 
+pub const Lens = struct {
+    source: Vec2,
+    target: Vec2,
+    comptime source_radius: f32 = 0.25,
+    comptime target_radius: f32 = 1,
+    source_hot_t: f32 = 0,
+    target_hot_t: f32 = 0,
+    tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
+        original_place: Workspace.BaseSexprPlace,
+        lens_transform: Transform,
+    }) = .empty,
+    const handle_radius: f32 = 0.1;
+
+    /// To understand this, think of the fixed point of the lenses zoom
+    pub const Transform = struct {
+        center: Vec2,
+        scale: f32,
+
+        pub const identity: Transform = .{ .center = .zero, .scale = 1 };
+
+        pub fn actOn(transform: Transform, point: Point) Point {
+            return .{
+                .pos = transform.center.add(
+                    point.pos.sub(transform.center).scale(transform.scale),
+                ),
+                .scale = point.scale * transform.scale,
+                .turns = point.turns,
+            };
+        }
+
+        pub fn combine(first: Transform, second: Transform) Transform {
+            // center is the fixed point of applying first, then second
+            return .{
+                .center = Vec2.add(
+                    first.center.scale((1.0 - first.scale) * second.scale),
+                    second.center.scale(1.0 - second.scale),
+                ).scale(1.0 / (1.0 - first.scale * second.scale)),
+                .scale = first.scale * second.scale,
+            };
+        }
+    };
+
+    pub fn getTransform(lens: Lens) Transform {
+        const scale = lens.target_radius / lens.source_radius;
+        const delta = lens.target.sub(lens.source);
+        return .{
+            .center = lens.source.sub(delta.scale(1.0 / (scale - 1.0))),
+            .scale = scale,
+        };
+    }
+
+    pub fn setHandlePos(self: *Lens, part: Part, pos: Vec2) void {
+        switch (part) {
+            .source => self.source = pos.sub(.fromPolar(self.source_radius + 0.05, 0.125)),
+            .target => self.target = pos.sub(.fromPolar(self.target_radius + 0.05, 0.125)),
+        }
+    }
+
+    // TODO: refactor to use Point?
+    pub fn handlePos(self: Lens, part: Part) Vec2 {
+        return switch (part) {
+            .source => self.sourceHandlePos(),
+            .target => self.targetHandlePos(),
+        };
+    }
+
+    pub fn sourceHandlePos(self: Lens) Vec2 {
+        return self.source.add(.fromPolar(self.source_radius + 0.05, 0.125));
+    }
+
+    pub fn targetHandlePos(self: Lens) Vec2 {
+        return self.target.add(.fromPolar(self.target_radius + 0.05, 0.125));
+    }
+
+    pub const Part = enum { source, target };
+
+    pub fn update(self: *Lens, part: ?Part, delta_seconds: f32) void {
+        math.lerp_towards(&self.source_hot_t, if (part != null and part.? == .source) 1 else 0, 0.6, delta_seconds);
+        math.lerp_towards(&self.target_hot_t, if (part != null and part.? == .target) 1 else 0, 0.6, delta_seconds);
+    }
+
+    pub fn clone(self: *const Lens) Lens {
+        // not plain old data due to tmp_*, but that's not important
+        return self.*;
+    }
+};
+
 pub fn getGarlandForFnk(
     known_fnks: []const Fnkbox,
     fnkname: *const Sexpr,
@@ -2272,93 +2359,6 @@ pub const SerializedTag = enum(u32) {
 };
 
 const Workspace = struct {
-    pub const Lens = struct {
-        source: Vec2,
-        target: Vec2,
-        comptime source_radius: f32 = 0.25,
-        comptime target_radius: f32 = 1,
-        source_hot_t: f32 = 0,
-        target_hot_t: f32 = 0,
-        tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
-            original_place: BaseSexprPlace,
-            lens_transform: Transform,
-        }) = .empty,
-        const handle_radius: f32 = 0.1;
-
-        /// To understand this, think of the fixed point of the lenses zoom
-        pub const Transform = struct {
-            center: Vec2,
-            scale: f32,
-
-            pub const identity: Transform = .{ .center = .zero, .scale = 1 };
-
-            pub fn actOn(transform: Transform, point: Point) Point {
-                return .{
-                    .pos = transform.center.add(
-                        point.pos.sub(transform.center).scale(transform.scale),
-                    ),
-                    .scale = point.scale * transform.scale,
-                    .turns = point.turns,
-                };
-            }
-
-            pub fn combine(first: Transform, second: Transform) Transform {
-                // center is the fixed point of applying first, then second
-                return .{
-                    .center = Vec2.add(
-                        first.center.scale((1.0 - first.scale) * second.scale),
-                        second.center.scale(1.0 - second.scale),
-                    ).scale(1.0 / (1.0 - first.scale * second.scale)),
-                    .scale = first.scale * second.scale,
-                };
-            }
-        };
-
-        pub fn getTransform(lens: Lens) Transform {
-            const scale = lens.target_radius / lens.source_radius;
-            const delta = lens.target.sub(lens.source);
-            return .{
-                .center = lens.source.sub(delta.scale(1.0 / (scale - 1.0))),
-                .scale = scale,
-            };
-        }
-
-        pub fn setHandlePos(self: *Lens, part: Part, pos: Vec2) void {
-            switch (part) {
-                .source => self.source = pos.sub(.fromPolar(self.source_radius + 0.05, 0.125)),
-                .target => self.target = pos.sub(.fromPolar(self.target_radius + 0.05, 0.125)),
-            }
-        }
-
-        // TODO: refactor to use Point?
-        pub fn handlePos(self: Lens, part: Part) Vec2 {
-            return switch (part) {
-                .source => self.sourceHandlePos(),
-                .target => self.targetHandlePos(),
-            };
-        }
-
-        pub fn sourceHandlePos(self: Lens) Vec2 {
-            return self.source.add(.fromPolar(self.source_radius + 0.05, 0.125));
-        }
-
-        pub fn targetHandlePos(self: Lens) Vec2 {
-            return self.target.add(.fromPolar(self.target_radius + 0.05, 0.125));
-        }
-
-        pub const Part = enum { source, target };
-
-        pub fn update(self: *Lens, part: ?Part, delta_seconds: f32) void {
-            math.lerp_towards(&self.source_hot_t, if (part != null and part.? == .source) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&self.target_hot_t, if (part != null and part.? == .target) 1 else 0, 0.6, delta_seconds);
-        }
-
-        pub fn clone(self: *const Lens) Lens {
-            // not plain old data due to tmp_*, but that's not important
-            return self.*;
-        }
-    };
-
     lenses: std.ArrayList(Lens),
     sexprs: std.ArrayList(VeryPhysicalSexpr),
     cases: std.ArrayList(VeryPhysicalCase),
