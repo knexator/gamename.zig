@@ -104,12 +104,20 @@ pub fn mapWithCtx(comptime map_fn: anytype, comptime in: []const SecondInputOf(m
     return result;
 }
 
+/// Given T, *T, or *const T, returns T
+pub fn PointedType(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .pointer => |info| info.child,
+        else => T,
+    };
+}
+
 pub fn mapOOP(
     ctx: anytype,
-    comptime map_fn_name: std.meta.DeclEnum(@TypeOf(ctx)),
-    comptime in: []const SecondInputOf(@field(@TypeOf(ctx), @tagName(map_fn_name))),
-) [in.len]ReturnOf(@field(@TypeOf(ctx), @tagName(map_fn_name))) {
-    const map_fn = @field(@TypeOf(ctx), @tagName(map_fn_name));
+    comptime map_fn_name: std.meta.DeclEnum(PointedType(@TypeOf(ctx))),
+    comptime in: []const SecondInputOf(@field(PointedType(@TypeOf(ctx)), @tagName(map_fn_name))),
+) [in.len]ReturnOf(@field(PointedType(@TypeOf(ctx)), @tagName(map_fn_name))) {
+    const map_fn = @field(PointedType(@TypeOf(ctx)), @tagName(map_fn_name));
     std.debug.assert(@typeInfo(@TypeOf(map_fn)).@"fn".params.len == 2);
     std.debug.assert(FirstInputOf(map_fn) == @TypeOf(ctx));
     var result: [in.len]ReturnOf(map_fn) = undefined;

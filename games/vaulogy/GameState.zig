@@ -1323,13 +1323,11 @@ const Executor = struct {
             drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
             drawer.canvas.fillCircleV2(camera, c, .white);
         }
-        drawer.canvas.line(camera, &.{
-            executor.brakePath(0),
-            executor.brakePath(0.25),
-            executor.brakePath(0.5),
-            executor.brakePath(0.75),
-            executor.brakePath(1),
-        }, executor.handle.point.scale * 0.1, .gray(0.8));
+        drawer.canvas.line(camera, &kommon.funktional.mapOOP(
+            &executor,
+            .brakePath,
+            &kommon.funktional.linspace01(10, true),
+        ), executor.handle.point.scale * 0.1, .gray(0.8));
         drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
@@ -1371,10 +1369,12 @@ const Executor = struct {
         executor.brake_t = raw_t;
     }
 
-    fn brakePath(executor: *const Executor, t: f32) Vec2 {
+    pub fn brakePath(executor: *const Executor, t: f32) Vec2 {
         const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-        const brake_center = crank_center.applyToLocalPoint(.{ .pos = .new(0, 1) });
-        return brake_center.applyToLocalPosition(.fromPolar(1, math.remapFrom01(t, -0.1, 0.1)));
+        return crank_center
+            .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
+            .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
+            .addY(0.25);
     }
 
     pub fn crankHandle(executor: *const Executor) ?math.Circle {
