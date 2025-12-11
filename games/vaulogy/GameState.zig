@@ -2645,7 +2645,7 @@ const Workspace = struct {
         dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
 
-        if (false) {
+        if (true) {
             try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
                 .{},
                 &.{ .right, .left },
@@ -2653,9 +2653,8 @@ const Workspace = struct {
             try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
 
             var random: std.Random.DefaultPrng = .init(1);
-            if (true) {
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
-
+            try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
+            if (false) {
                 try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
 
                 for ([_][]const u8{
@@ -2666,8 +2665,8 @@ const Workspace = struct {
                 }, 0..) |n, k| {
                     try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) * 3, -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
                 }
-            } else {
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
+                // } else {
+                //     try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
             }
 
             try dst.cases.append(try .fromValues(&dst.hover_pool, .{
@@ -2679,7 +2678,7 @@ const Workspace = struct {
                 .pattern = Sexpr.builtin.vars.v1,
                 .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
                 .fnk_name = Sexpr.builtin.identity,
-            }, .{ .pos = .new(-7, 0) }));
+            }, .{ .pos = .new(-7, 5) }));
 
             try dst.garlands.append(.{
                 .cases = try .initCapacity(mem.gpa, 4),
@@ -2711,7 +2710,7 @@ const Workspace = struct {
 
             try dst.executors.append(try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
 
-            try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
+            try dst.fnkviewers.append(try .init(.{ .pos = .new(-10, -7) }, &dst.hover_pool));
 
             if (false) {
                 const debug_fnk = try core.parsing.parseSingleFnk(
@@ -3694,10 +3693,11 @@ const Workspace = struct {
         for (workspace.fnkboxes.items) |*fnkbox| {
             try fnkbox.updateStatus(workspace.fnkboxes.items, mem);
         }
-        workspace.toolbar_case_enabled =
+        // TODO: remove this debug
+        workspace.toolbar_case_enabled = true or
             workspace.fnkboxes.items[0].status == .solved and
-            workspace.fnkboxes.items[1].status == .solved and
-            workspace.fnkboxes.items[2].status == .solved;
+                workspace.fnkboxes.items[1].status == .solved and
+                workspace.fnkboxes.items[2].status == .solved;
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
