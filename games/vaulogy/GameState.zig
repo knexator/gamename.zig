@@ -2358,6 +2358,66 @@ pub const SerializedTag = enum(u32) {
     Fnkbox,
 };
 
+const WorkspaceArea = struct {
+    lenses: std.ArrayListUnmanaged(Lens),
+    sexprs: std.ArrayListUnmanaged(VeryPhysicalSexpr),
+    cases: std.ArrayListUnmanaged(VeryPhysicalCase),
+    garlands: std.ArrayListUnmanaged(VeryPhysicalGarland),
+    executors: std.ArrayListUnmanaged(Executor),
+    fnkviewers: std.ArrayListUnmanaged(Fnkviewer),
+    fnkboxes: std.ArrayListUnmanaged(Fnkbox),
+    traces: std.ArrayListUnmanaged(ExecutionTrace),
+    trashes: std.ArrayListUnmanaged(ToolbarTrash),
+    postits: std.ArrayListUnmanaged(Postit),
+
+    pub fn init(dst: *WorkspaceArea) void {
+        dst.* = .{
+            .lenses = .empty,
+            .sexprs = .empty,
+            .cases = .empty,
+            .garlands = .empty,
+            .executors = .empty,
+            .fnkviewers = .empty,
+            .fnkboxes = .empty,
+            .traces = .empty,
+            .postits = .empty,
+            .trashes = .empty,
+        };
+    }
+
+    pub fn deinit(workspace: *WorkspaceArea, gpa: std.mem.Allocator) void {
+        for (workspace.cases.items) |*c| {
+            c.next.deinit(gpa);
+        }
+        for (workspace.garlands.items) |*g| {
+            g.deinit(gpa);
+        }
+        inline for (.{
+            workspace.executors.items,
+            workspace.fnkviewers.items,
+            workspace.fnkboxes.items,
+            workspace.traces.items,
+        }) |things| {
+            for (things) |*e| {
+                if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
+                    e.deinit(gpa);
+                } else {
+                    e.garland.deinit(gpa);
+                }
+            }
+        }
+        workspace.lenses.deinit(gpa);
+        workspace.sexprs.deinit(gpa);
+        workspace.cases.deinit(gpa);
+        workspace.garlands.deinit(gpa);
+        workspace.executors.deinit(gpa);
+        workspace.fnkviewers.deinit(gpa);
+        workspace.fnkboxes.deinit(gpa);
+        workspace.traces.deinit(gpa);
+        workspace.postits.deinit(gpa);
+    }
+};
+
 const Workspace = struct {
     lenses: std.ArrayList(Lens),
     sexprs: std.ArrayList(VeryPhysicalSexpr),
@@ -2370,6 +2430,8 @@ const Workspace = struct {
     toolbar_case: VeryPhysicalCase,
     toolbar_trash: ToolbarTrash,
     postits: std.ArrayList(Postit),
+
+    hand: WorkspaceArea,
 
     focus: Focus = .{},
     camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
@@ -2638,6 +2700,8 @@ const Workspace = struct {
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff, random_seed: u64) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
 
+        dst.hand.init();
+
         dst.random_instance = .init(random_seed);
 
         dst.undo_stack = .init(mem.gpa);
@@ -2850,6 +2914,8 @@ const Workspace = struct {
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
+        workspace.hand.deinit(gpa);
+
         for (workspace.cases.items) |*c| {
             c.next.deinit(gpa);
         }
