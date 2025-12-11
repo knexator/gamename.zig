@@ -2590,14 +2590,7 @@ const Workspace = struct {
                 /// removed from its old board position.
                 old_grabbed_position: Focus.Target,
             },
-            grabbed: struct {
-                duplicate: bool,
-                from: Focus.Target,
-                /// not always used
-                old_point: Point,
-                /// not always used
-                old_ispattern: bool,
-            },
+            grabbed: Grabbed,
             started_execution_fnkbox_from_input: struct {
                 fnkbox: usize,
                 input: VeryPhysicalSexpr,
@@ -2622,6 +2615,18 @@ const Workspace = struct {
         },
 
         pub const noop: UndoableCommand = .{ .specific = .noop };
+
+        pub const Grabbed = struct {
+            duplicate: bool,
+            from: Focus.Target,
+            /// not all fields are used
+            old_data: OldData,
+
+            pub const OldData = struct {
+                point: Point,
+                is_pattern: bool,
+            };
+        };
     };
 
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff, random_seed: u64) !void {
@@ -3804,86 +3809,90 @@ const Workspace = struct {
                         fnkbox.scroll_testcases = t.old_position;
                     },
                     .grabbed => |g| {
-                        switch (g.from.kind) {
-                            .nothing => unreachable,
-                            .executor_handle => |h| {
-                                const e = &workspace.executors.items[h];
-                                e.handle.point = g.old_point;
-                            },
-                            .executor_crank_handle,
-                            .executor_brake_handle,
-                            => @panic("TODO"),
-                            .fnkviewer_handle => |h| {
-                                const e = &workspace.fnkviewers.items[h];
-                                e.handle.point = g.old_point;
-                            },
-                            .fnkbox_handle => |h| {
-                                if (g.duplicate) {
-                                    assert(h == workspace.fnkboxes.items.len - 1);
-                                    _ = workspace.fnkboxes.pop().?;
-                                } else {
-                                    const e = &workspace.fnkboxes.items[h];
-                                    e.handle.point = g.old_point;
-                                }
-                            },
-                            .postit => |k| {
-                                if (g.duplicate) {
-                                    _ = workspace.postits.pop().?;
-                                } else {
-                                    const postit = &workspace.postits.items[k];
-                                    postit.button.rect.top_left = g.old_point.pos;
-                                }
-                            },
-                            .lens_handle => |h| {
-                                if (g.duplicate) {
-                                    _ = workspace.lenses.pop().?;
-                                } else {
-                                    const lens = &workspace.lenses.items[h.index];
-                                    lens.setHandlePos(h.part, g.old_point.pos);
-                                    assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
-                                    assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
-                                }
-                            },
-                            .garland_handle => |h| {
-                                if (g.duplicate) {
+                        if (g.duplicate) {
+                            // delete the last created thing
+                            switch (g.from.kind) {
+                                .nothing => unreachable,
+                                .fnkviewer_handle,
+                                .executor_handle,
+                                .executor_crank_handle,
+                                .executor_brake_handle,
+                                => @panic("TODO"),
+                                .fnkbox_handle => _ = workspace.fnkboxes.pop().?,
+                                .postit => _ = workspace.postits.pop().?,
+                                .lens_handle => _ = workspace.lenses.pop().?,
+                                .garland_handle => {
                                     // TODO: better memory management?
                                     var old = workspace.garlands.pop().?;
                                     old.deinit(mem.gpa);
-                                } else if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
-                                    const garland = &workspace.garlands.items[h.parent.garland];
-                                    garland.handle.point = g.old_point;
-                                } else {
-                                    const garland = workspace.garlands.pop().?;
-                                    workspace.garlandAt(h).* = garland;
-                                }
-                            },
-                            .case_handle => |h| {
-                                if (g.duplicate) {
-                                    _ = workspace.cases.pop().?;
-                                } else switch (h) {
-                                    .toolbar => unreachable,
-                                    .board => |k| {
-                                        const case = &workspace.cases.items[k];
-                                        case.handle.point = g.old_point;
-                                    },
-                                    .garland => |t| {
-                                        const case = workspace.cases.pop().?;
-                                        const garland = workspace.garlandAt(t.parent);
-                                        try garland.insertCase(mem.gpa, t.local, case);
-                                    },
-                                }
-                            },
-                            .sexpr => |h| {
-                                var old = workspace.sexprs.pop().?;
-                                if (g.duplicate) {
+                                },
+                                .case_handle => _ = workspace.cases.pop().?,
+                                .sexpr => |h| {
+                                    _ = workspace.sexprs.pop().?;
+                                    // visual flair
                                     workspace.sexprAtPlace(h.base).getSubValue(h.local).hovered.value = 10;
-                                } else {
+                                },
+                            }
+                        } else {
+                            // undo any grabbing-related changes to the thing
+                            switch (g.from.kind) {
+                                .nothing => unreachable,
+                                .executor_handle => |h| {
+                                    const e = &workspace.executors.items[h];
+                                    e.handle.point = g.old_data.point;
+                                },
+                                .executor_crank_handle,
+                                .executor_brake_handle,
+                                => @panic("TODO"),
+                                .fnkviewer_handle => |h| {
+                                    const e = &workspace.fnkviewers.items[h];
+                                    e.handle.point = g.old_data.point;
+                                },
+                                .fnkbox_handle => |h| {
+                                    const e = &workspace.fnkboxes.items[h];
+                                    e.handle.point = g.old_data.point;
+                                },
+                                .postit => |k| {
+                                    const postit = &workspace.postits.items[k];
+                                    postit.button.rect.top_left = g.old_data.point.pos;
+                                },
+                                .lens_handle => |h| {
+                                    const lens = &workspace.lenses.items[h.index];
+                                    lens.setHandlePos(h.part, g.old_data.point.pos);
+                                    assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
+                                    assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
+                                },
+                                .garland_handle => |h| {
+                                    if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
+                                        const garland = &workspace.garlands.items[h.parent.garland];
+                                        garland.handle.point = g.old_data.point;
+                                    } else {
+                                        const garland = workspace.garlands.pop().?;
+                                        workspace.garlandAt(h).* = garland;
+                                    }
+                                },
+                                .case_handle => |h| {
+                                    switch (h) {
+                                        .toolbar => unreachable,
+                                        .board => |k| {
+                                            const case = &workspace.cases.items[k];
+                                            case.handle.point = g.old_data.point;
+                                        },
+                                        .garland => |t| {
+                                            const case = workspace.cases.pop().?;
+                                            const garland = workspace.garlandAt(t.parent);
+                                            try garland.insertCase(mem.gpa, t.local, case);
+                                        },
+                                    }
+                                },
+                                .sexpr => |h| {
+                                    var old = workspace.sexprs.pop().?;
                                     old.hovered.value = 10;
-                                    old.point = g.old_point;
-                                    old.is_pattern = g.old_ispattern;
+                                    old.point = g.old_data.point;
+                                    old.is_pattern = g.old_data.is_pattern;
                                     try workspace.unpopSexprAt(h, old, &workspace.hover_pool, mem);
-                                }
-                            },
+                                },
+                            }
                         }
                         workspace.focus.grabbing = .nothing;
                     },
@@ -4211,22 +4220,11 @@ const Workspace = struct {
                         break :blk .noop;
                     },
                 },
-                .sexpr => |s| .{
-                    .specific = .{
-                        .grabbed = .{
-                            .from = hovering,
-                            .duplicate = mouse.wasPressed(.right) or s.base.immutable(),
-                            .old_point = workspace.sexprAtPlace(s.base).point,
-                            .old_ispattern = workspace.sexprAtPlace(s.base).is_pattern,
-                        },
-                    },
-                },
                 else => .{ .specific = .{
                     .grabbed = .{
                         .from = hovering,
                         .duplicate = mouse.wasPressed(.right) or hovering.kind.immutable(),
-                        .old_point = workspace.pointOf(hovering),
-                        .old_ispattern = undefined,
+                        .old_data = workspace.getOldData(hovering),
                     },
                 } },
             }
@@ -4393,7 +4391,7 @@ const Workspace = struct {
                     => |h, t| {
                         workspace.focus.grabbing_offset = switch (t) {
                             else => .zero,
-                            .postit => mouse.cur.position.sub(g.old_point.pos),
+                            .postit => mouse.cur.position.sub(g.old_data.point.pos),
                         };
                         if (g.duplicate) {
                             switch (t) {
@@ -4651,6 +4649,16 @@ const Workspace = struct {
             .case_handle => |h| workspace.caseHandleRef(h).point,
             .garland_handle => |k| workspace.garlandHandleRef(k).point,
             .sexpr => |s| workspace.sexprAtPlace(s.base).point,
+        };
+    }
+
+    fn getOldData(workspace: *Workspace, hovering: Focus.Target) UndoableCommand.Grabbed.OldData {
+        return .{
+            .point = workspace.pointOf(hovering),
+            .is_pattern = switch (hovering.kind) {
+                else => undefined,
+                .sexpr => |s| workspace.sexprAtPlace(s.base).is_pattern,
+            },
         };
     }
 
