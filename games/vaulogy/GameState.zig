@@ -2358,7 +2358,7 @@ pub const SerializedTag = enum(u32) {
     Fnkbox,
 };
 
-const Workspace = struct {
+const WorkspaceArea = struct {
     lenses: std.ArrayList(Lens),
     sexprs: std.ArrayList(VeryPhysicalSexpr),
     cases: std.ArrayList(VeryPhysicalCase),
@@ -2367,9 +2367,894 @@ const Workspace = struct {
     fnkviewers: std.ArrayList(Fnkviewer),
     fnkboxes: std.ArrayList(Fnkbox),
     traces: std.ArrayList(ExecutionTrace),
+    postits: std.ArrayList(Postit),
+
+    const Focus = Workspace.Focus;
+    const BaseSexprPlace = Workspace.BaseSexprPlace;
+    const GarlandHandle = Workspace.GarlandHandle;
+    const CaseHandle = Workspace.CaseHandle;
+    const ExecutorPlace = Workspace.ExecutorPlace;
+    const SexprPlace = Workspace.SexprPlace;
+
+    pub fn init(dst: *WorkspaceArea, mem: *core.VeryPermamentGameStuff) void {
+        dst.* = .{
+            .lenses = .init(mem.gpa),
+            .sexprs = .init(mem.gpa),
+            .cases = .init(mem.gpa),
+            .garlands = .init(mem.gpa),
+            .executors = .init(mem.gpa),
+            .fnkviewers = .init(mem.gpa),
+            .fnkboxes = .init(mem.gpa),
+            .traces = .init(mem.gpa),
+            .postits = .init(mem.gpa),
+        };
+    }
+
+    pub fn deinit(workspace: *WorkspaceArea, gpa: std.mem.Allocator) void {
+        for (workspace.cases.items) |*c| {
+            c.next.deinit(gpa);
+        }
+        for (workspace.garlands.items) |*g| {
+            g.deinit(gpa);
+        }
+        inline for (.{
+            workspace.executors.items,
+            workspace.fnkviewers.items,
+            workspace.fnkboxes.items,
+            workspace.traces.items,
+        }) |things| {
+            for (things) |*e| {
+                if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
+                    e.deinit(gpa);
+                } else {
+                    e.garland.deinit(gpa);
+                }
+            }
+        }
+        workspace.lenses.deinit();
+        workspace.sexprs.deinit();
+        workspace.cases.deinit();
+        workspace.garlands.deinit();
+        workspace.executors.deinit();
+        workspace.fnkviewers.deinit();
+        workspace.fnkboxes.deinit();
+        workspace.traces.deinit();
+        workspace.postits.deinit();
+    }
+
+    // TODO: could be an iterator
+    pub fn topLevelThings(workspace: *WorkspaceArea, res: std.mem.Allocator) ![]const Focus.Target {
+        var result: std.ArrayListUnmanaged(Focus.Target) = try .initCapacity(
+            res,
+            workspace.sexprs.items.len +
+                workspace.cases.items.len +
+                workspace.garlands.items.len +
+                workspace.executors.items.len +
+                workspace.fnkviewers.items.len +
+                workspace.fnkboxes.items.len +
+                // for toolbar variable
+                1,
+            // TODO: traces
+        );
+
+        result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .toolbar } });
+
+        for (workspace.sexprs.items, 0..) |_, k| {
+            result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = &.{} } } });
+        }
+        for (workspace.cases.items, 0..) |_, k| {
+            result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .{ .board = k } } });
+        }
+        for (workspace.garlands.items, 0..) |_, k| {
+            result.appendAssumeCapacity(.{ .kind = .{ .garland_handle = .{
+                .local = &.{},
+                .parent = .{ .garland = k },
+            } } });
+        }
+        for (workspace.executors.items, 0..) |_, k| {
+            result.appendAssumeCapacity(.{ .kind = .{ .executor_handle = k } });
+        }
+        for (workspace.fnkviewers.items, 0..) |_, k| {
+            result.appendAssumeCapacity(.{ .kind = .{ .fnkviewer_handle = k } });
+        }
+        for (workspace.fnkboxes.items, 0..) |_, k| {
+            result.appendAssumeCapacity(.{ .kind = .{ .fnkbox_handle = k } });
+        }
+
+        return try result.toOwnedSlice(res);
+    }
+
+    // TODO: could be an iterator
+    pub fn ownedSexprs(workspace: *WorkspaceArea, parent: Focus.Target, res: std.mem.Allocator) ![]const BaseSexprPlace {
+        var result: std.ArrayListUnmanaged(BaseSexprPlace) = .empty;
+
+        // sexprs owned directly and not due to a case
+        switch (parent.kind) {
+            .sexpr => |p| {
+                try result.append(res, p.base);
+            },
+            .executor_handle => |k| {
+                try result.append(res, .{ .executor_input = k });
+            },
+            .fnkviewer_handle => |k| {
+                try result.append(res, .{ .fnkviewer_fnkname = k });
+            },
+            .fnkbox_handle => |k| {
+                try result.append(res, .{ .fnkbox_fnkname = k });
+                try result.append(res, .{ .fnkbox_input = k });
+                const parent_fnkbox = &workspace.fnkboxes.items[k];
+                for (parent_fnkbox.testcases.items, 0..) |_, testcase_index| {
+                    inline for (TestCase.parts) |part| {
+                        try result.append(res, .{ .fnkbox_testcase = .{
+                            .fnkbox = k,
+                            .testcase = testcase_index,
+                            .part = part,
+                        } });
+                    }
+                }
+            },
+            .nothing,
+            .lens_handle,
+            .case_handle,
+            .garland_handle,
+            .postit,
+            .executor_crank_handle,
+            .executor_brake_handle,
+            => {},
+        }
+
+        // sexprs owned due to owning a case
+        const owned_cases = try workspace.ownedCases(parent, res);
+        for (owned_cases) |case_address| {
+            if (!case_address.exists()) continue;
+            inline for (core.CasePart.all) |part| {
+                try result.append(res, .{ .case = .{
+                    .parent = case_address,
+                    .part = part,
+                } });
+            }
+        }
+
+        return try result.toOwnedSlice(res);
+    }
+
+    // TODO: could be an iterator
+    // TODO: don't assume that parent is a top level thing
+    pub fn ownedGarlands(workspace: *WorkspaceArea, parent: Focus.Target, res: std.mem.Allocator) ![]const GarlandHandle {
+        var result: std.ArrayListUnmanaged(GarlandHandle) = .empty;
+
+        if (@as(?GarlandHandle.Parent, switch (parent.kind) {
+            .case_handle => |case_handle| switch (case_handle) {
+                .board => |k| .{ .case = k },
+                else => null,
+            },
+            .garland_handle => |garland_handle| .{ .garland = garland_handle.parent.garland },
+            .executor_handle => |k| .{ .executor = k },
+            .fnkviewer_handle => |k| .{ .fnkviewer = k },
+            .fnkbox_handle => |k| .{ .fnkbox = k },
+            .nothing,
+            .lens_handle,
+            .sexpr,
+            .postit,
+            .executor_crank_handle,
+            .executor_brake_handle,
+            => null,
+        })) |parent_garland_handle| {
+            const parent_garland = workspace.garlandAt(.{ .local = &.{}, .parent = parent_garland_handle });
+            var it = parent_garland.childGarlandsAddressIterator(res);
+            while (try it.next()) |address| {
+                try result.append(res, .{
+                    .local = address,
+                    .parent = parent_garland_handle,
+                });
+            }
+        }
+
+        return try result.toOwnedSlice(res);
+    }
+
+    // TODO: could be an iterator
+    // TODO: don't assume that parent is a top level thing
+    pub fn ownedCases(workspace: *WorkspaceArea, parent: Focus.Target, res: std.mem.Allocator) ![]const CaseHandle {
+        var result: std.ArrayListUnmanaged(CaseHandle) = .empty;
+
+        // cases owned directly and not due to a garland
+        switch (parent.kind) {
+            .case_handle => |case_handle| {
+                try result.append(res, case_handle);
+            },
+            .garland_handle,
+            .executor_handle,
+            .executor_crank_handle,
+            .executor_brake_handle,
+            .fnkviewer_handle,
+            .fnkbox_handle,
+            .nothing,
+            .lens_handle,
+            .sexpr,
+            .postit,
+            => {},
+        }
+
+        // cases owned due to owning a garland
+        const owned_garlands = try workspace.ownedGarlands(parent, res);
+        for (owned_garlands) |garland_address| {
+            const garland = workspace.garlandAt(garland_address);
+            for (0..garland.cases.items.len) |case_index| {
+                try result.append(res, .{
+                    .garland = .{
+                        .local = case_index,
+                        .parent = garland_address,
+                        .existing_case = true,
+                    },
+                });
+            }
+            for (0..garland.cases.items.len + 1) |case_index| {
+                try result.append(res, .{
+                    .garland = .{
+                        .local = case_index,
+                        .parent = garland_address,
+                        .existing_case = false,
+                    },
+                });
+            }
+        }
+
+        return try result.toOwnedSlice(res);
+    }
+
+    fn isGrabbedSexpr(thing: BaseSexprPlace, grabbed: Focus.Target) bool {
+        return grabbed.kind.equals(.{ .sexpr = .{
+            .local = &.{},
+            .base = thing,
+        } });
+    }
+
+    fn isGrabbedGarland(thing: GarlandHandle, grabbed: Focus.Target) bool {
+        return grabbed.kind.equals(.{ .garland_handle = thing });
+    }
+
+    fn isGrabbedCase(thing: CaseHandle, grabbed: Focus.Target) bool {
+        return grabbed.kind.equals(.{ .case_handle = thing });
+    }
+
+    fn draw(workspace: *WorkspaceArea, camera: Rect, grabbing: Focus.Target, platform: PlatformGives, drawer: *Drawer) !void {
+        // TODO: remove duplication
+        for (workspace.sexprs.items, 0..) |s, k| {
+            if (isGrabbedSexpr(.{ .board = k }, grabbing)) continue;
+            try s.draw(drawer, camera);
+        }
+
+        const holding: VeryPhysicalCase.Holding = switch (grabbing.kind) {
+            .sexpr => .sexpr,
+            .garland_handle, .case_handle => .case_or_garland,
+            else => .other,
+        };
+
+        for (workspace.cases.items, 0..) |c, k| {
+            if (isGrabbedCase(.{ .board = k }, grabbing)) continue;
+            try c.draw(holding, drawer, camera);
+        }
+
+        for (workspace.garlands.items, 0..) |c, k| {
+            if (isGrabbedGarland(.{ .local = &.{}, .parent = .{ .garland = k } }, grabbing)) continue;
+            try c.draw(holding, drawer, camera);
+        }
+
+        inline for (.{
+            workspace.fnkboxes.items,
+            workspace.executors.items,
+            workspace.fnkviewers.items,
+        }) |things| {
+            for (things) |g| {
+                try g.draw(holding, drawer, camera);
+            }
+        }
+
+        inline for (.{
+            workspace.traces.items,
+            workspace.postits.items,
+        }) |things| {
+            for (things) |g| {
+                try g.draw(drawer, camera);
+            }
+        }
+
+        for (workspace.lenses.items) |lens| {
+            drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
+
+            if (camera.plusMargin(lens.target_radius + 1).contains(lens.target)) {
+                platform.gl.startStencil();
+                drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
+                platform.gl.doneStencil();
+                defer platform.gl.stopStencil();
+
+                for (lens.tmp_visible_sexprs.items) |s| {
+                    var scaled = workspace.sexprAtPlace(s.original_place).*;
+                    scaled.point = s.lens_transform.actOn(scaled.point);
+                    try scaled.draw(drawer, camera);
+                }
+            }
+
+            drawer.canvas.line(camera, &.{
+                lens.source.towardsPure(lens.target, lens.source_radius),
+                lens.target.towardsPure(lens.source, lens.target_radius),
+            }, 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
+            drawer.canvas.fillCircle(
+                camera,
+                lens.sourceHandlePos(),
+                Lens.handle_radius * (1.0 + 0.2 * lens.source_hot_t),
+                .black,
+            );
+            drawer.canvas.fillCircle(
+                camera,
+                lens.targetHandlePos(),
+                Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
+                .black,
+            );
+        }
+
+        switch (grabbing.kind) {
+            else => {},
+            .garland_handle => |t| try workspace.garlandAt(t).draw(.other, drawer, camera),
+            .case_handle => |t| try workspace.cases.items[t.board].draw(.other, drawer, camera),
+            .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
+        }
+    }
+
+    pub fn updateLensesData(workspace: *WorkspaceArea, frame_arena: std.mem.Allocator) !void {
+        // set lenses data
+        for (workspace.lenses.items, 0..) |*lens, lens_index| {
+            lens.tmp_visible_sexprs = .empty;
+
+            // TODO: cull and only store visible parts
+
+            const top_level_things = try workspace.topLevelThings(frame_arena);
+            for (top_level_things) |parent_address| {
+                const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
+                for (owned_sexprs) |base| {
+                    try lens.tmp_visible_sexprs.append(frame_arena, .{
+                        .original_place = base,
+                        .lens_transform = lens.getTransform(),
+                    });
+                }
+            }
+
+            for (0..lens_index) |other_lens_index| {
+                const other_lens = workspace.lenses.items[other_lens_index];
+                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
+                for (other_lens.tmp_visible_sexprs.items) |s| {
+                    try lens.tmp_visible_sexprs.append(frame_arena, .{
+                        .original_place = s.original_place,
+                        .lens_transform = .combine(s.lens_transform, lens.getTransform()),
+                    });
+                }
+            }
+        }
+    }
+
+    fn sexprAtPlace(workspace: *WorkspaceArea, place: BaseSexprPlace) *VeryPhysicalSexpr {
+        return switch (place) {
+            .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
+            .case => |case| workspace.caseAt(case.parent).sexprAt(case.part),
+            .executor_input => |k| &workspace.executors.items[k].input,
+            .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
+            .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
+            .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
+            .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
+        };
+    }
+
+    fn caseHandleRef(workspace: *WorkspaceArea, place: CaseHandle) *Handle {
+        return switch (place) {
+            .toolbar => @panic("TODO"),
+            // .toolbar => &workspace.toolbar_case.handle,
+            .board => |k| &workspace.cases.items[k].handle,
+            .garland => |t| if (t.existing_case)
+                &garlandAt(workspace, t.parent).cases.items[t.local].handle
+            else
+                garlandAt(workspace, t.parent).handleForNewCasesRef(t.local),
+        };
+    }
+
+    fn garlandHandleRef(workspace: *WorkspaceArea, place: GarlandHandle) *Handle {
+        return &workspace.garlandAt(place).handle;
+    }
+
+    fn garlandAt(workspace: *WorkspaceArea, place: GarlandHandle) *VeryPhysicalGarland {
+        return switch (place.parent) {
+            .garland => |k| workspace.garlands.items[k].childGarland(place.local),
+            .case => |k| workspace.cases.items[k].next.childGarland(place.local),
+            .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
+            .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
+            .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
+        };
+    }
+
+    fn caseAt(workspace: *WorkspaceArea, place: CaseHandle) *VeryPhysicalCase {
+        assert(place.exists());
+        return switch (place) {
+            .board => |k| &workspace.cases.items[k],
+            .garland => |t| &workspace.garlandAt(t.parent).cases.items[t.local],
+            .toolbar => @panic("TODO"),
+            // .toolbar => &workspace.toolbar_case,
+        };
+    }
+
+    fn executorAt(workspace: *WorkspaceArea, place: ExecutorPlace) *Executor {
+        return switch (place) {
+            .fnkbox => |k| &workspace.fnkboxes.items[k].execution.?.executor.?,
+            .board => |k| &workspace.executors.items[k],
+        };
+    }
+
+    // This made more sense when it was indexed by a Vec2
+    fn getAt(workspace: *WorkspaceArea, comptime T: type, k: usize) *T {
+        const items = switch (T) {
+            VeryPhysicalSexpr => workspace.sexprs.items,
+            VeryPhysicalCase => workspace.cases.items,
+            VeryPhysicalGarland => workspace.garlands.items,
+            else => comptime unreachable,
+        };
+        return &items[k];
+    }
+
+    pub fn popAt(workspace: *WorkspaceArea, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
+        return switch (target.kind) {
+            .sexpr => |p| .{ .sexpr = try workspace.popSexprAt(p, &mem.hover_pool, mem) },
+            .case_handle => |c| switch (c) {
+                .toolbar => unreachable,
+                .board => |k| .{ .case = workspace.cases.orderedRemove(k) },
+                .garland => |t| .{ .case = workspace.garlandAt(t.parent).popCase(t.local) },
+            },
+            .garland_handle => |g| .{ .garland = if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland)
+                workspace.garlands.orderedRemove(g.parent.garland)
+            else blk: {
+                const place = workspace.garlandAt(g);
+                const garland = place.*;
+                place.* = .init(garland.handle.point);
+                break :blk garland;
+            } },
+            else => @panic("TODO"),
+        };
+    }
+
+    pub fn unpopAt(workspace: *WorkspaceArea, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
+        switch (target.kind) {
+            .sexpr => |p| try workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
+            .case_handle => |c| switch (c) {
+                .toolbar => unreachable,
+                .board => |k| try workspace.cases.insert(k, value.case),
+                .garland => |t| try workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
+            },
+            .garland_handle => |g| if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland) {
+                try workspace.garlands.insert(g.parent.garland, value.garland);
+            } else {
+                const place = workspace.garlandAt(g);
+                place.* = value.garland;
+            },
+            else => @panic("TODO"),
+        }
+    }
+
+    fn popSexprAt(workspace: *WorkspaceArea, p: SexprPlace, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !VeryPhysicalSexpr {
+        if (p.local.len == 0) switch (p.base) {
+            else => {},
+            .board => |k| return workspace.sexprs.orderedRemove(k),
+        };
+
+        const base = workspace.sexprAtPlace(p.base);
+        return try base.popSubValue(p.local, hover_pool, mem);
+    }
+
+    fn unpopSexprAt(workspace: *WorkspaceArea, p: SexprPlace, v: VeryPhysicalSexpr, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !void {
+        if (p.local.len == 0) {
+            switch (p.base) {
+                else => try workspace.sexprAtPlace(p.base).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool),
+                .board => |k| try workspace.sexprs.insert(k, v),
+            }
+        } else {
+            try workspace.sexprAtPlace(p.base).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
+        }
+    }
+
+    fn findUiAtPosition(workspace: *WorkspaceArea, pos: Vec2) !Focus.UiTarget {
+        for (workspace.fnkboxes.items, 0..) |fnkbox, fnkbox_index| {
+            if (fnkbox.fold_button.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
+            }
+            if (!fnkbox.box().contains(pos)) continue;
+            if (fnkbox.scroll_button_up.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } } };
+            }
+            if (fnkbox.scroll_button_down.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } } };
+            }
+            if (fnkbox.execution != null) continue;
+            if (fnkbox.statusBarGoal().contains(pos) and std.meta.activeTag(fnkbox.status) == .unsolved) {
+                return .{ .kind = .{ .fnkbox_see_failing_case = fnkbox_index } };
+            }
+            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
+            for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
+                if (testcase.play_button.rect.contains(pos)) {
+                    return .{ .kind = .{ .fnkbox_launch_testcase = .{
+                        .fnkbox = fnkbox_index,
+                        .testcase = testcase_index,
+                    } } };
+                }
+            }
+        }
+        return .nothing;
+    }
+
+    fn findHoverableOrDropzoneAtPosition(workspace: *WorkspaceArea, pos: Vec2, grabbed: Focus.Target, res: std.mem.Allocator, scratch: std.mem.Allocator) !Focus.Target {
+        const grabbed_tag = std.meta.activeTag(grabbed.kind);
+
+        // lenses
+        if (grabbed_tag == .nothing) {
+            for (workspace.lenses.items, 0..) |lens, k| {
+                if (pos.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
+                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .source } } };
+                }
+                if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
+                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .target } } };
+                }
+            }
+        }
+
+        // executors
+        if (grabbed_tag == .nothing) {
+            for (workspace.executors.items, 0..) |executor, k| {
+                if (executor.brakeHandle().contains(pos)) {
+                    return .{ .kind = .{ .executor_brake_handle = .{ .board = k } } };
+                }
+                if (executor.animating()) {
+                    if (executor.crankHandle().?.contains(pos)) {
+                        return .{ .kind = .{ .executor_crank_handle = .{ .board = k } } };
+                    }
+                } else {
+                    if (executor.handle.overlapped(pos, Handle.radius)) {
+                        return .{ .kind = .{ .executor_handle = k } };
+                    }
+                }
+            }
+        }
+
+        // executors in fnkboxes
+        if (grabbed_tag == .nothing) {
+            for (workspace.fnkboxes.items, 0..) |thing, k| {
+                if (thing.execution) |execution| {
+                    if (execution.executor) |executor| {
+                        if (executor.crankHandle()) |handle| {
+                            if (handle.contains(pos)) {
+                                return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } } };
+                            }
+                        }
+                        if (executor.brakeHandle().contains(pos)) {
+                            return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } } };
+                        }
+                    }
+                }
+            }
+        }
+
+        // fnkviewers
+        if (grabbed_tag == .nothing) {
+            for (workspace.fnkviewers.items, 0..) |fnkviewer, k| {
+                if (fnkviewer.handle.overlapped(pos, Handle.radius)) {
+                    return .{ .kind = .{ .fnkviewer_handle = k } };
+                }
+            }
+        }
+
+        // fnkboxes handles
+        if (grabbed_tag == .nothing) {
+            for (workspace.fnkboxes.items, 0..) |thing, k| {
+                if (thing.handle.overlapped(pos, Handle.radius)) {
+                    return .{ .kind = .{ .fnkbox_handle = k } };
+                }
+            }
+        }
+
+        const top_level_things = try workspace.topLevelThings(scratch);
+
+        // sexprs inside lenses and everywhere else
+        if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
+            const is_dropzone = grabbed_tag != .nothing;
+            for (workspace.lenses.items) |lens| {
+                if (pos.distTo(lens.target) < lens.target_radius) {
+                    for (lens.tmp_visible_sexprs.items) |s| {
+                        if (isGrabbedSexpr(s.original_place, grabbed)) continue;
+                        const original = sexprAtPlace(workspace, s.original_place);
+                        if (try ViewHelper.overlapsSexpr(
+                            // TODO: check this doesn't leak
+                            res,
+                            original.is_pattern,
+                            original.value,
+                            s.lens_transform.actOn(original.point),
+                            pos,
+                            is_dropzone,
+                        )) |address| {
+                            return .{
+                                .kind = .{
+                                    .sexpr = .{
+                                        .base = try s.original_place.clone(res),
+                                        .local = address,
+                                    },
+                                },
+                                .lens_transform = s.lens_transform,
+                            };
+                        }
+                    }
+                }
+            }
+
+            for (top_level_things) |parent_address| {
+                const owned_sexprs = try workspace.ownedSexprs(parent_address, scratch);
+                for (owned_sexprs) |base| {
+                    if (isGrabbedSexpr(base, grabbed)) continue;
+
+                    // some special cases
+                    if (grabbed_tag != .nothing and base.immutable()) continue;
+                    switch (base) {
+                        .executor_input => |k| {
+                            if (workspace.executors.items[k].animating()) continue;
+                        },
+                        .fnkbox_fnkname => {
+                            // TODO: change this if some part of fnkbox gets mutable
+                            if (grabbed_tag != .nothing) continue;
+                        },
+                        .fnkbox_testcase => |t| {
+                            // TODO: change this if some part of fnkbox gets mutable
+                            if (grabbed_tag != .nothing) continue;
+                            const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                            if (!fnkbox.box().contains(pos)) continue;
+                            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
+                        },
+                        .fnkbox_input => |k| {
+                            const fnkbox = &workspace.fnkboxes.items[k];
+                            if (fnkbox.execution != null) continue;
+                        },
+                        .case => |t| switch (t.parent) {
+                            else => {},
+                            .toolbar => {},
+                            // .toolbar => if (!workspace.toolbar_case_enabled) continue,
+                            .garland => |g| switch (g.parent.parent) {
+                                else => {},
+                                .fnkbox => |k| {
+                                    if (workspace.fnkboxes.items[k].execution != null) continue;
+                                },
+                                .executor => |k| {
+                                    if (workspace.executors.items[k].animating()) continue;
+                                },
+                            },
+                        },
+                        else => {},
+                    }
+
+                    const s = workspace.sexprAtPlace(base);
+                    if (try ViewHelper.overlapsSexpr(
+                        // TODO: check this doesn't leak
+                        res,
+                        s.is_pattern,
+                        s.value,
+                        s.point,
+                        pos,
+                        is_dropzone,
+                    )) |address| {
+                        return .{ .kind = .{ .sexpr = .{
+                            .base = try base.clone(res),
+                            .local = address,
+                        } } };
+                    }
+                }
+            }
+        }
+
+        // garlands
+        if (grabbed_tag == .nothing or grabbed_tag == .garland_handle) {
+            for (top_level_things) |parent_address| {
+                const owned_garlands = try workspace.ownedGarlands(parent_address, scratch);
+                for (owned_garlands) |base| {
+                    if (isGrabbedGarland(base, grabbed)) continue;
+
+                    // some special cases
+                    switch (base.parent) {
+                        .garland => {
+                            // don't place garlands over board-level garlands (TODO: maybe not a bad idea?)
+                            if (grabbed_tag == .garland_handle and base.local.len == 0) continue;
+                        },
+                        .executor => |k| {
+                            if (workspace.executors.items[k].animating()) continue;
+                        },
+                        .fnkbox => |k| {
+                            if (workspace.fnkboxes.items[k].execution != null) continue;
+                        },
+                        else => {},
+                    }
+
+                    const g = workspace.garlandAt(base);
+                    if (g.handle.overlapped(pos, VeryPhysicalGarland.handle_radius)) {
+                        return .{ .kind = .{ .garland_handle = try base.clone(res) } };
+                    }
+                }
+            }
+        }
+
+        // cases, for picking and for dropping
+        for (top_level_things) |parent_address| {
+            const owned_cases = try workspace.ownedCases(parent_address, scratch);
+            for (owned_cases) |base| {
+                if (isGrabbedCase(base, grabbed)) continue;
+                const handle = workspace.caseHandleRef(base);
+
+                // some special cases
+                switch (base) {
+                    .board => {},
+                    .toolbar => {},
+                    // TODO
+                    // .toolbar => if (!workspace.toolbar_case_enabled) continue,
+                    .garland => |t| switch (t.parent.parent) {
+                        else => {},
+                        .fnkbox => |k| {
+                            if (workspace.fnkboxes.items[k].execution != null) continue;
+                        },
+                        .executor => |k| {
+                            if (workspace.executors.items[k].animating()) continue;
+                        },
+                    },
+                }
+
+                // picking
+                if (base.exists() and grabbed_tag == .nothing) {
+                    if (handle.overlapped(pos, VeryPhysicalCase.handle_radius)) {
+                        return .{ .kind = .{ .case_handle = try base.clone(res) } };
+                    }
+                }
+
+                // dropping
+                if (!base.exists() and grabbed_tag == .case_handle) {
+                    if (handle.overlapped(pos, VeryPhysicalGarland.handle_drop_radius)) {
+                        return .{ .kind = .{ .case_handle = try base.clone(res) } };
+                    }
+                }
+            }
+        }
+
+        // postits
+        if (grabbed_tag == .nothing) {
+            for (0..workspace.postits.items.len) |k_rev| {
+                const k = workspace.postits.items.len - k_rev - 1;
+                const postit = workspace.postits.items[k];
+                if (postit.button.rect.contains(pos)) {
+                    return .{ .kind = .{ .postit = k } };
+                }
+            }
+        }
+
+        return .nothing;
+    }
+
+    pub fn updateHotT(
+        workspace: *WorkspaceArea,
+        frame_arena: std.mem.Allocator,
+        hovered_or_dropzone_thing: Focus.Target,
+        hovering: Focus.Target,
+        dropzone: Focus.Target,
+        grabbing: Focus.Target,
+        ui_hot: Focus.UiTarget,
+        ui_active: Focus.UiTarget,
+        delta_seconds: f32,
+    ) !void {
+        // update hover_t for sexprs, garland handles, case handles
+        const top_level_things = try workspace.topLevelThings(frame_arena);
+        for (top_level_things) |parent_address| {
+            const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
+            for (owned_sexprs) |base| {
+                const s = workspace.sexprAtPlace(base);
+                if (isGrabbedSexpr(base, grabbing)) {
+                    s.is_pattern = switch (dropzone.kind) {
+                        .nothing => s.is_pattern,
+                        else => unreachable,
+                        .sexpr => |x| workspace.sexprAtPlace(x.base).is_pattern,
+                    };
+                    s.hovered.update(switch (dropzone.kind) {
+                        .sexpr => &.{},
+                        .nothing => null,
+                        else => unreachable,
+                    }, 2.0, delta_seconds);
+                } else {
+                    const hovered = switch (hovering.kind) {
+                        else => null,
+                        .sexpr => |sexpr| blk: {
+                            // special case: no hover anim for base values
+                            // if (std.meta.activeTag(sexpr.base) == .board and sexpr.local.len == 0) break :blk null;
+                            break :blk if (sexpr.base.equals(base)) sexpr.local else null;
+                        },
+                    };
+                    s.hovered.update(hovered, 1.0, delta_seconds);
+                }
+                s.updateIsPattern(delta_seconds);
+            }
+
+            const owned_garlands = try workspace.ownedGarlands(parent_address, frame_arena);
+            for (owned_garlands) |base| {
+                const g = workspace.garlandAt(base);
+                const handle = &g.handle;
+                const hovered: f32 = switch (hovered_or_dropzone_thing.kind) {
+                    else => 0,
+                    .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
+                };
+                math.lerp_towards(&handle.hot_t, hovered, 0.6, delta_seconds);
+            }
+
+            const owned_cases = try workspace.ownedCases(parent_address, frame_arena);
+            for (owned_cases) |base| {
+                const handle = workspace.caseHandleRef(base);
+                const hovered: f32 = switch (hovered_or_dropzone_thing.kind) {
+                    else => 0,
+                    .case_handle => |h| if (workspace.caseHandleRef(h) == handle) 1 else 0,
+                };
+                math.lerp_towards(&handle.hot_t, hovered, 0.6, delta_seconds);
+            }
+        }
+
+        // update ui hotness
+        for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
+            fnkbox.updateUiHotness(fnkbox_index, ui_hot, ui_active, delta_seconds);
+        }
+
+        for (workspace.postits.items, 0..) |*postit, k| {
+            postit.button.updateHot2(switch (hovering.kind) {
+                else => false,
+                .postit => |k2| k == k2,
+            }, switch (grabbing.kind) {
+                else => false,
+                .postit => |k2| k == k2,
+            }, delta_seconds);
+        }
+
+        // TODO: reduce duplication?
+        // update hover_t for other kinds of handles
+        for (workspace.lenses.items, 0..) |*lens, k| {
+            const hovered = switch (hovering.kind) {
+                else => null,
+                .lens_handle => |handle| if (handle.index == k) handle.part else null,
+            };
+            lens.update(hovered, delta_seconds);
+        }
+        for (workspace.executors.items, 0..) |*executor, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .executor_handle => |index| if (index == k) 1 else 0,
+            };
+            executor.handle.update(hovered, delta_seconds);
+        }
+        for (workspace.fnkviewers.items, 0..) |*thing, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .fnkviewer_handle => |index| if (index == k) 1 else 0,
+            };
+            thing.handle.update(hovered, delta_seconds);
+        }
+        for (workspace.fnkboxes.items, 0..) |*thing, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .fnkbox_handle => |index| if (index == k) 1 else 0,
+            };
+            thing.handle.update(hovered, delta_seconds);
+        }
+    }
+};
+
+const Workspace = struct {
+    main_area: WorkspaceArea,
+
+    // TODO: move to an area
     toolbar_case: VeryPhysicalCase,
     toolbar_trash: ToolbarTrash,
-    postits: std.ArrayList(Postit),
 
     focus: Focus = .{},
     camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
@@ -2633,30 +3518,25 @@ const Workspace = struct {
 
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
-        dst.lenses = .init(mem.gpa);
-        dst.sexprs = .init(mem.gpa);
-        dst.cases = .init(mem.gpa);
-        dst.garlands = .init(mem.gpa);
-        dst.executors = .init(mem.gpa);
-        dst.fnkviewers = .init(mem.gpa);
-        dst.fnkboxes = .init(mem.gpa);
-        dst.traces = .init(mem.gpa);
-        dst.postits = .init(mem.gpa);
         dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
 
-        if (false) {
-            try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
+        dst.main_area.init(mem);
+
+        const main_area = &dst.main_area;
+
+        if (true) {
+            try main_area.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
                 .{},
                 &.{ .right, .left },
             ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
-            try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
+            try main_area.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
 
             var random: std.Random.DefaultPrng = .init(1);
             if (true) {
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
+                try main_area.sexprs.append(try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
 
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
+                try main_area.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
 
                 for ([_][]const u8{
                     "Hermes",    "Mercury",
@@ -2664,24 +3544,24 @@ const Workspace = struct {
                     "Zeus",      "Jupiter",
                     "Aphrodite", "Venus",
                 }, 0..) |n, k| {
-                    try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) * 3, -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
+                    try main_area.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) * 3, -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
                 }
             } else {
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
+                try main_area.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
             }
 
-            try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+            try main_area.cases.append(try .fromValues(&dst.hover_pool, .{
                 .pattern = Sexpr.builtin.true,
                 .template = Sexpr.builtin.false,
                 .fnk_name = Sexpr.builtin.identity,
             }, .{ .pos = .new(0, 3) }));
-            try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+            try main_area.cases.append(try .fromValues(&dst.hover_pool, .{
                 .pattern = Sexpr.builtin.vars.v1,
                 .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
                 .fnk_name = Sexpr.builtin.identity,
             }, .{ .pos = .new(-7, 0) }));
 
-            try dst.garlands.append(.{
+            try main_area.garlands.append(.{
                 .cases = try .initCapacity(mem.gpa, 4),
                 .handle = .{ .point = .{ .pos = .new(0, 5) } },
                 .handles_for_new_cases_first = .{ .handle = .{ .point = .{ .pos = .new(0, 5) } }, .length = 1 },
@@ -2689,7 +3569,7 @@ const Workspace = struct {
             });
 
             for (0..4) |k| {
-                dst.garlands.items[0].handles_for_new_cases_rest.appendAssumeCapacity(.{ .handle = .{ .point = .{ .pos = .new(0, tof32(k + 1)) } }, .length = 1 });
+                main_area.garlands.items[0].handles_for_new_cases_rest.appendAssumeCapacity(.{ .handle = .{ .point = .{ .pos = .new(0, tof32(k + 1)) } }, .length = 1 });
             }
             for ([_][2][]const u8{
                 .{ "Hermes", "Mercury" },
@@ -2697,21 +3577,21 @@ const Workspace = struct {
                 .{ "Zeus", "Jupiter" },
                 .{ "Aphrodite", "Venus" },
             }, 0..) |p, k| {
-                dst.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
+                main_area.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
                     .pattern = try mem.storeSexpr(.doLit(p[0])),
                     .template = try mem.storeSexpr(.doLit(p[1])),
                     .fnk_name = Sexpr.builtin.empty,
-                }, dst.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(0, 1 + 2.5 * tof32(k)) })));
+                }, main_area.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(0, 1 + 2.5 * tof32(k)) })));
             }
-            try dst.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
+            try main_area.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
                 .pattern = Sexpr.builtin.true,
                 .template = valid[1],
                 .fnk_name = valid[0],
-            }, dst.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(6, 0) })));
+            }, main_area.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(6, 0) })));
 
-            try dst.executors.append(try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
+            try main_area.executors.append(try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
 
-            try dst.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
+            try main_area.fnkviewers.append(try .init(.{ .pos = .new(-6, -7) }, &dst.hover_pool));
 
             if (false) {
                 const debug_fnk = try core.parsing.parseSingleFnk(
@@ -2724,7 +3604,7 @@ const Workspace = struct {
                     \\}
                 , &mem.pool_for_sexprs, mem.scratch.allocator());
 
-                try dst.fnkboxes.append(
+                try main_area.fnkboxes.append(
                     try .init(
                         "TODO: remove",
                         debug_fnk.name,
@@ -2751,7 +3631,7 @@ const Workspace = struct {
                 }
                 break :blk try samples.toOwnedSlice(mem.scratch.allocator());
             };
-            try dst.fnkboxes.append(
+            try main_area.fnkboxes.append(
                 try .init(
                     level.description,
                     level.fnk_name,
@@ -2767,46 +3647,46 @@ const Workspace = struct {
 
         var postit_pos: Vec2 = .new(33, -3);
         dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
-        try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
         postit_pos.addInPlace(.new(12, 4));
-        try dst.postits.append(.fromText(&.{ "Move around", "with WASD", "or Arrow Keys" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Move around", "with WASD", "or Arrow Keys" }, postit_pos));
         postit_pos.addInPlace(.new(-15, 5));
-        try dst.postits.append(.fromText(&.{ "Left click", "to pick up", "Atoms ->" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Left click", "to pick up", "Atoms ->" }, postit_pos));
         postit_pos.addInPlace(.new(4.5, 1.25));
-        try dst.sexprs.append(try .fromSexpr(
+        try main_area.sexprs.append(try .fromSexpr(
             &dst.hover_pool,
             try mem.storeSexpr(.doLit("a")),
             .{ .pos = postit_pos },
             false,
         ));
-        try dst.sexprs.append(try .fromSexpr(
+        try main_area.sexprs.append(try .fromSexpr(
             &dst.hover_pool,
             try mem.storeSexpr(.doLit("b")),
             .{ .pos = postit_pos.add(.new(5, -1.5)) },
             true,
         ));
-        try dst.sexprs.append(try .fromSexpr(
+        try main_area.sexprs.append(try .fromSexpr(
             &dst.hover_pool,
             try mem.storeSexpr(.doLit("C")),
             .{ .pos = postit_pos.add(.new(-2, 4)) },
             false,
         ));
         postit_pos.addInPlace(.new(5.5, 5.5));
-        try dst.postits.append(.fromText(&.{ "Right click to", "duplicate them" }, postit_pos));
-        try dst.postits.append(.fromText(&.{"Z to undo"}, postit_pos.add(.new(6.5, 0.7))));
+        try main_area.postits.append(.fromText(&.{ "Right click to", "duplicate them" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{"Z to undo"}, postit_pos.add(.new(6.5, 0.7))));
 
         postit_pos.addInPlace(.new(19, -14));
-        try dst.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
-        try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+        try main_area.postits.append(.fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
+        try main_area.cases.append(try .fromValues(&dst.hover_pool, .{
             .pattern = try mem.storeSexpr(.doLit("a")),
             .template = try mem.storeSexpr(.doLit("b")),
             .fnk_name = Sexpr.builtin.empty,
         }, .{ .pos = postit_pos.addY(5) }));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
-        try dst.garlands.append(try .fromDefinition(.{ .pos = postit_pos.addY(5) }, .{ .cases = &.{
+        try main_area.postits.append(.fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
+        try main_area.garlands.append(try .fromDefinition(.{ .pos = postit_pos.addY(5) }, .{ .cases = &.{
             .{
                 .pattern = try mem.storeSexpr(.doLit("a")),
                 .template = try mem.storeSexpr(.doLit("b")),
@@ -2821,56 +3701,28 @@ const Workspace = struct {
             },
         } }, mem, &mem.hover_pool));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
-        try dst.postits.append(.fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
+        try main_area.postits.append(.fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
         postit_pos.addInPlace(.new(25, -2));
-        try dst.postits.append(.fromText(&.{"Your turn!"}, postit_pos));
-        try dst.postits.append(.fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
+        try main_area.postits.append(.fromText(&.{"Your turn!"}, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
         postit_pos.addInPlace(.new(25, 0));
         postit_pos.addInPlace(.new(7, -6.1));
-        try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
-        try dst.postits.append(.fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
-        try dst.postits.append(.fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
+        try main_area.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
+        try main_area.postits.append(.fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
         postit_pos.addInPlace(.new(25, 1));
-        try dst.postits.append(.fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
+        try main_area.postits.append(.fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
 
         try dst.canonizeAfterChanges(mem);
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
-        for (workspace.cases.items) |*c| {
-            c.next.deinit(gpa);
-        }
-        for (workspace.garlands.items) |*g| {
-            g.deinit(gpa);
-        }
-        inline for (.{
-            workspace.executors.items,
-            workspace.fnkviewers.items,
-            workspace.fnkboxes.items,
-            workspace.traces.items,
-        }) |things| {
-            for (things) |*e| {
-                if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
-                    e.deinit(gpa);
-                } else {
-                    e.garland.deinit(gpa);
-                }
-            }
-        }
-        workspace.lenses.deinit();
-        workspace.sexprs.deinit();
-        workspace.cases.deinit();
+        workspace.main_area.deinit(gpa);
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
-        workspace.garlands.deinit();
-        workspace.executors.deinit();
-        workspace.fnkviewers.deinit();
-        workspace.fnkboxes.deinit();
-        workspace.traces.deinit();
-        workspace.postits.deinit();
     }
 
     fn freshToolbarCase(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !VeryPhysicalCase {
@@ -2997,403 +3849,24 @@ const Workspace = struct {
         }
     }
 
-    // TODO: could be an iterator
-    pub fn topLevelThings(workspace: *Workspace, res: std.mem.Allocator) ![]const Focus.Target {
-        var result: std.ArrayListUnmanaged(Focus.Target) = try .initCapacity(
-            res,
-            workspace.sexprs.items.len +
-                workspace.cases.items.len +
-                workspace.garlands.items.len +
-                workspace.executors.items.len +
-                workspace.fnkviewers.items.len +
-                workspace.fnkboxes.items.len +
-                // for toolbar variable
-                1,
-            // TODO: traces
-        );
-
-        result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .toolbar } });
-
-        for (workspace.sexprs.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{ .base = .{ .board = k }, .local = &.{} } } });
-        }
-        for (workspace.cases.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .{ .board = k } } });
-        }
-        for (workspace.garlands.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .garland_handle = .{
-                .local = &.{},
-                .parent = .{ .garland = k },
-            } } });
-        }
-        for (workspace.executors.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .executor_handle = k } });
-        }
-        for (workspace.fnkviewers.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .fnkviewer_handle = k } });
-        }
-        for (workspace.fnkboxes.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .fnkbox_handle = k } });
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    pub fn ownedSexprs(workspace: *Workspace, parent: Focus.Target, res: std.mem.Allocator) ![]const BaseSexprPlace {
-        var result: std.ArrayListUnmanaged(BaseSexprPlace) = .empty;
-
-        // sexprs owned directly and not due to a case
-        switch (parent.kind) {
-            .sexpr => |p| {
-                try result.append(res, p.base);
-            },
-            .executor_handle => |k| {
-                try result.append(res, .{ .executor_input = k });
-            },
-            .fnkviewer_handle => |k| {
-                try result.append(res, .{ .fnkviewer_fnkname = k });
-            },
-            .fnkbox_handle => |k| {
-                try result.append(res, .{ .fnkbox_fnkname = k });
-                try result.append(res, .{ .fnkbox_input = k });
-                const parent_fnkbox = &workspace.fnkboxes.items[k];
-                for (parent_fnkbox.testcases.items, 0..) |_, testcase_index| {
-                    inline for (TestCase.parts) |part| {
-                        try result.append(res, .{ .fnkbox_testcase = .{
-                            .fnkbox = k,
-                            .testcase = testcase_index,
-                            .part = part,
-                        } });
-                    }
-                }
-            },
-            .nothing,
-            .lens_handle,
-            .case_handle,
-            .garland_handle,
-            .postit,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            => {},
-        }
-
-        // sexprs owned due to owning a case
-        const owned_cases = try workspace.ownedCases(parent, res);
-        for (owned_cases) |case_address| {
-            if (!case_address.exists()) continue;
-            inline for (core.CasePart.all) |part| {
-                try result.append(res, .{ .case = .{
-                    .parent = case_address,
-                    .part = part,
-                } });
-            }
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    // TODO: don't assume that parent is a top level thing
-    pub fn ownedGarlands(workspace: *Workspace, parent: Focus.Target, res: std.mem.Allocator) ![]const GarlandHandle {
-        var result: std.ArrayListUnmanaged(GarlandHandle) = .empty;
-
-        if (@as(?GarlandHandle.Parent, switch (parent.kind) {
-            .case_handle => |case_handle| switch (case_handle) {
-                .board => |k| .{ .case = k },
-                else => null,
-            },
-            .garland_handle => |garland_handle| .{ .garland = garland_handle.parent.garland },
-            .executor_handle => |k| .{ .executor = k },
-            .fnkviewer_handle => |k| .{ .fnkviewer = k },
-            .fnkbox_handle => |k| .{ .fnkbox = k },
-            .nothing,
-            .lens_handle,
-            .sexpr,
-            .postit,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            => null,
-        })) |parent_garland_handle| {
-            const parent_garland = workspace.garlandAt(.{ .local = &.{}, .parent = parent_garland_handle });
-            var it = parent_garland.childGarlandsAddressIterator(res);
-            while (try it.next()) |address| {
-                try result.append(res, .{
-                    .local = address,
-                    .parent = parent_garland_handle,
-                });
-            }
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    // TODO: don't assume that parent is a top level thing
-    pub fn ownedCases(workspace: *Workspace, parent: Focus.Target, res: std.mem.Allocator) ![]const CaseHandle {
-        var result: std.ArrayListUnmanaged(CaseHandle) = .empty;
-
-        // cases owned directly and not due to a garland
-        switch (parent.kind) {
-            .case_handle => |case_handle| {
-                try result.append(res, case_handle);
-            },
-            .garland_handle,
-            .executor_handle,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            .fnkviewer_handle,
-            .fnkbox_handle,
-            .nothing,
-            .lens_handle,
-            .sexpr,
-            .postit,
-            => {},
-        }
-
-        // cases owned due to owning a garland
-        const owned_garlands = try workspace.ownedGarlands(parent, res);
-        for (owned_garlands) |garland_address| {
-            const garland = workspace.garlandAt(garland_address);
-            for (0..garland.cases.items.len) |case_index| {
-                try result.append(res, .{
-                    .garland = .{
-                        .local = case_index,
-                        .parent = garland_address,
-                        .existing_case = true,
-                    },
-                });
-            }
-            for (0..garland.cases.items.len + 1) |case_index| {
-                try result.append(res, .{
-                    .garland = .{
-                        .local = case_index,
-                        .parent = garland_address,
-                        .existing_case = false,
-                    },
-                });
-            }
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace) *VeryPhysicalSexpr {
-        return switch (place) {
-            .board => |p| workspace.getAt(VeryPhysicalSexpr, p),
-            .case => |case| workspace.caseAt(case.parent).sexprAt(case.part),
-            .executor_input => |k| &workspace.executors.items[k].input,
-            .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
-            .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
-            .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
-            .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
-        };
-    }
-
-    fn caseHandleRef(workspace: *Workspace, place: CaseHandle) *Handle {
-        return switch (place) {
-            .toolbar => &workspace.toolbar_case.handle,
-            .board => |k| &workspace.cases.items[k].handle,
-            .garland => |t| if (t.existing_case)
-                &garlandAt(workspace, t.parent).cases.items[t.local].handle
-            else
-                garlandAt(workspace, t.parent).handleForNewCasesRef(t.local),
-        };
-    }
-
-    fn garlandHandleRef(workspace: *Workspace, place: GarlandHandle) *Handle {
-        return &workspace.garlandAt(place).handle;
-    }
-
-    fn garlandAt(workspace: *Workspace, place: GarlandHandle) *VeryPhysicalGarland {
-        return switch (place.parent) {
-            .garland => |k| workspace.garlands.items[k].childGarland(place.local),
-            .case => |k| workspace.cases.items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
-            .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
-            .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
-        };
-    }
-
-    fn caseAt(workspace: *Workspace, place: CaseHandle) *VeryPhysicalCase {
-        assert(place.exists());
-        return switch (place) {
-            .board => |k| &workspace.cases.items[k],
-            .garland => |t| &workspace.garlandAt(t.parent).cases.items[t.local],
-            .toolbar => &workspace.toolbar_case,
-        };
-    }
-
-    fn executorAt(workspace: *Workspace, place: ExecutorPlace) *Executor {
-        return switch (place) {
-            .fnkbox => |k| &workspace.fnkboxes.items[k].execution.?.executor.?,
-            .board => |k| &workspace.executors.items[k],
-        };
-    }
-
-    // This made more sense when it was indexed by a Vec2
-    fn getAt(workspace: *Workspace, comptime T: type, k: usize) *T {
-        const items = switch (T) {
-            VeryPhysicalSexpr => workspace.sexprs.items,
-            VeryPhysicalCase => workspace.cases.items,
-            VeryPhysicalGarland => workspace.garlands.items,
-            else => comptime unreachable,
-        };
-        return &items[k];
-    }
-
-    pub fn popAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
-        return switch (target.kind) {
-            .sexpr => |p| .{ .sexpr = try workspace.popSexprAt(p, &mem.hover_pool, mem) },
-            .case_handle => |c| switch (c) {
-                .toolbar => unreachable,
-                .board => |k| .{ .case = workspace.cases.orderedRemove(k) },
-                .garland => |t| .{ .case = workspace.garlandAt(t.parent).popCase(t.local) },
-            },
-            .garland_handle => |g| .{ .garland = if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland)
-                workspace.garlands.orderedRemove(g.parent.garland)
-            else blk: {
-                const place = workspace.garlandAt(g);
-                const garland = place.*;
-                place.* = .init(garland.handle.point);
-                break :blk garland;
-            } },
-            else => @panic("TODO"),
-        };
-    }
-
-    pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
-        switch (target.kind) {
-            .sexpr => |p| try workspace.unpopSexprAt(p, value.sexpr, &mem.hover_pool, mem),
-            .case_handle => |c| switch (c) {
-                .toolbar => unreachable,
-                .board => |k| try workspace.cases.insert(k, value.case),
-                .garland => |t| try workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
-            },
-            .garland_handle => |g| if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland) {
-                try workspace.garlands.insert(g.parent.garland, value.garland);
-            } else {
-                const place = workspace.garlandAt(g);
-                place.* = value.garland;
-            },
-            else => @panic("TODO"),
-        }
-    }
-
-    fn popSexprAt(workspace: *Workspace, p: SexprPlace, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !VeryPhysicalSexpr {
-        if (p.local.len == 0) switch (p.base) {
-            else => {},
-            .board => |k| return workspace.sexprs.orderedRemove(k),
-        };
-
-        const base = workspace.sexprAtPlace(p.base);
-        return try base.popSubValue(p.local, hover_pool, mem);
-    }
-
-    fn unpopSexprAt(workspace: *Workspace, p: SexprPlace, v: VeryPhysicalSexpr, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !void {
-        if (p.local.len == 0) {
-            switch (p.base) {
-                else => try workspace.sexprAtPlace(p.base).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool),
-                .board => |k| try workspace.sexprs.insert(k, v),
-            }
-        } else {
-            try workspace.sexprAtPlace(p.base).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
-        }
-    }
-
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
         const asdf = tracy.initZone(@src(), .{ .name = "draw" });
         defer asdf.deinit();
 
         const camera = workspace.camera;
 
-        // TODO: remove duplication
-        for (workspace.sexprs.items, 0..) |s, k| {
-            if (isGrabbedSexpr(.{ .board = k }, workspace.focus.grabbing)) continue;
-            try s.draw(drawer, camera);
-        }
-
-        const holding: VeryPhysicalCase.Holding = switch (workspace.focus.grabbing.kind) {
-            .sexpr => .sexpr,
-            .garland_handle, .case_handle => .case_or_garland,
-            else => .other,
-        };
-
-        for (workspace.cases.items, 0..) |c, k| {
-            if (isGrabbedCase(.{ .board = k }, workspace.focus.grabbing)) continue;
-            try c.draw(holding, drawer, camera);
-        }
-
-        for (workspace.garlands.items, 0..) |c, k| {
-            if (isGrabbedGarland(.{ .local = &.{}, .parent = .{ .garland = k } }, workspace.focus.grabbing)) continue;
-            try c.draw(holding, drawer, camera);
-        }
-
-        inline for (.{
-            workspace.fnkboxes.items,
-            workspace.executors.items,
-            workspace.fnkviewers.items,
-        }) |things| {
-            for (things) |g| {
-                try g.draw(holding, drawer, camera);
-            }
-        }
-
-        inline for (.{
-            workspace.traces.items,
-            workspace.postits.items,
-        }) |things| {
-            for (things) |g| {
-                try g.draw(drawer, camera);
-            }
-        }
-
-        for (workspace.lenses.items) |lens| {
-            drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
-
-            if (camera.plusMargin(lens.target_radius + 1).contains(lens.target)) {
-                platform.gl.startStencil();
-                drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
-                platform.gl.doneStencil();
-                defer platform.gl.stopStencil();
-
-                for (lens.tmp_visible_sexprs.items) |s| {
-                    var scaled = workspace.sexprAtPlace(s.original_place).*;
-                    scaled.point = s.lens_transform.actOn(scaled.point);
-                    try scaled.draw(drawer, camera);
-                }
-            }
-
-            drawer.canvas.line(camera, &.{
-                lens.source.towardsPure(lens.target, lens.source_radius),
-                lens.target.towardsPure(lens.source, lens.target_radius),
-            }, 0.05, .black);
-            drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
-            drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
-            drawer.canvas.fillCircle(
-                camera,
-                lens.sourceHandlePos(),
-                Lens.handle_radius * (1.0 + 0.2 * lens.source_hot_t),
-                .black,
-            );
-            drawer.canvas.fillCircle(
-                camera,
-                lens.targetHandlePos(),
-                Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
-                .black,
-            );
-        }
+        try workspace.main_area.draw(camera, workspace.focus.grabbing, platform, drawer);
 
         drawer.canvas.fillRect(camera, workspace.leftToolbarRect(), .gray(0.4));
         if (workspace.toolbar_case_enabled) try workspace.toolbar_case.draw(.other, drawer, camera);
         try workspace.toolbar_trash.draw(drawer, camera);
 
-        switch (workspace.focus.grabbing.kind) {
-            else => {},
-            .garland_handle => |t| try workspace.garlandAt(t).draw(.other, drawer, camera),
-            .case_handle => |t| try workspace.cases.items[t.board].draw(.other, drawer, camera),
-            .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
-        }
+        // switch (workspace.focus.grabbing.kind) {
+        //     else => {},
+        //     .garland_handle => |t| try workspace.garlandAt(t).draw(.other, drawer, camera),
+        //     .case_handle => |t| try workspace.cases.items[t.board].draw(.other, drawer, camera),
+        //     .sexpr => |s| try workspace.sexprAtPlace(s.base).draw(drawer, camera),
+        // }
 
         if (display_fps) try drawer.canvas.drawText(
             0,
@@ -3415,289 +3888,14 @@ const Workspace = struct {
             .moveRelative(.new(-0.9 * (1 - workspace.toolbar_left), 0));
     }
 
-    fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
-        for (workspace.fnkboxes.items, 0..) |fnkbox, fnkbox_index| {
-            if (fnkbox.fold_button.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
-            }
-            if (!fnkbox.box().contains(pos)) continue;
-            if (fnkbox.scroll_button_up.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } } };
-            }
-            if (fnkbox.scroll_button_down.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } } };
-            }
-            if (fnkbox.execution != null) continue;
-            if (fnkbox.statusBarGoal().contains(pos) and std.meta.activeTag(fnkbox.status) == .unsolved) {
-                return .{ .kind = .{ .fnkbox_see_failing_case = fnkbox_index } };
-            }
-            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
-            for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
-                if (testcase.play_button.rect.contains(pos)) {
-                    return .{ .kind = .{ .fnkbox_launch_testcase = .{
-                        .fnkbox = fnkbox_index,
-                        .testcase = testcase_index,
-                    } } };
-                }
-            }
-        }
-        return .nothing;
-    }
-
-    fn findHoverableOrDropzoneAtPosition(workspace: *Workspace, pos: Vec2, res: std.mem.Allocator, scratch: std.mem.Allocator) !Focus.Target {
-        const grabbed = workspace.focus.grabbing;
-        const grabbed_tag = std.meta.activeTag(grabbed.kind);
-
-        // lenses
-        if (grabbed_tag == .nothing) {
-            for (workspace.lenses.items, 0..) |lens, k| {
-                if (pos.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
-                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .source } } };
-                }
-                if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
-                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .target } } };
-                }
-            }
-        }
-
-        // executors
-        if (grabbed_tag == .nothing) {
-            for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.brakeHandle().contains(pos)) {
-                    return .{ .kind = .{ .executor_brake_handle = .{ .board = k } } };
-                }
-                if (executor.animating()) {
-                    if (executor.crankHandle().?.contains(pos)) {
-                        return .{ .kind = .{ .executor_crank_handle = .{ .board = k } } };
-                    }
-                } else {
-                    if (executor.handle.overlapped(pos, Handle.radius)) {
-                        return .{ .kind = .{ .executor_handle = k } };
-                    }
-                }
-            }
-        }
-
-        // executors in fnkboxes
-        if (grabbed_tag == .nothing) {
-            for (workspace.fnkboxes.items, 0..) |thing, k| {
-                if (thing.execution) |execution| {
-                    if (execution.executor) |executor| {
-                        if (executor.crankHandle()) |handle| {
-                            if (handle.contains(pos)) {
-                                return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } } };
-                            }
-                        }
-                        if (executor.brakeHandle().contains(pos)) {
-                            return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } } };
-                        }
-                    }
-                }
-            }
-        }
-
-        // fnkviewers
-        if (grabbed_tag == .nothing) {
-            for (workspace.fnkviewers.items, 0..) |fnkviewer, k| {
-                if (fnkviewer.handle.overlapped(pos, Handle.radius)) {
-                    return .{ .kind = .{ .fnkviewer_handle = k } };
-                }
-            }
-        }
-
-        // fnkboxes handles
-        if (grabbed_tag == .nothing) {
-            for (workspace.fnkboxes.items, 0..) |thing, k| {
-                if (thing.handle.overlapped(pos, Handle.radius)) {
-                    return .{ .kind = .{ .fnkbox_handle = k } };
-                }
-            }
-        }
-
-        const top_level_things = try workspace.topLevelThings(scratch);
-
-        // sexprs inside lenses and everywhere else
-        if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
-            const is_dropzone = grabbed_tag != .nothing;
-            for (workspace.lenses.items) |lens| {
-                if (pos.distTo(lens.target) < lens.target_radius) {
-                    for (lens.tmp_visible_sexprs.items) |s| {
-                        if (isGrabbedSexpr(s.original_place, grabbed)) continue;
-                        const original = sexprAtPlace(workspace, s.original_place);
-                        if (try ViewHelper.overlapsSexpr(
-                            // TODO: check this doesn't leak
-                            res,
-                            original.is_pattern,
-                            original.value,
-                            s.lens_transform.actOn(original.point),
-                            pos,
-                            is_dropzone,
-                        )) |address| {
-                            return .{
-                                .kind = .{
-                                    .sexpr = .{
-                                        .base = try s.original_place.clone(res),
-                                        .local = address,
-                                    },
-                                },
-                                .lens_transform = s.lens_transform,
-                            };
-                        }
-                    }
-                }
-            }
-
-            for (top_level_things) |parent_address| {
-                const owned_sexprs = try workspace.ownedSexprs(parent_address, scratch);
-                for (owned_sexprs) |base| {
-                    if (isGrabbedSexpr(base, grabbed)) continue;
-
-                    // some special cases
-                    if (grabbed_tag != .nothing and base.immutable()) continue;
-                    switch (base) {
-                        .executor_input => |k| {
-                            if (workspace.executors.items[k].animating()) continue;
-                        },
-                        .fnkbox_fnkname => {
-                            // TODO: change this if some part of fnkbox gets mutable
-                            if (grabbed_tag != .nothing) continue;
-                        },
-                        .fnkbox_testcase => |t| {
-                            // TODO: change this if some part of fnkbox gets mutable
-                            if (grabbed_tag != .nothing) continue;
-                            const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
-                            if (!fnkbox.box().contains(pos)) continue;
-                            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
-                        },
-                        .fnkbox_input => |k| {
-                            const fnkbox = &workspace.fnkboxes.items[k];
-                            if (fnkbox.execution != null) continue;
-                        },
-                        .case => |t| switch (t.parent) {
-                            else => {},
-                            .toolbar => if (!workspace.toolbar_case_enabled) continue,
-                            .garland => |g| switch (g.parent.parent) {
-                                else => {},
-                                .fnkbox => |k| {
-                                    if (workspace.fnkboxes.items[k].execution != null) continue;
-                                },
-                                .executor => |k| {
-                                    if (workspace.executors.items[k].animating()) continue;
-                                },
-                            },
-                        },
-                        else => {},
-                    }
-
-                    const s = workspace.sexprAtPlace(base);
-                    if (try ViewHelper.overlapsSexpr(
-                        // TODO: check this doesn't leak
-                        res,
-                        s.is_pattern,
-                        s.value,
-                        s.point,
-                        pos,
-                        is_dropzone,
-                    )) |address| {
-                        return .{ .kind = .{ .sexpr = .{
-                            .base = try base.clone(res),
-                            .local = address,
-                        } } };
-                    }
-                }
-            }
-        }
-
-        // garlands
-        if (grabbed_tag == .nothing or grabbed_tag == .garland_handle) {
-            for (top_level_things) |parent_address| {
-                const owned_garlands = try workspace.ownedGarlands(parent_address, scratch);
-                for (owned_garlands) |base| {
-                    if (isGrabbedGarland(base, grabbed)) continue;
-
-                    // some special cases
-                    switch (base.parent) {
-                        .garland => {
-                            // don't place garlands over board-level garlands (TODO: maybe not a bad idea?)
-                            if (grabbed_tag == .garland_handle and base.local.len == 0) continue;
-                        },
-                        .executor => |k| {
-                            if (workspace.executors.items[k].animating()) continue;
-                        },
-                        .fnkbox => |k| {
-                            if (workspace.fnkboxes.items[k].execution != null) continue;
-                        },
-                        else => {},
-                    }
-
-                    const g = workspace.garlandAt(base);
-                    if (g.handle.overlapped(pos, VeryPhysicalGarland.handle_radius)) {
-                        return .{ .kind = .{ .garland_handle = try base.clone(res) } };
-                    }
-                }
-            }
-        }
-
-        // cases, for picking and for dropping
-        for (top_level_things) |parent_address| {
-            const owned_cases = try workspace.ownedCases(parent_address, scratch);
-            for (owned_cases) |base| {
-                if (isGrabbedCase(base, grabbed)) continue;
-                const handle = workspace.caseHandleRef(base);
-
-                // some special cases
-                switch (base) {
-                    .board => {},
-                    .toolbar => if (!workspace.toolbar_case_enabled) continue,
-                    .garland => |t| switch (t.parent.parent) {
-                        else => {},
-                        .fnkbox => |k| {
-                            if (workspace.fnkboxes.items[k].execution != null) continue;
-                        },
-                        .executor => |k| {
-                            if (workspace.executors.items[k].animating()) continue;
-                        },
-                    },
-                }
-
-                // picking
-                if (base.exists() and grabbed_tag == .nothing) {
-                    if (handle.overlapped(pos, VeryPhysicalCase.handle_radius)) {
-                        return .{ .kind = .{ .case_handle = try base.clone(res) } };
-                    }
-                }
-
-                // dropping
-                if (!base.exists() and grabbed_tag == .case_handle) {
-                    if (handle.overlapped(pos, VeryPhysicalGarland.handle_drop_radius)) {
-                        return .{ .kind = .{ .case_handle = try base.clone(res) } };
-                    }
-                }
-            }
-        }
-
-        // postits
-        if (grabbed_tag == .nothing) {
-            for (0..workspace.postits.items.len) |k_rev| {
-                const k = workspace.postits.items.len - k_rev - 1;
-                const postit = workspace.postits.items[k];
-                if (postit.button.rect.contains(pos)) {
-                    return .{ .kind = .{ .postit = k } };
-                }
-            }
-        }
-
-        return .nothing;
-    }
-
     pub fn canonizeAfterChanges(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
-        for (workspace.fnkboxes.items) |*fnkbox| {
-            try fnkbox.updateStatus(workspace.fnkboxes.items, mem);
+        for (workspace.main_area.fnkboxes.items) |*fnkbox| {
+            try fnkbox.updateStatus(workspace.main_area.fnkboxes.items, mem);
         }
         workspace.toolbar_case_enabled =
-            workspace.fnkboxes.items[0].status == .solved and
-            workspace.fnkboxes.items[1].status == .solved and
-            workspace.fnkboxes.items[2].status == .solved;
+            workspace.main_area.fnkboxes.items[0].status == .solved and
+            workspace.main_area.fnkboxes.items[1].status == .solved and
+            workspace.main_area.fnkboxes.items[2].status == .solved;
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
@@ -3715,34 +3913,7 @@ const Workspace = struct {
             left_toolbar_rect_ideal,
         );
 
-        // set lenses data
-        for (workspace.lenses.items, 0..) |*lens, lens_index| {
-            lens.tmp_visible_sexprs = .empty;
-
-            // TODO: cull and only store visible parts
-
-            const top_level_things = try workspace.topLevelThings(frame_arena);
-            for (top_level_things) |parent_address| {
-                const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
-                for (owned_sexprs) |base| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = base,
-                        .lens_transform = lens.getTransform(),
-                    });
-                }
-            }
-
-            for (0..lens_index) |other_lens_index| {
-                const other_lens = workspace.lenses.items[other_lens_index];
-                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
-                for (other_lens.tmp_visible_sexprs.items) |s| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = s.original_place,
-                        .lens_transform = .combine(s.lens_transform, lens.getTransform()),
-                    });
-                }
-            }
-        }
+        try workspace.main_area.updateLensesData(frame_arena);
 
         // drawing
         if (drawer) |d| {
@@ -3760,18 +3931,21 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                     .spawned_trace => {
-                        _ = workspace.traces.pop().?;
+                        // TODO: don't hardcode main_area
+                        _ = workspace.main_area.traces.pop().?;
                         const next_cmd = workspace.undo_stack.pop().?;
                         continue :again next_cmd.specific;
                     },
                     .despawned_trace => |t| {
-                        try workspace.traces.append(t.trace);
-                        if (t.spawned_sexpr) _ = workspace.sexprs.pop().?;
+                        // TODO: don't hardcode main_area
+                        try workspace.main_area.traces.append(t.trace);
+                        if (t.spawned_sexpr) _ = workspace.main_area.sexprs.pop().?;
                         const next_cmd = workspace.undo_stack.pop().?;
                         continue :again next_cmd.specific;
                     },
                     .started_execution => |g| {
-                        const executor = &workspace.executors.items[g.executor];
+                        // TODO: don't hardcode main_area
+                        const executor = &workspace.main_area.executors.items[g.executor];
                         executor.input = g.input;
                         executor.garland = g.garland;
                         executor.prev_pills = .fromOwnedSlice(g.prev_pills);
@@ -3783,7 +3957,7 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                     .started_execution_fnkbox_from_input => |g| {
-                        const fnkbox = &workspace.fnkboxes.items[g.fnkbox];
+                        const fnkbox = &workspace.main_area.fnkboxes.items[g.fnkbox];
                         fnkbox.input = g.input;
                         fnkbox.execution = null;
                         const next_cmd = workspace.undo_stack.pop().?;
@@ -3791,54 +3965,54 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                     .fnkbox_launch_testcase => |t| {
-                        const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                        const fnkbox = &workspace.main_area.fnkboxes.items[t.fnkbox];
                         fnkbox.testcases.items[t.testcase].actual = t.old_actual;
                         fnkbox.execution = null;
                     },
                     .fnkbox_toggle_fold => |k| {
-                        const fnkbox = &workspace.fnkboxes.items[k];
+                        const fnkbox = &workspace.main_area.fnkboxes.items[k];
                         fnkbox.folded = !fnkbox.folded;
                     },
                     .fnkbox_scroll => |t| {
-                        const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                        const fnkbox = &workspace.main_area.fnkboxes.items[t.fnkbox];
                         fnkbox.scroll_testcases = t.old_position;
                     },
                     .grabbed => |g| {
                         switch (g.from.kind) {
                             .nothing => unreachable,
                             .executor_handle => |h| {
-                                const e = &workspace.executors.items[h];
+                                const e = &workspace.main_area.executors.items[h];
                                 e.handle.point = g.old_point;
                             },
                             .executor_crank_handle,
                             .executor_brake_handle,
                             => @panic("TODO"),
                             .fnkviewer_handle => |h| {
-                                const e = &workspace.fnkviewers.items[h];
+                                const e = &workspace.main_area.fnkviewers.items[h];
                                 e.handle.point = g.old_point;
                             },
                             .fnkbox_handle => |h| {
                                 if (g.duplicate) {
-                                    assert(h == workspace.fnkboxes.items.len - 1);
-                                    _ = workspace.fnkboxes.pop().?;
+                                    assert(h == workspace.main_area.fnkboxes.items.len - 1);
+                                    _ = workspace.main_area.fnkboxes.pop().?;
                                 } else {
-                                    const e = &workspace.fnkboxes.items[h];
+                                    const e = &workspace.main_area.fnkboxes.items[h];
                                     e.handle.point = g.old_point;
                                 }
                             },
                             .postit => |k| {
                                 if (g.duplicate) {
-                                    _ = workspace.postits.pop().?;
+                                    _ = workspace.main_area.postits.pop().?;
                                 } else {
-                                    const postit = &workspace.postits.items[k];
+                                    const postit = &workspace.main_area.postits.items[k];
                                     postit.button.rect.top_left = g.old_point.pos;
                                 }
                             },
                             .lens_handle => |h| {
                                 if (g.duplicate) {
-                                    _ = workspace.lenses.pop().?;
+                                    _ = workspace.main_area.lenses.pop().?;
                                 } else {
-                                    const lens = &workspace.lenses.items[h.index];
+                                    const lens = &workspace.main_area.lenses.items[h.index];
                                     lens.setHandlePos(h.part, g.old_point.pos);
                                     assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
                                     assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
@@ -3847,41 +4021,41 @@ const Workspace = struct {
                             .garland_handle => |h| {
                                 if (g.duplicate) {
                                     // TODO: better memory management?
-                                    var old = workspace.garlands.pop().?;
+                                    var old = workspace.main_area.garlands.pop().?;
                                     old.deinit(mem.gpa);
                                 } else if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
-                                    const garland = &workspace.garlands.items[h.parent.garland];
+                                    const garland = &workspace.main_area.garlands.items[h.parent.garland];
                                     garland.handle.point = g.old_point;
                                 } else {
-                                    const garland = workspace.garlands.pop().?;
-                                    workspace.garlandAt(h).* = garland;
+                                    const garland = workspace.main_area.garlands.pop().?;
+                                    workspace.main_area.garlandAt(h).* = garland;
                                 }
                             },
                             .case_handle => |h| {
                                 if (g.duplicate) {
-                                    _ = workspace.cases.pop().?;
+                                    _ = workspace.main_area.cases.pop().?;
                                 } else switch (h) {
                                     .toolbar => unreachable,
                                     .board => |k| {
-                                        const case = &workspace.cases.items[k];
+                                        const case = &workspace.main_area.cases.items[k];
                                         case.handle.point = g.old_point;
                                     },
                                     .garland => |t| {
-                                        const case = workspace.cases.pop().?;
-                                        const garland = workspace.garlandAt(t.parent);
+                                        const case = workspace.main_area.cases.pop().?;
+                                        const garland = workspace.main_area.garlandAt(t.parent);
                                         try garland.insertCase(mem.gpa, t.local, case);
                                     },
                                 }
                             },
                             .sexpr => |h| {
-                                var old = workspace.sexprs.pop().?;
+                                var old = workspace.main_area.sexprs.pop().?;
                                 if (g.duplicate) {
-                                    workspace.sexprAtPlace(h.base).getSubValue(h.local).hovered.value = 10;
+                                    workspace.main_area.sexprAtPlace(h.base).getSubValue(h.local).hovered.value = 10;
                                 } else {
                                     old.hovered.value = 10;
                                     old.point = g.old_point;
                                     old.is_pattern = g.old_ispattern;
-                                    try workspace.unpopSexprAt(h, old, &workspace.hover_pool, mem);
+                                    try workspace.main_area.unpopSexprAt(h, old, &workspace.hover_pool, mem);
                                 }
                             },
                         }
@@ -3902,11 +4076,11 @@ const Workspace = struct {
                                 if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                                     workspace.focus.grabbing = g.at;
                                 } else {
-                                    try workspace.garlands.insert(old_k, undefined);
-                                    const place = workspace.garlandAt(h);
+                                    try workspace.main_area.garlands.insert(old_k, undefined);
+                                    const place = workspace.main_area.garlandAt(h);
                                     const garland = place.*;
                                     place.* = g.overwritten_garland;
-                                    workspace.garlands.items[old_k] = garland;
+                                    workspace.main_area.garlands.items[old_k] = garland;
                                 }
                             },
                             .case_handle => |h| {
@@ -3917,20 +4091,20 @@ const Workspace = struct {
                                         workspace.focus.grabbing = g.at;
                                     },
                                     .garland => |t| {
-                                        try workspace.cases.insert(old_k, undefined);
-                                        const garland = workspace.garlandAt(t.parent);
+                                        try workspace.main_area.cases.insert(old_k, undefined);
+                                        const garland = workspace.main_area.garlandAt(t.parent);
                                         const case = garland.popCase(t.local);
-                                        workspace.cases.items[old_k] = case;
+                                        workspace.main_area.cases.items[old_k] = case;
                                     },
                                 }
                             },
                             .sexpr => |h| {
                                 if (g.overwritten_sexpr) |overwritten| {
-                                    try workspace.sexprs.insert(g.old_grabbed_position.kind.sexpr.base.board, undefined);
-                                    const base = workspace.sexprAtPlace(h.base);
+                                    try workspace.main_area.sexprs.insert(g.old_grabbed_position.kind.sexpr.base.board, undefined);
+                                    const base = workspace.main_area.sexprAtPlace(h.base);
                                     var grabbed = base.getSubValue(h.local);
                                     grabbed.point.scale = 1;
-                                    workspace.sexprs.items[g.old_grabbed_position.kind.sexpr.base.board] = grabbed;
+                                    workspace.main_area.sexprs.items[g.old_grabbed_position.kind.sexpr.base.board] = grabbed;
                                     try base.updateSubValue(
                                         h.local,
                                         overwritten.value,
@@ -3956,7 +4130,7 @@ const Workspace = struct {
 
         const mouse = platform.getMouse(camera);
 
-        const hovered_or_dropzone_thing = try workspace.findHoverableOrDropzoneAtPosition(mouse.cur.position, mem.gpa, frame_arena);
+        const hovered_or_dropzone_thing = try workspace.main_area.findHoverableOrDropzoneAtPosition(mouse.cur.position, workspace.focus.grabbing, mem.gpa, frame_arena);
 
         const hovering: Focus.Target = switch (workspace.focus.grabbing.kind) {
             else => .nothing,
@@ -3967,7 +4141,7 @@ const Workspace = struct {
             .nothing => .nothing,
         };
 
-        const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
+        const ui_hot = try workspace.main_area.findUiAtPosition(mouse.cur.position);
 
         math.lerp_towards(&workspace.toolbar_left, if (workspace.leftToolbarRect().contains(mouse.cur.position)) 1 else 0, 0.3, platform.delta_seconds);
 
@@ -3991,106 +4165,18 @@ const Workspace = struct {
                 .default,
         );
 
-        // update hover_t for sexprs, garland handles, case handles
-        const top_level_things = try workspace.topLevelThings(frame_arena);
-        for (top_level_things) |parent_address| {
-            const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
-            for (owned_sexprs) |base| {
-                const s = workspace.sexprAtPlace(base);
-                if (isGrabbedSexpr(base, workspace.focus.grabbing)) {
-                    s.is_pattern = switch (dropzone.kind) {
-                        .nothing => s.is_pattern,
-                        else => unreachable,
-                        .sexpr => |x| workspace.sexprAtPlace(x.base).is_pattern,
-                    };
-                    s.hovered.update(switch (dropzone.kind) {
-                        .sexpr => &.{},
-                        .nothing => null,
-                        else => unreachable,
-                    }, 2.0, platform.delta_seconds);
-                } else {
-                    const hovered = switch (hovering.kind) {
-                        else => null,
-                        .sexpr => |sexpr| blk: {
-                            // special case: no hover anim for base values
-                            // if (std.meta.activeTag(sexpr.base) == .board and sexpr.local.len == 0) break :blk null;
-                            break :blk if (sexpr.base.equals(base)) sexpr.local else null;
-                        },
-                    };
-                    s.hovered.update(hovered, 1.0, platform.delta_seconds);
-                }
-                s.updateIsPattern(platform.delta_seconds);
-            }
-
-            const owned_garlands = try workspace.ownedGarlands(parent_address, frame_arena);
-            for (owned_garlands) |base| {
-                const g = workspace.garlandAt(base);
-                const handle = &g.handle;
-                const hovered: f32 = switch (hovered_or_dropzone_thing.kind) {
-                    else => 0,
-                    .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
-                };
-                math.lerp_towards(&handle.hot_t, hovered, 0.6, platform.delta_seconds);
-            }
-
-            const owned_cases = try workspace.ownedCases(parent_address, frame_arena);
-            for (owned_cases) |base| {
-                const handle = workspace.caseHandleRef(base);
-                const hovered: f32 = switch (hovered_or_dropzone_thing.kind) {
-                    else => 0,
-                    .case_handle => |h| if (workspace.caseHandleRef(h) == handle) 1 else 0,
-                };
-                math.lerp_towards(&handle.hot_t, hovered, 0.6, platform.delta_seconds);
-            }
-        }
-
-        // update ui hotness
-        for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
-            fnkbox.updateUiHotness(fnkbox_index, ui_hot, workspace.focus.ui_active, platform.delta_seconds);
-        }
-
-        for (workspace.postits.items, 0..) |*postit, k| {
-            postit.button.updateHot2(switch (hovering.kind) {
-                else => false,
-                .postit => |k2| k == k2,
-            }, switch (workspace.focus.grabbing.kind) {
-                else => false,
-                .postit => |k2| k == k2,
-            }, platform.delta_seconds);
-        }
-
         math.lerp_towards(&workspace.toolbar_trash.hot_t, if (hovering_toolbar_trash) 1 else 0, 0.6, platform.delta_seconds);
 
-        // TODO: reduce duplication?
-        // update hover_t for other kinds of handles
-        for (workspace.lenses.items, 0..) |*lens, k| {
-            const hovered = switch (hovering.kind) {
-                else => null,
-                .lens_handle => |handle| if (handle.index == k) handle.part else null,
-            };
-            lens.update(hovered, platform.delta_seconds);
-        }
-        for (workspace.executors.items, 0..) |*executor, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .executor_handle => |index| if (index == k) 1 else 0,
-            };
-            executor.handle.update(hovered, platform.delta_seconds);
-        }
-        for (workspace.fnkviewers.items, 0..) |*thing, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .fnkviewer_handle => |index| if (index == k) 1 else 0,
-            };
-            thing.handle.update(hovered, platform.delta_seconds);
-        }
-        for (workspace.fnkboxes.items, 0..) |*thing, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .fnkbox_handle => |index| if (index == k) 1 else 0,
-            };
-            thing.handle.update(hovered, platform.delta_seconds);
-        }
+        try workspace.main_area.updateHotT(
+            frame_arena,
+            hovered_or_dropzone_thing,
+            hovering,
+            dropzone,
+            workspace.focus.grabbing,
+            ui_hot,
+            workspace.focus.ui_active,
+            platform.delta_seconds,
+        );
 
         // apply dragging
         const mouse_point: Point = .{ .pos = mouse.cur.position };
@@ -4546,7 +4632,7 @@ const Workspace = struct {
                             .board => {},
                             .toolbar => unreachable,
                             .garland => |t| {
-                                const garland = garlandAt(workspace, t.parent);
+                                const garland = workspace.main_area.garlandAt(t.parent);
                                 try garland.insertCase(mem.gpa, t.local, workspace.cases.items[old_k]);
                                 _ = workspace.cases.orderedRemove(old_k);
                             },
@@ -4654,19 +4740,12 @@ const Workspace = struct {
         };
     }
 
-    fn isGrabbedSexpr(thing: BaseSexprPlace, grabbed: Focus.Target) bool {
-        return grabbed.kind.equals(.{ .sexpr = .{
-            .local = &.{},
-            .base = thing,
-        } });
+    pub fn popAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
+        return workspace.main_area.popAt(target, mem);
     }
 
-    fn isGrabbedGarland(thing: GarlandHandle, grabbed: Focus.Target) bool {
-        return grabbed.kind.equals(.{ .garland_handle = thing });
-    }
-
-    fn isGrabbedCase(thing: CaseHandle, grabbed: Focus.Target) bool {
-        return grabbed.kind.equals(.{ .case_handle = thing });
+    pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
+        return workspace.main_area.unpopAt(target, value, mem);
     }
 };
 
