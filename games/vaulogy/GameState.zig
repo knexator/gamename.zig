@@ -2937,6 +2937,7 @@ const Workspace = struct {
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
         workspace.hand.deinit(gpa);
+        workspace.main_area.deinit(gpa);
 
         for (workspace.cases.items) |*c| {
             c.next.deinit(gpa);
