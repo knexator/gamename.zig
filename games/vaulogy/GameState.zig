@@ -4074,7 +4074,7 @@ const Workspace = struct {
                                     },
                                 }
                             },
-                            .sexpr => |h| {
+                            .sexpr => {
                                 const value = try workspace.fetchPut(
                                     g.at,
                                     if (g.overwritten_sexpr) |o|
@@ -4084,17 +4084,6 @@ const Workspace = struct {
                                     mem,
                                 );
                                 try workspace.unpopAt(g.old_grabbed_position, value, mem);
-
-                                if (g.overwritten_sexpr) |overwritten| {
-                                    const base = workspace.sexprAtPlace(h.base);
-                                    try base.updateSubValue(
-                                        h.local,
-                                        overwritten.value,
-                                        overwritten.hovered,
-                                        mem,
-                                        &workspace.hover_pool,
-                                    );
-                                }
                                 workspace.focus.grabbing = g.old_grabbed_position;
                             },
                         }
