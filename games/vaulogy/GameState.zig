@@ -3416,12 +3416,12 @@ const Workspace = struct {
         switch (area) {
             .hand => {
                 assert(p.local.len == 0);
-                return workspace.hand.sexprs.orderedRemove(p.base.board);
+                return workspace.hand.sexprs.swapRemove(p.base.board);
             },
             else => {
                 if (p.local.len == 0) switch (p.base) {
                     else => {},
-                    .board => |k| return workspace.main_area.sexprs.orderedRemove(k),
+                    .board => |k| return workspace.main_area.sexprs.swapRemove(k),
                 };
 
                 const base = workspace.sexprAtPlace(p.base);
@@ -3437,11 +3437,11 @@ const Workspace = struct {
                     assert(area == .main_area);
                     try workspace.sexprAtPlace(p.base).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
                 },
-                .board => |k| switch (area) {
+                .board => |k| swapInsertAssumeCapacity(VeryPhysicalSexpr, switch (area) {
                     .nowhere => unreachable,
-                    .main_area => try workspace.main_area.sexprs.insert(mem.gpa, k, v),
-                    .hand => try workspace.hand.sexprs.insert(mem.gpa, k, v),
-                },
+                    .main_area => &workspace.main_area.sexprs,
+                    .hand => &workspace.hand.sexprs,
+                }, k, v),
             }
         } else {
             try workspace.sexprAtPlace(p.base).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
@@ -4981,3 +4981,20 @@ const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
 const BindingsState = @import("physical.zig").BindingsState;
 const Sample = @import("levels_new.zig").Sample;
+
+/// Inserts the element at the specified index, and moves the element there to the end of the list.
+/// Undoes swapRemove
+/// This operation is O(1).
+/// Asserts that the index is in bounds.
+pub fn swapInsertAssumeCapacity(T: type, array: *std.ArrayListUnmanaged(T), i: usize, element: T) void {
+    assert(array.items.len < array.capacity);
+    assert(i <= array.items.len);
+    array.items.len += 1;
+    if (array.items.len - 1 == i) {
+        array.items[i] = element;
+    } else {
+        const old_last = array.items[i];
+        array.items[i] = element;
+        array.items[array.items.len - 1] = old_last;
+    }
+}
