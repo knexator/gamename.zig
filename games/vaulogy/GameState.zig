@@ -2667,19 +2667,7 @@ const Workspace = struct {
                 old_place: Focus.Target,
                 value: Focus.Value,
             },
-            dropped: struct {
-                at: Focus.Target,
-                /// only used when 'at' is of kind sexpr
-                overwritten_sexpr: ?VeryPhysicalSexpr,
-                /// only used when 'at' is of kind garland_handle
-                overwritten_garland: VeryPhysicalGarland,
-                /// for sexprs is always 'board',
-                /// for lens_handle is equal to .at,
-                /// for case_handle might be different
-                /// if it was dropped in a garland and thus
-                /// removed from its old board position.
-                old_grabbed_position: Focus.Target,
-            },
+            dropped: Dropped,
             grabbed: Grabbed,
             started_execution_fnkbox_from_input: struct {
                 fnkbox: usize,
@@ -2716,6 +2704,20 @@ const Workspace = struct {
                 point: Point,
                 is_pattern: bool,
             };
+        };
+
+        pub const Dropped = struct {
+            at: Focus.Target,
+            /// only used when 'at' is of kind sexpr
+            overwritten_sexpr: ?VeryPhysicalSexpr,
+            /// only used when 'at' is of kind garland_handle
+            overwritten_garland: VeryPhysicalGarland,
+            /// for sexprs is always 'board',
+            /// for lens_handle is equal to .at,
+            /// for case_handle might be different
+            /// if it was dropped in a garland and thus
+            /// removed from its old board position.
+            old_grabbed_position: Focus.Target,
         };
     };
 
