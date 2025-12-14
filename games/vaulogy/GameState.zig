@@ -11,6 +11,8 @@ pub const display_fps = false;
 
 const EXECUTOR_MOVES_LEFT = true;
 
+const CRANKS_ENABLED = false;
+
 comptime {
     std.testing.refAllDecls(@import("execution_tree.zig"));
 }
@@ -1318,17 +1320,19 @@ const Executor = struct {
             if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
         }
-        if (executor.crankHandle()) |c| {
-            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-            drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
-            drawer.canvas.fillCircleV2(camera, c, .white);
+        if (CRANKS_ENABLED) {
+            if (executor.crankHandle()) |c| {
+                const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+                drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
+                drawer.canvas.fillCircleV2(camera, c, .white);
+            }
+            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
+                &executor,
+                .brakePath,
+                &kommon.funktional.linspace01(10, true),
+            ), executor.handle.point.scale * 0.1, .gray(0.8));
+            drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
         }
-        drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-            &executor,
-            .brakePath,
-            &kommon.funktional.linspace01(10, true),
-        ), executor.handle.point.scale * 0.1, .gray(0.8));
-        drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
         for (executor.enqueued_stack.items) |s| try s.garland.drawWithBindings(.{
@@ -3467,11 +3471,11 @@ const Workspace = struct {
         // executors
         if (grabbed_tag == .nothing) {
             for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.brakeHandle().contains(pos)) {
+                if (executor.brakeHandle().contains(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .board = k } } };
                 }
                 if (executor.animating()) {
-                    if (executor.crankHandle().?.contains(pos)) {
+                    if (executor.crankHandle().?.contains(pos) and CRANKS_ENABLED) {
                         return .{ .kind = .{ .executor_crank_handle = .{ .board = k } } };
                     }
                 } else {
@@ -3488,11 +3492,11 @@ const Workspace = struct {
                 if (thing.execution) |execution| {
                     if (execution.executor) |executor| {
                         if (executor.crankHandle()) |handle| {
-                            if (handle.contains(pos)) {
+                            if (handle.contains(pos) and CRANKS_ENABLED) {
                                 return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } } };
                             }
                         }
-                        if (executor.brakeHandle().contains(pos)) {
+                        if (executor.brakeHandle().contains(pos) and CRANKS_ENABLED) {
                             return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } } };
                         }
                     }
