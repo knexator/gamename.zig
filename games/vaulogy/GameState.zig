@@ -3982,7 +3982,11 @@ const Workspace = struct {
 
         const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
 
+        const prev_toolbar_left = workspace.toolbar_left;
         math.lerp_towards(&workspace.toolbar_left, if (workspace.leftToolbarRect().contains(mouse.cur.position)) 1 else 0, 0.3, platform.delta_seconds);
+        if (workspace.toolbar_left > 0.1 and prev_toolbar_left <= 0.1) {
+            workspace.toolbar_case = try workspace.freshToolbarCase(mem);
+        }
 
         // TODO: should maybe be a Focus.Target as a dropzone
         const hovering_toolbar_trash: bool = switch (workspace.focus.grabbing.kind) {
@@ -4488,7 +4492,8 @@ const Workspace = struct {
                                 assert(g.duplicate);
                                 try workspace.cases.append(workspace.toolbar_case);
                                 // TODO: undoable
-                                workspace.toolbar_case = try workspace.freshToolbarCase(mem);
+                                // TODO: decide
+                                // workspace.toolbar_case = try workspace.freshToolbarCase(mem);
                                 workspace.focus.grabbing = .{ .kind = .{
                                     .case_handle = .{ .board = workspace.cases.items.len - 1 },
                                 } };
