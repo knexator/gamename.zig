@@ -2422,27 +2422,45 @@ const WorkspaceArea = struct {
         workspace.postits.deinit(workspace.gpa_for_arraylists);
     }
 
-    pub fn draw(workspace: *WorkspaceArea, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
+    pub fn draw(workspace: *WorkspaceArea, camera: Rect, holding: VeryPhysicalCase.Holding, platform: PlatformGives, drawer: *Drawer) !void {
+        // TODO: remove duplication
         for (workspace.sexprs.items) |s| {
             try s.draw(drawer, camera);
+        }
+        for (workspace.cases.items) |s| {
+            try s.draw(holding, drawer, camera);
         }
         // TODO: all the other things
         _ = platform;
     }
 
-    pub fn addOne(workspace: *WorkspaceArea, area: Workspace.Focus.Target.Area, kind: enum { sexpr }) !Focus.Target {
-        assert(kind == .sexpr);
-        _ = try workspace.sexprs.addOne(workspace.gpa_for_arraylists);
-        return .{ .kind = .{ .sexpr = .{
-            .local = &.{},
-            .base = .{ .board = workspace.sexprs.items.len - 1 },
-        } }, .area = area };
+    pub fn updateSpringsAndStuff(workspace: *WorkspaceArea, delta_seconds: f32) void {
+        for (workspace.cases.items) |*s| {
+            s.update(delta_seconds);
+        }
+    }
+
+    pub fn addOne(workspace: *WorkspaceArea, area: Workspace.Focus.Target.Area, kind: enum { sexpr, case }) !Focus.Target {
+        switch (kind) {
+            .case => {
+                _ = try workspace.cases.addOne(workspace.gpa_for_arraylists);
+                return .{ .kind = .{
+                    .case_handle = .{ .board = workspace.cases.items.len - 1 },
+                }, .area = area };
+            },
+            .sexpr => {
+                _ = try workspace.sexprs.addOne(workspace.gpa_for_arraylists);
+                return .{ .kind = .{ .sexpr = .{
+                    .local = &.{},
+                    .base = .{ .board = workspace.sexprs.items.len - 1 },
+                } }, .area = area };
+            },
+        }
     }
 };
 
 const Workspace = struct {
     lenses: std.ArrayList(Lens),
-    cases: std.ArrayList(VeryPhysicalCase),
     garlands: std.ArrayList(VeryPhysicalGarland),
     executors: std.ArrayList(Executor),
     fnkviewers: std.ArrayList(Fnkviewer),
@@ -2734,7 +2752,6 @@ const Workspace = struct {
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
         dst.lenses = .init(mem.gpa);
-        dst.cases = .init(mem.gpa);
         dst.garlands = .init(mem.gpa);
         dst.executors = .init(mem.gpa);
         dst.fnkviewers = .init(mem.gpa);
@@ -2768,12 +2785,12 @@ const Workspace = struct {
                 //     try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
             }
 
-            try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+            try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
                 .pattern = Sexpr.builtin.true,
                 .template = Sexpr.builtin.false,
                 .fnk_name = Sexpr.builtin.identity,
             }, .{ .pos = .new(0, 3) }));
-            try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+            try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
                 .pattern = Sexpr.builtin.vars.v1,
                 .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
                 .fnk_name = Sexpr.builtin.identity,
@@ -2897,7 +2914,7 @@ const Workspace = struct {
         try dst.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
         try dst.postits.append(.fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
-        try dst.cases.append(try .fromValues(&dst.hover_pool, .{
+        try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
             .pattern = try mem.storeSexpr(.doLit("a")),
             .template = try mem.storeSexpr(.doLit("b")),
             .fnk_name = Sexpr.builtin.empty,
@@ -2941,9 +2958,6 @@ const Workspace = struct {
         workspace.hand.deinit(gpa);
         workspace.main_area.deinit(gpa);
 
-        for (workspace.cases.items) |*c| {
-            c.next.deinit(gpa);
-        }
         for (workspace.garlands.items) |*g| {
             g.deinit(gpa);
         }
@@ -2962,7 +2976,6 @@ const Workspace = struct {
             }
         }
         workspace.lenses.deinit();
-        workspace.cases.deinit();
         workspace.hover_pool.deinit();
         workspace.undo_stack.deinit();
         workspace.garlands.deinit();
@@ -3102,8 +3115,9 @@ const Workspace = struct {
         const area = workspace.area;
         var result: std.ArrayListUnmanaged(Focus.Target) = try .initCapacity(
             res,
+            // TODO: revise 'main_area'
             workspace.main_area.sexprs.items.len +
-                workspace.cases.items.len +
+                workspace.main_area.cases.items.len +
                 workspace.garlands.items.len +
                 workspace.executors.items.len +
                 workspace.fnkviewers.items.len +
@@ -3115,6 +3129,7 @@ const Workspace = struct {
 
         result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .toolbar }, .area = area });
 
+        // TODO: revise 'main_area'
         for (workspace.main_area.sexprs.items, 0..) |_, k| {
             assert(area == .main_area);
             result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{
@@ -3122,7 +3137,7 @@ const Workspace = struct {
                 .local = &.{},
             } }, .area = area });
         }
-        for (workspace.cases.items, 0..) |_, k| {
+        for (workspace.main_area.cases.items, 0..) |_, k| {
             result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .{ .board = k } }, .area = area });
         }
         for (workspace.garlands.items, 0..) |_, k| {
@@ -3220,7 +3235,10 @@ const Workspace = struct {
             .executor_brake_handle,
             => null,
         })) |parent_garland_handle| {
-            const parent_garland = workspace.garlandAt(.{ .local = &.{}, .parent = parent_garland_handle });
+            const parent_garland = workspace.garlandAt(
+                .{ .local = &.{}, .parent = parent_garland_handle },
+                .main_area,
+            );
             var it = parent_garland.childGarlandsAddressIterator(res);
             while (try it.next()) |address| {
                 try result.append(res, .{
@@ -3259,7 +3277,7 @@ const Workspace = struct {
         // cases owned due to owning a garland
         const owned_garlands = try workspace.ownedGarlands(parent, res);
         for (owned_garlands) |garland_address| {
-            const garland = workspace.garlandAt(garland_address);
+            const garland = workspace.garlandAt(garland_address, .main_area);
             for (0..garland.cases.items.len) |case_index| {
                 try result.append(res, .{
                     .garland = .{
@@ -3301,10 +3319,11 @@ const Workspace = struct {
         }
     }
 
+    // TODO: take area as param
     fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace) *VeryPhysicalSexpr {
         return switch (place) {
             .board => |k| &workspace.main_area.sexprs.items[k],
-            .case => |case| workspace.caseAt(case.parent).sexprAt(case.part),
+            .case => |case| workspace.caseAt(case.parent, .main_area).sexprAt(case.part),
             .executor_input => |k| &workspace.executors.items[k].input,
             .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
@@ -3313,36 +3332,38 @@ const Workspace = struct {
         };
     }
 
-    fn caseHandleRef(workspace: *Workspace, place: CaseHandle) *Handle {
+    fn caseHandleRef(workspace: *Workspace, place: CaseHandle, area: Focus.Target.Area) *Handle {
         return switch (place) {
             .toolbar => &workspace.toolbar_case.handle,
-            .board => |k| &workspace.cases.items[k].handle,
+            .board => |k| &workspace.cases(area).items[k].handle,
             .garland => |t| if (t.existing_case)
-                &garlandAt(workspace, t.parent).cases.items[t.local].handle
+                &garlandAt(workspace, t.parent, area).cases.items[t.local].handle
             else
-                garlandAt(workspace, t.parent).handleForNewCasesRef(t.local),
+                garlandAt(workspace, t.parent, area).handleForNewCasesRef(t.local),
         };
     }
 
+    // TODO: pass area
     fn garlandHandleRef(workspace: *Workspace, place: GarlandHandle) *Handle {
-        return &workspace.garlandAt(place).handle;
+        return &workspace.garlandAt(place, .main_area).handle;
     }
 
-    fn garlandAt(workspace: *Workspace, place: GarlandHandle) *VeryPhysicalGarland {
+    fn garlandAt(workspace: *Workspace, place: GarlandHandle, area: Focus.Target.Area) *VeryPhysicalGarland {
+        assert(area == .main_area);
         return switch (place.parent) {
             .garland => |k| workspace.garlands.items[k].childGarland(place.local),
-            .case => |k| workspace.cases.items[k].next.childGarland(place.local),
+            .case => |k| workspace.main_area.cases.items[k].next.childGarland(place.local),
             .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
             .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
             .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
         };
     }
 
-    fn caseAt(workspace: *Workspace, place: CaseHandle) *VeryPhysicalCase {
+    fn caseAt(workspace: *Workspace, place: CaseHandle, area: Focus.Target.Area) *VeryPhysicalCase {
         assert(place.exists());
         return switch (place) {
-            .board => |k| &workspace.cases.items[k],
-            .garland => |t| &workspace.garlandAt(t.parent).cases.items[t.local],
+            .board => |k| &workspace.cases(area).items[k],
+            .garland => |t| &workspace.garlandAt(t.parent, area).cases.items[t.local],
             .toolbar => &workspace.toolbar_case,
         };
     }
@@ -3354,18 +3375,30 @@ const Workspace = struct {
         };
     }
 
+    pub fn dupeAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
+        return switch (target.kind) {
+            .sexpr => |h| .{ .sexpr = try workspace.sexprAtPlace(h.base).dupeSubValue(h.local, &mem.hover_pool) },
+            .case_handle => |c| switch (c) {
+                .toolbar => unreachable,
+                .board => |k| .{ .case = try workspace.cases(target.area).items[k].clone(mem.gpa, &mem.hover_pool) },
+                .garland => |t| .{ .case = try workspace.garlandAt(t.parent, target.area).cases.items[t.local].clone(mem.gpa, &mem.hover_pool) },
+            },
+            else => @panic("TODO"),
+        };
+    }
+
     pub fn popAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
         return switch (target.kind) {
             .sexpr => |p| .{ .sexpr = try workspace.popSexprAt(p, target.area, &mem.hover_pool, mem) },
             .case_handle => |c| switch (c) {
                 .toolbar => unreachable,
-                .board => |k| .{ .case = workspace.cases.orderedRemove(k) },
-                .garland => |t| .{ .case = workspace.garlandAt(t.parent).popCase(t.local) },
+                .board => |k| .{ .case = workspace.cases(target.area).swapRemove(k) },
+                .garland => |t| .{ .case = workspace.garlandAt(t.parent, target.area).popCase(t.local) },
             },
             .garland_handle => |g| .{ .garland = if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland)
                 workspace.garlands.orderedRemove(g.parent.garland)
             else blk: {
-                const place = workspace.garlandAt(g);
+                const place = workspace.garlandAt(g, target.area);
                 const garland = place.*;
                 place.* = .init(garland.handle.point);
                 break :blk garland;
@@ -3374,18 +3407,27 @@ const Workspace = struct {
         };
     }
 
+    pub fn cases(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(VeryPhysicalCase) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.cases,
+            .hand => &workspace.hand.cases,
+        };
+    }
+
     pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
         switch (target.kind) {
             .sexpr => |p| try workspace.unpopSexprAt(p, target.area, value.sexpr, &mem.hover_pool, mem),
             .case_handle => |c| switch (c) {
                 .toolbar => unreachable,
-                .board => |k| try workspace.cases.insert(k, value.case),
-                .garland => |t| try workspace.garlandAt(t.parent).insertCase(mem.gpa, t.local, value.case),
+                .board => |k| try workspace.cases(target.area).insert(mem.gpa, k, value.case),
+                .garland => |t| try workspace.garlandAt(t.parent, target.area).insertCase(mem.gpa, t.local, value.case),
             },
             .garland_handle => |g| if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland) {
+                assert(target.area == .main_area);
                 try workspace.garlands.insert(g.parent.garland, value.garland);
             } else {
-                const place = workspace.garlandAt(g);
+                const place = workspace.garlandAt(g, target.area);
                 place.* = value.garland;
             },
             else => @panic("TODO"),
@@ -3395,6 +3437,22 @@ const Workspace = struct {
     pub fn setAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
         switch (target.kind) {
             .sexpr => |p| try workspace.setSexprAt(p, target.area, value.sexpr, mem),
+            .case_handle => |h| switch (h) {
+                .board => |k| {
+                    const array = switch (target.area) {
+                        .nowhere => unreachable,
+                        .hand => &workspace.hand.cases,
+                        .main_area => &workspace.main_area.cases,
+                    };
+                    array.items[k] = value.case;
+                },
+                .toolbar => unreachable,
+                // TODO: not really a set!
+                .garland => |t| {
+                    const garland = garlandAt(workspace, t.parent, target.area);
+                    try garland.insertCase(mem.gpa, t.local, value.case);
+                },
+            },
             else => @panic("TODO"),
         }
     }
@@ -3456,21 +3514,15 @@ const Workspace = struct {
 
         const camera = workspace.camera;
 
-        // TODO: remove duplication
-        for (workspace.main_area.sexprs.items) |s| {
-            try s.draw(drawer, camera);
-        }
-
         const holding: VeryPhysicalCase.Holding = switch (workspace.focus.grabbing.kind) {
             .sexpr => .sexpr,
             .garland_handle, .case_handle => .case_or_garland,
             else => .other,
         };
 
-        for (workspace.cases.items, 0..) |c, k| {
-            if (isGrabbedCase(.{ .board = k }, workspace.focus.grabbing)) continue;
-            try c.draw(holding, drawer, camera);
-        }
+        // TODO: remove duplication
+
+        try workspace.main_area.draw(camera, holding, platform, drawer);
 
         for (workspace.garlands.items, 0..) |c, k| {
             if (isGrabbedGarland(.{ .local = &.{}, .parent = .{ .garland = k } }, workspace.focus.grabbing)) continue;
@@ -3536,12 +3588,11 @@ const Workspace = struct {
         if (workspace.toolbar_case_enabled) try workspace.toolbar_case.draw(.other, drawer, camera);
         try workspace.toolbar_trash.draw(drawer, camera);
 
-        try workspace.hand.draw(camera, platform, drawer);
+        try workspace.hand.draw(camera, .other, platform, drawer);
 
         switch (workspace.focus.grabbing.kind) {
             else => {},
-            .garland_handle => |t| try workspace.garlandAt(t).draw(.other, drawer, camera),
-            .case_handle => |t| try workspace.cases.items[t.board].draw(.other, drawer, camera),
+            .garland_handle => |t| try workspace.garlandAt(t, .main_area).draw(.other, drawer, camera),
         }
 
         if (display_fps) try drawer.canvas.drawText(
@@ -3777,7 +3828,7 @@ const Workspace = struct {
                         else => {},
                     }
 
-                    const g = workspace.garlandAt(base);
+                    const g = workspace.garlandAt(base, .main_area);
                     if (g.handle.overlapped(pos, VeryPhysicalGarland.handle_radius)) {
                         return .{ .kind = .{ .garland_handle = try base.clone(res) }, .area = workspace.area };
                     }
@@ -3789,8 +3840,7 @@ const Workspace = struct {
         for (top_level_things) |parent_address| {
             const owned_cases = try workspace.ownedCases(parent_address, scratch);
             for (owned_cases) |base| {
-                if (isGrabbedCase(base, grabbed)) continue;
-                const handle = workspace.caseHandleRef(base);
+                const handle = workspace.caseHandleRef(base, workspace.area);
 
                 // some special cases
                 switch (base) {
@@ -3969,7 +4019,7 @@ const Workspace = struct {
                                     var old = workspace.garlands.pop().?;
                                     old.deinit(mem.gpa);
                                 },
-                                .case_handle => _ = workspace.cases.pop().?,
+                                .case_handle => _ = workspace.hand.cases.pop().?,
                                 .sexpr => |h| {
                                     _ = workspace.hand.sexprs.pop().?;
                                     // visual flair
@@ -4011,22 +4061,13 @@ const Workspace = struct {
                                         garland.handle.point = g.old_data.point;
                                     } else {
                                         const garland = workspace.garlands.pop().?;
-                                        workspace.garlandAt(h).* = garland;
+                                        workspace.garlandAt(h, g.from.area).* = garland;
                                     }
                                 },
-                                .case_handle => |h| {
-                                    switch (h) {
-                                        .toolbar => unreachable,
-                                        .board => |k| {
-                                            const case = &workspace.cases.items[k];
-                                            case.handle.point = g.old_data.point;
-                                        },
-                                        .garland => |t| {
-                                            const case = workspace.cases.pop().?;
-                                            const garland = workspace.garlandAt(t.parent);
-                                            try garland.insertCase(mem.gpa, t.local, case);
-                                        },
-                                    }
+                                .case_handle => {
+                                    var case = workspace.hand.cases.pop().?;
+                                    case.handle.point = g.old_data.point;
+                                    try workspace.unpopAt(g.from, .{ .case = case }, mem);
                                 },
                                 .sexpr => |h| {
                                     var old = workspace.hand.sexprs.pop().?;
@@ -4055,26 +4096,16 @@ const Workspace = struct {
                                     workspace.focus.grabbing = g.at;
                                 } else {
                                     try workspace.garlands.insert(old_k, undefined);
-                                    const place = workspace.garlandAt(h);
+                                    const place = workspace.garlandAt(h, g.at.area);
                                     const garland = place.*;
                                     place.* = g.overwritten_garland;
                                     workspace.garlands.items[old_k] = garland;
                                 }
                             },
-                            .case_handle => |h| {
-                                const old_k = g.old_grabbed_position.kind.case_handle.board;
-                                switch (h) {
-                                    .toolbar => unreachable,
-                                    .board => {
-                                        workspace.focus.grabbing = g.at;
-                                    },
-                                    .garland => |t| {
-                                        try workspace.cases.insert(old_k, undefined);
-                                        const garland = workspace.garlandAt(t.parent);
-                                        const case = garland.popCase(t.local);
-                                        workspace.cases.items[old_k] = case;
-                                    },
-                                }
+                            .case_handle => { // |h| {
+                                const case = try workspace.popAt(g.at, mem);
+                                try workspace.unpopAt(g.old_grabbed_position, case, mem);
+                                workspace.focus.grabbing = g.old_grabbed_position;
                             },
                             .sexpr => {
                                 const value = try workspace.fetchPut(
@@ -4169,7 +4200,7 @@ const Workspace = struct {
 
             const owned_garlands = try workspace.ownedGarlands(parent_address, frame_arena);
             for (owned_garlands) |base| {
-                const g = workspace.garlandAt(base);
+                const g = workspace.garlandAt(base, workspace.area);
                 const handle = &g.handle;
                 const hovered: f32 = switch (hovered_or_dropzone_thing.kind) {
                     else => 0,
@@ -4180,10 +4211,10 @@ const Workspace = struct {
 
             const owned_cases = try workspace.ownedCases(parent_address, frame_arena);
             for (owned_cases) |base| {
-                const handle = workspace.caseHandleRef(base);
+                const handle = workspace.caseHandleRef(base, workspace.area);
                 const hovered: f32 = switch (hovered_or_dropzone_thing.kind) {
                     else => 0,
-                    .case_handle => |h| if (workspace.caseHandleRef(h) == handle) 1 else 0,
+                    .case_handle => |h| if (workspace.caseHandleRef(h, workspace.area) == handle) 1 else 0,
                 };
                 math.lerp_towards(&handle.hot_t, hovered, 0.6, platform.delta_seconds);
             }
@@ -4260,7 +4291,7 @@ const Workspace = struct {
             .fnkbox_handle => |h| {
                 workspace.fnkboxes.items[h].handle.point = mouse_point;
             },
-            .case_handle => |p| workspace.caseHandleRef(p).point = mouse_point,
+            .case_handle => |p| workspace.caseHandleRef(p, workspace.focus.grabbing.area).point = mouse_point,
             .garland_handle => |p| workspace.garlandHandleRef(p).point = mouse_point,
             .sexpr => |g| {
                 assert(g.local.len == 0);
@@ -4295,7 +4326,8 @@ const Workspace = struct {
 
         // update spring positions, and update in general (TODO: maybe separate, or join with hover_t)
         // TODO: remove duplication
-        for (workspace.cases.items) |*c| {
+        workspace.hand.updateSpringsAndStuff(platform.delta_seconds);
+        for (workspace.cases(.main_area).items) |*c| {
             c.update(platform.delta_seconds);
         }
 
@@ -4392,7 +4424,7 @@ const Workspace = struct {
                     else => unreachable,
                     .nothing => .{ .specific = .{
                         .dropped = .{
-                            .at = workspace.focus.grabbing,
+                            .at = try workspace.main_area.addOne(.main_area, .case),
                             .old_grabbed_position = workspace.focus.grabbing,
                             .overwritten_sexpr = undefined,
                             .overwritten_garland = undefined,
@@ -4418,7 +4450,7 @@ const Workspace = struct {
                         .overwritten_sexpr = undefined,
                         .overwritten_garland = switch (dropzone.kind) {
                             .nothing => undefined,
-                            .garland_handle => |h| workspace.garlandAt(h).*,
+                            .garland_handle => |h| workspace.garlandAt(h, dropzone.area).*,
                             else => unreachable,
                         },
                     },
@@ -4573,7 +4605,7 @@ const Workspace = struct {
                         if (!g.duplicate and h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {
                             workspace.focus.grabbing = g.from;
                         } else {
-                            const place = workspace.garlandAt(h);
+                            const place = workspace.garlandAt(h, g.from.area);
                             if (g.duplicate) {
                                 const garland = try place.clone(mem.gpa, &workspace.hover_pool);
                                 try workspace.garlands.append(garland);
@@ -4592,41 +4624,19 @@ const Workspace = struct {
                     },
                     .case_handle => |h| {
                         assert(h.exists());
-                        switch (h) {
-                            .board => |k| {
-                                if (g.duplicate) {
-                                    const case = try workspace.cases.items[k].clone(mem.gpa, &workspace.hover_pool);
-                                    try workspace.cases.append(case);
-                                    // TODO: lens transform?
-                                    workspace.focus.grabbing = .{ .kind = .{
-                                        .case_handle = .{ .board = workspace.cases.items.len - 1 },
-                                    }, .area = workspace.area };
-                                } else {
-                                    workspace.focus.grabbing = g.from;
-                                }
-                            },
-                            .garland => |t| {
-                                const garland = workspace.garlandAt(t.parent);
-                                const case = if (g.duplicate)
-                                    try garland.cases.items[t.local].clone(mem.gpa, &workspace.hover_pool)
-                                else
-                                    garland.popCase(t.local);
-                                try workspace.cases.append(case);
-                                // TODO: lens transform?
-                                workspace.focus.grabbing = .{ .kind = .{
-                                    .case_handle = .{ .board = workspace.cases.items.len - 1 },
-                                }, .area = .hand };
-                            },
-                            .toolbar => {
-                                assert(g.duplicate);
-                                try workspace.cases.append(workspace.toolbar_case);
-                                // TODO: undoable
-                                workspace.toolbar_case = try workspace.freshToolbarCase(mem);
-                                workspace.focus.grabbing = .{ .kind = .{
-                                    .case_handle = .{ .board = workspace.cases.items.len - 1 },
-                                }, .area = .hand };
-                            },
-                        }
+                        const original = if (g.duplicate)
+                            try workspace.dupeAt(g.from, mem)
+                        else
+                            try workspace.popAt(g.from, mem);
+
+                        try workspace.hand.cases.append(mem.gpa, original.case);
+                        workspace.focus.grabbing = .{ .kind = .{ .case_handle = .{
+                            .board = workspace.hand.cases.items.len - 1,
+                        } }, .area = .hand };
+
+                        // TODO: toolbar refresh
+                        // TODO: undoable
+                        // workspace.toolbar_case = try workspace.freshToolbarCase(mem);
                     },
                     .sexpr => |h| {
                         const original = if (g.duplicate)
@@ -4664,7 +4674,7 @@ const Workspace = struct {
                     => {},
                     .garland_handle => |h| {
                         if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {} else {
-                            const place = workspace.garlandAt(h);
+                            const place = workspace.garlandAt(h, g.at.area);
                             const k = g.old_grabbed_position.kind.garland_handle.parent.garland;
                             assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
                             const garland = workspace.garlands.items[k];
@@ -4672,22 +4682,10 @@ const Workspace = struct {
                             _ = workspace.garlands.orderedRemove(k);
                         }
                     },
-                    .case_handle => |h| {
-                        const old_k = g.old_grabbed_position.kind.case_handle.board;
-                        switch (h) {
-                            .board => {},
-                            .toolbar => unreachable,
-                            .garland => |t| {
-                                const garland = garlandAt(workspace, t.parent);
-                                try garland.insertCase(mem.gpa, t.local, workspace.cases.items[old_k]);
-                                _ = workspace.cases.orderedRemove(old_k);
-                            },
-                        }
-                    },
-                    .sexpr => {
+                    .sexpr, .case_handle => {
                         assert(g.old_grabbed_position.area == .hand);
-                        assert(std.meta.activeTag(g.old_grabbed_position.kind.sexpr.base) == .board);
-                        assert(g.old_grabbed_position.kind.sexpr.local.len == 0);
+                        // assert(std.meta.activeTag(g.old_grabbed_position.kind.sexpr.base) == .board);
+                        // assert(g.old_grabbed_position.kind.sexpr.local.len == 0);
                         assert(g.at.area != .hand);
                         const grabbed = try workspace.popAt(g.old_grabbed_position, mem);
                         try workspace.setAt(g.at, grabbed, mem);
@@ -4772,7 +4770,7 @@ const Workspace = struct {
             .executor_brake_handle => |h| workspace.executorAt(h).brakeHandle().asPoint(),
             .fnkviewer_handle => |h| workspace.fnkviewers.items[h].handle.point,
             .fnkbox_handle => |h| workspace.fnkboxes.items[h].handle.point,
-            .case_handle => |h| workspace.caseHandleRef(h).point,
+            .case_handle => |h| workspace.caseHandleRef(h, thing.area).point,
             .garland_handle => |k| workspace.garlandHandleRef(k).point,
             .sexpr => |s| workspace.sexprAtPlace(s.base).point,
         };
@@ -4790,10 +4788,6 @@ const Workspace = struct {
 
     fn isGrabbedGarland(thing: GarlandHandle, grabbed: Focus.Target) bool {
         return grabbed.kind.equals(.{ .garland_handle = thing });
-    }
-
-    fn isGrabbedCase(thing: CaseHandle, grabbed: Focus.Target) bool {
-        return grabbed.kind.equals(.{ .case_handle = thing });
     }
 };
 
