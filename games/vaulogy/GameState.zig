@@ -11,6 +11,8 @@ pub const display_fps = false;
 
 const EXECUTOR_MOVES_LEFT = true;
 
+const CRANKS_ENABLED = false;
+
 comptime {
     std.testing.refAllDecls(@import("execution_tree.zig"));
 }
@@ -1318,17 +1320,19 @@ const Executor = struct {
             if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
             if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
         }
-        if (executor.crankHandle()) |c| {
-            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-            drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
-            drawer.canvas.fillCircleV2(camera, c, .white);
+        if (CRANKS_ENABLED) {
+            if (executor.crankHandle()) |c| {
+                const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+                drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
+                drawer.canvas.fillCircleV2(camera, c, .white);
+            }
+            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
+                &executor,
+                .brakePath,
+                &kommon.funktional.linspace01(10, true),
+            ), executor.handle.point.scale * 0.1, .gray(0.8));
+            drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
         }
-        drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-            &executor,
-            .brakePath,
-            &kommon.funktional.linspace01(10, true),
-        ), executor.handle.point.scale * 0.1, .gray(0.8));
-        drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
         for (executor.enqueued_stack.items) |s| try s.garland.drawWithBindings(.{
@@ -2761,7 +2765,7 @@ const Workspace = struct {
         dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
 
-        if (true) {
+        if (false) {
             try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
                 .{},
                 &.{ .right, .left },
@@ -2853,7 +2857,6 @@ const Workspace = struct {
             }
         }
 
-        // TODO: use all levels
         const levels = @import("levels_new.zig").levels;
         // const levels = @import("levels_new.zig").levels; //[0..5];
         var x: f32 = 100;
@@ -3663,11 +3666,11 @@ const Workspace = struct {
         // executors
         if (grabbed_tag == .nothing) {
             for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.brakeHandle().contains(pos)) {
+                if (executor.brakeHandle().contains(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .board = k } }, .area = workspace.area };
                 }
                 if (executor.animating()) {
-                    if (executor.crankHandle().?.contains(pos)) {
+                    if (executor.crankHandle().?.contains(pos) and CRANKS_ENABLED) {
                         return .{ .kind = .{ .executor_crank_handle = .{ .board = k } }, .area = workspace.area };
                     }
                 } else {
@@ -3684,11 +3687,11 @@ const Workspace = struct {
                 if (thing.execution) |execution| {
                     if (execution.executor) |executor| {
                         if (executor.crankHandle()) |handle| {
-                            if (handle.contains(pos)) {
+                            if (handle.contains(pos) and CRANKS_ENABLED) {
                                 return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
                             }
                         }
-                        if (executor.brakeHandle().contains(pos)) {
+                        if (executor.brakeHandle().contains(pos) and CRANKS_ENABLED) {
                             return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };
                         }
                     }
@@ -4144,7 +4147,11 @@ const Workspace = struct {
 
         const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
 
+        const prev_toolbar_left = workspace.toolbar_left;
         math.lerp_towards(&workspace.toolbar_left, if (workspace.leftToolbarRect().contains(mouse.cur.position)) 1 else 0, 0.3, platform.delta_seconds);
+        if (workspace.toolbar_left > 0.1 and prev_toolbar_left <= 0.1) {
+            workspace.toolbar_case = try workspace.freshToolbarCase(mem);
+        }
 
         // TODO: should maybe be a Focus.Target as a dropzone
         const hovering_toolbar_trash: bool = switch (workspace.focus.grabbing.kind) {
@@ -4634,7 +4641,7 @@ const Workspace = struct {
                             .board = workspace.hand.cases.items.len - 1,
                         } }, .area = .hand };
 
-                        // TODO: toolbar refresh
+                        // TODO: toolbar refresh, decide
                         // TODO: undoable
                         // workspace.toolbar_case = try workspace.freshToolbarCase(mem);
                     },
