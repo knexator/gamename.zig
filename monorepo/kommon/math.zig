@@ -1082,6 +1082,41 @@ pub const Rect = extern struct {
         };
     }
 
+    pub fn transformBetweenRects(old_rect: Rect, new_rect: Rect) Point {
+        assert(std.math.approxEqAbs(
+            f32,
+            old_rect.size.aspectRatio(),
+            new_rect.size.aspectRatio(),
+            0.001,
+        ));
+
+        return Rect.pointAsIf(new_rect, .{}, old_rect);
+    }
+
+    pub fn transform(original: Rect, transformation: Point) Rect {
+        assert(std.math.approxEqAbs(f32, transformation.turns, 0, 0.001));
+        return .{
+            .top_left = transformation.applyToLocalPosition(original.top_left),
+            .size = original.size.scale(transformation.scale),
+        };
+    }
+
+    test "transformBetweenRects" {
+        try Point.expectApproxEqAbs(.{ .pos = .one }, transformBetweenRects(
+            .unit,
+            Rect.unit.move(.one),
+        ), 0.001);
+
+        const transformation: Point = .{ .pos = .new(2, 1), .scale = 3 };
+        const original_rect: Rect = .unit;
+        const transformed_rect: Rect = original_rect.transform(transformation);
+
+        try Point.expectApproxEqAbs(transformation, transformBetweenRects(
+            original_rect,
+            transformed_rect,
+        ), 0.001);
+    }
+
     pub fn intersect(a: Rect, b: Rect) ?Rect {
         const a_left = a.top_left.x;
         const a_right = a.top_left.x + a.size.x;
@@ -1840,10 +1875,6 @@ pub const Point = extern struct {
             .scale = parent.scale * local.scale,
             .turns = parent.turns + local.turns,
         };
-    }
-
-    pub fn applyToLocalPointInPlace(parent: *Point, local: Point) void {
-        parent.* = parent.applyToLocalPoint(local);
     }
 
     pub fn expectApproxEqRel(expected: Point, actual: Point, tolerance: anytype) !void {
