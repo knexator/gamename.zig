@@ -2654,7 +2654,7 @@ const Workspace = struct {
         dst.toolbar_case = try dst.freshToolbarCase(mem);
         dst.toolbar_trash = .{ .rect = .unit };
 
-        if (true) {
+        if (false) {
             try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
                 .{},
                 &.{ .right, .left },
@@ -2746,7 +2746,6 @@ const Workspace = struct {
             }
         }
 
-        // TODO: use all levels
         const levels = @import("levels_new.zig").levels;
         // const levels = @import("levels_new.zig").levels; //[0..5];
         var x: f32 = 100;

@@ -378,7 +378,7 @@ pub fn deinit(self: *Canvas, gl: Gl, gpa: std.mem.Allocator) void {
 }
 
 pub fn drawDirty(
-    self: Canvas,
+    self: *const Canvas,
     comptime renderable_info: struct {
         /// without preamble!
         vertex_src: [:0]const u8,
@@ -499,7 +499,7 @@ pub fn fillShapeWithVertexColors(
 // TODO: multiple shapes in one draw call
 // maybe by having this hidden behind a batch API
 pub fn fillShape(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     parent: Point,
     shape: PrecomputedShape,
@@ -533,7 +533,7 @@ pub fn fillShape(
 }
 
 pub fn fillCircleV2(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     circle: math.Circle,
     color: FColor,
@@ -542,7 +542,7 @@ pub fn fillCircleV2(
 }
 
 pub fn fillCircle(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     center: Vec2,
     radius: f32,
@@ -557,7 +557,7 @@ pub fn fillCircle(
 }
 
 pub fn fillSquare(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     top_left: Vec2,
     side: f32,
@@ -888,7 +888,7 @@ pub fn Drawable(
 }
 
 // pub fn sprite(
-//     self: Canvas,
+//     self: *const Canvas,
 //     camera: Rect,
 //     point: Point,
 //     pivot: Rect.MeasureKind,
@@ -929,7 +929,7 @@ pub fn Drawable(
 // }
 
 pub fn fillRectWithRoundCorners(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     rect: Rect,
     circle_radius: f32,
@@ -943,7 +943,7 @@ pub fn fillRectWithRoundCorners(
 }
 
 pub fn fillRect(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     rect: Rect,
     color: FColor,
@@ -966,7 +966,7 @@ pub fn fillRect(
 }
 
 pub fn borderRect(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     rect: Rect,
     width: f32,
@@ -993,7 +993,7 @@ pub fn borderRect(
 }
 
 pub fn strokeRect(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     rect: Rect,
     width: f32,
@@ -1014,7 +1014,7 @@ pub fn strokeRect(
 }
 
 pub fn strokeCircle(
-    self: Canvas,
+    self: *const Canvas,
     comptime resolution: usize,
     camera: Rect,
     center: Vec2,
@@ -1074,7 +1074,7 @@ pub const InstancedShapeInfo = extern struct {
 };
 
 pub fn fillShapesInstanced(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     shape: PrecomputedShape,
     instances: []const InstancedShapeInfo,
@@ -1116,7 +1116,7 @@ pub fn fillInstancedCircles(
 
 // // https://wwwtyro.net/2019/11/18/instanced-lines.html
 pub fn line(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     points: []const Vec2,
     world_width: f32,
@@ -1185,7 +1185,7 @@ pub fn line(
 
 pub const Segment = extern struct { a: Vec2, b: Vec2, color: FColor };
 pub fn instancedSegments(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     segments: []const Segment,
     world_width: f32,
@@ -1276,7 +1276,7 @@ pub fn rectGradient(
 
 pub const FilledRect = extern struct { pos: Rect, color: FColor };
 pub fn fillRects(
-    self: Canvas,
+    self: *const Canvas,
     camera: Rect,
     rects: []const FilledRect,
 ) void {
