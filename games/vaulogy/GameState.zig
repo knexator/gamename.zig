@@ -2455,8 +2455,92 @@ const WorkspaceArea = struct {
         for (workspace.garlands.items) |s| {
             try s.draw(holding, drawer, camera);
         }
-        // TODO: all the other things
-        _ = platform;
+
+        inline for (.{
+            workspace.fnkboxes.items,
+            workspace.executors.items,
+            workspace.fnkviewers.items,
+        }) |things| {
+            for (things) |g| {
+                try g.draw(holding, drawer, camera);
+            }
+        }
+
+        inline for (.{
+            workspace.traces.items,
+            workspace.postits.items,
+        }) |things| {
+            for (things) |g| {
+                try g.draw(drawer, camera);
+            }
+        }
+
+        for (workspace.lenses.items) |lens| {
+            drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
+
+            if (camera.plusMargin(lens.target_radius + 1).contains(lens.target)) {
+                platform.gl.startStencil();
+                drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
+                platform.gl.doneStencil();
+                defer platform.gl.stopStencil();
+
+                for (lens.tmp_visible_sexprs.items) |s| {
+                    var scaled = workspace.sexprAtPlace(s.original_place).*;
+                    scaled.point = s.lens_transform.actOn(scaled.point);
+                    try scaled.draw(drawer, camera);
+                }
+            }
+
+            drawer.canvas.line(camera, &.{
+                lens.source.towardsPure(lens.target, lens.source_radius),
+                lens.target.towardsPure(lens.source, lens.target_radius),
+            }, 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
+            drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
+            drawer.canvas.fillCircle(
+                camera,
+                lens.sourceHandlePos(),
+                Lens.handle_radius * (1.0 + 0.2 * lens.source_hot_t),
+                .black,
+            );
+            drawer.canvas.fillCircle(
+                camera,
+                lens.targetHandlePos(),
+                Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
+                .black,
+            );
+        }
+    }
+
+    pub fn updateLensesData(workspace: *WorkspaceArea, frame_arena: std.mem.Allocator) !void {
+        // set lenses data
+        for (workspace.lenses.items, 0..) |*lens, lens_index| {
+            lens.tmp_visible_sexprs = .empty;
+
+            // TODO: cull and only store visible parts
+
+            const top_level_things = try workspace.topLevelThings(frame_arena);
+            for (top_level_things) |parent_address| {
+                const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
+                for (owned_sexprs) |base| {
+                    try lens.tmp_visible_sexprs.append(frame_arena, .{
+                        .original_place = base,
+                        .lens_transform = lens.getTransform(),
+                    });
+                }
+            }
+
+            for (0..lens_index) |other_lens_index| {
+                const other_lens = workspace.lenses.items[other_lens_index];
+                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
+                for (other_lens.tmp_visible_sexprs.items) |s| {
+                    try lens.tmp_visible_sexprs.append(frame_arena, .{
+                        .original_place = s.original_place,
+                        .lens_transform = .combine(s.lens_transform, lens.getTransform()),
+                    });
+                }
+            }
+        }
     }
 
     pub fn updateSpringsAndStuff(workspace: *WorkspaceArea, delta_seconds: f32) void {
@@ -2466,6 +2550,10 @@ const WorkspaceArea = struct {
 
         for (workspace.garlands.items) |*g| {
             g.update(delta_seconds);
+        }
+
+        for (workspace.traces.items) |*c| {
+            c.update(delta_seconds);
         }
     }
 
@@ -2537,6 +2625,37 @@ const WorkspaceArea = struct {
                 };
                 math.lerp_towards(&handle.hot_t, hovered, 0.6, delta_seconds);
             }
+        }
+
+        // TODO: reduce duplication?
+        // update hover_t for other kinds of handles
+        for (workspace.lenses.items, 0..) |*lens, k| {
+            const hovered = switch (hovering.kind) {
+                else => null,
+                .lens_handle => |handle| if (handle.index == k) handle.part else null,
+            };
+            lens.update(hovered, delta_seconds);
+        }
+        for (workspace.executors.items, 0..) |*executor, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .executor_handle => |index| if (index == k) 1 else 0,
+            };
+            executor.handle.update(hovered, delta_seconds);
+        }
+        for (workspace.fnkviewers.items, 0..) |*thing, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .fnkviewer_handle => |index| if (index == k) 1 else 0,
+            };
+            thing.handle.update(hovered, delta_seconds);
+        }
+        for (workspace.fnkboxes.items, 0..) |*thing, k| {
+            const hovered: f32 = switch (hovering.kind) {
+                else => 0,
+                .fnkbox_handle => |index| if (index == k) 1 else 0,
+            };
+            thing.handle.update(hovered, delta_seconds);
         }
     }
 
@@ -3046,13 +3165,7 @@ const WorkspaceArea = struct {
 };
 
 const Workspace = struct {
-    lenses: std.ArrayList(Lens),
-    executors: std.ArrayList(Executor),
-    fnkviewers: std.ArrayList(Fnkviewer),
-    fnkboxes: std.ArrayList(Fnkbox),
-    traces: std.ArrayList(ExecutionTrace),
     toolbar_trash: ToolbarTrash,
-    postits: std.ArrayList(Postit),
 
     hand: WorkspaceArea,
     main_area: WorkspaceArea,
@@ -3344,20 +3457,14 @@ const Workspace = struct {
 
         dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
 
-        dst.lenses = .init(mem.gpa);
-        dst.executors = .init(mem.gpa);
-        dst.fnkviewers = .init(mem.gpa);
-        dst.fnkboxes = .init(mem.gpa);
-        dst.traces = .init(mem.gpa);
-        dst.postits = .init(mem.gpa);
         dst.toolbar_trash = .{ .rect = .unit };
 
         if (true) {
-            try dst.lenses.append(.{ .source = ViewHelper.sexprTemplateChildView(
+            try dst.main_area.lenses.append(mem.gpa, .{ .source = ViewHelper.sexprTemplateChildView(
                 .{},
                 &.{ .right, .left },
             ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
-            try dst.lenses.append(.{ .source = .new(3, 0), .target = .new(6, 0) });
+            try dst.main_area.lenses.append(mem.gpa, .{ .source = .new(3, 0), .target = .new(6, 0) });
 
             var random: std.Random.DefaultPrng = .init(1);
             try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
@@ -3415,9 +3522,9 @@ const Workspace = struct {
                 .fnk_name = valid[0],
             }, dst.main_area.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(6, 0) })));
 
-            try dst.executors.append(try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
+            try dst.main_area.executors.append(mem.gpa, try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
 
-            try dst.fnkviewers.append(try .init(.{ .pos = .new(-10, -7) }, &dst.hover_pool));
+            try dst.main_area.fnkviewers.append(mem.gpa, try .init(.{ .pos = .new(-10, -7) }, &dst.hover_pool));
 
             if (false) {
                 const debug_fnk = try core.parsing.parseSingleFnk(
@@ -3455,7 +3562,8 @@ const Workspace = struct {
                 }
                 break :blk try samples.toOwnedSlice(mem.scratch.allocator());
             };
-            try dst.fnkboxes.append(
+            try dst.main_area.fnkboxes.append(
+                mem.gpa,
                 try .init(
                     level.description,
                     level.fnk_name,
@@ -3471,11 +3579,11 @@ const Workspace = struct {
 
         var postit_pos: Vec2 = .new(33, -3);
         dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
-        try dst.postits.append(.fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
         postit_pos.addInPlace(.new(12, 4));
-        try dst.postits.append(.fromText(&.{ "Move around", "with WASD", "or Arrow Keys" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Move around", "with WASD", "or Arrow Keys" }, postit_pos));
         postit_pos.addInPlace(.new(-15, 5));
-        try dst.postits.append(.fromText(&.{ "Left click", "to pick up", "Atoms ->" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Left click", "to pick up", "Atoms ->" }, postit_pos));
         postit_pos.addInPlace(.new(4.5, 1.25));
         try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(
             &dst.hover_pool,
@@ -3496,20 +3604,20 @@ const Workspace = struct {
             false,
         ));
         postit_pos.addInPlace(.new(5.5, 5.5));
-        try dst.postits.append(.fromText(&.{ "Right click to", "duplicate them" }, postit_pos));
-        try dst.postits.append(.fromText(&.{"Z to undo"}, postit_pos.add(.new(6.5, 0.7))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Right click to", "duplicate them" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Z to undo"}, postit_pos.add(.new(6.5, 0.7))));
 
         postit_pos.addInPlace(.new(19, -14));
-        try dst.postits.append(.fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
         try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
             .pattern = try mem.storeSexpr(.doLit("a")),
             .template = try mem.storeSexpr(.doLit("b")),
             .fnk_name = Sexpr.builtin.empty,
         }, .{ .pos = postit_pos.addY(5) }));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
         try dst.main_area.garlands.append(mem.gpa, try .fromDefinition(.{ .pos = postit_pos.addY(5) }, .{ .cases = &.{
             .{
                 .pattern = try mem.storeSexpr(.doLit("a")),
@@ -3525,50 +3633,28 @@ const Workspace = struct {
             },
         } }, mem, &mem.hover_pool));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.postits.append(.fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
-        try dst.postits.append(.fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
         postit_pos.addInPlace(.new(25, -2));
-        try dst.postits.append(.fromText(&.{"Your turn!"}, postit_pos));
-        try dst.postits.append(.fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Your turn!"}, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
         postit_pos.addInPlace(.new(25, 0));
         postit_pos.addInPlace(.new(7, -6.1));
-        try dst.postits.append(.fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
-        try dst.postits.append(.fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
-        try dst.postits.append(.fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
         postit_pos.addInPlace(.new(25, 1));
-        try dst.postits.append(.fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
 
         try dst.canonizeAfterChanges(mem);
     }
 
     pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
+        workspace.toolbar.deinit(gpa);
         workspace.hand.deinit(gpa);
         workspace.main_area.deinit(gpa);
-
-        inline for (.{
-            workspace.executors.items,
-            workspace.fnkviewers.items,
-            workspace.fnkboxes.items,
-            workspace.traces.items,
-        }) |things| {
-            for (things) |*e| {
-                if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
-                    e.deinit(gpa);
-                } else {
-                    e.garland.deinit(gpa);
-                }
-            }
-        }
-        workspace.lenses.deinit();
-        workspace.hover_pool.deinit();
-        workspace.undo_stack.deinit();
-        workspace.executors.deinit();
-        workspace.fnkviewers.deinit();
-        workspace.fnkboxes.deinit();
-        workspace.traces.deinit();
-        workspace.postits.deinit();
     }
 
     fn freshToolbarCase(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !VeryPhysicalCase {
@@ -3937,9 +4023,9 @@ const Workspace = struct {
         return switch (place.parent) {
             .garland => |k| workspace.garlands(area).items[k].childGarland(place.local),
             .case => |k| workspace.cases(area).items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
-            .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
-            .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
+            .executor => |k| workspace.executors(area).items[k].garland.childGarland(place.local),
+            .fnkviewer => |k| workspace.fnkviewers(area).items[k].garland.childGarland(place.local),
+            .fnkbox => |k| workspace.fnkboxes(area).items[k].garland.childGarland(place.local),
         };
     }
 
@@ -3951,10 +4037,10 @@ const Workspace = struct {
         };
     }
 
-    fn executorAt(workspace: *Workspace, place: ExecutorPlace) *Executor {
+    fn executorAt(workspace: *Workspace, place: ExecutorPlace, area: Focus.Target.Area) *Executor {
         return switch (place) {
-            .fnkbox => |k| &workspace.fnkboxes.items[k].execution.?.executor.?,
-            .board => |k| &workspace.executors.items[k],
+            .fnkbox => |k| &workspace.fnkboxes(area).items[k].execution.?.executor.?,
+            .board => |k| &workspace.executors(area).items[k],
         };
     }
 
@@ -4005,6 +4091,51 @@ const Workspace = struct {
             .main_area => &workspace.main_area.garlands,
             .hand => &workspace.hand.garlands,
             .toolbar => &workspace.toolbar.garlands,
+        };
+    }
+
+    pub fn executors(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Executor) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.executors,
+            .hand => &workspace.hand.executors,
+            .toolbar => &workspace.toolbar.executors,
+        };
+    }
+
+    pub fn fnkviewers(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Fnkviewer) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.fnkviewers,
+            .hand => &workspace.hand.fnkviewers,
+            .toolbar => &workspace.toolbar.fnkviewers,
+        };
+    }
+
+    pub fn fnkboxes(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Fnkbox) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.fnkboxes,
+            .hand => &workspace.hand.fnkboxes,
+            .toolbar => &workspace.toolbar.fnkboxes,
+        };
+    }
+
+    pub fn postits(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Postit) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.postits,
+            .hand => &workspace.hand.postits,
+            .toolbar => &workspace.toolbar.postits,
+        };
+    }
+
+    pub fn lenses(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Lens) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.lenses,
+            .hand => &workspace.hand.lenses,
+            .toolbar => &workspace.toolbar.lenses,
         };
     }
 
@@ -4113,66 +4244,6 @@ const Workspace = struct {
 
         try workspace.main_area.draw(camera, holding, platform, drawer);
 
-        for (workspace.main_area.garlands.items) |c| {
-            try c.draw(holding, drawer, camera);
-        }
-
-        inline for (.{
-            workspace.fnkboxes.items,
-            workspace.executors.items,
-            workspace.fnkviewers.items,
-        }) |things| {
-            for (things) |g| {
-                try g.draw(holding, drawer, camera);
-            }
-        }
-
-        inline for (.{
-            workspace.traces.items,
-            workspace.postits.items,
-        }) |things| {
-            for (things) |g| {
-                try g.draw(drawer, camera);
-            }
-        }
-
-        for (workspace.lenses.items) |lens| {
-            drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
-
-            if (camera.plusMargin(lens.target_radius + 1).contains(lens.target)) {
-                platform.gl.startStencil();
-                drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
-                platform.gl.doneStencil();
-                defer platform.gl.stopStencil();
-
-                for (lens.tmp_visible_sexprs.items) |s| {
-                    // TODO: area agnostic
-                    var scaled = workspace.sexprAtPlace(s.original_place, .main_area).*;
-                    scaled.point = s.lens_transform.actOn(scaled.point);
-                    try scaled.draw(drawer, camera);
-                }
-            }
-
-            drawer.canvas.line(camera, &.{
-                lens.source.towardsPure(lens.target, lens.source_radius),
-                lens.target.towardsPure(lens.source, lens.target_radius),
-            }, 0.05, .black);
-            drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
-            drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
-            drawer.canvas.fillCircle(
-                camera,
-                lens.sourceHandlePos(),
-                Lens.handle_radius * (1.0 + 0.2 * lens.source_hot_t),
-                .black,
-            );
-            drawer.canvas.fillCircle(
-                camera,
-                lens.targetHandlePos(),
-                Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
-                .black,
-            );
-        }
-
         drawer.canvas.fillRect(workspace.leftToolbarCamera(), left_toolbar_rect_ideal, .gray(0.4));
         try workspace.toolbar_trash.draw(drawer, camera);
         try workspace.toolbar.draw(workspace.leftToolbarCamera(), .other, platform, drawer);
@@ -4211,7 +4282,7 @@ const Workspace = struct {
     }
 
     fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
-        for (workspace.fnkboxes.items, 0..) |fnkbox, fnkbox_index| {
+        for (workspace.fnkboxes(.main_area).items, 0..) |fnkbox, fnkbox_index| {
             if (fnkbox.fold_button.rect.contains(pos)) {
                 return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
             }
@@ -4481,8 +4552,8 @@ const Workspace = struct {
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
-        for (workspace.fnkboxes.items) |*fnkbox| {
-            try fnkbox.updateStatus(workspace.fnkboxes.items, mem);
+        for (workspace.main_area.fnkboxes.items) |*fnkbox| {
+            try fnkbox.updateStatus(workspace.main_area.fnkboxes.items, mem);
         }
         // TODO: remove this debug
         workspace.toolbar_case_enabled = true or
@@ -4507,34 +4578,9 @@ const Workspace = struct {
             left_toolbar_rect_ideal,
         );
 
-        // set lenses data
-        for (workspace.lenses.items, 0..) |*lens, lens_index| {
-            lens.tmp_visible_sexprs = .empty;
-
-            // TODO: cull and only store visible parts
-
-            const top_level_things = try workspace.topLevelThings(frame_arena);
-            for (top_level_things) |parent_address| {
-                const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
-                for (owned_sexprs) |base| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = base,
-                        .lens_transform = lens.getTransform(),
-                    });
-                }
-            }
-
-            for (0..lens_index) |other_lens_index| {
-                const other_lens = workspace.lenses.items[other_lens_index];
-                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
-                for (other_lens.tmp_visible_sexprs.items) |s| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = s.original_place,
-                        .lens_transform = .combine(s.lens_transform, lens.getTransform()),
-                    });
-                }
-            }
-        }
+        try workspace.main_area.updateLensesData(frame_arena);
+        try workspace.toolbar.updateLensesData(frame_arena);
+        try workspace.hand.updateLensesData(frame_arena);
 
         // drawing
         if (drawer) |d| {
@@ -4556,18 +4602,18 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                     .spawned_trace => {
-                        _ = workspace.traces.pop().?;
+                        _ = workspace.main_area.traces.pop().?;
                         const next_cmd = workspace.undo_stack.pop().?;
                         continue :again next_cmd.specific;
                     },
                     .despawned_trace => |t| {
-                        try workspace.traces.append(t.trace);
+                        try workspace.main_area.traces.append(mem.gpa, t.trace);
                         if (t.spawned_sexpr) _ = workspace.main_area.sexprs.pop().?;
                         const next_cmd = workspace.undo_stack.pop().?;
                         continue :again next_cmd.specific;
                     },
                     .started_execution => |g| {
-                        const executor = &workspace.executors.items[g.executor];
+                        const executor = &workspace.executors(.main_area).items[g.executor];
                         executor.input = g.input;
                         executor.garland = g.garland;
                         executor.prev_pills = .fromOwnedSlice(g.prev_pills);
@@ -4579,7 +4625,7 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                     .started_execution_fnkbox_from_input => |g| {
-                        const fnkbox = &workspace.fnkboxes.items[g.fnkbox];
+                        const fnkbox = &workspace.fnkboxes(.main_area).items[g.fnkbox];
                         fnkbox.input = g.input;
                         fnkbox.execution = null;
                         const next_cmd = workspace.undo_stack.pop().?;
@@ -4587,16 +4633,16 @@ const Workspace = struct {
                         continue :again next_cmd.specific;
                     },
                     .fnkbox_launch_testcase => |t| {
-                        const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                        const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
                         fnkbox.testcases.items[t.testcase].actual = t.old_actual;
                         fnkbox.execution = null;
                     },
                     .fnkbox_toggle_fold => |k| {
-                        const fnkbox = &workspace.fnkboxes.items[k];
+                        const fnkbox = &workspace.fnkboxes(.main_area).items[k];
                         fnkbox.folded = !fnkbox.folded;
                     },
                     .fnkbox_scroll => |t| {
-                        const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                        const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
                         fnkbox.scroll_testcases = t.old_position;
                     },
                     .grabbed => |g| {
@@ -4609,9 +4655,9 @@ const Workspace = struct {
                                 .executor_crank_handle,
                                 .executor_brake_handle,
                                 => @panic("TODO"),
-                                .fnkbox_handle => _ = workspace.fnkboxes.pop().?,
-                                .postit => _ = workspace.postits.pop().?,
-                                .lens_handle => _ = workspace.lenses.pop().?,
+                                .fnkbox_handle => _ = workspace.fnkboxes(.main_area).pop().?,
+                                .postit => _ = workspace.postits(.main_area).pop().?,
+                                .lens_handle => _ = workspace.lenses(.main_area).pop().?,
                                 .garland_handle => {
                                     // TODO: better memory management?
                                     var old = workspace.hand.garlands.pop().?;
@@ -4629,26 +4675,26 @@ const Workspace = struct {
                             switch (g.from.kind) {
                                 .nothing => unreachable,
                                 .executor_handle => |h| {
-                                    const e = &workspace.executors.items[h];
+                                    const e = &workspace.executors(.main_area).items[h];
                                     e.handle.point = g.old_data.point;
                                 },
                                 .executor_crank_handle,
                                 .executor_brake_handle,
                                 => @panic("TODO"),
                                 .fnkviewer_handle => |h| {
-                                    const e = &workspace.fnkviewers.items[h];
+                                    const e = &workspace.fnkviewers(.main_area).items[h];
                                     e.handle.point = g.old_data.point;
                                 },
                                 .fnkbox_handle => |h| {
-                                    const e = &workspace.fnkboxes.items[h];
+                                    const e = &workspace.fnkboxes(.main_area).items[h];
                                     e.handle.point = g.old_data.point;
                                 },
                                 .postit => |k| {
-                                    const postit = &workspace.postits.items[k];
+                                    const postit = &workspace.postits(.main_area).items[k];
                                     postit.button.rect.top_left = g.old_data.point.pos;
                                 },
                                 .lens_handle => |h| {
-                                    const lens = &workspace.lenses.items[h.index];
+                                    const lens = &workspace.lenses(.main_area).items[h.index];
                                     lens.setHandlePos(h.part, g.old_data.point.pos);
                                     assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
                                     assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
@@ -4742,7 +4788,8 @@ const Workspace = struct {
                 );
             }
 
-            const on_main_area = try workspace.findHoverableOrDropzoneAtPosition(
+            const on_main_area = try workspace.main_area.findHoverableOrDropzoneAtPosition(
+                std.meta.activeTag(workspace.focus.grabbing.kind),
                 mouse.cur.position,
                 mem.gpa,
                 frame_arena,
@@ -4813,11 +4860,11 @@ const Workspace = struct {
         );
 
         // update ui hotness
-        for (workspace.fnkboxes.items, 0..) |*fnkbox, fnkbox_index| {
+        for (workspace.fnkboxes(.main_area).items, 0..) |*fnkbox, fnkbox_index| {
             fnkbox.updateUiHotness(fnkbox_index, ui_hot, workspace.focus.ui_active, platform.delta_seconds);
         }
 
-        for (workspace.postits.items, 0..) |*postit, k| {
+        for (workspace.postits(.main_area).items, 0..) |*postit, k| {
             postit.button.updateHot2(switch (hovering.kind) {
                 else => false,
                 .postit => |k2| k == k2,
@@ -4829,59 +4876,28 @@ const Workspace = struct {
 
         math.lerp_towards(&workspace.toolbar_trash.hot_t, if (hovering_toolbar_trash) 1 else 0, 0.6, platform.delta_seconds);
 
-        // TODO: reduce duplication?
-        // update hover_t for other kinds of handles
-        for (workspace.lenses.items, 0..) |*lens, k| {
-            const hovered = switch (hovering.kind) {
-                else => null,
-                .lens_handle => |handle| if (handle.index == k) handle.part else null,
-            };
-            lens.update(hovered, platform.delta_seconds);
-        }
-        for (workspace.executors.items, 0..) |*executor, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .executor_handle => |index| if (index == k) 1 else 0,
-            };
-            executor.handle.update(hovered, platform.delta_seconds);
-        }
-        for (workspace.fnkviewers.items, 0..) |*thing, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .fnkviewer_handle => |index| if (index == k) 1 else 0,
-            };
-            thing.handle.update(hovered, platform.delta_seconds);
-        }
-        for (workspace.fnkboxes.items, 0..) |*thing, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .fnkbox_handle => |index| if (index == k) 1 else 0,
-            };
-            thing.handle.update(hovered, platform.delta_seconds);
-        }
-
         // apply dragging
         const mouse_point: Point = .{ .pos = mouse.cur.position };
         switch (workspace.focus.grabbing.kind) {
             .nothing => {},
             // TODO: would be nice to unify all handle dragging
             .postit => |k| {
-                workspace.postits.items[k].button.rect.top_left = mouse.cur.position.sub(workspace.focus.grabbing_offset);
+                workspace.postits(workspace.focus.grabbing.area).items[k].button.rect.top_left = mouse.cur.position.sub(workspace.focus.grabbing_offset);
             },
             .lens_handle => |p| {
-                const lens = &workspace.lenses.items[p.index];
+                const lens = &workspace.lenses(workspace.focus.grabbing.area).items[p.index];
                 lens.setHandlePos(p.part, mouse.cur.position);
             },
             .executor_handle => |h| {
-                workspace.executors.items[h].handle.point = mouse_point;
+                workspace.executors(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
             },
-            .executor_crank_handle => |h| try workspace.executorAt(h).crankMovedTo(mouse_point.pos),
-            .executor_brake_handle => |h| try workspace.executorAt(h).brakeMovedTo(mouse_point.pos),
+            .executor_crank_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).crankMovedTo(mouse_point.pos),
+            .executor_brake_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).brakeMovedTo(mouse_point.pos),
             .fnkviewer_handle => |h| {
-                workspace.fnkviewers.items[h].handle.point = mouse_point;
+                workspace.fnkviewers(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
             },
             .fnkbox_handle => |h| {
-                workspace.fnkboxes.items[h].handle.point = mouse_point;
+                workspace.fnkboxes(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
             },
             .case_handle => |p| workspace.caseHandleRef(p, workspace.focus.grabbing.area).point = mouse_point,
             .garland_handle => |p| workspace.garlandHandleRef(p, workspace.focus.grabbing.area).point = mouse_point,
@@ -4909,7 +4925,7 @@ const Workspace = struct {
         switch (workspace.focus.ui_active.kind) {
             else => {},
             .fnkbox_scroll => |t| {
-                workspace.fnkboxes.items[t.fnkbox].scroll_testcases += platform.delta_seconds * @as(f32, switch (t.direction) {
+                workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_testcases += platform.delta_seconds * @as(f32, switch (t.direction) {
                     .up => 1,
                     .down => -1,
                 }) / 0.2;
@@ -4922,15 +4938,11 @@ const Workspace = struct {
         workspace.toolbar.updateSpringsAndStuff(platform.delta_seconds);
         workspace.main_area.updateSpringsAndStuff(platform.delta_seconds);
 
-        for (workspace.traces.items) |*c| {
-            c.update(platform.delta_seconds);
-        }
-
         {
             var k: usize = 0;
-            while (k < workspace.traces.items.len) {
-                if (workspace.traces.items[k].remaining_lifetime <= 0) {
-                    const old = workspace.traces.swapRemove(k);
+            while (k < workspace.main_area.traces.items.len) {
+                if (workspace.main_area.traces.items[k].remaining_lifetime <= 0) {
+                    const old = workspace.main_area.traces.swapRemove(k);
                     // TODO: call this on undo_stack deinit
                     // old.deinit(mem.gpa);
                     if (old.last_input) |l| try workspace.main_area.sexprs.append(mem.gpa, l);
@@ -4942,21 +4954,35 @@ const Workspace = struct {
             }
         }
 
-        for (workspace.executors.items) |*e| {
-            try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
+        // TODO: move these inside updateSpringsAndStuff
+        for (workspace.executors(.main_area).items) |*e| {
+            try e.update(mem, workspace.fnkboxes(.main_area).items, &workspace.hover_pool, platform.delta_seconds);
         }
 
-        for (workspace.fnkviewers.items) |*e| {
-            try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
+        for (workspace.fnkviewers(.main_area).items) |*e| {
+            try e.update(mem, workspace.fnkboxes(.main_area).items, &workspace.hover_pool, platform.delta_seconds);
         }
 
-        for (workspace.fnkboxes.items) |*e| {
+        for (workspace.fnkboxes(.main_area).items) |*e| {
             // TODO: revise
-            const added_trace = try e.update(mem, workspace.fnkboxes.items, &workspace.hover_pool, platform.delta_seconds);
+            const added_trace = try e.update(mem, workspace.fnkboxes(.main_area).items, &workspace.hover_pool, platform.delta_seconds);
             if (added_trace) |trace| {
-                try workspace.traces.append(trace);
+                try workspace.main_area.traces.append(mem.gpa, trace);
                 try workspace.undo_stack.append(.{ .specific = .spawned_trace });
             }
+        }
+
+        // camera controls
+        {
+            const hovering_fnkbox: ?usize = for (workspace.fnkboxes(.main_area).items, 0..) |f, k| {
+                if (f.box().contains(mouse.cur.position)) break k;
+            } else null;
+
+            if (hovering_fnkbox) |k| {
+                workspace.fnkboxes(.main_area).items[k].scroll_testcases += mouse.cur.scrolled.toNumber() * platform.delta_seconds / 0.05;
+            }
+
+            workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, hovering_fnkbox == null);
         }
 
         // 'var' since the deleted command gets completed at execution
@@ -4968,7 +4994,7 @@ const Workspace = struct {
                         workspace.focus.ui_active = ui_hot;
                         break :blk .{ .specific = .{ .fnkbox_scroll = .{
                             .fnkbox = t.fnkbox,
-                            .old_position = workspace.fnkboxes.items[t.fnkbox].scroll_testcases,
+                            .old_position = workspace.fnkboxes(hovering.area).items[t.fnkbox].scroll_testcases,
                         } } };
                     },
                     .nothing, .fnkbox_launch_testcase, .fnkbox_see_failing_case => blk: {
@@ -5072,7 +5098,7 @@ const Workspace = struct {
                 .nothing => unreachable,
                 .fnkbox_toggle_fold, .fnkbox_scroll => .noop,
                 .fnkbox_see_failing_case => |k| op: {
-                    const fnkbox = &workspace.fnkboxes.items[k];
+                    const fnkbox = &workspace.fnkboxes(.main_area).items[k];
                     break :op .{
                         .specific = .{ .fnkbox_launch_testcase = .{
                             .fnkbox = k,
@@ -5084,24 +5110,10 @@ const Workspace = struct {
                 .fnkbox_launch_testcase => |t| .{ .specific = .{ .fnkbox_launch_testcase = .{
                     .fnkbox = t.fnkbox,
                     .testcase = t.testcase,
-                    .old_actual = try workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].actual.clone(&workspace.hover_pool),
+                    .old_actual = try workspace.fnkboxes(.main_area).items[t.fnkbox].testcases.items[t.testcase].actual.clone(&workspace.hover_pool),
                 } } },
             };
         } else .noop;
-
-        // TODO: move somewhere else
-        // camera controls
-        {
-            const hovering_fnkbox: ?usize = for (workspace.fnkboxes.items, 0..) |f, k| {
-                if (f.box().contains(mouse.cur.position)) break k;
-            } else null;
-
-            if (hovering_fnkbox) |k| {
-                workspace.fnkboxes.items[k].scroll_testcases += mouse.cur.scrolled.toNumber() * platform.delta_seconds / 0.05;
-            }
-
-            workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, hovering_fnkbox == null);
-        }
 
         // actually perform the action
         switch (action.specific) {
@@ -5113,7 +5125,7 @@ const Workspace = struct {
             .created_fresh_case_in_toolbar,
             => unreachable,
             .fnkbox_launch_testcase => |t| {
-                const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
+                const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
                 const testcase = &fnkbox.testcases.items[t.testcase];
                 assert(fnkbox.execution == null);
                 const old_actual = testcase.actual.value;
@@ -5127,7 +5139,7 @@ const Workspace = struct {
                 };
             },
             .fnkbox_toggle_fold => |k| {
-                const fnkbox = &workspace.fnkboxes.items[k];
+                const fnkbox = &workspace.fnkboxes(.main_area).items[k];
                 fnkbox.folded = !fnkbox.folded;
             },
             .fnkbox_scroll => {
@@ -5156,33 +5168,33 @@ const Workspace = struct {
                             switch (t) {
                                 else => std.log.err("TODO", .{}),
                                 .fnkbox_handle => {
-                                    const original = workspace.fnkboxes.items[h];
+                                    const original = workspace.fnkboxes(.main_area).items[h];
 
                                     const S = struct {
                                         var random_instance: std.Random.DefaultPrng = std.Random.DefaultPrng.init(1);
                                     };
                                     const new_name = try mem.gpa.alloc(u8, 10);
                                     math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
-                                    while (for (workspace.fnkboxes.items) |fnkbox| {
+                                    while (for (workspace.fnkboxes(.main_area).items) |fnkbox| {
                                         if (fnkbox.fnkname.value.equals(&Sexpr.doLit(new_name))) break true;
                                     } else false) {
                                         math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
                                     }
 
-                                    try workspace.fnkboxes.append(try original.cloneAsEmpty(try mem.storeSexpr(.doLit(new_name)), mem));
+                                    try workspace.fnkboxes(.main_area).append(mem.gpa, try original.cloneAsEmpty(try mem.storeSexpr(.doLit(new_name)), mem));
                                     workspace.focus.grabbing = .{ .kind = .{
-                                        .fnkbox_handle = workspace.fnkboxes.items.len - 1,
+                                        .fnkbox_handle = workspace.fnkboxes(.main_area).items.len - 1,
                                     }, .area = .hand };
                                 },
                                 .lens_handle => {
-                                    var lens_pair = workspace.lenses.items[h.index].clone();
+                                    var lens_pair = workspace.lenses(.main_area).items[h.index].clone();
                                     lens_pair.source.addInPlace(.one);
                                     lens_pair.target.addInPlace(.one);
-                                    try workspace.lenses.append(lens_pair);
+                                    try workspace.lenses(.main_area).append(mem.gpa, lens_pair);
                                     // TODO: lens transform?
                                     workspace.focus.grabbing = .{ .kind = .{
                                         .lens_handle = .{
-                                            .index = workspace.lenses.items.len - 1,
+                                            .index = workspace.lenses(.main_area).items.len - 1,
                                             .part = h.part,
                                         },
                                     }, .area = .hand };
@@ -5281,7 +5293,7 @@ const Workspace = struct {
             try workspace.canonizeAfterChanges(mem);
         }
 
-        for (workspace.fnkboxes.items, 0..) |*fnkbox, k| {
+        for (workspace.fnkboxes(.main_area).items, 0..) |*fnkbox, k| {
             if (fnkbox.execution == null and !fnkbox.input.isEmpty() and fnkbox.garland.cases.items.len > 0) {
                 var garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool);
                 assert(garland.fnkname == null);
@@ -5305,7 +5317,7 @@ const Workspace = struct {
                 try workspace.canonizeAfterChanges(mem);
             }
         }
-        for (workspace.executors.items, 0..) |e, k| {
+        for (workspace.executors(.main_area).items, 0..) |e, k| {
             if (e.startedExecution()) {
                 assert(e.enqueued_stack.items.len == 0);
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution = .{
@@ -5326,7 +5338,7 @@ const Workspace = struct {
             .executor_brake_handle => |h| switch (h) {
                 .board => return false,
                 .fnkbox => |k| {
-                    const fnkbox = workspace.fnkboxes.items[k];
+                    const fnkbox = workspace.main_area.fnkboxes.items[k];
                     return fnkbox.execution == null or
                         fnkbox.execution.?.executor == null;
                 },
@@ -5334,7 +5346,7 @@ const Workspace = struct {
             .executor_crank_handle => |h| switch (h) {
                 .board => return false,
                 .fnkbox => |k| {
-                    const fnkbox = workspace.fnkboxes.items[k];
+                    const fnkbox = workspace.main_area.fnkboxes.items[k];
                     return fnkbox.execution == null or
                         fnkbox.execution.?.executor == null or
                         fnkbox.execution.?.executor.?.animation == null;
@@ -5346,13 +5358,13 @@ const Workspace = struct {
     fn pointOf(workspace: *Workspace, thing: Focus.Target) Point {
         return switch (thing.kind) {
             .nothing => unreachable,
-            .postit => |k| .{ .pos = workspace.postits.items[k].button.rect.top_left, .scale = undefined },
-            .lens_handle => |h| .{ .pos = workspace.lenses.items[h.index].handlePos(h.part) },
-            .executor_handle => |h| workspace.executors.items[h].handle.point,
-            .executor_crank_handle => |h| workspace.executorAt(h).crankHandle().?.asPoint(),
-            .executor_brake_handle => |h| workspace.executorAt(h).brakeHandle().asPoint(),
-            .fnkviewer_handle => |h| workspace.fnkviewers.items[h].handle.point,
-            .fnkbox_handle => |h| workspace.fnkboxes.items[h].handle.point,
+            .postit => |k| .{ .pos = workspace.postits(thing.area).items[k].button.rect.top_left, .scale = undefined },
+            .lens_handle => |h| .{ .pos = workspace.lenses(thing.area).items[h.index].handlePos(h.part) },
+            .executor_handle => |h| workspace.executors(thing.area).items[h].handle.point,
+            .executor_crank_handle => |h| workspace.executorAt(h, thing.area).crankHandle().?.asPoint(),
+            .executor_brake_handle => |h| workspace.executorAt(h, thing.area).brakeHandle().asPoint(),
+            .fnkviewer_handle => |h| workspace.fnkviewers(thing.area).items[h].handle.point,
+            .fnkbox_handle => |h| workspace.fnkboxes(thing.area).items[h].handle.point,
             .case_handle => |h| workspace.caseHandleRef(h, thing.area).point,
             .garland_handle => |k| workspace.garlandHandleRef(k, thing.area).point,
             .sexpr => |s| workspace.sexprAtPlace(s.base, thing.area).point,
