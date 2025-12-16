@@ -3155,6 +3155,8 @@ const Workspace = struct {
                 trace: ExecutionTrace,
                 spawned_sexpr: bool,
             },
+            // TODO: aghh idk
+            created_fresh_case_in_toolbar,
             deleted: struct {
                 old_place: Focus.Target,
                 value: Focus.Value,
@@ -4379,9 +4381,9 @@ const Workspace = struct {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        // TODO: should produce an undo event?
         if (workspace.toolbar_left < 0.1 and workspace.toolbar.cases.items.len == 0) {
             try workspace.toolbar.cases.append(mem.gpa, try workspace.freshToolbarCase(mem));
+            try workspace.undo_stack.append(.{ .specific = .created_fresh_case_in_toolbar });
         }
 
         workspace.toolbar_trash.rect = workspace.leftToolbarRect().subrectAsIf(
@@ -4428,6 +4430,10 @@ const Workspace = struct {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
                     .noop => {},
+                    .created_fresh_case_in_toolbar => {
+                        _ = workspace.toolbar.cases.pop();
+                        if (workspace.undo_stack.pop()) |next_cmd| continue :again next_cmd.specific;
+                    },
                     .deleted => |d| {
                         try workspace.unpopAt(d.old_place, d.value, mem);
                         const next_cmd = workspace.undo_stack.pop().?;
@@ -4542,16 +4548,12 @@ const Workspace = struct {
                                 },
                                 .case_handle => {
                                     var case = workspace.hand.cases.pop().?;
+                                    if (g.from.area == .toolbar) case.changeCoordinateSpace(Rect.transformBetweenRects(
+                                        workspace.camera,
+                                        workspace.leftToolbarCamera(),
+                                    ));
                                     case.handle.point = g.old_data.point;
-
-                                    // TODO: investigate/fix
-                                    // case.changeCoordinateSpace(Rect.transformBetweenRects(
-                                    //     workspace.camera,
-                                    //     workspace.leftToolbarCamera(),
-                                    // ));
-
                                     try workspace.unpopAt(g.from, .{ .case = case }, mem);
-                                    std.log.debug("unpoping at {any}", .{g.from});
                                 },
                                 .sexpr => |h| {
                                     var old = workspace.hand.sexprs.pop().?;
@@ -4605,7 +4607,8 @@ const Workspace = struct {
                             },
                         }
                         const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .grabbed);
+                        // Commented out since the next command might be 'created_fresh_case_in_toolbar
+                        // assert(std.meta.activeTag(next_cmd.specific) == .grabbed);
                         continue :again next_cmd.specific;
                     },
                 }
@@ -5032,6 +5035,7 @@ const Workspace = struct {
             .started_execution_fnkbox_from_input,
             .spawned_trace,
             .despawned_trace,
+            .created_fresh_case_in_toolbar,
             => unreachable,
             .fnkbox_launch_testcase => |t| {
                 const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
@@ -5139,8 +5143,7 @@ const Workspace = struct {
                         else
                             try workspace.popAt(g.from, mem);
 
-
-            if (g.from.area == .toolbar) original.case.changeCoordinateSpace(Rect.transformBetweenRects(
+                        if (g.from.area == .toolbar) original.case.changeCoordinateSpace(Rect.transformBetweenRects(
                             workspace.leftToolbarCamera(),
                             workspace.camera,
                         ));
