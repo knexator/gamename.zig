@@ -3831,7 +3831,6 @@ const Workspace = struct {
         var result: std.ArrayListUnmanaged(BaseSexprPlace) = .empty;
 
         // sexprs owned directly and not due to a case
-        std.log.debug("in ownedSexprs, parent is: {any}", .{parent});
         switch (parent.kind) {
             .sexpr => |p| {
                 try result.append(res, p.base);
@@ -4453,7 +4452,6 @@ const Workspace = struct {
                         else => {},
                     }
 
-                    std.log.debug("base {any}, area {s}", .{ base, @tagName(parent_address.area) });
                     const s = workspace.sexprAtPlace(base, parent_address.area);
                     if (try ViewHelper.overlapsSexpr(
                         // TODO: check this doesn't leak
@@ -5184,7 +5182,7 @@ const Workspace = struct {
                                     try workspace.fnkboxes(.main_area).append(mem.gpa, try original.cloneAsEmpty(try mem.storeSexpr(.doLit(new_name)), mem));
                                     workspace.focus.grabbing = .{ .kind = .{
                                         .fnkbox_handle = workspace.fnkboxes(.main_area).items.len - 1,
-                                    }, .area = .hand };
+                                    }, .area = .main_area };
                                 },
                                 .lens_handle => {
                                     var lens_pair = workspace.lenses(.main_area).items[h.index].clone();
@@ -5197,7 +5195,7 @@ const Workspace = struct {
                                             .index = workspace.lenses(.main_area).items.len - 1,
                                             .part = h.part,
                                         },
-                                    }, .area = .hand };
+                                    }, .area = .main_area };
                                 },
                             }
                         } else workspace.focus.grabbing = g.from;
