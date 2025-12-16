@@ -3655,6 +3655,9 @@ const Workspace = struct {
         workspace.toolbar.deinit(gpa);
         workspace.hand.deinit(gpa);
         workspace.main_area.deinit(gpa);
+
+        workspace.hover_pool.deinit();
+        workspace.undo_stack.deinit();
     }
 
     fn freshToolbarCase(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !VeryPhysicalCase {
