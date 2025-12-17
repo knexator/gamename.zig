@@ -11,7 +11,7 @@ pub const display_fps = false;
 
 const EXECUTOR_MOVES_LEFT = true;
 
-const CRANKS_ENABLED = false;
+const CRANKS_ENABLED = true;
 
 comptime {
     std.testing.refAllDecls(@import("execution_tree.zig"));
@@ -1333,17 +1333,22 @@ const Executor = struct {
             if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
         }
         if (CRANKS_ENABLED) {
+            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
+                &executor,
+                .brakeBody,
+                &kommon.funktional.linspace01(10, true),
+            ), executor.handle.point.scale * 0.1, .gray(0.8));
+            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
+                &executor,
+                .brakeHandlePath,
+                &kommon.funktional.linspace01(10, true),
+            ), executor.handle.point.scale * 0.05, FColor.gray(0.9).withAlpha(0.2));
+            drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
             if (executor.crankHandle()) |c| {
                 const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
                 drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
                 drawer.canvas.fillCircleV2(camera, c, .white);
             }
-            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-                &executor,
-                .brakePath,
-                &kommon.funktional.linspace01(10, true),
-            ), executor.handle.point.scale * 0.1, .gray(0.8));
-            drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
         }
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
@@ -1355,23 +1360,23 @@ const Executor = struct {
         try executor.garland.draw(holding, drawer, camera);
     }
 
-    pub fn crankMovedTo(executor: *Executor, pos: Vec2) !void {
+    pub fn crankMovedTo(executor: *Executor, pos: Vec2, delta_seconds: f32) !void {
         assert(executor.animation != null);
-        executor.brake_t = 1;
         const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
         const relative_pos = crank_center.inverseApplyGetLocalPosition(pos);
         const raw_t = relative_pos.getTurns();
         const cur_t = executor.animation.?.t;
         const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
-        executor.animation.?.t = target_t;
+        // math.lerp_towards(&executor.animation.?.t, @max(0, target_t), 0.6, delta_seconds);
+        math.towards(&executor.animation.?.t, target_t, delta_seconds * 5);
     }
 
-    pub fn brakeMovedTo(executor: *Executor, pos: Vec2) !void {
+    pub fn brakeMovedTo(executor: *Executor, pos: Vec2, delta_seconds: f32) !void {
         const S = struct {
             p: Vec2,
             e: *const Executor,
             pub fn score(ctx: @This(), t: f32) f32 {
-                return ctx.e.brakePath(t).sub(ctx.p).magSq();
+                return ctx.e.brakeHandlePath(t).sub(ctx.p).magSq();
             }
         };
         const raw_t = kommon.funktional.findFunctionMin(
@@ -1382,15 +1387,30 @@ const Executor = struct {
             10,
             0.0001,
         );
-        executor.brake_t = raw_t;
+        // math.lerp_towards(&executor.brake_t, raw_t, 0.6, delta_seconds);
+        math.towards(&executor.brake_t, raw_t, delta_seconds * 5);
     }
 
-    pub fn brakePath(executor: *const Executor, t: f32) Vec2 {
-        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+    pub fn brakeLineRaw(crank_center: Point, brake_t: f32, line_t: f32) Vec2 {
         return crank_center
-            .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
-            .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
-            .addY(0.25);
+            .applyToLocalPosition(.fromPolar(
+            math.remapFrom01(line_t, 0.5, 1.5 + 0.5 * (1 - brake_t)),
+            math.remapFrom01(brake_t, 0.125, 0.375),
+        ));
+    }
+
+    pub fn brakeBody(executor: *const Executor, line_t: f32) Vec2 {
+        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+        return brakeLineRaw(crank_center, executor.brake_t, line_t);
+    }
+
+    pub fn brakeHandlePath(executor: *const Executor, brake_t: f32) Vec2 {
+        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+        return brakeLineRaw(crank_center, brake_t, 1.0);
+        // return crank_center
+        //     .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
+        //     .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
+        //     .addY(0.25);
     }
 
     pub fn crankHandle(executor: *const Executor) ?math.Circle {
@@ -1405,7 +1425,7 @@ const Executor = struct {
 
     pub fn brakeHandle(executor: *const Executor) math.Circle {
         return .{
-            .center = executor.brakePath(executor.brake_t),
+            .center = executor.brakeHandlePath(executor.brake_t),
             .radius = executor.handle.point.scale * 0.2,
         };
     }
@@ -4892,8 +4912,8 @@ const Workspace = struct {
             .executor_handle => |h| {
                 workspace.executors(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
             },
-            .executor_crank_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).crankMovedTo(mouse_point.pos),
-            .executor_brake_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).brakeMovedTo(mouse_point.pos),
+            .executor_crank_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).crankMovedTo(mouse_point.pos, platform.delta_seconds),
+            .executor_brake_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).brakeMovedTo(mouse_point.pos, platform.delta_seconds),
             .fnkviewer_handle => |h| {
                 workspace.fnkviewers(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
             },
