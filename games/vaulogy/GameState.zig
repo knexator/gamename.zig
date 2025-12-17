@@ -1341,6 +1341,10 @@ const Executor = struct {
     }
 
     pub fn draw(executor: Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
+        try drawWithGarlandAlpha(executor, 1, holding, drawer, camera);
+    }
+
+    pub fn drawWithGarlandAlpha(executor: Executor, garland_alpha: f32, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera, 1);
         // const bindings_anim_t: ?f32 = if (executor.animation) |anim| if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8) else null;
         const bindings_active: BindingsState = if (executor.animation) |anim| .{
@@ -1383,7 +1387,7 @@ const Executor = struct {
             .new = &.{},
             .old = executor.prev_pills.items[s.parent_pill].bindings,
         }, holding, drawer, camera);
-        try executor.garland.draw(holding, drawer, camera);
+        try executor.garland.drawWithAlpha(garland_alpha, holding, drawer, camera);
     }
 
     pub fn crankMovedTo(executor: *Executor, pos: Vec2, delta_seconds: f32) !void {
@@ -1480,13 +1484,91 @@ const Executor = struct {
 
     // try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
     pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        executor.garland.handle.point.lerp_towards(executor.garlandPoint(), 0.6, delta_seconds);
-        var pill_offset: f32 = 0;
+        try updateSpringsAndStuff(executor, delta_seconds);
+        try advanceAnimation(executor, mem, known_fnks, hover_pool, delta_seconds);
+    }
+
+    pub fn advanceAnimation(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
         // var this_frame_ended_an_execution_without_direct_next: bool = false;
         var parent_pill_index: ?usize = null;
+
+        if (executor.animation) |*animation| {
+            animation.t += delta_seconds * speedScale(executor.brake_t);
+            if (animation.t >= 1) {
+                if (animation.matching) {
+                    try executor.prev_pills.append(mem.gpa, .{
+                        .pattern = animation.active_case.pattern,
+                        .input = executor.input,
+                        .fnkname_call = animation.active_case.fnk_name,
+                        .fnkname_response = animation.garland_fnkname,
+                        // TODO: should include previous bindings? not really, since they have now been merged
+                        .bindings = try mem.gpa.dupe(core.Binding, animation.new_bindings),
+                    });
+                    // TODO: revise
+                    // pill_offset -= 1;
+                    try animation.active_case.fillVariables(animation.new_bindings, mem);
+                    executor.input = animation.active_case.template;
+
+                    if (animation.invoked_fnk) |*fnk| {
+                        executor.garland = fnk.*;
+                        if (animation.active_case.next.cases.items.len > 0) {
+                            try executor.enqueued_stack.append(mem.gpa, .{ .garland = animation.active_case.next, .parent_pill = executor.prev_pills.items.len - 1 });
+                        }
+                    } else if (animation.active_case.next.cases.items.len > 0) {
+                        executor.garland = animation.active_case.next;
+                        // this_frame_ended_an_execution_without_direct_next = true;
+                        parent_pill_index = executor.prev_pills.items.len - 1;
+                    } else if (executor.enqueued_stack.pop()) |g| {
+                        executor.garland = g.garland;
+                        // this_frame_ended_an_execution_without_direct_next = true;
+                        parent_pill_index = g.parent_pill;
+                    } else {
+                        executor.garland = .init(executor.garlandPoint());
+                    }
+                } else {
+                    assert(animation.new_bindings.len == 0);
+                    executor.garland.fnkname = animation.garland_fnkname;
+                }
+                executor.animation = null;
+            }
+        }
+
+        if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
+            const case = executor.garland.popFirstCaseForExecution();
+            var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
+            const matching = try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings);
+            const invoked_fnk: ?VeryPhysicalGarland = if (!matching)
+                null
+            else if (case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
+                null
+            else blk: {
+                const offset = 3.0;
+                const function_point = executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
+                if (try getGarlandForFnk(known_fnks, case.fnk_name.value, function_point, mem, hover_pool)) |garland| {
+                    break :blk garland;
+                } else @panic("TODO: handle this");
+            };
+            const garland_fnkname = executor.garland.fnkname;
+            executor.garland.fnkname = null;
+            executor.animation = .{
+                .active_case = case,
+                .matching = matching,
+                .invoked_fnk = invoked_fnk,
+                .new_bindings = try new_bindings.toOwnedSlice(),
+                .original_point = executor.handle.point,
+                .garland_fnkname = garland_fnkname,
+                .parent_pill = parent_pill_index,
+            };
+        }
+    }
+
+    pub fn updateSpringsAndStuff(executor: *Executor, delta_seconds: f32) !void {
+        executor.garland.handle.point.lerp_towards(executor.garlandPoint(), 0.6, delta_seconds);
+        executor.recomputeBrakeHandlePos();
+
+        var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
             assert(executor.garland.fnkname == null);
-            animation.t += delta_seconds * speedScale(executor.brake_t);
             const anim_t = math.clamp01(animation.t);
             if (!animation.matching) {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
@@ -1563,42 +1645,6 @@ const Executor = struct {
                 executor.input.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
                 if (animation.garland_fnkname) |*f| f.point = executor.input.point.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 });
             }
-            if (animation.t >= 1) {
-                if (animation.matching) {
-                    try executor.prev_pills.append(mem.gpa, .{
-                        .pattern = animation.active_case.pattern,
-                        .input = executor.input,
-                        .fnkname_call = animation.active_case.fnk_name,
-                        .fnkname_response = animation.garland_fnkname,
-                        // TODO: should include previous bindings? not really, since they have now been merged
-                        .bindings = try mem.gpa.dupe(core.Binding, animation.new_bindings),
-                    });
-                    pill_offset -= 1;
-                    try animation.active_case.fillVariables(animation.new_bindings, mem);
-                    executor.input = animation.active_case.template;
-
-                    if (animation.invoked_fnk) |*fnk| {
-                        executor.garland = fnk.*;
-                        if (animation.active_case.next.cases.items.len > 0) {
-                            try executor.enqueued_stack.append(mem.gpa, .{ .garland = animation.active_case.next, .parent_pill = executor.prev_pills.items.len - 1 });
-                        }
-                    } else if (animation.active_case.next.cases.items.len > 0) {
-                        executor.garland = animation.active_case.next;
-                        // this_frame_ended_an_execution_without_direct_next = true;
-                        parent_pill_index = executor.prev_pills.items.len - 1;
-                    } else if (executor.enqueued_stack.pop()) |g| {
-                        executor.garland = g.garland;
-                        // this_frame_ended_an_execution_without_direct_next = true;
-                        parent_pill_index = g.parent_pill;
-                    } else {
-                        executor.garland = .init(executor.garlandPoint());
-                    }
-                } else {
-                    assert(animation.new_bindings.len == 0);
-                    executor.garland.fnkname = animation.garland_fnkname;
-                }
-                executor.animation = null;
-            }
         } else {
             executor.garland.update(delta_seconds);
             executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
@@ -1610,34 +1656,6 @@ const Executor = struct {
             pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), 0.6, delta_seconds);
             if (pill.fnkname_call) |*f| f.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(8, -3), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
             if (pill.fnkname_response) |*g| g.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
-        }
-
-        if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
-            const case = executor.garland.popFirstCaseForExecution();
-            var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-            const matching = try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings);
-            const invoked_fnk: ?VeryPhysicalGarland = if (!matching)
-                null
-            else if (case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
-                null
-            else blk: {
-                const offset = 3.0;
-                const function_point = executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
-                if (try getGarlandForFnk(known_fnks, case.fnk_name.value, function_point, mem, hover_pool)) |garland| {
-                    break :blk garland;
-                } else @panic("TODO: handle this");
-            };
-            const garland_fnkname = executor.garland.fnkname;
-            executor.garland.fnkname = null;
-            executor.animation = .{
-                .active_case = case,
-                .matching = matching,
-                .invoked_fnk = invoked_fnk,
-                .new_bindings = try new_bindings.toOwnedSlice(),
-                .original_point = executor.handle.point,
-                .garland_fnkname = garland_fnkname,
-                .parent_pill = parent_pill_index,
-            };
         }
     }
 
@@ -1825,12 +1843,12 @@ const Button = struct {
 // reel + definition + explanation
 const Fnkbox = struct {
     handle: Handle,
-    input: VeryPhysicalSexpr,
     fnkname: VeryPhysicalSexpr,
-    garland: VeryPhysicalGarland,
     testcases: std.ArrayListUnmanaged(TestCase),
     scroll_testcases: f32 = 0,
+    executor: Executor,
     execution: ?struct {
+        original_garland: VeryPhysicalGarland,
         source: union(enum) {
             testcase: usize,
             input,
@@ -1840,7 +1858,6 @@ const Fnkbox = struct {
         /// if source is input, this is ignored
         state: enum { scrolling_towards_case, starting, executing, ending },
         state_t: f32,
-        executor: ?Executor,
         final_result: VeryPhysicalSexpr = undefined,
     } = null,
     text: []const u8,
@@ -1957,11 +1974,14 @@ const Fnkbox = struct {
         const result: Fnkbox = .{
             .text = text,
             .handle = .{ .point = base },
-            .input = try .empty(geo.inputPoint(), hover_pool, false),
-            .garland = if (initial_definition) |def|
-                try .fromDefinition(geo.garlandPoint(), def, mem, hover_pool)
-            else
-                .init(geo.garlandPoint()),
+            .executor = .initWithThings(
+                try .empty(geo.inputPoint(), hover_pool, false),
+                if (initial_definition) |def|
+                    try .fromDefinition(geo.garlandPoint(), def, mem, hover_pool)
+                else
+                    .init(geo.garlandPoint()),
+                geo.executorPoint(),
+            ),
             .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
             .testcases = testcases,
             .folded = false,
@@ -1973,7 +1993,7 @@ const Fnkbox = struct {
 
     pub fn deinit(fnkbox: *Fnkbox, gpa: std.mem.Allocator) void {
         fnkbox.testcases.deinit(gpa);
-        fnkbox.garland.deinit(gpa);
+        fnkbox.executor.garland.deinit(gpa);
     }
 
     pub fn cloneAsEmpty(
@@ -1984,8 +2004,7 @@ const Fnkbox = struct {
         const result: Fnkbox = .{
             .text = "custom fnk",
             .handle = .{ .point = original.handle.point },
-            .input = try .empty(original.inputPoint(), &mem.hover_pool, false),
-            .garland = .init(original.garlandPoint()),
+            .executor = try .init(original.executorPoint(), &mem.hover_pool),
             .fnkname = try .fromSexpr(&mem.hover_pool, new_fnkname, original.fnkname.point, true),
             .testcases = .empty,
             .folded = original.folded,
@@ -2074,18 +2093,18 @@ const Fnkbox = struct {
         drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
         if (fnkbox.execution == null or !fnkbox.folded) try fnkbox.fnkname.draw(drawer, camera);
         try fnkbox.handle.draw(drawer, camera, 1);
-        if (fnkbox.execution) |e| {
-            if (e.state == .ending) {
-                try fnkbox.garland.drawWithAlpha(math.smoothstep(e.state_t, 0.9, 1), holding, drawer, camera);
-                try e.final_result.draw(drawer, camera);
-            } else if (e.state == .scrolling_towards_case) {
-                try fnkbox.garland.drawWithAlpha(1, holding, drawer, camera);
-            } else {
-                try e.executor.?.draw(holding, drawer, camera);
-            }
+
+        if (fnkbox.execution != null and fnkbox.execution.?.state == .ending) {
+            const e = fnkbox.execution.?;
+            try fnkbox.executor.drawWithGarlandAlpha(
+                math.smoothstep(e.state_t, 0.9, 1),
+                holding,
+                drawer,
+                camera,
+            );
+            try e.final_result.draw(drawer, camera);
         } else {
-            try fnkbox.garland.draw(holding, drawer, camera);
-            try fnkbox.input.draw(drawer, camera);
+            try fnkbox.executor.draw(holding, drawer, camera);
         }
         try fnkbox.fold_button.draw(drawer, camera);
     }
@@ -2106,7 +2125,7 @@ const Fnkbox = struct {
         // TODO: leaks?
         var all_fnks: FnkCollection = .init(mem.scratch.allocator());
         for (known_fnks) |k| {
-            try all_fnks.putNoClobber(k.fnkname.value, try k.garland.toDefinition(mem.scratch.allocator()));
+            try all_fnks.putNoClobber(k.fnkname.value, try k.executor.garland.toDefinition(mem.scratch.allocator()));
         }
         var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
         defer temp_mem.deinit();
@@ -2160,13 +2179,9 @@ const Fnkbox = struct {
     pub fn updateHoverT(fnkbox: *Fnkbox, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
         fnkbox.handle.updateHoverT(self_address, hovering, delta_seconds);
 
-        if (fnkbox.execution) |*execution| {
-            if (execution.executor) |*executor| {
-                executor.updateHoverT(.{ .area = self_address.area, .kind = .{
-                    .executor_handle = .{ .fnkbox = self_address.kind.fnkbox_handle },
-                } }, hovering, delta_seconds);
-            }
-        }
+        fnkbox.executor.updateHoverT(.{ .area = self_address.area, .kind = .{
+            .executor_handle = .{ .fnkbox = self_address.kind.fnkbox_handle },
+        } }, hovering, delta_seconds);
     }
 
     pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !?ExecutionTrace {
@@ -2181,9 +2196,8 @@ const Fnkbox = struct {
         fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .top_left).plusMargin(-0.1), 0.6, delta_seconds);
         fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .bottom_left).plusMargin(-0.1), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
-        fnkbox.input.point.lerp_towards(fnkbox.inputPoint(), 0.6, delta_seconds);
-        fnkbox.garland.handle.point.lerp_towards(fnkbox.garlandPoint(), 0.6, delta_seconds);
-        fnkbox.garland.update(delta_seconds);
+        fnkbox.executor.handle.point.lerp_towards(fnkbox.executorPoint(), 0.6, delta_seconds);
+        try fnkbox.executor.updateSpringsAndStuff(delta_seconds);
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*t, k| {
             const center = fnkbox.point()
@@ -2205,19 +2219,14 @@ const Fnkbox = struct {
                         if (math.inRangeClosed(fnkbox.scroll_testcases, min, max)) {
                             execution.state = .starting;
                             execution.state_t = 0;
-                            execution.executor = .initWithThings(
-                                try fnkbox.testcases.items[testcase_index].input.dupeSubValue(&.{}, hover_pool),
-                                try fnkbox.garland.clone(mem.gpa, hover_pool),
-                                fnkbox.executorPoint(),
-                            );
-                            execution.executor.?.recomputeBrakeHandlePos();
-                            execution.executor.?.input.point = fnkbox.testcases.items[testcase_index].input.point;
+                            fnkbox.executor.input = try fnkbox.testcases.items[testcase_index].input.dupeSubValue(&.{}, hover_pool);
+                            // fnkbox.executor.input.point = fnkbox.testcases.items[testcase_index].input.point;
                         }
                     },
                     .starting => {
-                        execution.executor.?.input.point = .lerp(
+                        fnkbox.executor.input.point = .lerp(
                             fnkbox.testcases.items[testcase_index].input.point,
-                            execution.executor.?.inputPoint(),
+                            fnkbox.executor.inputPoint(),
                             execution.state_t,
                         );
                         execution.state_t += delta_seconds / 0.8;
@@ -2227,14 +2236,15 @@ const Fnkbox = struct {
                         }
                     },
                     .executing => {
-                        const executor = &execution.executor.?;
-                        try executor.update(mem, known_fnks, hover_pool, delta_seconds);
-                        if (execution.executor.?.animation == null) {
+                        const executor = &fnkbox.executor;
+                        try executor.advanceAnimation(mem, known_fnks, hover_pool, delta_seconds);
+                        if (executor.animation == null) {
                             execution.state = .ending;
                             execution.state_t = 0;
-                            execution.final_result = try executor.input.clone(hover_pool);
+                            execution.final_result = executor.input; // try executor.input.clone(hover_pool);
                             result = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
-                            execution.executor = null;
+
+                            try fnkbox.resetExecutor(execution.original_garland, hover_pool);
                         }
                     },
                     .ending => {
@@ -2262,12 +2272,13 @@ const Fnkbox = struct {
                     },
                 },
                 .input => {
-                    const executor = &execution.executor.?;
-                    try executor.update(mem, known_fnks, hover_pool, delta_seconds);
+                    const executor = &fnkbox.executor;
+                    try executor.advanceAnimation(mem, known_fnks, hover_pool, delta_seconds);
                     if (executor.animation == null) {
                         result = try .fromExecutor(executor.prev_pills.items, &executor.input, .new(-5, 0), 0.75, mem, hover_pool);
+                        try fnkbox.resetExecutor(execution.original_garland, hover_pool);
+                        // TODO: memory leak here?
                         fnkbox.execution = null;
-                        fnkbox.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
                     }
                 },
             }
@@ -2276,6 +2287,14 @@ const Fnkbox = struct {
             // e.handle.pos.lerpTowards(fnkbox.point().applyToLocalPoint(relative_executor_point).pos, 0.6, delta_seconds);
         }
         return result;
+    }
+
+    pub fn resetExecutor(fnkbox: *Fnkbox, original_garland: VeryPhysicalGarland, hover_pool: *HoveredSexpr.Pool) !void {
+        fnkbox.executor.garland = original_garland;
+        fnkbox.executor.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
+        fnkbox.executor.prev_pills.clearRetainingCapacity();
+        fnkbox.executor.enqueued_stack.clearRetainingCapacity();
+        fnkbox.executor.animation = null;
     }
 };
 
@@ -2418,7 +2437,10 @@ pub fn getGarlandForFnk(
 ) !?VeryPhysicalGarland {
     for (known_fnks) |k| {
         if (k.fnkname.value.equals(fnkname)) {
-            var garland = try k.garland.clone(mem.gpa, hover_pool);
+            var garland = try (if (k.execution) |e|
+                e.original_garland
+            else
+                k.executor.garland).clone(mem.gpa, hover_pool);
             garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
             garland.kinematicUpdate(new_point, null, undefined);
             return garland;
@@ -2777,17 +2799,14 @@ const WorkspaceArea = struct {
         // executors in fnkboxes
         if (grabbed_tag == .nothing) {
             for (workspace.fnkboxes.items, 0..) |thing, k| {
-                if (thing.execution) |execution| {
-                    if (execution.executor) |executor| {
-                        if (executor.crankHandle()) |handle| {
-                            if (handle.contains(pos) and CRANKS_ENABLED) {
-                                return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
-                            }
-                        }
-                        if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
-                            return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };
-                        }
+                const executor = thing.executor;
+                if (executor.crankHandle()) |handle| {
+                    if (handle.contains(pos) and CRANKS_ENABLED) {
+                        return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
                     }
+                }
+                if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                    return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };
                 }
             }
         }
@@ -2849,8 +2868,9 @@ const WorkspaceArea = struct {
                     // some special cases
                     if (grabbed_tag != .nothing and base.immutable(parent_address.area)) continue;
                     switch (base) {
-                        .executor_input => |k| {
-                            if (workspace.executors.items[k.board].animating()) continue;
+                        .executor_input => |h| switch (h) {
+                            .board => |k| if (workspace.executors.items[k].animating()) continue,
+                            .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
                         },
                         .fnkbox_fnkname => {
                             // TODO: change this if some part of fnkbox gets mutable
@@ -2863,19 +2883,13 @@ const WorkspaceArea = struct {
                             if (!fnkbox.box().contains(pos)) continue;
                             if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
                         },
-                        .fnkbox_input => |k| {
-                            const fnkbox = &workspace.fnkboxes.items[k];
-                            if (fnkbox.execution != null) continue;
-                        },
                         .case => |t| switch (t.parent) {
                             else => {},
                             .garland => |g| switch (g.parent.parent) {
                                 else => {},
-                                .fnkbox => |k| {
-                                    if (workspace.fnkboxes.items[k].execution != null) continue;
-                                },
-                                .executor => |k| {
-                                    if (workspace.executors.items[k.board].animating()) continue;
+                                .executor => |h| switch (h) {
+                                    .board => |k| if (workspace.executors.items[k].animating()) continue,
+                                    .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
                                 },
                             },
                         },
@@ -2912,11 +2926,10 @@ const WorkspaceArea = struct {
                             // don't place garlands over board-level garlands (TODO: maybe not a bad idea?)
                             if (grabbed_tag == .garland_handle and base.local.len == 0) continue;
                         },
-                        .executor => |k| {
-                            if (workspace.executors.items[k.board].animating()) continue;
-                        },
-                        .fnkbox => |k| {
-                            if (workspace.fnkboxes.items[k].execution != null) continue;
+                        // TODO: this triplication would be removed if we traversed top-to-bottom instead of by each type
+                        .executor => |h| switch (h) {
+                            .board => |k| if (workspace.executors.items[k].animating()) continue,
+                            .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
                         },
                         else => {},
                     }
@@ -2940,11 +2953,10 @@ const WorkspaceArea = struct {
                     .board => {},
                     .garland => |t| switch (t.parent.parent) {
                         else => {},
-                        .fnkbox => |k| {
-                            if (workspace.fnkboxes.items[k].execution != null) continue;
-                        },
-                        .executor => |k| {
-                            if (workspace.executors.items[k.board].animating()) continue;
+                        // TODO: this triplication would be removed if we traversed top-to-bottom instead of by each type
+                        .executor => |h| switch (h) {
+                            .board => |k| if (workspace.executors.items[k].animating()) continue,
+                            .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
                         },
                     },
                 }
@@ -2979,14 +2991,20 @@ const WorkspaceArea = struct {
         return .nothing;
     }
 
+    fn executorAt(workspace: *WorkspaceArea, place: Workspace.ExecutorPlace) *Executor {
+        return switch (place) {
+            .board => |k| &workspace.executors.items[k],
+            .fnkbox => |k| &workspace.fnkboxes.items[k].executor,
+        };
+    }
+
     fn sexprAtPlace(workspace: *WorkspaceArea, place: BaseSexprPlace) *VeryPhysicalSexpr {
         return switch (place) {
             .board => |k| &workspace.sexprs.items[k],
             .case => |case| workspace.caseAt(case.parent).sexprAt(case.part),
-            .executor_input => |k| &workspace.executors.items[k.board].input,
+            .executor_input => |k| &workspace.executorAt(k).input,
             .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
-            .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
             .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
         };
     }
@@ -3007,9 +3025,8 @@ const WorkspaceArea = struct {
         return switch (place.parent) {
             .garland => |k| workspace.garlands.items[k].childGarland(place.local),
             .case => |k| workspace.cases.items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executors.items[k.board].garland.childGarland(place.local),
+            .executor => |k| workspace.executorAt(k).garland.childGarland(place.local),
             .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
-            .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
         };
     }
 
@@ -3080,7 +3097,7 @@ const WorkspaceArea = struct {
             },
             .fnkbox_handle => |k| {
                 try result.append(res, .{ .fnkbox_fnkname = k });
-                try result.append(res, .{ .fnkbox_input = k });
+                try result.append(res, .{ .executor_input = .{ .fnkbox = k } });
                 const parent_fnkbox = &workspace.fnkboxes.items[k];
                 for (parent_fnkbox.testcases.items, 0..) |_, testcase_index| {
                     inline for (TestCase.parts) |part| {
@@ -3130,7 +3147,7 @@ const WorkspaceArea = struct {
             .garland_handle => |garland_handle| .{ .garland = garland_handle.parent.garland },
             .executor_handle => |k| .{ .executor = k },
             .fnkviewer_handle => |k| .{ .fnkviewer = k },
-            .fnkbox_handle => |k| .{ .fnkbox = k },
+            .fnkbox_handle => |k| .{ .executor = .{ .fnkbox = k } },
             .nothing,
             .lens_handle,
             .sexpr,
@@ -3358,7 +3375,6 @@ const Workspace = struct {
             case: usize,
             executor: ExecutorPlace,
             fnkviewer: usize,
-            fnkbox: usize,
         };
 
         pub fn clone(original: GarlandHandle, res: std.mem.Allocator) !GarlandHandle {
@@ -3378,7 +3394,6 @@ const Workspace = struct {
         executor_input: ExecutorPlace,
         fnkviewer_fnkname: usize,
         fnkbox_fnkname: usize,
-        fnkbox_input: usize,
         fnkbox_testcase: struct {
             fnkbox: usize,
             testcase: usize,
@@ -3395,7 +3410,6 @@ const Workspace = struct {
                 .board,
                 .executor_input,
                 .fnkviewer_fnkname,
-                .fnkbox_input,
                 => false,
             };
         }
@@ -4068,18 +4082,7 @@ const Workspace = struct {
     }
 
     fn garlandAt(workspace: *Workspace, place: GarlandHandle, area: Focus.Target.Area) *VeryPhysicalGarland {
-        switch (place.parent) {
-            .garland, .case => {},
-            else => assert(area == .main_area),
-        }
-
-        return switch (place.parent) {
-            .garland => |k| workspace.garlands(area).items[k].childGarland(place.local),
-            .case => |k| workspace.cases(area).items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executors(area).items[k.board].garland.childGarland(place.local),
-            .fnkviewer => |k| workspace.fnkviewers(area).items[k].garland.childGarland(place.local),
-            .fnkbox => |k| workspace.fnkboxes(area).items[k].garland.childGarland(place.local),
-        };
+        return workspace.areaAt(area).garlandAt(place);
     }
 
     fn caseAt(workspace: *Workspace, place: CaseHandle, area: Focus.Target.Area) *VeryPhysicalCase {
@@ -4092,7 +4095,7 @@ const Workspace = struct {
 
     fn executorAt(workspace: *Workspace, place: ExecutorPlace, area: Focus.Target.Area) *Executor {
         return switch (place) {
-            .fnkbox => |k| &workspace.fnkboxes(area).items[k].execution.?.executor.?,
+            .fnkbox => |k| &workspace.fnkboxes(area).items[k].executor,
             .board => |k| &workspace.executors(area).items[k],
         };
     }
@@ -4678,8 +4681,11 @@ const Workspace = struct {
                     },
                     .started_execution_fnkbox_from_input => |g| {
                         const fnkbox = &workspace.fnkboxes(.main_area).items[g.fnkbox];
-                        fnkbox.input = g.input;
-                        fnkbox.execution = null;
+                        if (fnkbox.execution) |e| {
+                            try fnkbox.resetExecutor(e.original_garland, &mem.hover_pool);
+                            fnkbox.execution = null;
+                        }
+                        fnkbox.executor.input = g.input;
                         const next_cmd = workspace.undo_stack.pop().?;
                         assert(std.meta.activeTag(next_cmd.specific) == .dropped);
                         continue :again next_cmd.specific;
@@ -4687,7 +4693,10 @@ const Workspace = struct {
                     .fnkbox_launch_testcase => |t| {
                         const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
                         fnkbox.testcases.items[t.testcase].actual = t.old_actual;
-                        fnkbox.execution = null;
+                        if (fnkbox.execution) |e| {
+                            try fnkbox.resetExecutor(e.original_garland, &mem.hover_pool);
+                            fnkbox.execution = null;
+                        }
                     },
                     .fnkbox_toggle_fold => |k| {
                         const fnkbox = &workspace.fnkboxes(.main_area).items[k];
@@ -5185,7 +5194,7 @@ const Workspace = struct {
                 fnkbox.execution = .{
                     .source = .{ .testcase = t.testcase },
                     .old_testcase_actual_value = old_actual,
-                    .executor = null,
+                    .original_garland = try fnkbox.executor.garland.clone(mem.gpa, &mem.hover_pool),
                     .state_t = undefined,
                     .state = .scrolling_towards_case,
                 };
@@ -5346,24 +5355,19 @@ const Workspace = struct {
         }
 
         for (workspace.fnkboxes(.main_area).items, 0..) |*fnkbox, k| {
-            if (fnkbox.execution == null and !fnkbox.input.isEmpty() and fnkbox.garland.cases.items.len > 0) {
-                var garland = try fnkbox.garland.clone(mem.gpa, &workspace.hover_pool);
-                assert(garland.fnkname == null);
-                if (fnkbox.folded) garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
+            if (fnkbox.execution == null and fnkbox.executor.startedExecution()) {
                 fnkbox.execution = .{
+                    .original_garland = try fnkbox.executor.garland.clone(mem.gpa, &workspace.hover_pool),
                     .source = .input,
                     .state = .executing,
                     .state_t = undefined,
                     .old_testcase_actual_value = undefined,
-                    .executor = .initWithThings(
-                        fnkbox.input,
-                        garland,
-                        fnkbox.executorPoint(),
-                    ),
                 };
+                assert(fnkbox.executor.garland.fnkname == null);
+                if (fnkbox.folded) fnkbox.executor.garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
                     .fnkbox = k,
-                    .input = fnkbox.input,
+                    .input = try fnkbox.executor.input.clone(&mem.hover_pool),
                 } } });
                 try workspace.canonizeAfterChanges(mem);
             }
@@ -5386,21 +5390,12 @@ const Workspace = struct {
     fn grabbingSomethingIllegal(workspace: *const Workspace) bool {
         switch (workspace.focus.grabbing.kind) {
             else => return false,
-            .executor_brake_handle => |h| switch (h) {
-                .board => return false,
-                .fnkbox => |k| {
-                    const fnkbox = workspace.main_area.fnkboxes.items[k];
-                    return fnkbox.execution == null or
-                        fnkbox.execution.?.executor == null;
-                },
-            },
             .executor_crank_handle => |h| switch (h) {
                 .board => return false,
                 .fnkbox => |k| {
                     const fnkbox = workspace.main_area.fnkboxes.items[k];
                     return fnkbox.execution == null or
-                        fnkbox.execution.?.executor == null or
-                        fnkbox.execution.?.executor.?.animation == null;
+                        fnkbox.executor.animation == null;
                 },
             },
         }
