@@ -261,6 +261,7 @@ pub const HoveredSexpr = struct {
 const Handle = struct {
     point: Point,
     hot_t: f32 = 0,
+    // TODO: per-handle param
     pub const radius = 0.2;
 
     pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
@@ -272,13 +273,21 @@ const Handle = struct {
         drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha));
     }
 
-    pub fn update(handle: *Handle, hot_target: f32, delta_seconds: f32) void {
-        math.lerp_towards(&handle.hot_t, hot_target, 0.6, delta_seconds);
+    pub fn update(handle: *Handle, hot_target: bool, delta_seconds: f32) void {
+        math.lerp_towards(&handle.hot_t, if (hot_target) 1 else 0, 0.6, delta_seconds);
+    }
+
+    pub fn updateHoverT(handle: *Handle, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
+        handle.update(hovering.equalsExceptForLens(self_address), delta_seconds);
     }
 
     // TODO: radius should not be a parameter
     pub fn overlapped(handle: *const Handle, pos: Vec2, comptime base_radius: f32) bool {
         return pos.distTo(handle.point.pos) < base_radius * handle.point.scale;
+    }
+
+    pub fn overlappedV2(handle: *const Handle, pos: Vec2) bool {
+        return pos.distTo(handle.point.pos) < radius * handle.point.scale;
     }
 
     pub fn save(handle: *const Handle, out: std.io.AnyWriter, _: std.mem.Allocator) !void {
@@ -1302,16 +1311,33 @@ const Executor = struct {
     /// in 0..1; 1 is braked, 0.5 is normal speed, 0 is speedup
     brake_t: f32 = 0.5,
 
+    brake_handle: Handle,
+
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_point: Point = .{ .pos = .new(4, 0) };
     const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
 
     pub fn init(point: Point, hover_pool: *HoveredSexpr.Pool) !Executor {
-        return .{
+        return .initWithThings(
+            try .empty(point.applyToLocalPoint(relative_input_point), hover_pool, false),
+            .init(point.applyToLocalPoint(relative_input_point)),
+            point,
+        );
+    }
+
+    pub fn initWithThings(input: VeryPhysicalSexpr, garland: VeryPhysicalGarland, point: Point) Executor {
+        var result: Executor = .{
             .handle = .{ .point = point },
-            .garland = .init(point.applyToLocalPoint(relative_input_point)),
-            .input = try .empty(point.applyToLocalPoint(relative_input_point), hover_pool, false),
+            .garland = garland,
+            .input = input,
+            .brake_handle = .{ .point = undefined },
         };
+        result.recomputeBrakeHandlePos();
+        return result;
+    }
+
+    fn recomputeBrakeHandlePos(executor: *Executor) void {
+        executor.brake_handle.point = .{ .pos = executor.brakeHandlePath(executor.brake_t) };
     }
 
     pub fn draw(executor: Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
@@ -1343,7 +1369,7 @@ const Executor = struct {
                 .brakeHandlePath,
                 &kommon.funktional.linspace01(10, true),
             ), executor.handle.point.scale * 0.05, FColor.gray(0.9).withAlpha(0.2));
-            drawer.canvas.fillCircleV2(camera, executor.brakeHandle(), .white);
+            try executor.brake_handle.draw(drawer, camera, 1.0);
             if (executor.crankHandle()) |c| {
                 const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
                 drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
@@ -1389,6 +1415,7 @@ const Executor = struct {
         );
         // math.lerp_towards(&executor.brake_t, raw_t, 0.6, delta_seconds);
         math.towards(&executor.brake_t, raw_t, delta_seconds * 5);
+        executor.recomputeBrakeHandlePos();
     }
 
     pub fn brakeLineRaw(crank_center: Point, brake_t: f32, line_t: f32) Vec2 {
@@ -1423,13 +1450,6 @@ const Executor = struct {
         } else return null;
     }
 
-    pub fn brakeHandle(executor: *const Executor) math.Circle {
-        return .{
-            .center = executor.brakeHandlePath(executor.brake_t),
-            .radius = executor.handle.point.scale * 0.2,
-        };
-    }
-
     fn speedScale(brake_t: f32) f32 {
         // 1 -> 0
         // 0.5 -> 1
@@ -1449,6 +1469,13 @@ const Executor = struct {
 
     pub fn startedExecution(executor: Executor) bool {
         return executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty();
+    }
+
+    pub fn updateHoverT(executor: *Executor, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
+        executor.handle.updateHoverT(self_address, hovering, delta_seconds);
+        executor.brake_handle.updateHoverT(.{ .area = self_address.area, .kind = .{
+            .executor_brake_handle = self_address.kind.executor_handle,
+        } }, hovering, delta_seconds);
     }
 
     // try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
@@ -2130,6 +2157,18 @@ const Fnkbox = struct {
         fnkbox.status = .solved;
     }
 
+    pub fn updateHoverT(fnkbox: *Fnkbox, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
+        fnkbox.handle.updateHoverT(self_address, hovering, delta_seconds);
+
+        if (fnkbox.execution) |*execution| {
+            if (execution.executor) |*executor| {
+                executor.updateHoverT(.{ .area = self_address.area, .kind = .{
+                    .executor_handle = .{ .fnkbox = self_address.kind.fnkbox_handle },
+                } }, hovering, delta_seconds);
+            }
+        }
+    }
+
     pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !?ExecutionTrace {
         var result: ?ExecutionTrace = null;
         math.lerp_towards_range(&fnkbox.scroll_testcases, 0, @max(0, tof32(fnkbox.testcases.items.len) - visible_testcases), 0.6, delta_seconds);
@@ -2166,12 +2205,12 @@ const Fnkbox = struct {
                         if (math.inRangeClosed(fnkbox.scroll_testcases, min, max)) {
                             execution.state = .starting;
                             execution.state_t = 0;
-                            execution.executor = .{
-                                .input = try fnkbox.testcases.items[testcase_index].input.dupeSubValue(&.{}, hover_pool),
-                                .garland = try fnkbox.garland.clone(mem.gpa, hover_pool),
-                                .handle = .{ .point = fnkbox.executorPoint() },
-                                .animation = null,
-                            };
+                            execution.executor = .initWithThings(
+                                try fnkbox.testcases.items[testcase_index].input.dupeSubValue(&.{}, hover_pool),
+                                try fnkbox.garland.clone(mem.gpa, hover_pool),
+                                fnkbox.executorPoint(),
+                            );
+                            execution.executor.?.recomputeBrakeHandlePos();
                             execution.executor.?.input.point = fnkbox.testcases.items[testcase_index].input.point;
                         }
                     },
@@ -2657,25 +2696,17 @@ const WorkspaceArea = struct {
             lens.update(hovered, delta_seconds);
         }
         for (workspace.executors.items, 0..) |*executor, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .executor_handle => |index| if (index == k) 1 else 0,
-            };
-            executor.handle.update(hovered, delta_seconds);
+            executor.updateHoverT(.{ .area = workspace.area, .kind = .{ .executor_handle = .{ .board = k } } }, hovering, delta_seconds);
         }
         for (workspace.fnkviewers.items, 0..) |*thing, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .fnkviewer_handle => |index| if (index == k) 1 else 0,
+            const hovered: bool = switch (hovering.kind) {
+                else => false,
+                .fnkviewer_handle => |index| index == k,
             };
             thing.handle.update(hovered, delta_seconds);
         }
         for (workspace.fnkboxes.items, 0..) |*thing, k| {
-            const hovered: f32 = switch (hovering.kind) {
-                else => 0,
-                .fnkbox_handle => |index| if (index == k) 1 else 0,
-            };
-            thing.handle.update(hovered, delta_seconds);
+            thing.updateHoverT(.{ .area = workspace.area, .kind = .{ .fnkbox_handle = k } }, hovering, delta_seconds);
         }
     }
 
@@ -2728,7 +2759,7 @@ const WorkspaceArea = struct {
         // executors
         if (grabbed_tag == .nothing) {
             for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.brakeHandle().contains(pos) and CRANKS_ENABLED) {
+                if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .board = k } }, .area = workspace.area };
                 }
                 if (executor.animating()) {
@@ -2737,7 +2768,7 @@ const WorkspaceArea = struct {
                     }
                 } else {
                     if (executor.handle.overlapped(pos, Handle.radius)) {
-                        return .{ .kind = .{ .executor_handle = k }, .area = workspace.area };
+                        return .{ .kind = .{ .executor_handle = .{ .board = k } }, .area = workspace.area };
                     }
                 }
             }
@@ -2753,7 +2784,7 @@ const WorkspaceArea = struct {
                                 return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
                             }
                         }
-                        if (executor.brakeHandle().contains(pos) and CRANKS_ENABLED) {
+                        if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
                             return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };
                         }
                     }
@@ -2819,7 +2850,7 @@ const WorkspaceArea = struct {
                     if (grabbed_tag != .nothing and base.immutable(parent_address.area)) continue;
                     switch (base) {
                         .executor_input => |k| {
-                            if (workspace.executors.items[k].animating()) continue;
+                            if (workspace.executors.items[k.board].animating()) continue;
                         },
                         .fnkbox_fnkname => {
                             // TODO: change this if some part of fnkbox gets mutable
@@ -2844,7 +2875,7 @@ const WorkspaceArea = struct {
                                     if (workspace.fnkboxes.items[k].execution != null) continue;
                                 },
                                 .executor => |k| {
-                                    if (workspace.executors.items[k].animating()) continue;
+                                    if (workspace.executors.items[k.board].animating()) continue;
                                 },
                             },
                         },
@@ -2882,7 +2913,7 @@ const WorkspaceArea = struct {
                             if (grabbed_tag == .garland_handle and base.local.len == 0) continue;
                         },
                         .executor => |k| {
-                            if (workspace.executors.items[k].animating()) continue;
+                            if (workspace.executors.items[k.board].animating()) continue;
                         },
                         .fnkbox => |k| {
                             if (workspace.fnkboxes.items[k].execution != null) continue;
@@ -2913,7 +2944,7 @@ const WorkspaceArea = struct {
                             if (workspace.fnkboxes.items[k].execution != null) continue;
                         },
                         .executor => |k| {
-                            if (workspace.executors.items[k].animating()) continue;
+                            if (workspace.executors.items[k.board].animating()) continue;
                         },
                     },
                 }
@@ -2952,7 +2983,7 @@ const WorkspaceArea = struct {
         return switch (place) {
             .board => |k| &workspace.sexprs.items[k],
             .case => |case| workspace.caseAt(case.parent).sexprAt(case.part),
-            .executor_input => |k| &workspace.executors.items[k].input,
+            .executor_input => |k| &workspace.executors.items[k.board].input,
             .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
             .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
             .fnkbox_input => |k| &workspace.fnkboxes.items[k].input,
@@ -2976,7 +3007,7 @@ const WorkspaceArea = struct {
         return switch (place.parent) {
             .garland => |k| workspace.garlands.items[k].childGarland(place.local),
             .case => |k| workspace.cases.items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executors.items[k].garland.childGarland(place.local),
+            .executor => |k| workspace.executors.items[k.board].garland.childGarland(place.local),
             .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
             .fnkbox => |k| workspace.fnkboxes.items[k].garland.childGarland(place.local),
         };
@@ -3020,7 +3051,7 @@ const WorkspaceArea = struct {
             } }, .area = area });
         }
         for (workspace.executors.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .executor_handle = k }, .area = area });
+            result.appendAssumeCapacity(.{ .kind = .{ .executor_handle = .{ .board = k } }, .area = area });
         }
         for (workspace.fnkviewers.items, 0..) |_, k| {
             result.appendAssumeCapacity(.{ .kind = .{ .fnkviewer_handle = k }, .area = area });
@@ -3253,7 +3284,7 @@ const Workspace = struct {
                 },
                 case_handle: CaseHandle,
                 garland_handle: GarlandHandle,
-                executor_handle: usize,
+                executor_handle: ExecutorPlace,
                 executor_crank_handle: ExecutorPlace,
                 executor_brake_handle: ExecutorPlace,
                 fnkviewer_handle: usize,
@@ -3325,7 +3356,7 @@ const Workspace = struct {
         pub const Parent = union(enum) {
             garland: usize,
             case: usize,
-            executor: usize,
+            executor: ExecutorPlace,
             fnkviewer: usize,
             fnkbox: usize,
         };
@@ -3344,7 +3375,7 @@ const Workspace = struct {
             parent: CaseHandle,
             part: core.CasePart,
         },
-        executor_input: usize,
+        executor_input: ExecutorPlace,
         fnkviewer_fnkname: usize,
         fnkbox_fnkname: usize,
         fnkbox_input: usize,
@@ -4045,7 +4076,7 @@ const Workspace = struct {
         return switch (place.parent) {
             .garland => |k| workspace.garlands(area).items[k].childGarland(place.local),
             .case => |k| workspace.cases(area).items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executors(area).items[k].garland.childGarland(place.local),
+            .executor => |k| workspace.executors(area).items[k.board].garland.childGarland(place.local),
             .fnkviewer => |k| workspace.fnkviewers(area).items[k].garland.childGarland(place.local),
             .fnkbox => |k| workspace.fnkboxes(area).items[k].garland.childGarland(place.local),
         };
@@ -4696,7 +4727,7 @@ const Workspace = struct {
                             switch (g.from.kind) {
                                 .nothing => unreachable,
                                 .executor_handle => |h| {
-                                    const e = &workspace.executors(.main_area).items[h];
+                                    const e = &workspace.executors(.main_area).items[h.board];
                                     e.handle.point = g.old_data.point;
                                 },
                                 .executor_crank_handle,
@@ -4910,7 +4941,7 @@ const Workspace = struct {
                 lens.setHandlePos(p.part, mouse.cur.position);
             },
             .executor_handle => |h| {
-                workspace.executors(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
+                workspace.executors(workspace.focus.grabbing.area).items[h.board].handle.point = mouse_point;
             },
             .executor_crank_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).crankMovedTo(mouse_point.pos, platform.delta_seconds),
             .executor_brake_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).brakeMovedTo(mouse_point.pos, platform.delta_seconds),
@@ -5324,12 +5355,11 @@ const Workspace = struct {
                     .state = .executing,
                     .state_t = undefined,
                     .old_testcase_actual_value = undefined,
-                    .executor = .{
-                        .input = fnkbox.input,
-                        .garland = garland,
-                        .handle = .{ .point = fnkbox.executorPoint() },
-                        .animation = null,
-                    },
+                    .executor = .initWithThings(
+                        fnkbox.input,
+                        garland,
+                        fnkbox.executorPoint(),
+                    ),
                 };
                 try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
                     .fnkbox = k,
@@ -5381,9 +5411,9 @@ const Workspace = struct {
             .nothing => unreachable,
             .postit => |k| .{ .pos = workspace.postits(thing.area).items[k].button.rect.top_left, .scale = undefined },
             .lens_handle => |h| .{ .pos = workspace.lenses(thing.area).items[h.index].handlePos(h.part) },
-            .executor_handle => |h| workspace.executors(thing.area).items[h].handle.point,
-            .executor_crank_handle => |h| workspace.executorAt(h, thing.area).crankHandle().?.asPoint(),
-            .executor_brake_handle => |h| workspace.executorAt(h, thing.area).brakeHandle().asPoint(),
+            .executor_handle => |h| workspace.executors(thing.area).items[h.board].handle.point,
+            .executor_crank_handle => undefined,
+            .executor_brake_handle => undefined,
             .fnkviewer_handle => |h| workspace.fnkviewers(thing.area).items[h].handle.point,
             .fnkbox_handle => |h| workspace.fnkboxes(thing.area).items[h].handle.point,
             .case_handle => |h| workspace.caseHandleRef(h, thing.area).point,
@@ -5392,6 +5422,7 @@ const Workspace = struct {
         };
     }
 
+    // TODO: add brake_t and executor.anim.t
     fn getOldData(workspace: *Workspace, hovering: Focus.Target) UndoableCommand.Grabbed.OldData {
         return .{
             .point = workspace.pointOf(hovering),
