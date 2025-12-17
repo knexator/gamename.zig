@@ -44,6 +44,9 @@ pub const AtomVisuals = struct {
         var template_pair_holder: Canvas.PrecomputedShape = undefined;
         var pattern_pair_holder: Canvas.PrecomputedShape = undefined;
 
+        // other shapes
+        pub var ridged_circle: Canvas.PrecomputedShape = undefined;
+
         pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2, gl: kommon.Gl) !Geometry {
             const template: Canvas.PrecomputedShape = blk: {
                 const skeleton_positions = [1]Vec2{.new(2, -1)} ++
@@ -148,6 +151,12 @@ pub const AtomVisuals = struct {
                     return Vec2.fromTurns(math.lerp(-0.25, 0.25, math.tof32(k) / 32)).addX(-0.5);
                 }
             }.anon) ++ [1]Vec2{.new(-1, 1)}), gl);
+
+            Geometry.ridged_circle = try .fromPoints(mem, &(funk.map(struct {
+                pub fn anon(t: f32) Vec2 {
+                    return Vec2.fromPolar(@abs(0.1 * math.cos(t * 4)) + 1, t);
+                }
+            }.anon, &funk.linspace01(128, false))), gl);
         }
     };
 };

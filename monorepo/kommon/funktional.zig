@@ -112,6 +112,20 @@ pub fn PointedType(comptime T: type) type {
     };
 }
 
+test "PointedType" {
+    const T = *const u8;
+    try std.testing.expect(PointedType(T) == u8);
+
+    const S = struct {
+        foo: u8 = 0,
+        fn bar(s: *const @This()) u8 {
+            return s.foo;
+        }
+    };
+
+    comptime std.debug.assert(std.meta.DeclEnum(S) == std.meta.DeclEnum(PointedType(*const S)));
+}
+
 pub fn mapOOP(
     ctx: anytype,
     comptime map_fn_name: std.meta.DeclEnum(PointedType(@TypeOf(ctx))),

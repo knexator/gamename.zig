@@ -261,6 +261,7 @@ pub const HoveredSexpr = struct {
 const Handle = struct {
     point: Point,
     hot_t: f32 = 0,
+    enabled: bool = true,
     // TODO: per-handle param
     pub const radius = 0.2;
 
@@ -269,11 +270,13 @@ const Handle = struct {
     }
 
     pub fn drawCustom(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32, p1: f32, p2: f32) !void {
-        drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha));
-        drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha));
+        const alpha_mul: f32 = if (handle.enabled) 1 else 0.5;
+        drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha * alpha_mul));
+        drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha * alpha_mul));
     }
 
     pub fn update(handle: *Handle, hot_target: bool, delta_seconds: f32) void {
+        if (!handle.enabled) assert(!hot_target);
         math.lerp_towards(&handle.hot_t, if (hot_target) 1 else 0, 0.6, delta_seconds);
     }
 
@@ -283,11 +286,11 @@ const Handle = struct {
 
     // TODO: radius should not be a parameter
     pub fn overlapped(handle: *const Handle, pos: Vec2, comptime base_radius: f32) bool {
-        return pos.distTo(handle.point.pos) < base_radius * handle.point.scale;
+        return handle.enabled and pos.distTo(handle.point.pos) < base_radius * handle.point.scale;
     }
 
     pub fn overlappedV2(handle: *const Handle, pos: Vec2) bool {
-        return pos.distTo(handle.point.pos) < radius * handle.point.scale;
+        return handle.enabled and pos.distTo(handle.point.pos) < radius * handle.point.scale;
     }
 
     pub fn save(handle: *const Handle, out: std.io.AnyWriter, _: std.mem.Allocator) !void {
@@ -1312,6 +1315,7 @@ const Executor = struct {
     brake_t: f32 = 0.5,
 
     brake_handle: Handle,
+    crank_handle: Handle,
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_point: Point = .{ .pos = .new(4, 0) };
@@ -1331,13 +1335,23 @@ const Executor = struct {
             .garland = garland,
             .input = input,
             .brake_handle = .{ .point = undefined },
+            .crank_handle = .{ .point = undefined },
         };
         result.recomputeBrakeHandlePos();
+        result.recomputeCrankHandlePos();
         return result;
     }
 
     fn recomputeBrakeHandlePos(executor: *Executor) void {
         executor.brake_handle.point = .{ .pos = executor.brakeHandlePath(executor.brake_t) };
+    }
+
+    fn recomputeCrankHandlePos(executor: *Executor) void {
+        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+        executor.crank_handle.point = .{ .pos = crank_center.applyToLocalPosition(
+            .fromPolar(0.75, if (executor.animation) |anim| anim.t else 0),
+        ) };
+        executor.crank_handle.enabled = executor.animation != null;
     }
 
     pub fn draw(executor: Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
@@ -1374,11 +1388,12 @@ const Executor = struct {
                 &kommon.funktional.linspace01(10, true),
             ), executor.handle.point.scale * 0.05, FColor.gray(0.9).withAlpha(0.2));
             try executor.brake_handle.draw(drawer, camera, 1.0);
-            if (executor.crankHandle()) |c| {
-                const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-                drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
-                drawer.canvas.fillCircleV2(camera, c, .white);
-            }
+            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
+            drawer.canvas.fillShape(camera, crank_center.plusTurns(
+                if (executor.animation) |anim| anim.t else 0,
+            ), Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
+            // drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
+            try executor.crank_handle.draw(drawer, camera, 1.0);
         }
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
         // TODO: revise that .new is correct
@@ -1399,6 +1414,7 @@ const Executor = struct {
         const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
         // math.lerp_towards(&executor.animation.?.t, @max(0, target_t), 0.6, delta_seconds);
         math.towards(&executor.animation.?.t, target_t, delta_seconds * 5);
+        executor.recomputeCrankHandlePos();
     }
 
     pub fn brakeMovedTo(executor: *Executor, pos: Vec2, delta_seconds: f32) !void {
@@ -1442,16 +1458,6 @@ const Executor = struct {
         //     .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
         //     .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
         //     .addY(0.25);
-    }
-
-    pub fn crankHandle(executor: *const Executor) ?math.Circle {
-        if (executor.animation) |anim| {
-            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-            return .{
-                .center = crank_center.applyToLocalPosition(.fromPolar(1, anim.t)),
-                .radius = crank_center.scale * 0.2,
-            };
-        } else return null;
     }
 
     fn speedScale(brake_t: f32) f32 {
@@ -1560,11 +1566,13 @@ const Executor = struct {
                 .parent_pill = parent_pill_index,
             };
         }
+        executor.recomputeCrankHandlePos();
     }
 
     pub fn updateSpringsAndStuff(executor: *Executor, delta_seconds: f32) !void {
         executor.garland.handle.point.lerp_towards(executor.garlandPoint(), 0.6, delta_seconds);
         executor.recomputeBrakeHandlePos();
+        executor.recomputeCrankHandlePos();
 
         var pill_offset: f32 = 0;
         if (executor.animation) |*animation| {
@@ -2784,14 +2792,11 @@ const WorkspaceArea = struct {
                 if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .board = k } }, .area = workspace.area };
                 }
-                if (executor.animating()) {
-                    if (executor.crankHandle().?.contains(pos) and CRANKS_ENABLED) {
-                        return .{ .kind = .{ .executor_crank_handle = .{ .board = k } }, .area = workspace.area };
-                    }
-                } else {
-                    if (executor.handle.overlapped(pos, Handle.radius)) {
-                        return .{ .kind = .{ .executor_handle = .{ .board = k } }, .area = workspace.area };
-                    }
+                if (executor.crank_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                    return .{ .kind = .{ .executor_crank_handle = .{ .board = k } }, .area = workspace.area };
+                }
+                if (executor.handle.overlapped(pos, Handle.radius)) {
+                    return .{ .kind = .{ .executor_handle = .{ .board = k } }, .area = workspace.area };
                 }
             }
         }
@@ -2800,10 +2805,8 @@ const WorkspaceArea = struct {
         if (grabbed_tag == .nothing) {
             for (workspace.fnkboxes.items, 0..) |thing, k| {
                 const executor = thing.executor;
-                if (executor.crankHandle()) |handle| {
-                    if (handle.contains(pos) and CRANKS_ENABLED) {
-                        return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
-                    }
+                if (executor.crank_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                    return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
                 }
                 if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };

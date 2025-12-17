@@ -1835,6 +1835,10 @@ pub const Point = extern struct {
         return .{ .pos = new_pos, .turns = original.turns, .scale = original.scale };
     }
 
+    pub fn plusTurns(original: Point, extra_turns: f32) Point {
+        return .{ .pos = original.pos, .turns = original.turns + extra_turns, .scale = original.scale };
+    }
+
     pub fn lerp(a: Point, b: Point, t: f32) Point {
         // TODO: properly handle rotation
         return .{
