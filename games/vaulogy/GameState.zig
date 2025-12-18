@@ -1938,7 +1938,7 @@ const Fnkbox = struct {
     };
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
-    const relative_bottom_testcase_point: Point = .{ .pos = .new(0, box_height - 0.5) };
+    const relative_top_testcase_point: Point = .{ .pos = .new(0, box_height - testcases_height) };
     const text_height: f32 = 2.5;
     const status_bar_height: f32 = 1;
     const testcases_header_height: f32 = 0.75;
@@ -2224,8 +2224,8 @@ const Fnkbox = struct {
         fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*t, k| {
             const center = fnkbox.point()
-                .applyToLocalPoint(relative_bottom_testcase_point)
-                .applyToLocalPoint(.{ .pos = .new(0, -2.5 * (tof32(k) - fnkbox.scroll_testcases)) });
+                .applyToLocalPoint(relative_top_testcase_point)
+                .applyToLocalPoint(.{ .pos = .new(0, 2 + 2.5 * (tof32(k) - fnkbox.scroll_testcases)) });
             t.input.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(-4, 0) }), 0.6, delta_seconds);
             t.expected.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(0, 0) }), 0.6, delta_seconds);
             t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
@@ -3279,6 +3279,8 @@ const Workspace = struct {
 
         const UiTarget = struct {
             kind: Kind,
+            // TODO: remove default
+            area: Target.Area = .main_area,
 
             pub const nothing: UiTarget = .{ .kind = .nothing };
 
@@ -4390,6 +4392,7 @@ const Workspace = struct {
         return .nothing;
     }
 
+    // TODO NOW: remove
     fn findHoverableOrDropzoneAtPosition(workspace: *Workspace, pos: Vec2, res: std.mem.Allocator, scratch: std.mem.Allocator) !Focus.Target {
         const grabbed = workspace.focus.grabbing;
         const grabbed_tag = std.meta.activeTag(grabbed.kind);
@@ -5015,7 +5018,7 @@ const Workspace = struct {
         switch (workspace.focus.ui_active.kind) {
             else => {},
             .fnkbox_scroll => |t| {
-                workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_testcases += platform.delta_seconds * @as(f32, switch (t.direction) {
+                workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_testcases -= platform.delta_seconds * @as(f32, switch (t.direction) {
                     .up => 1,
                     .down => -1,
                 }) / 0.2;
@@ -5069,7 +5072,7 @@ const Workspace = struct {
             } else null;
 
             if (hovering_fnkbox) |k| {
-                workspace.fnkboxes(.main_area).items[k].scroll_testcases += mouse.cur.scrolled.toNumber() * platform.delta_seconds / 0.05;
+                workspace.fnkboxes(.main_area).items[k].scroll_testcases -= mouse.cur.scrolled.toNumber() * platform.delta_seconds / 0.05;
             }
 
             workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, hovering_fnkbox == null);
@@ -5084,7 +5087,7 @@ const Workspace = struct {
                         workspace.focus.ui_active = ui_hot;
                         break :blk .{ .specific = .{ .fnkbox_scroll = .{
                             .fnkbox = t.fnkbox,
-                            .old_position = workspace.fnkboxes(hovering.area).items[t.fnkbox].scroll_testcases,
+                            .old_position = workspace.fnkboxes(ui_hot.area).items[t.fnkbox].scroll_testcases,
                         } } };
                     },
                     .nothing, .fnkbox_launch_testcase, .fnkbox_see_failing_case => blk: {
