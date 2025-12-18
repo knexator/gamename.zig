@@ -3424,7 +3424,8 @@ const Workspace = struct {
             return switch (place) {
                 .fnkbox_fnkname, .fnkbox_testcase => true,
                 .case => switch (area) {
-                    .toolbar => true,
+                    .toolbar => false,
+                    // .toolbar => true,
                     else => false,
                 },
                 .board,
@@ -3470,7 +3471,9 @@ const Workspace = struct {
                 spawned_sexpr: bool,
             },
             // TODO: aghh idk
-            created_fresh_case_in_toolbar,
+            refreshed_case_in_toolbar: struct {
+                old_case: ?VeryPhysicalCase,
+            },
             deleted: struct {
                 old_place: Focus.Target,
                 value: Focus.Value,
@@ -4158,6 +4161,15 @@ const Workspace = struct {
     }
 
     // TODO: remove?
+    pub fn sexprs(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(VeryPhysicalSexpr) {
+        return switch (area) {
+            .nowhere => unreachable,
+            .main_area => &workspace.main_area.sexprs,
+            .hand => &workspace.hand.sexprs,
+            .toolbar => &workspace.toolbar.sexprs,
+        };
+    }
+
     pub fn cases(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(VeryPhysicalCase) {
         return switch (area) {
             .nowhere => unreachable,
@@ -4263,18 +4275,10 @@ const Workspace = struct {
     }
 
     fn setSexprAt(workspace: *Workspace, p: SexprPlace, area: Focus.Target.Area, v: VeryPhysicalSexpr, mem: *VeryPermamentGameStuff) !void {
-        switch (area) {
-            .nowhere => unreachable,
-            .toolbar => unreachable,
-            .main_area => if (p.local.len == 0 and std.meta.activeTag(p.base) == .board) {
-                workspace.main_area.sexprs.items[p.base.board] = v;
-            } else {
-                try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, &mem.hover_pool);
-            },
-            .hand => {
-                assert(p.local.len == 0 and std.meta.activeTag(p.base) == .board);
-                workspace.hand.sexprs.items[p.base.board] = v;
-            },
+        if (p.local.len == 0 and std.meta.activeTag(p.base) == .board) {
+            workspace.sexprs(area).items[p.base.board] = v;
+        } else {
+            try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, &mem.hover_pool);
         }
     }
 
@@ -4409,11 +4413,6 @@ const Workspace = struct {
         // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        if (workspace.toolbar_left < 0.1 and workspace.toolbar.cases.items.len == 0) {
-            try workspace.toolbar.cases.append(mem.gpa, try workspace.freshToolbarCase(mem));
-            try workspace.undo_stack.append(.{ .specific = .created_fresh_case_in_toolbar });
-        }
-
         workspace.toolbar_trash.rect = workspace.leftToolbarRect().subrectAsIf(
             .{ .top_left = .half, .size = .both(3) },
             left_toolbar_rect_ideal,
@@ -4433,8 +4432,11 @@ const Workspace = struct {
             if (workspace.undo_stack.pop()) |command| {
                 again: switch (command.specific) {
                     .noop => {},
-                    .created_fresh_case_in_toolbar => {
+                    .refreshed_case_in_toolbar => |g| {
                         _ = workspace.toolbar.cases.pop();
+                        if (g.old_case) |c| {
+                            workspace.toolbar.cases.appendAssumeCapacity(c);
+                        }
                         if (workspace.undo_stack.pop()) |next_cmd| continue :again next_cmd.specific;
                     },
                     .deleted => |d| {
@@ -4660,6 +4662,7 @@ const Workspace = struct {
 
         const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
 
+        const old_toolbar_left = workspace.toolbar_left;
         math.lerp_towards(
             &workspace.toolbar_left,
             if (left_toolbar_rect_ideal
@@ -4669,6 +4672,16 @@ const Workspace = struct {
             0.3,
             platform.delta_seconds,
         );
+
+        // TODO: only do on open or on close (right now, doing on both just in case)
+        if ((old_toolbar_left > 0.1 and workspace.toolbar_left <= 0.1) or (old_toolbar_left <= 0.1 and workspace.toolbar_left > 0.1)) {
+            const old_case = workspace.toolbar.cases.pop();
+            assert(workspace.toolbar.cases.items.len == 0);
+            try workspace.toolbar.cases.append(mem.gpa, try workspace.freshToolbarCase(mem));
+            try workspace.undo_stack.append(.{ .specific = .{
+                .refreshed_case_in_toolbar = .{ .old_case = old_case },
+            } });
+        }
 
         // TODO: should maybe be a Focus.Target as a dropzone
         const hovering_toolbar_trash: bool = switch (workspace.focus.grabbing.kind) {
@@ -4762,7 +4775,13 @@ const Workspace = struct {
                 const target: Point = switch (dropzone.kind) {
                     .sexpr => |s| ViewHelper.sexprChildView(
                         grabbed.is_pattern,
-                        dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base, dropzone.area).point),
+
+                        Rect.transformBetweenRects(
+                            workspace.areaCamera(dropzone.area),
+                            workspace.camera,
+                        ).applyToLocalPoint(
+                            dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base, dropzone.area).point),
+                        ),
                         s.local,
                     ),
                     .nothing => .{
@@ -4976,7 +4995,7 @@ const Workspace = struct {
             .started_execution_fnkbox_from_input,
             .spawned_trace,
             .despawned_trace,
-            .created_fresh_case_in_toolbar,
+            .refreshed_case_in_toolbar,
             => unreachable,
             .fnkbox_launch_testcase => |t| {
                 const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
@@ -5092,15 +5111,12 @@ const Workspace = struct {
                         else
                             try workspace.popAt(g.from, mem);
 
+                        original.sexpr.point = hovering.lens_transform.actOn(original.sexpr.point);
                         if (g.from.area == .toolbar) original.sexpr.changeCoordinateSpace(Rect.transformBetweenRects(
                             workspace.leftToolbarCamera(),
                             workspace.camera,
                         ));
-
-                        original.sexpr.point = hovering.lens_transform.actOn(original.sexpr.point);
-
                         try workspace.hand.sexprs.append(mem.gpa, original.sexpr);
-
                         workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{
                             .base = .{ .board = workspace.hand.sexprs.items.len - 1 },
                             .local = &.{},
@@ -5218,6 +5234,15 @@ const Workspace = struct {
                 else => undefined,
                 .sexpr => |s| workspace.sexprAtPlace(s.base, hovering.area).is_pattern,
             },
+        };
+    }
+
+    // fn getTransformBetweenAreas(workspace: *const Workspace, old_area: Focus.Target.Area, new_area: Focus.Target)
+    fn areaCamera(workspace: *const Workspace, area: Focus.Target.Area) Rect {
+        return switch (area) {
+            .nowhere => unreachable,
+            .hand, .main_area => workspace.camera,
+            .toolbar => workspace.leftToolbarCamera(),
         };
     }
 };
