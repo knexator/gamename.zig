@@ -4663,6 +4663,8 @@ const Workspace = struct {
         math.lerp_towards(
             &workspace.toolbar_left,
             if (left_toolbar_rect_ideal
+                // just in case the mouse is out of the screen on that side
+                .scaleNonUniform(.new(100, 1), .center_right)
                 .contains(mouse_toolbar_pos)) 1 else 0,
             0.3,
             platform.delta_seconds,
