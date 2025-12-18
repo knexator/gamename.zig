@@ -105,6 +105,7 @@ pub const levels: []const Level = &.{
         .description = "Return true if the input letter is a vowel",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.uppercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[4], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = &Sexpr.doVar("other"), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
         } },

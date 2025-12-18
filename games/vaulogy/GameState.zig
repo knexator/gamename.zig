@@ -270,9 +270,10 @@ const Handle = struct {
     }
 
     pub fn drawCustom(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32, p1: f32, p2: f32) !void {
-        const alpha_mul: f32 = if (handle.enabled) 1 else 0.5;
-        drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha * alpha_mul));
-        drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha * alpha_mul));
+        if (handle.enabled) {
+            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha));
+            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha));
+        }
     }
 
     pub fn update(handle: *Handle, hot_target: bool, delta_seconds: f32) void {
@@ -1326,12 +1327,13 @@ const Executor = struct {
             try .empty(point.applyToLocalPoint(relative_input_point), hover_pool, false),
             .init(point.applyToLocalPoint(relative_input_point)),
             point,
+            true,
         );
     }
 
-    pub fn initWithThings(input: VeryPhysicalSexpr, garland: VeryPhysicalGarland, point: Point) Executor {
+    pub fn initWithThings(input: VeryPhysicalSexpr, garland: VeryPhysicalGarland, point: Point, handle_enabled: bool) Executor {
         var result: Executor = .{
-            .handle = .{ .point = point },
+            .handle = .{ .point = point, .enabled = handle_enabled },
             .garland = garland,
             .input = input,
             .brake_handle = .{ .point = undefined },
@@ -1354,11 +1356,11 @@ const Executor = struct {
         executor.crank_handle.enabled = executor.animation != null;
     }
 
-    pub fn draw(executor: Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(executor: *const Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
         try drawWithGarlandAlpha(executor, 1, holding, drawer, camera);
     }
 
-    pub fn drawWithGarlandAlpha(executor: Executor, garland_alpha: f32, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
+    pub fn drawWithGarlandAlpha(executor: *const Executor, garland_alpha: f32, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
         try executor.handle.draw(drawer, camera, 1);
         // const bindings_anim_t: ?f32 = if (executor.animation) |anim| if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8) else null;
         const bindings_active: BindingsState = if (executor.animation) |anim| .{
@@ -1378,21 +1380,20 @@ const Executor = struct {
         }
         if (CRANKS_ENABLED) {
             drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-                &executor,
+                executor,
                 .brakeBody,
-                &kommon.funktional.linspace01(10, true),
-            ), executor.handle.point.scale * 0.1, .gray(0.8));
+                &kommon.funktional.linspace01(32, true),
+            ), executor.handle.point.scale * 0.2, .gray(0.4));
             drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-                &executor,
+                executor,
                 .brakeHandlePath,
-                &kommon.funktional.linspace01(10, true),
-            ), executor.handle.point.scale * 0.05, FColor.gray(0.9).withAlpha(0.2));
+                &kommon.funktional.linspace01(32, true),
+            ), executor.handle.point.scale * 0.01, FColor.gray(1));
             try executor.brake_handle.draw(drawer, camera, 1.0);
             const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
             drawer.canvas.fillShape(camera, crank_center.plusTurns(
                 if (executor.animation) |anim| anim.t else 0,
             ), Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
-            // drawer.canvas.fillCircleV2(camera, math.Circle.fromPoint(crank_center).scale(1.0), .gray(0.6));
             try executor.crank_handle.draw(drawer, camera, 1.0);
         }
         for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
@@ -1439,11 +1440,21 @@ const Executor = struct {
     }
 
     pub fn brakeLineRaw(crank_center: Point, brake_t: f32, line_t: f32) Vec2 {
+        const radius: f32 = std.math.exp(2 - brake_t) / 2.0;
+        // const radius: f32 = math.remapFrom01(std.math.exp(1 - brake_t) / std.math.e, 1.3, 5);
+        // const radius: f32 = math.remapFrom01(math.easings.linear(1 - brake_t), 1.3, 5);
+        // const radius: f32 = math.remapFrom01(math.easings.easeInQuad(1 - brake_t), 1.3, 5);
         return crank_center
-            .applyToLocalPosition(.fromPolar(
-            math.remapFrom01(line_t, 0.5, 1.5 + 0.5 * (1 - brake_t)),
-            math.remapFrom01(brake_t, 0.125, 0.375),
-        ));
+            .applyToLocalPoint(.{ .turns = -0.25 })
+            .applyToLocalPoint(.{ .pos = .new(0, 1.2) })
+            .applyToLocalPoint(.{ .pos = .new(0, -radius) })
+            .applyToLocalPosition(.fromPolar(radius - (1 - line_t) * 0.2, 0.25 + 0.65 * line_t / radius));
+
+        // return crank_center
+        //     .applyToLocalPosition(.fromPolar(
+        //     math.remapFrom01(line_t, 0.5, 1.5 + 0.5 * (1 - brake_t)),
+        //     math.remapFrom01(brake_t, 0.125, 0.375),
+        // ));
     }
 
     pub fn brakeBody(executor: *const Executor, line_t: f32) Vec2 {
@@ -1473,11 +1484,11 @@ const Executor = struct {
         try std.testing.expectApproxEqAbs(3, speedScale(0), 0.0001);
     }
 
-    pub fn animating(executor: Executor) bool {
+    pub fn animating(executor: *const Executor) bool {
         return executor.animation != null;
     }
 
-    pub fn startedExecution(executor: Executor) bool {
+    pub fn startedExecution(executor: *const Executor) bool {
         return executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty();
     }
 
@@ -1485,6 +1496,9 @@ const Executor = struct {
         executor.handle.updateHoverT(self_address, hovering, delta_seconds);
         executor.brake_handle.updateHoverT(.{ .area = self_address.area, .kind = .{
             .executor_brake_handle = self_address.kind.executor_handle,
+        } }, hovering, delta_seconds);
+        executor.crank_handle.updateHoverT(.{ .area = self_address.area, .kind = .{
+            .executor_crank_handle = self_address.kind.executor_handle,
         } }, hovering, delta_seconds);
     }
 
@@ -1667,15 +1681,15 @@ const Executor = struct {
         }
     }
 
-    pub fn inputPoint(executor: Executor) Point {
+    pub fn inputPoint(executor: *const Executor) Point {
         return executor.handle.point.applyToLocalPoint(Executor.relative_input_point);
     }
 
-    pub fn firstCasePoint(executor: Executor) Point {
+    pub fn firstCasePoint(executor: *const Executor) Point {
         return executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(0, 1.5) });
     }
 
-    pub fn garlandPoint(executor: Executor) Point {
+    pub fn garlandPoint(executor: *const Executor) Point {
         return executor.handle.point.applyToLocalPoint(Executor.relative_garland_point);
     }
 };
@@ -1989,6 +2003,7 @@ const Fnkbox = struct {
                 else
                     .init(geo.garlandPoint()),
                 geo.executorPoint(),
+                false,
             ),
             .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
             .testcases = testcases,
@@ -3642,6 +3657,10 @@ const Workspace = struct {
                     mem,
                 ),
             );
+            if (k == 0) {
+                dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
+                dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 5;
+            }
             x += if (k < 5) 25 else 35;
         }
 
@@ -3703,8 +3722,9 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(7, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(-5, 7))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos.addY(-2)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(0.5, 4.5))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use the handles", "to control", "execution speed" }, postit_pos.add(.new(3.5, 11.5))));
         postit_pos.addInPlace(.new(25, -2));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Your turn!"}, postit_pos));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
@@ -3715,6 +3735,7 @@ const Workspace = struct {
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
         postit_pos.addInPlace(.new(25, 1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" }, postit_pos.addX(7)));
 
         try dst.canonizeAfterChanges(mem);
     }
@@ -4744,7 +4765,12 @@ const Workspace = struct {
                                 },
                                 .executor_crank_handle,
                                 .executor_brake_handle,
-                                => @panic("TODO"),
+                                => {
+                                    std.log.err("TODO: undo crank/brake handle moves", .{});
+                                    if (workspace.undo_stack.pop()) |next_cmd| {
+                                        continue :again next_cmd.specific;
+                                    }
+                                },
                                 .fnkviewer_handle => |h| {
                                     const e = &workspace.fnkviewers(.main_area).items[h];
                                     e.handle.point = g.old_data.point;
@@ -5472,7 +5498,7 @@ pub fn beforeHotReload(self: *GameState) !void {
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    try self.workspace.init(&self.core_mem, 0);
+    // try self.workspace.init(&self.core_mem, 0);
 }
 
 /// returns true if should quit
