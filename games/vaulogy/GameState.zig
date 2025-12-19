@@ -1891,6 +1891,7 @@ const Fnkbox = struct {
     fold_button: Button = .{ .rect = .unit, .kind = .unknown },
     scroll_button_up: Button = .{ .rect = .unit, .kind = .unknown },
     scroll_button_down: Button = .{ .rect = .unit, .kind = .unknown },
+    scroll_button_handle: Button = .{ .rect = .unit, .kind = .unknown },
 
     pub fn save(fnkbox: *const Fnkbox, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
         try fnkbox.handle.save(out, scratch);
@@ -1923,6 +1924,7 @@ const Fnkbox = struct {
         dst.fold_button = .{ .rect = .unit };
         dst.scroll_button_up = .{ .rect = .unit };
         dst.scroll_button_down = .{ .rect = .unit };
+        dst.scroll_button_handle = .{ .rect = .unit };
 
         const n_testcases: usize = @intCast(try in.readInt(u32, .little));
         dst.testcases = .fromOwnedSlice(try mem.gpa.alloc(TestCase, n_testcases));
@@ -2062,6 +2064,31 @@ const Fnkbox = struct {
         );
     }
 
+    /// pos is the desired top-left for the handle
+    pub fn scrollHandleMovedTo(fnkbox: *Fnkbox, pos: Vec2, delta_seconds: f32) void {
+        // TODO: simplify
+        const handle_size: f32 = 1;
+        const rect = fnkbox.testcasesBoxUnfolded().withSize(.new(
+            undefined,
+            (1.0 / tof32(@max(1, fnkbox.testcases.items.len -| visible_testcases))) * (testcases_height - 1.2 - handle_size),
+        ), .top_left)
+            .move(.new(0.1, 0.6));
+        fnkbox.scroll_testcases = math.clamp(rect.localFromWorldPosition(pos).y, 0, tof32(fnkbox.testcases.items.len -| visible_testcases));
+        _ = delta_seconds;
+    }
+
+    pub fn scrollHandleGoal(fnkbox: *const Fnkbox, part: Workspace.Focus.UiTarget.ScrollbarPart) Rect {
+        // const handle_size = (testcases_height - 1.2) / @min(20.0, tof32(@max(fnkbox.testcases.items.len, visible_testcases) - visible_testcases));
+        const handle_size: f32 = 1;
+        return switch (part) {
+            .up => fnkbox.testcasesBoxUnfolded().withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1),
+            .down => fnkbox.testcasesBoxUnfolded().withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1),
+            // TODO: simplify
+            .handle => fnkbox.testcasesBoxUnfolded().withSize(.new(0.5, handle_size), .top_left).move(.new(0.1, 0.6))
+                .move(.new(0, (fnkbox.scroll_testcases / tof32(@max(1, fnkbox.testcases.items.len -| visible_testcases))) * (testcases_height - 1.2 - handle_size))),
+        };
+    }
+
     pub fn foldButtonGoal(fnkbox: *const Fnkbox) Rect {
         return .fromMeasureAndSizeV2(
             .center,
@@ -2112,6 +2139,7 @@ const Fnkbox = struct {
                 // }
                 try fnkbox.scroll_button_up.draw(drawer, camera);
                 try fnkbox.scroll_button_down.draw(drawer, camera);
+                try fnkbox.scroll_button_handle.draw(drawer, camera);
             }
         }
         drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
@@ -2139,6 +2167,7 @@ const Fnkbox = struct {
         fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
         fnkbox.scroll_button_up.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } }, ui_hot, ui_active, delta_seconds);
         fnkbox.scroll_button_down.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } }, ui_hot, ui_active, delta_seconds);
+        fnkbox.scroll_button_handle.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .handle } }, ui_hot, ui_active, delta_seconds);
         for (fnkbox.testcases.items, 0..) |*testcase, testcase_index| {
             testcase.play_button.updateHot(.{ .fnkbox_launch_testcase = .{ .fnkbox = fnkbox_index, .testcase = testcase_index } }, ui_hot, ui_active, delta_seconds);
         }
@@ -2217,8 +2246,9 @@ const Fnkbox = struct {
             .solved => false,
             .unsolved => true,
         };
-        fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .top_left).plusMargin(-0.1), 0.6, delta_seconds);
-        fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.testcasesBoxUnfolded().withSize(.new(1.2, 0.7), .bottom_left).plusMargin(-0.1), 0.6, delta_seconds);
+        fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.scrollHandleGoal(.up), 0.6, delta_seconds);
+        fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.scrollHandleGoal(.down), 0.6, delta_seconds);
+        fnkbox.scroll_button_handle.rect.lerpTowards(fnkbox.scrollHandleGoal(.handle), 0.6, delta_seconds);
         math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
         fnkbox.executor.handle.point.lerp_towards(fnkbox.executorPoint(), 0.6, delta_seconds);
         try fnkbox.executor.updateSpringsAndStuff(delta_seconds);
@@ -3271,14 +3301,14 @@ const Workspace = struct {
 
     area: Focus.Target.Area = .main_area,
 
-    const Focus = struct {
+    pub const Focus = struct {
         // TODO: Not really any Target, since for sexprs it's .grabbed with no local
         grabbing: Target = .nothing,
         ui_active: UiTarget = .nothing,
-        /// only used for postits
+        /// only used for postits and scrollbar handle
         grabbing_offset: Vec2 = .zero,
 
-        const UiTarget = struct {
+        pub const UiTarget = struct {
             kind: Kind,
             // TODO: remove default
             area: Target.Area = .main_area,
@@ -3295,9 +3325,11 @@ const Workspace = struct {
                 },
                 fnkbox_scroll: struct {
                     fnkbox: usize,
-                    direction: enum { up, down },
+                    direction: ScrollbarPart,
                 },
             };
+
+            pub const ScrollbarPart = enum { up, down, handle };
 
             pub fn equals(a: UiTarget, b: UiTarget) bool {
                 return std.meta.eql(a, b);
@@ -3665,7 +3697,7 @@ const Workspace = struct {
             );
             if (k == 0) {
                 dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
-                dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 5;
+                dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
             }
             x += if (k < 5) 25 else 35;
         }
@@ -4370,6 +4402,9 @@ const Workspace = struct {
             if (fnkbox.scroll_button_down.rect.contains(pos)) {
                 return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } } };
             }
+            if (fnkbox.scroll_button_handle.rect.contains(pos)) {
+                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .handle } } };
+            }
             if (fnkbox.execution != null) continue;
             if (fnkbox.statusBarGoal().contains(pos) and std.meta.activeTag(fnkbox.status) == .unsolved) {
                 return .{ .kind = .{ .fnkbox_see_failing_case = fnkbox_index } };
@@ -4789,10 +4824,20 @@ const Workspace = struct {
         switch (workspace.focus.ui_active.kind) {
             else => {},
             .fnkbox_scroll => |t| {
-                workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_testcases -= platform.delta_seconds * @as(f32, switch (t.direction) {
-                    .up => 1,
-                    .down => -1,
-                }) / 0.2;
+                switch (t.direction) {
+                    .handle => {
+                        // TODO: grab offset
+                        workspace.fnkboxes(.main_area).items[t.fnkbox].scrollHandleMovedTo(
+                            mouse.cur.position.sub(workspace.focus.grabbing_offset),
+                            platform.delta_seconds,
+                        );
+                    },
+                    inline .up, .down => |x| workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_testcases -= platform.delta_seconds * @as(f32, switch (x) {
+                        .up => 1,
+                        .down => -1,
+                        .handle => unreachable,
+                    }) / 0.2,
+                }
             },
         }
 
@@ -4855,6 +4900,9 @@ const Workspace = struct {
                 .nothing => switch (ui_hot.kind) {
                     .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
                     .fnkbox_scroll => |t| blk: {
+                        if (t.direction == .handle) {
+                            workspace.focus.grabbing_offset = mouse.cur.position.sub(workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_button_handle.rect.top_left);
+                        }
                         workspace.focus.ui_active = ui_hot;
                         break :blk .{ .specific = .{ .fnkbox_scroll = .{
                             .fnkbox = t.fnkbox,
