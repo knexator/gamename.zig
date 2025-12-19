@@ -4448,11 +4448,6 @@ const Workspace = struct {
         try workspace.toolbar.updateLensesData(frame_arena);
         try workspace.hand.updateLensesData(frame_arena);
 
-        // drawing
-        if (drawer) |d| {
-            try workspace.draw(platform, d);
-        }
-
         // state changes
         if (platform.keyboard.wasPressed(.KeyZ)) {
             if (workspace.undo_stack.pop()) |command| {
@@ -5232,6 +5227,11 @@ const Workspace = struct {
                 } } });
                 try workspace.canonizeAfterChanges(mem);
             }
+        }
+
+        // drawing
+        if (drawer) |d| {
+            try workspace.draw(platform, d);
         }
     }
 
