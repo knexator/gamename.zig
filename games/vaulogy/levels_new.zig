@@ -171,7 +171,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("firstAsUppercase"),
-        .description = "Get the uppercase version of the pair's top half.",
+        .description = "Get the pair's top half in uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(Vals.lowercase[0], &.doVar("other")),

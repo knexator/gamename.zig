@@ -2356,21 +2356,61 @@ const Fnkbox = struct {
 // TODO: player should be able to draw on these, freehand
 pub const Postit = struct {
     button: Button,
-    lines: []const []const u8,
+    parts: []const DrawingPart,
+
+    // TODO: remove this hack
+    var asdf_arena_for_all_postit_parts: std.mem.Allocator = undefined;
+
+    const DrawingPart = struct {
+        point: Point,
+        part: union(enum) {
+            paragraph: []const []const u8,
+            arrow,
+        },
+    };
 
     pub fn fromText(lines: []const []const u8, center: Vec2) Postit {
         return .{
             .button = .{ .rect = .fromCenterAndSize(center, .both(6)), .kind = .postit },
-            .lines = lines,
+            // .parts = try asdf_arena_for_all_postit_parts.dupe(DrawingPart, &.{
+            //     .point = .{ .pos = .both(3) },
+            .parts = asdf_arena_for_all_postit_parts.dupe(DrawingPart, &.{.{
+                .point = .{ .pos = .both(3) },
+                .part = .{ .paragraph = lines },
+            }}) catch @panic("TODO"),
         };
     }
 
-    pub fn draw(postit: Postit, drawer: *Drawer, camera: Rect) !void {
+    pub fn fromParts(parts: []const DrawingPart, center: Vec2) Postit {
+        return .{
+            .button = .{ .rect = .fromCenterAndSize(center, .both(6)), .kind = .postit },
+            .parts = parts,
+        };
+    }
+
+    pub fn draw(postit: *const Postit, drawer: *Drawer, camera: Rect) !void {
         try postit.button.draw(drawer, camera);
-        for (postit.lines, 0..) |line, k| {
-            try drawer.canvas.drawText(0, camera, line, .centeredAt(postit.button.rect.getCenter().addY(
-                (tof32(k) - (tof32(postit.lines.len) - 1) / 2.0) * 1,
-            )), 0.8, .black);
+        const top_left: Point = .{ .pos = postit.button.rect.top_left };
+        for (postit.parts) |part| {
+            const center = top_left.applyToLocalPoint(part.point);
+            switch (part.part) {
+                .paragraph => |lines| {
+                    for (lines, 0..) |line, k| {
+                        try drawer.canvas.drawText(0, camera, line, .centeredAt(center.applyToLocalPosition(
+                            .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)),
+                        )), 0.8 * part.point.scale, .black);
+                    }
+                },
+                .arrow => {
+                    drawer.canvas.line(camera, &.{
+                        center.applyToLocalPosition(.new(-0.5, 0)),
+                        center.applyToLocalPosition(.new(0.5, 0)),
+                        center.applyToLocalPosition(.new(0.0, 0.25)),
+                        center.applyToLocalPosition(.new(0.5, 0)),
+                        center.applyToLocalPosition(.new(0.0, -0.25)),
+                    }, 0.1 * part.point.scale, .black);
+                },
+            }
         }
     }
 };
@@ -3567,6 +3607,7 @@ const Workspace = struct {
 
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff, random_seed: u64) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
+        Postit.asdf_arena_for_all_postit_parts = mem.gpa;
 
         dst.hand.init(.hand, mem.gpa);
         dst.main_area.init(.main_area, mem.gpa);
@@ -3776,6 +3817,26 @@ const Workspace = struct {
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" }, postit_pos.addX(7)));
         postit_pos.addInPlace(.new(25, -1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Machines can", "invoke other", "machines" }, postit_pos));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Each machine", "has its own", "\"name\"" } } },
+            .{ .point = .{ .pos = .new(0.9, 5.25), .turns = 0.25 }, .part = .arrow },
+        }, postit_pos));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That's the       ", "name of the first", "machine, the one", "that transforms", "'a' into 'A'" } } },
+            .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+        }, postit_pos));
+        try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(
+            &mem.hover_pool,
+            @import("levels_new.zig").levels[0].fnk_name,
+            .{ .pos = postit_pos.add(.new(4, -2.5)), .scale = 0.5, .turns = 0.25 },
+            false,
+        ));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Placed there,", "it will invoke", "the machine", "with that name" } } },
+            .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
+        }, postit_pos.add(.new(1.5, 16.75))));
 
         try dst.canonizeAfterChanges(mem);
     }

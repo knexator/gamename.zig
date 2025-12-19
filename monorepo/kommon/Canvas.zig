@@ -1323,7 +1323,8 @@ pub const TextBatch = struct {
         em: f32,
         color: FColor,
     ) !void {
-        assert(std.mem.indexOf(u8, text, "\n") == null);
+        std.log.debug("in addText, text.len is: {d}", .{text.len});
+        if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
         const info = try self.text_renderer.quadsForLineV2(text, em, color, self.canvas.frame_arena.allocator());
         const quads = info.quads;
         defer self.canvas.frame_arena.allocator().free(quads);
