@@ -1674,10 +1674,11 @@ const Executor = struct {
 
         for (executor.prev_pills.items, 0..) |*pill, k| {
             const pill_input_pos = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5 * (tof32(executor.prev_pills.items.len - k) + pill_offset), 0) });
-            pill.input.point.lerp_towards(pill_input_pos, 0.6, delta_seconds);
-            pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), 0.6, delta_seconds);
-            if (pill.fnkname_call) |*f| f.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(8, -3), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
-            if (pill.fnkname_response) |*g| g.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
+            const ratio: f32 = 1; // 0.6;
+            pill.input.point.lerp_towards(pill_input_pos, ratio, delta_seconds);
+            pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), ratio, delta_seconds);
+            if (pill.fnkname_call) |*f| f.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(8, -3), .turns = 0.25, .scale = 0.5 }), ratio, delta_seconds);
+            if (pill.fnkname_response) |*g| g.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), ratio, delta_seconds);
         }
     }
 
@@ -3729,7 +3730,7 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(7, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos.addY(-2)));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(0.5, 4.5))));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use the handles", "to control", "execution speed" }, postit_pos.add(.new(3.5, 11.5))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use the crank", "and brake", "to control", "execution speed" }, postit_pos.add(.new(3.5, 11.5))));
         postit_pos.addInPlace(.new(25, -2));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Your turn!"}, postit_pos));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
@@ -3741,6 +3742,8 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(25, 1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(25, -1));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Machines can", "invoke other", "machines" }, postit_pos));
 
         try dst.canonizeAfterChanges(mem);
     }

@@ -175,25 +175,13 @@ pub const levels: []const Level = &.{
         .initial_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(Vals.lowercase[0], &.doVar("other")),
-                .template = Vals.uppercase[0],
-                .fnk_name = Sexpr.builtin.empty,
-                .next = null,
-            },
-            .{
-                .pattern = &.doPair(Vals.lowercase[1], &.doVar("other")),
-                .template = Vals.uppercase[1],
-                .fnk_name = Sexpr.builtin.empty,
-                .next = null,
-            },
-            .{
-                .pattern = &.doPair(Vals.lowercase[2], &.doVar("other")),
-                .template = Vals.lowercase[2],
+                .template = Vals.lowercase[0],
                 .fnk_name = &.doLit("uppercase"),
                 .next = null,
             },
             .{
-                .pattern = &.doPair(Vals.lowercase[3], &.doVar("other")),
-                .template = Vals.lowercase[3],
+                .pattern = &.doPair(Vals.lowercase[1], &.doVar("other")),
+                .template = Vals.lowercase[1],
                 .fnk_name = &.doLit("uppercase"),
                 .next = null,
             },
