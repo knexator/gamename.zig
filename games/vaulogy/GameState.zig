@@ -4264,12 +4264,6 @@ const Workspace = struct {
                 },
             },
             .garland_handle => |h| workspace.garlandAt(h, target.area).* = value.garland,
-            // .garland_handle => |h| switch (h.parent) {
-            //     .garland => |k| if (h.local.len == 0) {
-            //         workspace.garlands(target.area).items[k] = value.garland;
-            //     } else {
-            //     },
-            // },
             else => @panic("TODO"),
         }
     }
@@ -4299,15 +4293,9 @@ const Workspace = struct {
         if (p.local.len == 0) {
             switch (p.base) {
                 else => {
-                    assert(area == .main_area);
                     try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
                 },
-                .board => |k| swapInsertAssumeCapacity(VeryPhysicalSexpr, switch (area) {
-                    .nowhere => unreachable,
-                    .main_area => &workspace.main_area.sexprs,
-                    .hand => &workspace.hand.sexprs,
-                    .toolbar => &workspace.toolbar.sexprs,
-                }, k, v),
+                .board => |k| swapInsertAssumeCapacity(VeryPhysicalSexpr, workspace.sexprs(area), k, v),
             }
         } else {
             try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
@@ -4567,12 +4555,12 @@ const Workspace = struct {
                                     case.handle.point = g.old_data.point;
                                     try workspace.unpopAt(g.from, .{ .case = case }, mem);
                                 },
-                                .sexpr => |h| {
+                                .sexpr => {
                                     var old = workspace.hand.sexprs.pop().?;
                                     old.hovered.value = 10;
                                     old.point = g.old_data.point;
                                     old.is_pattern = g.old_data.is_pattern;
-                                    try workspace.unpopSexprAt(h, .main_area, old, &workspace.hover_pool, mem);
+                                    try workspace.unpopAt(g.from, .{ .sexpr = old }, mem);
                                 },
                             }
                         }
