@@ -1365,7 +1365,9 @@ pub const Rect = extern struct {
     pub fn with2(original: Rect, change_kind: MeasureKind, change_value: Vec2, keep: MeasureKind) Rect {
         if (change_kind == .size) {
             return .fromPivotAndSize(original.get(keep), keep.asPivot(), change_value);
-        } else @panic("TODO");
+        } else {
+            return .fromPivotAndSize(change_value, change_kind.asPivot(), original.size);
+        }
     }
 
     pub fn with(original: Rect, change: Measure, keep: MeasureKind) Rect {
@@ -1833,6 +1835,18 @@ pub const Point = extern struct {
 
     pub fn withPos(original: Point, new_pos: Vec2) Point {
         return .{ .pos = new_pos, .turns = original.turns, .scale = original.scale };
+    }
+
+    pub fn moveAbs(original: Point, delta: Vec2) Point {
+        return original.withPos(original.pos.add(delta));
+    }
+
+    pub fn rotateAround(original: Point, center: Vec2, turns: f32) Point {
+        return .{
+            .pos = original.pos.rotateAround(center, turns),
+            .turns = original.turns + turns,
+            .scale = original.scale,
+        };
     }
 
     pub fn plusTurns(original: Point, extra_turns: f32) Point {

@@ -2366,6 +2366,8 @@ pub const Postit = struct {
         part: union(enum) {
             paragraph: []const []const u8,
             arrow,
+            launch_testcase_button,
+            piece_center,
         },
     };
 
@@ -2381,7 +2383,7 @@ pub const Postit = struct {
         };
     }
 
-    pub fn fromParts(parts: []const DrawingPart, center: Vec2) Postit {
+    pub fn fromParts(comptime parts: []const DrawingPart, center: Vec2) Postit {
         return .{
             .button = .{ .rect = .fromCenterAndSize(center, .both(6)), .kind = .postit },
             .parts = parts,
@@ -2409,6 +2411,34 @@ pub const Postit = struct {
                         center.applyToLocalPosition(.new(0.5, 0)),
                         center.applyToLocalPosition(.new(0.0, -0.25)),
                     }, 0.1 * part.point.scale, .black);
+                },
+                .launch_testcase_button => {
+                    const temp: Button = .{ .kind = .launch_testcase, .rect = .fromPoint(center, .center, .one) };
+                    // try temp.draw(drawer, camera);
+                    const rect = temp.rect;
+                    drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
+                    drawer.canvas.line(camera, &.{
+                        rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
+                        rect.getCenter().add(.new(0, 0)).addX(0.15),
+                        rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
+                    }, 0.05, .black);
+                },
+                .piece_center => {
+                    drawer.canvas.line(camera, &.{
+                        center.applyToLocalPosition(.new(-0.5, 0)),
+                        center.applyToLocalPosition(.new(-0.2, 0)),
+                    }, 0.05 * center.scale, .black);
+                    drawer.canvas.line(camera, &.{
+                        center.applyToLocalPosition(.new(0.2, 0)),
+                        center.applyToLocalPosition(.new(0.5, 0)),
+                    }, 0.05 * center.scale, .black);
+                    drawer.canvas.strokeCircle(128, camera, center.pos, center.scale * 0.2, 0.05 * center.scale, .black);
+                    const arc: [32]Vec2 = comptime funk.map(
+                        Vec2.fromTurns,
+                        &funk.linspace(-0.15, 0.15, 32, true),
+                    );
+                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(-1.5, 0) }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(1.5, 0), .turns = 0.5 }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
                 },
             }
         }
@@ -3621,7 +3651,7 @@ const Workspace = struct {
 
         dst.toolbar_trash = .{ .rect = .unit };
 
-        if (true) {
+        if (false) {
             try dst.main_area.lenses.append(mem.gpa, .{ .source = ViewHelper.sexprTemplateChildView(
                 .{},
                 &.{ .right, .left },
@@ -3740,7 +3770,7 @@ const Workspace = struct {
                 dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
                 dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
             }
-            x += if (k < 5) 25 else 35;
+            x += if (k < 4) 25 else if (k == 4) 30 else 35;
         }
 
         var postit_pos: Vec2 = .new(33, -3);
@@ -3802,26 +3832,40 @@ const Workspace = struct {
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos.addY(-2)));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(0.5, 4.5))));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "see it in action!" } } },
+            .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
+        }, postit_pos.add(.new(0.5, 4.5))));
+        // try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(0.5, 4.5))));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use the crank", "and brake", "to control", "execution speed" }, postit_pos.add(.new(3.5, 11.5))));
         postit_pos.addInPlace(.new(25, -2));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Your turn!"}, postit_pos));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "and modify", "the machine", "to fix it" }, postit_pos.add(.new(0.5, 6.5 * 2))));
         postit_pos.addInPlace(.new(25, 0));
         postit_pos.addInPlace(.new(7, -6.1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "(right click", "on the piece's", "circular center)" }, postit_pos.addX(7)));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "(right click", "on the piece's", "circular center)" } } },
+            .{ .point = (Point{ .pos = .new(2, 3) }).rotateAround(.both(3), 0.35).moveAbs(.new(0, 1.5)), .part = .arrow },
+            .{ .point = .{ .pos = .new(3, 4.5) }, .part = .piece_center },
+        }, postit_pos.addX(7)));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That    ", "is a Wildcard,", "which matches", "with everything" } } },
+            .{ .point = .{ .pos = .new(4.5, 1.5) }, .part = .arrow },
+        }, postit_pos.addX(1).addY(24)));
         postit_pos.addInPlace(.new(25, 1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" }, postit_pos.addX(7)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Remember,", "right click", "to duplicate" }, postit_pos.addX(14)));
         postit_pos.addInPlace(.new(25, -1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Machines can", "invoke other", "machines" }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
         try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
             .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Each machine", "has its own", "\"name\"" } } },
             .{ .point = .{ .pos = .new(0.9, 5.25), .turns = 0.25 }, .part = .arrow },
-        }, postit_pos));
+        }, postit_pos.addY(0.6)));
         postit_pos.addInPlace(.new(7, 0));
         try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
             .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That's the       ", "name of the first", "machine, the one", "that transforms", "'a' into 'A'" } } },
@@ -3837,6 +3881,10 @@ const Workspace = struct {
             .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Placed there,", "it will invoke", "the machine", "with that name" } } },
             .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
         }, postit_pos.add(.new(1.5, 16.75))));
+        postit_pos.addInPlace(.new(30 - 14, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Pieces can match", "with the result", "of other pieces" }, postit_pos));
+
+        // dst.camera = dst.camera.with2(.center, postit_pos, .size);
 
         try dst.canonizeAfterChanges(mem);
     }

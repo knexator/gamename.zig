@@ -200,7 +200,6 @@ const AtomVisualCache = struct {
             .color = .new(0.9, 0.5, 0.5),
             .profile = &.{ .new(1.0 / 6.0, 0.2), .new(0.5, -0.2), .new(5.0 / 6.0, 0.2) },
         },
-
         .A = HardcodedAtomVisuals{
             .color = .fromHex("#FA00FF"),
             .profile = &.{
@@ -370,6 +369,10 @@ const AtomVisualCache = struct {
                 .new(0.79141130, -0.03685517),
             },
             .display = "f",
+        },
+        .firstAsUppercase = HardcodedAtomVisuals{
+            .color = .fromHex("#99BBFF"),
+            .profile = null,
         },
     };
 
