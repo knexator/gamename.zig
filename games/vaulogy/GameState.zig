@@ -10,6 +10,9 @@ pub const tracy = @import("tracy");
 pub const display_fps = false;
 
 const EXECUTOR_MOVES_LEFT = true;
+const SEQUENTIAL_GOES_DOWN = true;
+
+// TODO NOW : debug animation for "check if B anywhere"
 
 const CRANKS_ENABLED = true;
 
@@ -790,7 +793,7 @@ const VeryPhysicalCase = struct {
     pub const handle_radius: f32 = 0.2;
 
     const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
-    const next_garland_offset: Vec2 = .new(8, -1.5);
+    const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
 
     pub fn save(case: *const VeryPhysicalCase, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
         try case.handle.save(out, scratch);
@@ -873,11 +876,17 @@ const VeryPhysicalCase = struct {
             case.pattern.point.pos,
             case.template.point.pos,
         }, 0.05 * case.handle.point.scale, .blackAlpha(alpha));
+        if (holding == .case_or_garland or case.next.cases.items.len > 0) {
+            drawer.canvas.line(camera, &.{
+                case.template.point.applyToLocalPosition(.new(0.5, if (SEQUENTIAL_GOES_DOWN) 1 else -1)),
+                case.next.handle.point.pos,
+            }, 0.05 * case.handle.point.scale, .blackAlpha(alpha));
+            try case.next.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
+        }
+        if (holding == .sexpr or !case.fnk_name.isEmpty()) try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.handle.draw(drawer, camera, alpha);
         try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
         try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        if (holding == .sexpr or !case.fnk_name.isEmpty()) try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        if (holding == .case_or_garland or case.next.cases.items.len > 0) try case.next.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
     }
 
     pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, holding: Holding, drawer: *Drawer, camera: Rect) !void {
@@ -1311,6 +1320,7 @@ const Executor = struct {
     } = null,
     // execution_trace: ExecutionTrace = .empty,
     prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
+    /// last one is the next one to apply
     enqueued_stack: std.ArrayListUnmanaged(struct { garland: VeryPhysicalGarland, parent_pill: usize }) = .empty,
     /// in 0..1; 1 is braked, 0.5 is normal speed, 0 is speedup
     brake_t: f32 = 0.5,
@@ -1583,6 +1593,26 @@ const Executor = struct {
         executor.recomputeCrankHandlePos();
     }
 
+    /// 0 -> default point
+    /// 0...1 rotating
+    /// 1 -> enqueued
+    fn extraForDequeuingNext(enqueueing_t: f32) Point {
+        return .{
+            .pos = .new(enqueueing_t * 6, -3 * math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
+            .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 0.7, .easeInOutCubic)),
+        };
+    }
+
+    /// same as extraForDequeuingNext but applied from a case (so it has to climb more, for example)
+    fn extraForEnqueuingNext(enqueueing_t: f32) Point {
+        assert(math.in01(enqueueing_t));
+        return .{
+            .pos = .new(enqueueing_t * 4, (-3 - VeryPhysicalCase.next_garland_offset.y - VeryPhysicalGarland.dist_between_cases_first) *
+                math.smoothstepEased(enqueueing_t, 0, 0.35, .easeInOutCubic)),
+            .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0.0, 0.3, .easeInOutCubic)),
+        };
+    }
+
     pub fn updateSpringsAndStuff(executor: *Executor, delta_seconds: f32) !void {
         executor.garland.handle.point.lerp_towards(executor.garlandPoint(), 0.6, delta_seconds);
         executor.recomputeBrakeHandlePos();
@@ -1607,6 +1637,11 @@ const Executor = struct {
                 animation.active_case.kinematicUpdate(case_floating_away, null, null, delta_seconds);
                 executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
                 if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
+                for (executor.enqueued_stack.items, 0..) |*x, k| {
+                    x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(
+                        extraForDequeuingNext(tof32(executor.enqueued_stack.items.len - k - 1) + 1),
+                    ), null, delta_seconds);
+                }
             } else {
                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
@@ -1616,7 +1651,7 @@ const Executor = struct {
                 pill_offset = enqueueing_t;
 
                 if (!EXECUTOR_MOVES_LEFT) {
-                    executor.handle.pos = animation.original_pos.addX(enqueueing_t * 5);
+                    executor.handle.point.pos = animation.original_point.pos.addX(enqueueing_t * 5);
                 }
 
                 const case_point = executor.firstCasePoint().applyToLocalPoint(
@@ -1635,33 +1670,27 @@ const Executor = struct {
                         .applyToLocalPoint(.{ .pos = .new(2 * offset + 6 - match_t - enqueueing_t * 5, 6 * offset) });
                     invoked.kinematicUpdate(function_point, null, delta_seconds);
 
-                    animation.active_case.kinematicUpdate(case_point, .{
-                        .pos = .new(enqueueing_t * 6, -2 * enqueueing_t),
-                        .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
-                    }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
+                    animation.active_case.kinematicUpdate(
+                        case_point,
+                        extraForEnqueuingNext(enqueueing_t),
+                        .{ .pos = .new(-invoking_t * 4, 0) },
+                        delta_seconds,
+                    );
 
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
-                        x.garland.kinematicUpdate(case_point
-                            .applyToLocalPoint(.{ .pos = VeryPhysicalCase.next_garland_offset })
-                            .applyToLocalPoint(.{ .pos = .new(anim_t * 12 + 6 * tof32(k), -2), .turns = -0.1 }), null, delta_seconds);
+                        x.garland.kinematicUpdate(executor.garlandPoint()
+                            .applyToLocalPoint(extraForDequeuingNext(enqueueing_t + 1 + tof32(executor.enqueued_stack.items.len - k - 1))), null, delta_seconds);
                     }
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{
-                        .pos = .new(-enqueueing_t * 2, 0),
+                        .pos = .new(-enqueueing_t * 2, -(VeryPhysicalCase.next_garland_offset.y + VeryPhysicalGarland.dist_between_cases_first) *
+                            math.smoothstep(enqueueing_t, 0, 0.6)),
                     }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
+                    const dequeueing = animation.active_case.next.cases.items.len == 0;
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
-                        const et = 1 - enqueueing_t;
-                        if (k + 1 == executor.enqueued_stack.items.len) {
-                            x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
-                                .pos = .new(et * 6 + 2 - enqueueing_t * 2, -2 * et),
-                                .turns = math.lerp(0, -0.1, math.smoothstepEased(et, 0, 1, .easeInOutCubic)),
-                            }), null, delta_seconds);
-                        } else {
-                            x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(.{
-                                .pos = .new((1 - anim_t) * 6 + 2 + 6 * tof32(executor.enqueued_stack.items.len - k - 1), -2),
-                                .turns = -0.1,
-                            }), null, delta_seconds);
-                        }
+                        x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(extraForDequeuingNext(
+                            tof32(executor.enqueued_stack.items.len - k - 1) + 1 - if (dequeueing) enqueueing_t else 0,
+                        )), null, delta_seconds);
                     }
                 }
                 executor.input.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
