@@ -263,17 +263,20 @@ const Handle = struct {
     point: Point,
     hot_t: f32 = 0,
     enabled: bool = true,
-    // TODO: per-handle param
-    pub const radius = 0.2;
+    radius: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 },
+
+    // extern so it can be saved/loaded without defining stuff
+    pub const Size = extern struct {
+        base: f32,
+        hot: f32,
+        hitbox: f32,
+    };
 
     pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
-        try handle.drawCustom(drawer, camera, alpha, 1, 0.2);
-    }
-
-    pub fn drawCustom(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32, p1: f32, p2: f32) !void {
         if (handle.enabled) {
-            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), COLORS.bg.withAlpha(alpha));
-            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * p1 * radius * (1 + handle.hot_t * p2), 0.05 * handle.point.scale, .blackAlpha(alpha));
+            const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
+            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
+            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
         }
     }
 
@@ -286,23 +289,22 @@ const Handle = struct {
         handle.update(hovering.equalsExceptForLens(self_address), delta_seconds);
     }
 
-    // TODO: radius should not be a parameter
-    pub fn overlapped(handle: *const Handle, pos: Vec2, comptime base_radius: f32) bool {
-        return handle.enabled and pos.distTo(handle.point.pos) < base_radius * handle.point.scale;
-    }
-
-    pub fn overlappedV2(handle: *const Handle, pos: Vec2) bool {
-        return handle.enabled and pos.distTo(handle.point.pos) < radius * handle.point.scale;
+    pub fn overlapped(handle: *const Handle, pos: Vec2) bool {
+        return handle.enabled and pos.distTo(handle.point.pos) < handle.radius.hitbox * handle.point.scale;
     }
 
     pub fn save(handle: *const Handle, out: std.io.AnyWriter, _: std.mem.Allocator) !void {
         try out.writeStructEndian(handle.point, .little);
+        try out.writeStructEndian(handle.radius, .little);
+        try writeBool(out, handle.enabled);
     }
 
     pub fn load(dst: *Handle, in: std.io.AnyReader, version: u32, _: *core.VeryPermamentGameStuff) !void {
         assert(version == 0);
         dst.* = .{
             .point = try in.readStructEndian(Point, .little),
+            .radius = try in.readStructEndian(Size, .little),
+            .enabled = try readBool(in),
         };
     }
 };
@@ -318,11 +320,11 @@ const VeryPhysicalGarland = struct {
     fnkname: ?VeryPhysicalSexpr = null,
 
     handle: Handle,
-    pub const handle_radius: f32 = 0.2;
-    pub const handle_drop_radius: f32 = 1.5;
     pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
     pub const dist_between_cases_first: f32 = 1.5;
     pub const dist_between_cases_rest: f32 = 2.5;
+
+    pub const newcase_handle_size: Handle.Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.5 };
 
     const HandleForNewCase = struct {
         length: f32,
@@ -382,10 +384,13 @@ const VeryPhysicalGarland = struct {
 
     pub fn init(point: Point) VeryPhysicalGarland {
         return .{
-            .handle = .{ .point = point },
+            .handle = .{ .point = point, .radius = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 } },
             .cases = .empty,
             .handles_for_new_cases_rest = .empty,
-            .handles_for_new_cases_first = .{ .length = dist_between_cases_first, .handle = .{ .point = point.applyToLocalPoint(.{ .pos = .new(0, dist_between_cases_first / 2.0) }) } },
+            .handles_for_new_cases_first = .{ .length = dist_between_cases_first, .handle = .{
+                .point = point.applyToLocalPoint(.{ .pos = .new(0, dist_between_cases_first / 2.0) }),
+                .radius = newcase_handle_size,
+            } },
         };
     }
 
@@ -512,7 +517,7 @@ const VeryPhysicalGarland = struct {
         try garland.handle.draw(drawer, camera, alpha);
         for (0..garland.cases.items.len + 1) |k| {
             const h = garland.handleForNewCases(&.{k});
-            try h.drawCustom(drawer, camera, alpha, 0.5, 3.0);
+            try h.draw(drawer, camera, alpha);
         }
         for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
     }
@@ -691,7 +696,7 @@ const VeryPhysicalGarland = struct {
     pub fn insertCase(parent: *VeryPhysicalGarland, mem: std.mem.Allocator, index: usize, case: VeryPhysicalCase) !void {
         const old_length = parent.handleForNewCasesInner(&.{index}).length;
         try parent.handles_for_new_cases_rest.insert(mem, index, .{
-            .handle = .{ .point = parent.handleForNewCases(&.{index}).point },
+            .handle = .{ .point = parent.handleForNewCases(&.{index}).point, .radius = newcase_handle_size },
             .length = old_length / 2.0,
         });
         try parent.cases.insert(mem, index, case);
@@ -788,7 +793,6 @@ const VeryPhysicalCase = struct {
     template: VeryPhysicalSexpr,
     next: VeryPhysicalGarland,
     handle: Handle,
-    pub const handle_radius: f32 = 0.2;
 
     const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
     const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
@@ -2026,7 +2030,7 @@ const Fnkbox = struct {
         }
         const result: Fnkbox = .{
             .text = text,
-            .handle = .{ .point = base },
+            .handle = geo.handle,
             .executor = .initWithThings(
                 try .empty(geo.inputPoint(), hover_pool, false),
                 if (initial_definition) |def|
@@ -2933,13 +2937,13 @@ const WorkspaceArea = struct {
         // executors
         if (grabbed_tag == .nothing) {
             for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                if (executor.brake_handle.overlapped(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .board = k } }, .area = workspace.area };
                 }
-                if (executor.crank_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                if (executor.crank_handle.overlapped(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_crank_handle = .{ .board = k } }, .area = workspace.area };
                 }
-                if (executor.handle.overlapped(pos, Handle.radius)) {
+                if (executor.handle.overlapped(pos)) {
                     return .{ .kind = .{ .executor_handle = .{ .board = k } }, .area = workspace.area };
                 }
             }
@@ -2949,10 +2953,10 @@ const WorkspaceArea = struct {
         if (grabbed_tag == .nothing) {
             for (workspace.fnkboxes.items, 0..) |thing, k| {
                 const executor = thing.executor;
-                if (executor.crank_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                if (executor.crank_handle.overlapped(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
                 }
-                if (executor.brake_handle.overlappedV2(pos) and CRANKS_ENABLED) {
+                if (executor.brake_handle.overlapped(pos) and CRANKS_ENABLED) {
                     return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };
                 }
             }
@@ -2961,7 +2965,7 @@ const WorkspaceArea = struct {
         // fnkviewers
         if (grabbed_tag == .nothing) {
             for (workspace.fnkviewers.items, 0..) |fnkviewer, k| {
-                if (fnkviewer.handle.overlapped(pos, Handle.radius)) {
+                if (fnkviewer.handle.overlapped(pos)) {
                     return .{ .kind = .{ .fnkviewer_handle = k }, .area = workspace.area };
                 }
             }
@@ -2970,7 +2974,7 @@ const WorkspaceArea = struct {
         // fnkboxes handles
         if (grabbed_tag == .nothing) {
             for (workspace.fnkboxes.items, 0..) |thing, k| {
-                if (thing.handle.overlapped(pos, Handle.radius)) {
+                if (thing.handle.overlapped(pos)) {
                     return .{ .kind = .{ .fnkbox_handle = k }, .area = workspace.area };
                 }
             }
@@ -3082,7 +3086,7 @@ const WorkspaceArea = struct {
                     }
 
                     const g = workspace.garlandAt(base);
-                    if (g.handle.overlapped(pos, VeryPhysicalGarland.handle_radius)) {
+                    if (g.handle.overlapped(pos)) {
                         return .{ .kind = .{ .garland_handle = try base.clone(res) }, .area = workspace.area };
                     }
                 }
@@ -3110,14 +3114,14 @@ const WorkspaceArea = struct {
 
                 // picking
                 if (base.exists() and grabbed_tag == .nothing) {
-                    if (handle.overlapped(pos, VeryPhysicalCase.handle_radius)) {
+                    if (handle.overlapped(pos)) {
                         return .{ .kind = .{ .case_handle = try base.clone(res) }, .area = workspace.area };
                     }
                 }
 
                 // dropping
                 if (!base.exists() and grabbed_tag == .case_handle) {
-                    if (handle.overlapped(pos, VeryPhysicalGarland.handle_drop_radius)) {
+                    if (handle.overlapped(pos)) {
                         return .{ .kind = .{ .case_handle = try base.clone(res) }, .area = workspace.area };
                     }
                 }
