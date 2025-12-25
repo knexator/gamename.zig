@@ -12,8 +12,6 @@ pub const display_fps = false;
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 
-// TODO NOW : debug animation for "check if B anywhere"
-
 const CRANKS_ENABLED = true;
 
 comptime {
@@ -1677,9 +1675,10 @@ const Executor = struct {
                         delta_seconds,
                     );
 
+                    const enqueueing = animation.active_case.next.cases.items.len > 0;
                     for (executor.enqueued_stack.items, 0..) |*x, k| {
                         x.garland.kinematicUpdate(executor.garlandPoint()
-                            .applyToLocalPoint(extraForDequeuingNext(enqueueing_t + 1 + tof32(executor.enqueued_stack.items.len - k - 1))), null, delta_seconds);
+                            .applyToLocalPoint(extraForDequeuingNext(1 + tof32(executor.enqueued_stack.items.len - k - 1) + if (enqueueing) enqueueing_t else 0)), null, delta_seconds);
                     }
                 } else {
                     animation.active_case.kinematicUpdate(case_point, .{
