@@ -449,6 +449,11 @@ resizeCanvas();
 document.title = getNullTerminatedString(wasm_exports.getTitle());
 const images = await Promise.all(image_promises);
 wasm_exports.init(Math.floor(Math.random() * 2 ** 32));
+// TODO: remove this hack
+if (true) {
+  const rect = canvas.getBoundingClientRect();
+  wasm_exports.pointermove(rect.width / 2, rect.height / 2);
+}
 
 // TODO(eternal): some more reliable way to detect if it's a hot reloading build
 if (location.hostname === "localhost") {
