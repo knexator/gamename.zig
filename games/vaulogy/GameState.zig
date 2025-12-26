@@ -1348,8 +1348,8 @@ const Executor = struct {
             .handle = .{ .point = point, .enabled = handle_enabled },
             .garland = garland,
             .input = input,
-            .brake_handle = .{ .point = undefined },
-            .crank_handle = .{ .point = undefined },
+            .brake_handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
+            .crank_handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
         };
         result.recomputeBrakeHandlePos();
         result.recomputeCrankHandlePos();
