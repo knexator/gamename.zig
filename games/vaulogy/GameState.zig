@@ -1400,7 +1400,7 @@ const Executor = struct {
                 executor,
                 .brakeHandlePath,
                 &kommon.funktional.linspace01(32, true),
-            ), executor.handle.point.scale * 0.01, FColor.gray(1));
+            ), Drawer.pixelWidth(camera), FColor.gray(1));
             try executor.brake_handle.draw(drawer, camera, 1.0);
             const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
             drawer.canvas.fillShape(camera, crank_center.plusTurns(
@@ -1568,7 +1568,7 @@ const Executor = struct {
         if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
             const case = executor.garland.popFirstCaseForExecution();
             var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-            const matching = try core.generateBindings(case.pattern.value, executor.input.value, &new_bindings);
+            const matching = try core.generateBindingsV2(case.pattern.value, executor.input.value, &new_bindings, true);
             const invoked_fnk: ?VeryPhysicalGarland = if (!matching)
                 null
             else if (case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
@@ -1974,9 +1974,9 @@ const Fnkbox = struct {
 
     const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
     const relative_top_testcase_point: Point = .{ .pos = .new(0, box_height - testcases_height) };
-    const text_height: f32 = 2.5;
+    const text_height: f32 = 2.4;
     const status_bar_height: f32 = 1;
-    const testcases_header_height: f32 = 0.75;
+    const testcases_header_height: f32 = 0.85;
     const testcases_height: f32 = 2.5 * visible_testcases;
     const box_height = text_height + status_bar_height + testcases_header_height + testcases_height;
     const visible_testcases = 2;
@@ -2150,7 +2150,8 @@ const Fnkbox = struct {
                     },
                 }
 
-                const testcases_labels_center = fnkbox.testcasesBoxUnfolded().get(.top_center).addY(-0.25).addX(0.85);
+                const testcases_labels_center = fnkbox.testcasesBoxUnfolded().get(.top_center).addY(-testcases_header_height * 0.5).addX(0.85);
+                try drawer.canvas.drawText(0, camera, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
                 try drawer.canvas.drawText(0, camera, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
                 try drawer.canvas.drawText(0, camera, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
                 try drawer.canvas.drawText(0, camera, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
@@ -2221,7 +2222,7 @@ const Fnkbox = struct {
             var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
             defer exec.deinit();
 
-            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true) catch |err| switch (err) {
+            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true) catch |err| switch (err) {
                 // TODO: "NoMatchingCase" is no longer an error
                 error.FnkNotFound,
                 error.NoMatchingCase,
@@ -3086,6 +3087,10 @@ const WorkspaceArea = struct {
                     }
 
                     const g = workspace.garlandAt(base);
+
+                    // another special case: don't overlap invisible garlands!
+                    if (grabbed_tag != .garland_handle and g.cases.items.len == 0) continue;
+
                     if (g.handle.overlapped(pos)) {
                         return .{ .kind = .{ .garland_handle = try base.clone(res) }, .area = workspace.area };
                     }
@@ -3805,7 +3810,7 @@ const Workspace = struct {
             x += if (k < 4) 25 else if (k == 4) 30 else 35;
         }
 
-        var postit_pos: Vec2 = .new(33, -3);
+        var postit_pos: Vec2 = .new(40, -3);
         dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
         postit_pos.addInPlace(.new(12, 4));
@@ -3837,13 +3842,15 @@ const Workspace = struct {
 
         postit_pos.addInPlace(.new(19, -14));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
-        try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
-            .pattern = try mem.storeSexpr(.doLit("a")),
-            .template = try mem.storeSexpr(.doLit("b")),
-            .fnk_name = Sexpr.builtin.empty,
-        }, .{ .pos = postit_pos.addY(5) }));
+        if (false) {
+            postit_pos.addInPlace(.new(7, 0));
+            try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
+            try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
+                .pattern = try mem.storeSexpr(.doLit("a")),
+                .template = try mem.storeSexpr(.doLit("b")),
+                .fnk_name = Sexpr.builtin.empty,
+            }, .{ .pos = postit_pos.addY(5) }));
+        }
         postit_pos.addInPlace(.new(7, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
         try dst.main_area.garlands.append(mem.gpa, try .fromDefinition(.{ .pos = postit_pos.addY(5) }, .{ .cases = &.{
@@ -3861,9 +3868,13 @@ const Workspace = struct {
             },
         } }, mem, &mem.hover_pool));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "I've already", "solved the first", "assignment", "for you." }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "I will give you", "assignments.", "You must make", "a new machine to", "solve each one." }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "It's that", "box -->", "and the", "solution", "hangs under it" }, postit_pos.addY(-2)));
+        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
+            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That box     ", "is the first", "assignment,", "already solved", "as an example." } } },
+            .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+        }, postit_pos.addY(-2)));
+
         try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
             .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "see it in action!" } } },
             .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
@@ -3872,7 +3883,7 @@ const Workspace = struct {
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use the crank", "and brake", "to control", "execution speed" }, postit_pos.add(.new(3.5, 11.5))));
         postit_pos.addInPlace(.new(25, -2));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Your turn!"}, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "a requirement", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "an example", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "and modify", "the machine", "to fix it" }, postit_pos.add(.new(0.5, 6.5 * 2))));
         postit_pos.addInPlace(.new(25, 0));
         postit_pos.addInPlace(.new(7, -6.1));
@@ -3890,7 +3901,8 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(25, 1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" }, postit_pos.addX(7)));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Remember,", "right click", "to duplicate" }, postit_pos.addX(14)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Remember,", "right click", "to duplicate." }, postit_pos.addX(14)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Solve all the", "examples with", "a single piece!" }, postit_pos.addX(7).addY(Fnkbox.box_height + 12)));
         postit_pos.addInPlace(.new(25, -1));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Machines can", "invoke other", "machines" }, postit_pos));
         postit_pos.addInPlace(.new(7, 0));
@@ -3914,7 +3926,26 @@ const Workspace = struct {
             .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
         }, postit_pos.add(.new(1.5, 16.75))));
         postit_pos.addInPlace(.new(30 - 14, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Pieces can match", "with the result", "of other pieces" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Pieces can", "match with", "the result", "of other pieces" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Try running", "the first two", "examples." }, postit_pos.addX(7)));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "These 'nested'", "machines are", "the same as", "regular machines" }, postit_pos.addX(14).add(.new(4, 13))));
+        postit_pos.addInPlace(.new(35, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can combine", "both tricks:", "invoke a machine", "and then match", "on its result" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Study this", "solved", "assignment", "in detail." }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(35, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You now know", "everything!" }, postit_pos));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Good luck."}, postit_pos.addX(7)));
+
+        postit_pos.addInPlace(.new(35, 0));
+        postit_pos.addInPlace(.new(35, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(35, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
+
+        postit_pos.addInPlace(.new(35 * 8, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(35, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
 
         // dst.camera = dst.camera.with2(.center, postit_pos, .size);
 
@@ -5030,6 +5061,12 @@ const Workspace = struct {
             workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, hovering_fnkbox == null);
         }
 
+        // drawing
+        // draw right before big state changes, to avoid breaking the lenses cache
+        if (drawer) |d| {
+            try workspace.draw(platform, d);
+        }
+
         // 'var' since the deleted command gets completed at execution
         var action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             switch (hovering.kind) {
@@ -5368,11 +5405,6 @@ const Workspace = struct {
                 } } });
                 try workspace.canonizeAfterChanges(mem);
             }
-        }
-
-        // drawing
-        if (drawer) |d| {
-            try workspace.draw(platform, d);
         }
     }
 

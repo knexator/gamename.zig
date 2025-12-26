@@ -60,6 +60,23 @@ const Helpers = struct {
 };
 
 pub const levels: []const Level = &.{
+    // .{
+    //     .fnk_name = &Sexpr.doLit("changeAtoBandBtoA"),
+    //     .description = "Turn 'a' into 'b', and 'b' into 'a'",
+    //     .initial_definition = .{ .cases = &.{
+    //         .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+    //         .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+    //     } },
+    //     .generate_sample = struct {
+    //         fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+    //             if (k == 0) {
+    //                 return .{ .input = Vals.lowercase[0], .expected = Vals.lowercase[1] };
+    //             } else if (k == 1) {
+    //                 return .{ .input = Vals.lowercase[1], .expected = Vals.lowercase[0] };
+    //             } else return null;
+    //         }
+    //     }.generate_sample,
+    // },
     .{
         .fnk_name = &Sexpr.doLit("uppercase"),
         .description = "Get the uppercase version of each atom",
@@ -125,8 +142,8 @@ pub const levels: []const Level = &.{
         .fnk_name = &Sexpr.doLit("swap"),
         .description = "Swap both values",
         .initial_definition = .{ .cases = &.{.{
-            .pattern = &.doPair(Vals.uppercase[0], &.doVar("down")),
-            .template = &.doPair(&.doVar("down"), Vals.uppercase[0]),
+            .pattern = &.doPair(Sexpr.builtin.empty, Vals.vars.down),
+            .template = &.doPair(Vals.vars.down, Vals.vars.up),
             .fnk_name = Sexpr.builtin.empty,
             .next = null,
         }} },
@@ -174,13 +191,13 @@ pub const levels: []const Level = &.{
         .description = "Get the pair's top half in uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
-                .pattern = &.doPair(Vals.lowercase[0], &.doVar("other")),
+                .pattern = &.doPair(Vals.lowercase[0], Sexpr.builtin.empty),
                 .template = Vals.lowercase[0],
                 .fnk_name = &.doLit("uppercase"),
                 .next = null,
             },
             .{
-                .pattern = &.doPair(Vals.lowercase[1], &.doVar("other")),
+                .pattern = &.doPair(Vals.lowercase[1], Sexpr.builtin.empty),
                 .template = Vals.lowercase[1],
                 .fnk_name = &.doLit("uppercase"),
                 .next = null,
@@ -204,7 +221,7 @@ pub const levels: []const Level = &.{
         .description = "Check if pair's top half is a B.",
         .initial_definition = .{ .cases = &.{
             .{
-                .pattern = &.doPair(&.doVar("left"), &.doVar("right")),
+                .pattern = &.doPair(&.doVar("left"), Sexpr.builtin.empty),
                 .template = &.doVar("left"),
                 .fnk_name = Sexpr.builtin.empty,
                 .next = &.{
@@ -239,7 +256,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = &Sexpr.doLit("uppercaseIfVowel"),
-        .description = "Make vowels uppercase; leave the rest the same.",
+        .description = "Change only the vowels to uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
                 .pattern = &.doVar("letter"),
@@ -279,40 +296,41 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = &Sexpr.doLit("withFirstUppercased"),
         .description = "Change the top half to be uppercase.",
-        .initial_definition = .{ .cases = &.{
-            .{
-                .pattern = &.doPair(Vals.lowercase[0], Vals.lowercase[0]),
-                .template = &.doPair(Vals.uppercase[0], Vals.lowercase[0]),
-                .fnk_name = Sexpr.builtin.empty,
-                .next = null,
-            },
-            .{
-                .pattern = &.doPair(Vals.lowercase[0], Vals.lowercase[1]),
-                .template = Vals.lowercase[0],
-                .fnk_name = &.doLit("uppercase"),
-                .next = &.{
-                    .{
-                        .pattern = Vals.uppercase[0],
-                        .template = &.doPair(Vals.uppercase[0], Vals.lowercase[1]),
-                        .fnk_name = Sexpr.builtin.empty,
-                        .next = null,
-                    },
-                },
-            },
-            .{
-                .pattern = &.doPair(&.doVar("first"), Vals.lowercase[2]),
-                .template = &.doVar("first"),
-                .fnk_name = &.doLit("uppercase"),
-                .next = &.{
-                    .{
-                        .pattern = &.doVar("FIRST"),
-                        .template = &.doPair(&.doVar("FIRST"), Vals.lowercase[2]),
-                        .fnk_name = Sexpr.builtin.empty,
-                        .next = null,
-                    },
-                },
-            },
-        } },
+        .initial_definition = null,
+        // .{ .cases = &.{
+        //     .{
+        //         .pattern = &.doPair(Vals.lowercase[0], Vals.lowercase[0]),
+        //         .template = &.doPair(Vals.uppercase[0], Vals.lowercase[0]),
+        //         .fnk_name = Sexpr.builtin.empty,
+        //         .next = null,
+        //     },
+        //     .{
+        //         .pattern = &.doPair(Vals.lowercase[0], Vals.lowercase[1]),
+        //         .template = Vals.lowercase[0],
+        //         .fnk_name = &.doLit("uppercase"),
+        //         .next = &.{
+        //             .{
+        //                 .pattern = Vals.uppercase[0],
+        //                 .template = &.doPair(Vals.uppercase[0], Vals.lowercase[1]),
+        //                 .fnk_name = Sexpr.builtin.empty,
+        //                 .next = null,
+        //             },
+        //         },
+        //     },
+        //     .{
+        //         .pattern = &.doPair(&.doVar("first"), Vals.lowercase[2]),
+        //         .template = &.doVar("first"),
+        //         .fnk_name = &.doLit("uppercase"),
+        //         .next = &.{
+        //             .{
+        //                 .pattern = &.doVar("FIRST"),
+        //                 .template = &.doPair(&.doVar("FIRST"), Vals.lowercase[2]),
+        //                 .fnk_name = Sexpr.builtin.empty,
+        //                 .next = null,
+        //             },
+        //         },
+        //     },
+        // } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
@@ -865,6 +883,12 @@ const Vals = struct {
         &Sexpr.doLit("E"),
         &Sexpr.doLit("F"),
     };
+
+    const vars: struct {
+        down: *const Sexpr = &Sexpr.doVar("down"),
+        up: *const Sexpr = &Sexpr.doVar("up"),
+        other: *const Sexpr = &Sexpr.doVar("other"),
+    } = .{};
 
     const BF: struct {
         prev: *const Sexpr = &Sexpr.doLit("prev"),

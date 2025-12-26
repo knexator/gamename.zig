@@ -1481,7 +1481,7 @@ pub const TextRenderer = struct {
                 \\
                 \\// for some reason, on desktop, the fwidth value is half of what it should.
                 \\#ifdef GL_ES // WebGL2
-                \\  #define FWIDTH(x) fwidth(x)
+                \\  #define FWIDTH(x) (fwidth(x))
                 \\#else // Desktop
                 \\  #define FWIDTH(x) (2.0 * fwidth(x))
                 \\#endif
@@ -1503,7 +1503,8 @@ pub const TextRenderer = struct {
                 \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
                 \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
                 \\  // density of the texture on screen; assume uniform scaling.
-                \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size;
+                // TODO: find out why we need that "* 0.5" to avoid graying background
+                \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size * 0.5;
                 \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
                 \\  // over how many screen pixels do the transition
                 \\  float transition_pixels = 1.0;

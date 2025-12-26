@@ -25,11 +25,12 @@ pub const AtomVisuals = struct {
         color: FColor,
         display: ?[]const u8 = null,
     }, gl: kommon.Gl) !AtomVisuals {
+        const geo: Geometry = try .fromProfile(mem, params.profile, gl);
         return .{
             .profile = params.profile,
             .color = params.color,
             .display = params.display,
-            .geometry = try .fromProfile(mem, params.profile, gl),
+            .geometry = geo,
         };
     }
 
@@ -374,6 +375,31 @@ const AtomVisualCache = struct {
             .color = .fromHex("#99BBFF"),
             .profile = null,
         },
+        .up = HardcodedAtomVisuals{
+            .color = .fromHex("#00ffff"),
+            .profile = null,
+        },
+        .down = HardcodedAtomVisuals{
+            .color = .fromHex("#ff9900"),
+            .profile = null,
+        },
+        .left = HardcodedAtomVisuals{
+            .color = .fromHex("#99ff00"),
+            .profile = null,
+        },
+        .right = HardcodedAtomVisuals{
+            .color = .fromHex("#ffff00"),
+            .profile = null,
+        },
+        .letter = HardcodedAtomVisuals{
+            .color = .fromHex("#123456"),
+            .profile = null,
+        },
+        // TODO: the debug web build crashes without this!
+        .other = HardcodedAtomVisuals{
+            .color = .fromHex("#9955ff"),
+            .profile = null,
+        },
     };
 
     pub fn init(arena: std.mem.Allocator, gl: Gl) !AtomVisualCache {
@@ -563,7 +589,7 @@ pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poin
     }
 }
 
-fn pixelWidth(camera: Rect) f32 {
+pub fn pixelWidth(camera: Rect) f32 {
     // const pixel_width = camera.height / window_size.y;
     return camera.size.y / 800.0;
 }

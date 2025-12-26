@@ -736,7 +736,7 @@ pub const ExecutionThread = struct {
             const rest_of_cases = last_stack_ptr.cur_cases[1..];
 
             var new_bindings: Bindings = .init(permanent_stuff.gpa);
-            if (!(try generateBindings(case.pattern, this.active_value, &new_bindings))) {
+            if (!(try generateBindingsV2(case.pattern, this.active_value, &new_bindings, false))) {
                 // undoLastBindings(&last_stack_ptr.cur_bindings, initial_bindings_count);
                 last_stack_ptr.cur_cases = rest_of_cases;
                 this.last_visual_state = .{ .failed_to_match = case };
@@ -821,20 +821,24 @@ pub const ExecutionThread = struct {
     }
 
     pub fn advanceStep(this: *ExecutionThread, scoring_run: *ScoringRun) !?*const Sexpr {
-        return try this.advanceStepV2(scoring_run, false);
+        return try this.advanceStepV2(scoring_run, false, false);
     }
 
-    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool) !?*const Sexpr {
+    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool, allow_unbound_variables: bool) !?*const Sexpr {
         var permanent_stuff = scoring_run.mem;
         if (this.stack.items.len > 0) {
             const last_stack_ptr: *StackThing = &this.stack.items[this.stack.items.len - 1];
             const initial_bindings_count = last_stack_ptr.cur_bindings.items.len;
             for (last_stack_ptr.cur_cases) |case| {
-                if (!(try generateBindings(case.pattern, this.active_value, &last_stack_ptr.cur_bindings))) {
+                if (!(try generateBindingsV2(case.pattern, this.active_value, &last_stack_ptr.cur_bindings, allow_unbound_variables))) {
                     undoLastBindings(&last_stack_ptr.cur_bindings, initial_bindings_count);
                     continue;
                 }
-                const argument = try fillTemplate(case.template, last_stack_ptr.cur_bindings, &permanent_stuff.pool_for_sexprs);
+                const argument_fill = try partiallyFillTemplateV2(case.template, last_stack_ptr.cur_bindings.items, &permanent_stuff.pool_for_sexprs);
+                if (!argument_fill.complete and !allow_unbound_variables) {
+                    return error.UsedUndefinedVariable;
+                }
+                const argument = argument_fill.result;
                 this.active_value = argument;
 
                 if (case.next) |next| {
@@ -881,10 +885,10 @@ pub const ExecutionThread = struct {
         return this.getFinalResultBoundedV2(scoring_run, max_steps, true);
     }
 
-    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool) !*const Sexpr {
+    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool, allow_unbound_variables: bool) !*const Sexpr {
         if (max_steps) |max| {
             for (0..max) |_| {
-                if (try this.advanceStepV2(scoring_run, allow_no_cases)) |res| {
+                if (try this.advanceStepV2(scoring_run, allow_no_cases, allow_unbound_variables)) |res| {
                     return res;
                 }
             } else return error.TookTooLong;
@@ -1421,7 +1425,11 @@ fn expectEqualSexprs(expected: *const Sexpr, actual: *const Sexpr) !void {
     }
 }
 
-pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *Bindings) error{ BAD_INPUT, OutOfMemory }!bool {
+// pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *Bindings) error{ BAD_INPUT, OutOfMemory }!bool {
+//     return generateBindingsV2(pattern, value, bindings, false);
+// }
+
+pub fn generateBindingsV2(pattern: *const Sexpr, value: *const Sexpr, bindings: *Bindings, allow_unbound_vars_in_value: bool) error{ BAD_INPUT, OutOfMemory }!bool {
     if (DEBUG) {
         const stderr = std.io.getStdErr().writer();
         stderr.print("\nGenerating bindings for pattern {any} and value {any}\n", .{ pattern, value }) catch unreachable;
@@ -1437,7 +1445,11 @@ pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *B
     switch (pattern.*) {
         .empty => return true,
         .atom_var => |pat| {
-            switch (value.*) {
+            if (allow_unbound_vars_in_value) {
+                // TODO: return error.BAD_INPUT if variable was already bound
+                try bindings.append(.{ .name = pat.value, .value = value });
+                return true;
+            } else switch (value.*) {
                 .atom_var => return error.BAD_INPUT,
                 else => {
                     // TODO: return error.BAD_INPUT if variable was already bound
@@ -1451,22 +1463,22 @@ pub fn generateBindings(pattern: *const Sexpr, value: *const Sexpr, bindings: *B
                 .empty => return true,
                 .pair => return false,
                 .atom_lit => |val| return val.equals(pat),
-                .atom_var => return error.BAD_INPUT,
+                .atom_var => return if (allow_unbound_vars_in_value) true else error.BAD_INPUT,
             }
         },
         .pair => |pat| {
             const starting_len = bindings.items.len;
             const result = switch (value.*) {
                 .atom_lit => false,
-                .atom_var => error.BAD_INPUT,
+                .atom_var => if (allow_unbound_vars_in_value) false else error.BAD_INPUT,
                 .empty => blk: {
-                    const a = try generateBindings(pat.left, &.empty, bindings);
-                    const b = try generateBindings(pat.right, &.empty, bindings);
+                    const a = try generateBindingsV2(pat.left, &.empty, bindings, allow_unbound_vars_in_value);
+                    const b = try generateBindingsV2(pat.right, &.empty, bindings, allow_unbound_vars_in_value);
                     break :blk a and b;
                 },
                 .pair => |val| blk: {
-                    const a = try generateBindings(pat.left, val.left, bindings);
-                    const b = try generateBindings(pat.right, val.right, bindings);
+                    const a = try generateBindingsV2(pat.left, val.left, bindings, allow_unbound_vars_in_value);
+                    const b = try generateBindingsV2(pat.right, val.right, bindings, allow_unbound_vars_in_value);
                     break :blk a and b;
                 },
             };
