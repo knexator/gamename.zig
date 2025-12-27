@@ -3674,7 +3674,7 @@ const Workspace = struct {
 
     pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff, random_seed: u64) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
-        Postit.asdf_arena_for_all_postit_parts = mem.gpa;
+        Postit.asdf_arena_for_all_postit_parts = mem.arena_for_permanent_stuff.allocator();
 
         dst.hand.init(.hand, mem.gpa);
         dst.main_area.init(.main_area, mem.gpa);

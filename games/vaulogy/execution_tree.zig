@@ -105,7 +105,7 @@ pub const ExecutionTree = struct {
     ) !ExecutionTree {
         for (cases, 0..) |case, case_index| {
             var new_bindings: std.ArrayList(core.Binding) = .init(scoring_run.mem.gpa);
-            if (try core.generateBindings(case.pattern, input, &new_bindings)) {
+            if (try core.generateBindingsV2(case.pattern, input, &new_bindings, false)) {
                 const bindings = try scoring_run.mem.gpa.alloc(core.Binding, incoming_bindings.len + new_bindings.items.len);
                 @memcpy(bindings[0..incoming_bindings.len], incoming_bindings);
                 @memcpy(bindings[incoming_bindings.len..], new_bindings.items);
