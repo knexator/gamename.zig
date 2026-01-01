@@ -27,7 +27,16 @@ pub const ViewHelper = struct {
         }
     };
 
-    pub fn overlapsTemplateAtom(atom_point: Point, needle_pos: Vec2, kind: enum { atom, pair }) bool {
+    pub const Kind = enum { atom, pair };
+
+    pub fn overlapsAtom(is_pattern: bool, atom_point: Point, needle_pos: Vec2, kind: Kind) bool {
+        return if (is_pattern)
+            overlapsPatternAtom(atom_point, needle_pos, kind)
+        else
+            overlapsTemplateAtom(atom_point, needle_pos, kind);
+    }
+
+    pub fn overlapsTemplateAtom(atom_point: Point, needle_pos: Vec2, kind: Kind) bool {
         const p = atom_point.inverseApplyGetLocal(.{ .pos = needle_pos }).pos;
         return inRange(p.y, -1, 1) and switch (kind) {
             .pair => inRange(p.x, -0.5 * (1 - @abs(p.y)), 0.5 - 0.25 * (1 - @abs(@abs(p.y) - 0.5) / 0.5)),
@@ -35,7 +44,7 @@ pub const ViewHelper = struct {
         };
     }
 
-    pub fn overlapsPatternAtom(atom_point: Point, needle_pos: Vec2, kind: enum { atom, pair }) bool {
+    pub fn overlapsPatternAtom(atom_point: Point, needle_pos: Vec2, kind: Kind) bool {
         const p = atom_point.inverseApplyGetLocal(.{ .pos = needle_pos }).pos;
         return inRange(p.y, -1, 1) and switch (kind) {
             .atom => inRange(p.x, -1, 0.5 * (1 - @abs(p.y))),

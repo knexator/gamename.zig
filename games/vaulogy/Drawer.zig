@@ -545,6 +545,26 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
     }
 }
 
+pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
+    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{name});
+        return;
+    };
+    if (is_pattern) {
+        try drawer.drawPatternAtom(camera, point, visuals, alpha);
+    } else {
+        try drawer.drawTemplateAtom(camera, point, visuals, alpha);
+    }
+}
+
+pub fn drawPairHolder(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, alpha: f32) !void {
+    if (is_pattern) {
+        try drawer.drawPatternPairHolder(camera, point, alpha);
+    } else {
+        try drawer.drawTemplatePairHolder(camera, point, alpha);
+    }
+}
+
 pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, point: Point, alpha: f32) !void {
     switch (sexpr.*) {
         .empty => {},
