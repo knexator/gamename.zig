@@ -67,9 +67,21 @@ pub fn clampPtr(v: *f32, min_inclusive: f32, max_inclusive: f32) void {
 
 const lerp_towards_float = lerp_towards;
 pub fn lerp_towards(v: *f32, goal: f32, ratio: f32, delta_seconds: f32) void {
-    // TODO: make this framerate independent
-    _ = delta_seconds;
-    v.* = std.math.lerp(v.*, goal, ratio);
+    // v.* = std.math.lerp(v.*, goal, ratio);
+    v.* = lerp_towards_pure_with_ratio(v.*, goal, ratio, delta_seconds);
+}
+
+pub fn lerp_towards_pure_with_ratio(current: f32, goal: f32, ratio: f32, delta_seconds: f32) f32 {
+    const halflife = halflife_from_duration_and_precision(1.0 / 60.0, 1.0 - ratio);
+    return lerp_towards_pure(current, goal, halflife, delta_seconds);
+}
+
+pub fn lerp_towards_pure(current: f32, goal: f32, halflife: f32, delta_seconds: f32) f32 {
+    return goal + (current - goal) * std.math.exp2(-delta_seconds / halflife);
+}
+
+pub fn halflife_from_duration_and_precision(duration: f32, precision: f32) f32 {
+    return -duration / std.math.log2(precision);
 }
 
 pub fn lerp_towards_range(v: *f32, min: f32, max: f32, ratio: f32, delta_seconds: f32) void {
@@ -357,9 +369,10 @@ pub const Vec2 = extern struct {
     }
 
     pub fn lerpTowardsPure(v: Self, goal: Self, ratio: f32, delta_seconds: f32) Self {
-        // TODO: make this framerate independent
-        _ = delta_seconds;
-        return .lerp(v, goal, ratio);
+        return .new(
+            lerp_towards_pure_with_ratio(v.x, goal.x, ratio, delta_seconds),
+            lerp_towards_pure_with_ratio(v.y, goal.y, ratio, delta_seconds),
+        );
     }
 
     pub fn lerpTowards(v: *Self, goal: Self, ratio: f32, delta_seconds: f32) void {
