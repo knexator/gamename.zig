@@ -350,18 +350,10 @@ const Workspace = struct {
     undo_stack: std.ArrayList(UndoableCommand),
 
     const UndoableCommand = union(enum) {
-        plucked: Plucked,
-        dropped: Dropped,
-        // TODO: for cranks, implement 'grabbed/released'
-
-        pub const Plucked = struct {
-            original: Lego,
-            substitution: Lego.Index,
-        };
-        pub const Dropped = struct {
-            overwritten: Lego.Index,
-            original: Lego.Index,
-        };
+        setGrabbing: Lego.Index,
+        addChildFirst: struct { parent: Lego.Index, new_child: Lego.Index },
+        changeChild: struct { original_child: Lego.Index, new_child: Lego.Index },
+        setData: struct { data: Lego, target: Lego.Index },
     };
 
     pub fn init(dst: *Workspace, gpa: std.mem.Allocator) !void {
@@ -495,19 +487,20 @@ const Workspace = struct {
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
-            if (workspace.undo_stack.pop()) |command| {
-                again: switch (command) {
-                    .plucked => |plucked| {
-                        workspace.toybox.get(plucked.original.index).point = plucked.original.point;
-                        workspace.toybox.changeChild(plucked.original.index, .nothing);
-                        if (plucked.substitution != .nothing) @panic("TODO: remove old substitution");
-                        workspace.toybox.setChild(plucked.original.tree, workspace.grabbing);
+            while (workspace.undo_stack.pop()) |command| {
+                // again: switch (command) {}
+                switch (command) {
+                    .setGrabbing => |c| {
+                        workspace.grabbing = c;
                     },
-                    .dropped => |dropped| {
-                        workspace.toybox.changeChild(dropped.original, dropped.overwritten);
-                        workspace.toybox.addChildFirst(workspace.hand_layer, dropped.original);
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        continue :again next_cmd;
+                    .addChildFirst => |c| {
+                        workspace.toybox.changeChild(c.new_child, .nothing);
+                    },
+                    .changeChild => |c| {
+                        workspace.toybox.changeChild(c.new_child, c.original_child);
+                    },
+                    .setData => |c| {
+                        workspace.toybox.get(c.target).* = c.data;
                     },
                 }
             }
@@ -545,49 +538,45 @@ const Workspace = struct {
             try workspace.draw(platform, d);
         }
 
+        try workspace.undo_stack.ensureUnusedCapacity(10);
         const toybox = &workspace.toybox;
-        var commands: std.BoundedArray(UndoableCommand, 2) = .{};
         if (workspace.grabbing == .nothing and
             hot_and_dropzone.hot != .nothing and
             (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
         {
-            commands.appendAssumeCapacity(.{
-                .plucked = .{
-                    .original = toybox.get(hot_and_dropzone.hot).*,
-                    // TODO: for a nested sexpr, it should be a fresh .empty sexpr
-                    .substitution = .nothing,
-                },
-            });
+            const plucked = hot_and_dropzone.hot;
+            const plucked_original: Lego = toybox.get(plucked).*;
+            // TODO: for a nested sexpr, it should be a fresh .empty sexpr
+            const substitution: Lego.Index = .nothing;
+
+            toybox.changeChild(plucked, substitution);
+            toybox.addChildFirst(workspace.hand_layer, plucked);
+            workspace.grabbing = plucked_original.index;
+
+            // workspace.undo_stack.appendAssumeCapacity(.barrier);
+            workspace.undo_stack.appendAssumeCapacity(.{ .setData = .{ .data = plucked_original, .target = plucked } });
+            // workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = plucked, .new_child = substitution } });
+            // workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.hand_layer, .new_child = plucked } });
+            // workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = .nothing });
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
-            commands.appendAssumeCapacity(.{
-                .dropped = .{
-                    .original = workspace.grabbing,
-                    .overwritten = hot_and_dropzone.dropzone,
-                },
-            });
-        }
+            const dropped = workspace.grabbing;
 
-        try workspace.undo_stack.ensureUnusedCapacity(commands.len);
-        for (commands.constSlice()) |new_command| {
-            switch (new_command) {
-                .plucked => |plucked| {
-                    workspace.grabbing = plucked.original.index;
-                    toybox.changeChild(workspace.grabbing, plucked.substitution);
-                    toybox.addChildFirst(workspace.hand_layer, workspace.grabbing);
-                },
-                .dropped => |dropped| {
-                    toybox.changeChild(workspace.grabbing, .nothing);
-                    if (dropped.overwritten == .nothing) {
-                        toybox.addChildFirst(workspace.main_area, workspace.grabbing);
-                    } else {
-                        toybox.changeChild(dropped.overwritten, workspace.grabbing);
-                    }
-                    workspace.grabbing = .nothing;
-                },
+            workspace.grabbing = .nothing;
+            workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = dropped });
+
+            toybox.changeChild(dropped, .nothing);
+            workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = dropped, .new_child = .nothing } });
+
+            if (hot_and_dropzone.dropzone != .nothing) {
+                const overwritten = hot_and_dropzone.dropzone;
+                toybox.changeChild(overwritten, dropped);
+                workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = overwritten, .new_child = dropped } });
+            } else {
+                toybox.addChildFirst(workspace.main_area, dropped);
+                workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.main_area, .new_child = dropped } });
             }
-            workspace.undo_stack.appendAssumeCapacity(new_command);
         }
 
         workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, true);
