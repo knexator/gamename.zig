@@ -139,7 +139,7 @@ workspace: Workspace,
 
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
-    // exists: bool,
+    exists: bool = true,
     index: Index,
     /// absolute coordinates
     point: Point = .{},
@@ -189,7 +189,6 @@ pub const Lego = struct {
             }
 
             pub fn popChild(area: *Area, toybox: *Toybox, child: Lego.Index) void {
-                std.log.debug("area: {any}", .{area.*});
                 assert(area.first != .nothing and area.last != .nothing);
                 const old_prev = toybox.get(child).ll_area_prev;
                 const old_next = toybox.get(child).ll_area_next;
@@ -372,13 +371,23 @@ pub const Toybox = struct {
     pub fn get(toybox: *Toybox, index: Lego.Index) *Lego {
         return &toybox.all_legos.items[@intFromEnum(index)];
     }
+
+    pub fn dupeFloating(toybox: *Toybox, original: Lego.Index) !*Lego {
+        const result = try toybox.add(undefined);
+        var thing = toybox.get(original).*;
+        thing.index = result.index;
+        thing.ll_area_next = .nothing;
+        thing.ll_area_prev = .nothing;
+        result.* = thing;
+        return result;
+    }
 };
 
 const Workspace = struct {
     toybox: Toybox,
 
     main_area: Lego.Index,
-    hand_layer: Lego.Index,
+    hand_layer: Lego.Index = .nothing,
 
     grabbing: Lego.Index = .nothing,
 
@@ -386,10 +395,16 @@ const Workspace = struct {
     undo_stack: std.ArrayList(UndoableCommand),
 
     const UndoableCommand = union(enum) {
-        setGrabbing: Lego.Index,
-        addChildFirst: struct { parent: Lego.Index, new_child: Lego.Index },
-        changeChild: struct { original_child: Lego.Index, new_child: Lego.Index },
-        setData: struct { data: Lego, target: Lego.Index },
+        fence,
+        destroy: Lego.Index,
+        reset_data: Lego,
+        // restore: Lego.Index,
+        pop: struct { child: Lego.Index, parent: Lego.Index },
+        set_grabbing: struct { grabbing: Lego.Index, hand_layer: Lego.Index },
+        // setGrabbing: Lego.Index,
+        // addChildFirst: struct { parent: Lego.Index, new_child: Lego.Index },
+        // changeChild: struct { original_child: Lego.Index, new_child: Lego.Index },
+        // setData: struct { data: Lego, target: Lego.Index },
     };
 
     pub fn init(dst: *Workspace, gpa: std.mem.Allocator) !void {
@@ -400,9 +415,7 @@ const Workspace = struct {
         const toybox = &dst.toybox;
 
         const main_area = try toybox.add(.{ .area = .{} });
-        const hand_layer = try toybox.add(.{ .area = .{} });
         dst.main_area = main_area.index;
-        dst.hand_layer = hand_layer.index;
 
         if (true) {
             const sample_sexpr = try toybox.add(.{ .sexpr = .{
@@ -442,6 +455,7 @@ const Workspace = struct {
 
         const roots: [2]Lego.Index = .{ workspace.main_area, workspace.hand_layer };
         for (&roots) |root| {
+            if (root == .nothing) continue;
             try Lego.draw(
                 toybox,
                 root,
@@ -469,9 +483,25 @@ const Workspace = struct {
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
+            const toybox = &workspace.toybox;
             while (workspace.undo_stack.pop()) |command| {
-                _ = command;
-                @panic("TODO");
+                switch (command) {
+                    .fence => break,
+                    .destroy => |index| {
+                        // FIXME: better
+                        toybox.get(index).point.pos.addInPlace(.new(0, 4));
+                    },
+                    .pop => |pop| {
+                        toybox.get(pop.parent).specific.area.popChild(toybox, pop.child);
+                    },
+                    .set_grabbing => |set| {
+                        workspace.grabbing = set.grabbing;
+                        workspace.hand_layer = set.hand_layer;
+                    },
+                    .reset_data => |data| {
+                        toybox.get(data.index).* = data;
+                    },
+                }
             }
         }
 
@@ -510,6 +540,7 @@ const Workspace = struct {
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor and the grabbed thing
         for ([2]Lego.Index{ workspace.main_area, workspace.hand_layer }) |root| {
+            if (root == .nothing) continue;
             Lego.updateSprings(
                 &workspace.toybox,
                 root,
@@ -525,79 +556,63 @@ const Workspace = struct {
         }
 
         const toybox = &workspace.toybox;
-        try workspace.undo_stack.ensureUnusedCapacity(10);
         if (workspace.grabbing == .nothing and
             interaction.kind == .hot and
             (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
         {
-            const reverse_path: []const Lego.Index = interaction.reverse_path.items;
-            const plucked = reverse_path[0];
+            try workspace.undo_stack.append(.fence);
 
-            switch (toybox.get(plucked).specific) {
-                .area => unreachable,
-                .sexpr => |sexpr| {
-                    const parent = toybox.get(reverse_path[1]);
-                    switch (parent.specific) {
-                        .area => |*parent_area| {
-                            parent_area.popChild(toybox, reverse_path[0]);
-                            toybox.get(workspace.hand_layer).specific.area.addChildLast(toybox, plucked);
-                        },
-                        else => @panic("TODO"),
-                    }
-                    _ = sexpr;
-                },
-            }
+            const new_element = try toybox.dupeFloating(interaction.reverse_path.items[0]);
+            try workspace.undo_stack.append(.{ .destroy = new_element.index });
 
-            workspace.grabbing = plucked;
+            const old_element = toybox.get(interaction.reverse_path.items[0]);
+            try workspace.undo_stack.append(.{ .reset_data = old_element.* });
+            // try workspace.undo_stack.append(.{ .restore = old_element.index });
+            // FIXME
+            // old_element.exists = false;
+            old_element.point.pos.addInPlace(.new(4, 0));
 
-            // const plucked = hot_and_dropzone.hot;
-            // const plucked_original: Lego = toybox.get(plucked).*;
-            // // TODO: for a nested sexpr, it should be a fresh .empty sexpr
-            // const substitution: Lego.Index = .nothing;
-
-            // toybox.changeChild(plucked, substitution);
-            // toybox.addChildFirst(workspace.hand_layer, plucked);
-            // workspace.grabbing = plucked_original.index;
-
-            // // workspace.undo_stack.appendAssumeCapacity(.barrier);
-            // workspace.undo_stack.appendAssumeCapacity(.{ .setData = .{ .data = plucked_original, .target = plucked } });
-            // // workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = plucked, .new_child = substitution } });
-            // // workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.hand_layer, .new_child = plucked } });
-            // // workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = .nothing });
+            try workspace.undo_stack.append(.{ .set_grabbing = .{
+                .grabbing = .nothing,
+                .hand_layer = .nothing,
+            } });
+            workspace.grabbing = new_element.index;
+            workspace.hand_layer = new_element.index;
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
-            const dropped = workspace.grabbing;
-
-            std.log.debug("poping from hand layer", .{});
-            toybox.get(workspace.hand_layer).specific.area.popChild(toybox, dropped);
-            if (interaction.kind == .dropzone) {
-                const overwritten = toybox.get(interaction.reverse_path.items[0]);
-                const overwritten_original = overwritten.*;
-                overwritten.* = toybox.get(dropped).*;
-                overwritten.index = overwritten_original.index;
-                overwritten.ll_area_prev = overwritten_original.ll_area_prev;
-                overwritten.ll_area_next = overwritten_original.ll_area_next;
-            } else {
-                toybox.get(workspace.main_area).specific.area.addChildLast(toybox, dropped);
-            }
-
-            workspace.grabbing = .nothing;
-
-            // workspace.grabbing = .nothing;
-            // workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = dropped });
-
-            // toybox.changeChild(dropped, .nothing);
-            // workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = dropped, .new_child = .nothing } });
-
-            // if (hot_and_dropzone.dropzone != .nothing) {
-            //     const overwritten = hot_and_dropzone.dropzone;
-            //     toybox.changeChild(overwritten, dropped);
-            //     workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = overwritten, .new_child = dropped } });
-            // } else {
-            //     toybox.addChildFirst(workspace.main_area, dropped);
-            //     workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.main_area, .new_child = dropped } });
+            // const overwritten_lego_index = if (interaction.kind == .dropzone)
+            //     interaction.reverse_path.items[0]
+            // else blk: {
+            //     const asdf = try toybox.add(undefined);
+            //     toybox.get(workspace.main_area).specific.area.addChildLast(toybox, asdf.index);
+            //     break :blk asdf.index;
             // }
+
+            if (interaction.kind == .dropzone) {
+                const index_of_overwritten = interaction.reverse_path.items[0];
+                const overwritten_data = toybox.get(index_of_overwritten).*;
+                try workspace.undo_stack.append(.{ .reset_data = overwritten_data });
+                var new_data = toybox.get(workspace.grabbing).*;
+                new_data.index = overwritten_data.index;
+                new_data.ll_area_next = overwritten_data.ll_area_next;
+                new_data.ll_area_prev = overwritten_data.ll_area_prev;
+                toybox.get(index_of_overwritten).* = new_data;
+            } else {
+                // TODO: could be unified with the other case, by creating a fresh last child and the overwriting it
+                assert(interaction.kind == .nothing);
+                toybox.get(workspace.main_area).specific.area.addChildLast(toybox, workspace.grabbing);
+                try workspace.undo_stack.append(.{ .pop = .{
+                    .child = workspace.grabbing,
+                    .parent = workspace.main_area,
+                } });
+            }
+            try workspace.undo_stack.append(.{ .set_grabbing = .{
+                .grabbing = workspace.grabbing,
+                .hand_layer = workspace.hand_layer,
+            } });
+            workspace.grabbing = .nothing;
+            workspace.hand_layer = .nothing;
         }
 
         workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, true);
