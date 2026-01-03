@@ -21,6 +21,7 @@ test "fuzz example" {
         delta_seconds: f32 = 0,
         mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 },
         keyboard: Keyboard = .{ .cur = .init, .prev = .init, .cur_time = 0 },
+        frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator),
 
         const TestPlatform = @This();
 
@@ -28,6 +29,7 @@ test "fuzz example" {
             self.mouse.prev = self.mouse.cur;
             self.mouse.cur.scrolled = .none;
             self.keyboard.prev = self.keyboard.cur;
+            _ = self.frame_arena.reset(.retain_capacity);
         }
 
         pub fn getGives(self: *TestPlatform, delta_seconds: f32) PlatformGives {
@@ -39,6 +41,7 @@ test "fuzz example" {
                 .mouse = self.mouse,
                 .keyboard = self.keyboard,
                 .gpa = std.testing.allocator,
+                .frame_arena = self.frame_arena.allocator(),
 
                 .aspect_ratio = stuff.metadata.desired_aspect_ratio,
                 .delta_seconds = delta_seconds,
@@ -76,6 +79,7 @@ test "fuzz example" {
             defer workspace.deinit();
 
             var test_platform: TestPlatform = .{};
+            defer test_platform.frame_arena.deinit();
 
             var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
             while (it.next()) |cur_input_raw| {
@@ -85,6 +89,7 @@ test "fuzz example" {
                     test_platform.mouse.cur.buttons.left = cur_input.mouse_left_down;
                     test_platform.mouse.cur.position = cur_input.mouse_pos;
                     try workspace.update(test_platform.getGives(1.0 / 60.0), null);
+                    test_platform.after();
                 }
             }
         }
@@ -132,17 +137,6 @@ usual: kommon.Usual,
 drawer: Drawer,
 workspace: Workspace,
 
-pub const Sexpr = struct {
-    pub const Kind = enum { pair, empty, atom_var, atom_lit };
-
-    pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
-        return ViewHelper.overlapsAtom(is_pattern, sexpr_point, needle_pos, switch (kind) {
-            .atom_var, .atom_lit, .empty => .atom,
-            .pair => .pair,
-        });
-    }
-};
-
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
     // exists: bool,
@@ -157,30 +151,193 @@ pub const Lego = struct {
     // active_t: f32 = 0,
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
-    immutable: bool = false,
-    sexpr: ?struct {
-        kind: Sexpr.Kind,
-        atom_name: []const u8,
-        is_pattern: bool,
-        is_pattern_t: f32,
-    } = null,
 
-    tree: Tree = .{
-        .first = .nothing,
-        .next = .nothing,
-        .prev = .nothing,
-        .parent = .nothing,
-    },
+    // ll = linked list
+    ll_area_prev: Index = .nothing,
+    ll_area_next: Index = .nothing,
 
-    pub const Tree = struct {
-        first: Index,
-        // last: Index,
-        next: Index,
-        prev: Index,
-        parent: Index,
+    specific: Specific,
+
+    pub const Specific = union(enum) {
+        sexpr: Sexpr,
+        area: Area,
+
+        pub fn tag(specific: *const Specific) std.meta.Tag(Specific) {
+            return std.meta.activeTag(specific.*);
+        }
+
+        pub const Area = struct {
+            first: Index = .nothing,
+            last: Index = .nothing,
+
+            pub fn addChildLast(area: *Area, toybox: *Toybox, child: Lego.Index) void {
+                const child_lego = toybox.get(child);
+                assert(child_lego.ll_area_prev == .nothing);
+                assert(child_lego.ll_area_next == .nothing);
+                if (area.last != .nothing) {
+                    assert(area.first != .nothing);
+                    const old_last = toybox.get(area.last);
+                    child_lego.ll_area_prev = area.last;
+                    assert(toybox.get(area.last).ll_area_next == .nothing);
+                    old_last.ll_area_next = child;
+                    area.last = child;
+                } else {
+                    assert(area.first == .nothing);
+                    area.first = child;
+                    area.last = child;
+                }
+            }
+
+            pub fn popChild(area: *Area, toybox: *Toybox, child: Lego.Index) void {
+                std.log.debug("area: {any}", .{area.*});
+                assert(area.first != .nothing and area.last != .nothing);
+                const old_prev = toybox.get(child).ll_area_prev;
+                const old_next = toybox.get(child).ll_area_next;
+                toybox.get(child).ll_area_next = .nothing;
+                toybox.get(child).ll_area_prev = .nothing;
+
+                if (old_prev != .nothing) {
+                    assert(area.first != child);
+                    toybox.get(old_prev).ll_area_next = old_next;
+                } else {
+                    assert(area.first == child);
+                    area.first = old_next;
+                }
+
+                if (old_next != .nothing) {
+                    assert(area.last != child);
+                    toybox.get(old_next).ll_area_prev = old_prev;
+                } else {
+                    assert(area.last == child);
+                    area.last = old_prev;
+                }
+            }
+        };
+
+        pub const Sexpr = struct {
+            kind: Kind,
+            is_pattern: bool,
+            is_pattern_t: f32,
+            atom_name: []const u8,
+            children: struct { up: Lego.Index, down: Lego.Index },
+
+            pub const Kind = enum { pair, empty, atom_var, atom_lit };
+
+            pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
+                return ViewHelper.overlapsAtom(is_pattern, sexpr_point, needle_pos, switch (kind) {
+                    .atom_var, .atom_lit, .empty => .atom,
+                    .pair => .pair,
+                });
+            }
+        };
     };
 
     pub const Index = enum(u32) { nothing = std.math.maxInt(u32), _ };
+
+    // TODO: could be a better API
+    const Interaction = struct {
+        reverse_path: std.ArrayListUnmanaged(Lego.Index) = .empty,
+        kind: Kind,
+
+        pub const Kind = enum { nothing, hot, dropzone };
+    };
+    pub fn findHotAndDropzone(toybox: *Toybox, index: Lego.Index, needle_pos: Vec2, grabbing: Lego.Index, allocator: std.mem.Allocator, depth: usize) !Interaction {
+        const lego = toybox.get(index);
+        switch (lego.specific) {
+            .area => |area| {
+                var cur = area.last;
+                while (cur != .nothing) : (cur = toybox.get(cur).ll_area_prev) {
+                    var result = try findHotAndDropzone(toybox, cur, needle_pos, grabbing, allocator, depth + 1);
+                    if (result.kind != .nothing) {
+                        result.reverse_path.appendAssumeCapacity(index);
+                        return result;
+                    }
+                }
+            },
+            .sexpr => |sexpr| {
+                if (sexpr.kind == .pair) @panic("TODO");
+                if (Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
+                    const interaction: Interaction.Kind = if (grabbing == .nothing)
+                        .hot
+                    else if (toybox.get(grabbing).specific.tag() == .sexpr)
+                        .dropzone
+                    else
+                        .nothing;
+
+                    if (interaction != .nothing) {
+                        var path: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(allocator, depth + 1);
+                        path.appendAssumeCapacity(index);
+                        return .{ .reverse_path = path, .kind = interaction };
+                    }
+                }
+            },
+        }
+
+        return .{ .kind = .nothing };
+    }
+
+    pub fn updateSprings(toybox: *Toybox, index: Lego.Index, mouse_pos: Vec2, grabbing: Lego.Index, dropzone: Lego.Index, delta_seconds: f32) void {
+        const lego = toybox.get(index);
+        if (index == grabbing) {
+            const target: Point = if (dropzone == .nothing) .{ .pos = mouse_pos } else toybox.get(dropzone).point;
+            lego.point.lerp_towards(target, 0.6, delta_seconds);
+            // TODO: set 'is_pattern'
+        }
+        switch (lego.specific) {
+            .area => |area| {
+                var cur = area.first;
+                while (cur != .nothing) : (cur = toybox.get(cur).ll_area_next) {
+                    updateSprings(toybox, cur, mouse_pos, grabbing, dropzone, delta_seconds);
+                }
+            },
+            .sexpr => |sexpr| {
+                if (sexpr.kind == .pair) @panic("TODO");
+
+                const base_point: Point = if (!sexpr.is_pattern)
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
+                else
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
+
+                const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
+                    .{ .turns = -0.01, .pos = .new(0.25, 0) },
+                    .{ .turns = 0.01, .pos = .new(-0.25, 0) },
+                    sexpr.is_pattern_t,
+                ), lego.hot_t + lego.dropping_t * 2));
+
+                lego.visual_offset = hovered_point;
+            },
+        }
+    }
+
+    pub fn draw(toybox: *Toybox, index: Lego.Index, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
+        const lego = toybox.get(index);
+        const point = lego.point.applyToLocalPoint(lego.visual_offset);
+        switch (lego.specific) {
+            .area => |area| {
+                var cur = area.first;
+                while (cur != .nothing) : (cur = toybox.get(cur).ll_area_next) {
+                    try draw(toybox, cur, camera, platform, drawer);
+                }
+            },
+            .sexpr => |sexpr| {
+                if (sexpr.kind == .pair) @panic("TODO");
+
+                switch (sexpr.kind) {
+                    .empty => {},
+                    .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
+                    .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
+                    .atom_var => @panic("TODO"),
+                }
+            },
+        }
+    }
+
+    // pub fn onClicked(toybox: *Toybox, index: Lego.Index) !void {
+    //     const lego = toybox.get(index);
+    //     switch (lego.specific) {
+    //         .area => unreachable,
+    //     }
+    // }
 };
 
 pub const Toybox = struct {
@@ -203,138 +360,17 @@ pub const Toybox = struct {
         self.all_legos_arena.deinit();
     }
 
-    pub fn add(toybox: *Toybox) !*Lego {
+    pub fn add(toybox: *Toybox, specific: Lego.Specific) !*Lego {
         const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
-        result.* = kommon.meta.initDefaultFields(Lego);
-        result.index = @enumFromInt(toybox.all_legos.items.len - 1);
+        result.* = .{
+            .index = @enumFromInt(toybox.all_legos.items.len - 1),
+            .specific = specific,
+        };
         return result;
     }
 
     pub fn get(toybox: *Toybox, index: Lego.Index) *Lego {
         return &toybox.all_legos.items[@intFromEnum(index)];
-    }
-
-    pub fn addChildFirst(toybox: *Toybox, parent: Lego.Index, new_child: Lego.Index) void {
-        assert(parent != .nothing);
-        if (new_child == .nothing) return;
-        const parent_tree = &toybox.get(parent).tree;
-        const child_tree = &toybox.get(new_child).tree;
-        assert(child_tree.parent == .nothing and
-            child_tree.next == .nothing and
-            child_tree.prev == .nothing);
-        child_tree.parent = parent;
-        child_tree.next = parent_tree.first;
-        child_tree.prev = .nothing;
-        if (parent_tree.first != .nothing) {
-            toybox.get(parent_tree.first).tree.prev = new_child;
-        }
-        parent_tree.first = new_child;
-        comptime assert(!@hasField(Lego.Tree, "last"));
-    }
-
-    pub fn changeChild(toybox: *Toybox, original_child: Lego.Index, new_child: Lego.Index) void {
-        assert(original_child != .nothing);
-        const original_tree: Lego.Tree = toybox.get(original_child).tree;
-        assert(original_tree.parent != .nothing);
-        const parent_tree: *Lego.Tree = &toybox.get(original_tree.parent).tree;
-        if (parent_tree.first == original_child) {
-            parent_tree.first = if (new_child != .nothing) new_child else original_tree.next;
-        }
-        if (@hasField(Lego.Tree, "last")) {
-            if (parent_tree.last == original_child) {
-                parent_tree.last = if (new_child != .nothing) new_child else original_tree.prev;
-            }
-        }
-        if (original_tree.prev != .nothing) {
-            toybox.get(original_tree.prev).tree.next = if (new_child != .nothing) new_child else original_tree.next;
-        }
-        if (original_tree.next != .nothing) {
-            toybox.get(original_tree.next).tree.prev = if (new_child != .nothing) new_child else original_tree.prev;
-        }
-        if (new_child != .nothing) {
-            const new_child_tree = &toybox.get(new_child).tree;
-            assert(new_child_tree.parent == .nothing and
-                new_child_tree.prev == .nothing and
-                new_child_tree.next == .nothing);
-            new_child_tree.parent = original_tree.parent;
-            new_child_tree.next = original_tree.next;
-            new_child_tree.prev = original_tree.prev;
-        }
-        toybox.get(original_child).tree.parent = .nothing;
-        toybox.get(original_child).tree.next = .nothing;
-        toybox.get(original_child).tree.prev = .nothing;
-    }
-
-    pub const VisitStep = struct {
-        next: Lego.Index,
-        // push_count: i32,
-        // pop_count: i32,
-    };
-
-    /// root to leaf, from first to last child
-    pub fn next_preordered(toybox: *Toybox, current: Lego.Index, root: Lego.Index) VisitStep {
-        assert(root != .nothing and current != .nothing);
-        var result: VisitStep = .{ .next = .nothing };
-        // var result: VisitStep = .{ .next = .nothing, .pop_count = 0, .push_count = 0 };
-        const cur = toybox.get(current);
-        if (cur.tree.first != .nothing) {
-            result.next = cur.tree.first;
-            // result.push_count = 1;
-        } else {
-            var p = current;
-            while (p != .nothing and p != root) : (p = toybox.get(p).tree.parent) {
-                const next = toybox.get(p).tree.next;
-                if (next != .nothing) {
-                    result.next = next;
-                    break;
-                } else {
-                    // result.pop_count += 1;
-                }
-            }
-        }
-        return result;
-    }
-
-    test "iteration order" {
-        var toybox: Toybox = undefined;
-        try toybox.init(std.testing.allocator);
-        defer toybox.deinit();
-        const root = try toybox.add();
-        const child_1 = try toybox.add();
-        const child_2 = try toybox.add();
-        const grandchild_1_1 = try toybox.add();
-        const grandchild_1_2 = try toybox.add();
-        const grandchild_2_1 = try toybox.add();
-        const grandchild_2_2 = try toybox.add();
-
-        toybox.addChildFirst(root.index, child_2.index);
-        toybox.addChildFirst(root.index, child_1.index);
-
-        toybox.addChildFirst(child_1.index, grandchild_1_2.index);
-        toybox.addChildFirst(child_1.index, grandchild_1_1.index);
-
-        toybox.addChildFirst(child_2.index, grandchild_2_2.index);
-        toybox.addChildFirst(child_2.index, grandchild_2_1.index);
-
-        const expected_order: [7]VisitStep = .{
-            .{ .next = root.index },
-            .{ .next = child_1.index },
-            .{ .next = grandchild_1_1.index },
-            .{ .next = grandchild_1_2.index },
-            .{ .next = child_2.index },
-            .{ .next = grandchild_2_1.index },
-            .{ .next = grandchild_2_2.index },
-        };
-
-        var actual_order: std.ArrayListUnmanaged(VisitStep) = try .initCapacity(std.testing.allocator, expected_order.len);
-        defer actual_order.deinit(std.testing.allocator);
-
-        var cur: VisitStep = .{ .next = root.index };
-        while (cur.next != .nothing) : (cur = toybox.next_preordered(cur.next, root.index)) {
-            try actual_order.append(std.testing.allocator, cur);
-        }
-
-        try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
     }
 };
 
@@ -361,88 +397,40 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         try dst.toybox.init(gpa);
 
-        dst.main_area = (try dst.toybox.add()).index;
-        dst.hand_layer = (try dst.toybox.add()).index;
+        const toybox = &dst.toybox;
 
-        {
-            const sample_sexpr = try dst.toybox.add();
-            sample_sexpr.sexpr = .{
+        const main_area = try toybox.add(.{ .area = .{} });
+        const hand_layer = try toybox.add(.{ .area = .{} });
+        dst.main_area = main_area.index;
+        dst.hand_layer = hand_layer.index;
+
+        if (true) {
+            const sample_sexpr = try toybox.add(.{ .sexpr = .{
                 .atom_name = "true",
                 .kind = .atom_lit,
                 .is_pattern = false,
                 .is_pattern_t = 0,
-            };
-            dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
+                .children = undefined,
+            } });
+            main_area.specific.area.addChildLast(toybox, sample_sexpr.index);
         }
-        {
-            const sample_sexpr = try dst.toybox.add();
-            sample_sexpr.sexpr = .{
+
+        if (true) {
+            const sample_sexpr = try toybox.add(.{ .sexpr = .{
                 .atom_name = "false",
                 .kind = .atom_lit,
                 .is_pattern = false,
                 .is_pattern_t = 0,
-            };
+                .children = undefined,
+            } });
             sample_sexpr.point.pos = .new(0, 1);
-            dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
+            main_area.specific.area.addChildLast(toybox, sample_sexpr.index);
         }
     }
 
     pub fn deinit(workspace: *Workspace) void {
         workspace.toybox.deinit();
         workspace.undo_stack.deinit();
-    }
-
-    const HotAndDropzone = struct { hot: Lego.Index = .nothing, dropzone: Lego.Index = .nothing };
-    fn findHotAndDropzone(workspace: *Workspace, needle_pos: Vec2) HotAndDropzone {
-        const toybox = &workspace.toybox;
-        const root = workspace.main_area;
-        const grabbing = workspace.grabbing;
-
-        var cur: Lego.Index = root;
-        while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
-            const lego = toybox.get(cur);
-            if (lego.sexpr) |sexpr| {
-                if (Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
-                    if (grabbing == .nothing) {
-                        return .{ .hot = cur };
-                    } else if (toybox.get(grabbing).sexpr != null) {
-                        return .{ .dropzone = cur };
-                    }
-                }
-            }
-        }
-
-        return .{};
-    }
-
-    fn updateSprings(workspace: *Workspace, mouse_pos: Vec2, dropzone: Lego.Index, delta_seconds: f32) void {
-        const toybox = &workspace.toybox;
-
-        const roots: [2]Lego.Index = .{ workspace.main_area, workspace.hand_layer };
-        for (&roots) |root| {
-            var cur: Lego.Index = root;
-            while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
-                const lego = toybox.get(cur);
-                if (cur == workspace.grabbing) {
-                    const target: Point = if (dropzone == .nothing) .{ .pos = mouse_pos } else toybox.get(dropzone).point;
-                    lego.point.lerp_towards(target, 0.6, delta_seconds);
-                }
-                if (lego.sexpr) |sexpr| {
-                    const base_point: Point = if (!sexpr.is_pattern)
-                        .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
-                    else
-                        .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
-
-                    const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
-                        .{ .turns = -0.01, .pos = .new(0.25, 0) },
-                        .{ .turns = 0.01, .pos = .new(-0.25, 0) },
-                        sexpr.is_pattern_t,
-                    ), lego.hot_t + lego.dropping_t * 2));
-
-                    lego.visual_offset = hovered_point;
-                }
-            }
-        }
     }
 
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
@@ -454,19 +442,13 @@ const Workspace = struct {
 
         const roots: [2]Lego.Index = .{ workspace.main_area, workspace.hand_layer };
         for (&roots) |root| {
-            var cur: Lego.Index = root;
-            while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
-                const lego = toybox.get(cur);
-                const point = lego.point.applyToLocalPoint(lego.visual_offset);
-                if (lego.sexpr) |sexpr| {
-                    switch (sexpr.kind) {
-                        .empty => {},
-                        .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                        .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                        .atom_var => @panic("TODO"),
-                    }
-                }
-            }
+            try Lego.draw(
+                toybox,
+                root,
+                camera,
+                platform,
+                drawer,
+            );
         }
 
         if (display_fps) try drawer.canvas.drawText(
@@ -488,27 +470,21 @@ const Workspace = struct {
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
             while (workspace.undo_stack.pop()) |command| {
-                // again: switch (command) {}
-                switch (command) {
-                    .setGrabbing => |c| {
-                        workspace.grabbing = c;
-                    },
-                    .addChildFirst => |c| {
-                        workspace.toybox.changeChild(c.new_child, .nothing);
-                    },
-                    .changeChild => |c| {
-                        workspace.toybox.changeChild(c.new_child, c.original_child);
-                    },
-                    .setData => |c| {
-                        workspace.toybox.get(c.target).* = c.data;
-                    },
-                }
+                _ = command;
+                @panic("TODO");
             }
         }
 
         const mouse = platform.getMouse(camera);
 
-        const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
+        const interaction: Lego.Interaction = try Lego.findHotAndDropzone(
+            &workspace.toybox,
+            workspace.main_area,
+            mouse.cur.position,
+            workspace.grabbing,
+            platform.frame_arena,
+            0,
+        );
 
         // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
         // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
@@ -517,7 +493,7 @@ const Workspace = struct {
         platform.setCursor(
             if (workspace.grabbing != .nothing)
                 .grabbing // or maybe .pointer, if it's UI
-            else if (hot_and_dropzone.hot != .nothing)
+            else if (interaction.kind == .hot)
                 .could_grab // or maybe .pointer, if it's UI
             else
                 .default,
@@ -525,58 +501,103 @@ const Workspace = struct {
 
         // update _t
         for (workspace.toybox.all_legos.items) |*lego| {
-            math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, platform.delta_seconds);
+            math.lerp_towards(&lego.hot_t, if (interaction.kind == .hot and
+                lego.index == interaction.reverse_path.items[0]) 1 else 0, 0.6, platform.delta_seconds);
             comptime assert(!@hasField(Lego, "active_t"));
             comptime assert(!@hasField(Lego, "dropzone_t"));
-            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, platform.delta_seconds);
+            math.lerp_towards(&lego.dropping_t, if (interaction.kind == .dropzone and lego.index == workspace.grabbing) 1 else 0, 0.6, platform.delta_seconds);
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor and the grabbed thing
-        workspace.updateSprings(mouse.cur.position, hot_and_dropzone.dropzone, platform.delta_seconds);
+        for ([2]Lego.Index{ workspace.main_area, workspace.hand_layer }) |root| {
+            Lego.updateSprings(
+                &workspace.toybox,
+                root,
+                mouse.cur.position,
+                workspace.grabbing,
+                if (interaction.kind == .dropzone) interaction.reverse_path.items[0] else .nothing,
+                platform.delta_seconds,
+            );
+        }
 
         if (drawer) |d| {
             try workspace.draw(platform, d);
         }
 
-        try workspace.undo_stack.ensureUnusedCapacity(10);
         const toybox = &workspace.toybox;
+        try workspace.undo_stack.ensureUnusedCapacity(10);
         if (workspace.grabbing == .nothing and
-            hot_and_dropzone.hot != .nothing and
+            interaction.kind == .hot and
             (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
         {
-            const plucked = hot_and_dropzone.hot;
-            const plucked_original: Lego = toybox.get(plucked).*;
-            // TODO: for a nested sexpr, it should be a fresh .empty sexpr
-            const substitution: Lego.Index = .nothing;
+            const reverse_path: []const Lego.Index = interaction.reverse_path.items;
+            const plucked = reverse_path[0];
 
-            toybox.changeChild(plucked, substitution);
-            toybox.addChildFirst(workspace.hand_layer, plucked);
-            workspace.grabbing = plucked_original.index;
+            switch (toybox.get(plucked).specific) {
+                .area => unreachable,
+                .sexpr => |sexpr| {
+                    const parent = toybox.get(reverse_path[1]);
+                    switch (parent.specific) {
+                        .area => |*parent_area| {
+                            parent_area.popChild(toybox, reverse_path[0]);
+                            toybox.get(workspace.hand_layer).specific.area.addChildLast(toybox, plucked);
+                        },
+                        else => @panic("TODO"),
+                    }
+                    _ = sexpr;
+                },
+            }
 
-            // workspace.undo_stack.appendAssumeCapacity(.barrier);
-            workspace.undo_stack.appendAssumeCapacity(.{ .setData = .{ .data = plucked_original, .target = plucked } });
-            // workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = plucked, .new_child = substitution } });
-            // workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.hand_layer, .new_child = plucked } });
-            // workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = .nothing });
+            workspace.grabbing = plucked;
+
+            // const plucked = hot_and_dropzone.hot;
+            // const plucked_original: Lego = toybox.get(plucked).*;
+            // // TODO: for a nested sexpr, it should be a fresh .empty sexpr
+            // const substitution: Lego.Index = .nothing;
+
+            // toybox.changeChild(plucked, substitution);
+            // toybox.addChildFirst(workspace.hand_layer, plucked);
+            // workspace.grabbing = plucked_original.index;
+
+            // // workspace.undo_stack.appendAssumeCapacity(.barrier);
+            // workspace.undo_stack.appendAssumeCapacity(.{ .setData = .{ .data = plucked_original, .target = plucked } });
+            // // workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = plucked, .new_child = substitution } });
+            // // workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.hand_layer, .new_child = plucked } });
+            // // workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = .nothing });
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
             const dropped = workspace.grabbing;
 
-            workspace.grabbing = .nothing;
-            workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = dropped });
-
-            toybox.changeChild(dropped, .nothing);
-            workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = dropped, .new_child = .nothing } });
-
-            if (hot_and_dropzone.dropzone != .nothing) {
-                const overwritten = hot_and_dropzone.dropzone;
-                toybox.changeChild(overwritten, dropped);
-                workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = overwritten, .new_child = dropped } });
+            std.log.debug("poping from hand layer", .{});
+            toybox.get(workspace.hand_layer).specific.area.popChild(toybox, dropped);
+            if (interaction.kind == .dropzone) {
+                const overwritten = toybox.get(interaction.reverse_path.items[0]);
+                const overwritten_original = overwritten.*;
+                overwritten.* = toybox.get(dropped).*;
+                overwritten.index = overwritten_original.index;
+                overwritten.ll_area_prev = overwritten_original.ll_area_prev;
+                overwritten.ll_area_next = overwritten_original.ll_area_next;
             } else {
-                toybox.addChildFirst(workspace.main_area, dropped);
-                workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.main_area, .new_child = dropped } });
+                toybox.get(workspace.main_area).specific.area.addChildLast(toybox, dropped);
             }
+
+            workspace.grabbing = .nothing;
+
+            // workspace.grabbing = .nothing;
+            // workspace.undo_stack.appendAssumeCapacity(.{ .setGrabbing = dropped });
+
+            // toybox.changeChild(dropped, .nothing);
+            // workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = dropped, .new_child = .nothing } });
+
+            // if (hot_and_dropzone.dropzone != .nothing) {
+            //     const overwritten = hot_and_dropzone.dropzone;
+            //     toybox.changeChild(overwritten, dropped);
+            //     workspace.undo_stack.appendAssumeCapacity(.{ .changeChild = .{ .original_child = overwritten, .new_child = dropped } });
+            // } else {
+            //     toybox.addChildFirst(workspace.main_area, dropped);
+            //     workspace.undo_stack.appendAssumeCapacity(.{ .addChildFirst = .{ .parent = workspace.main_area, .new_child = dropped } });
+            // }
         }
 
         workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, true);

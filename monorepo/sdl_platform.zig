@@ -147,6 +147,9 @@ pub fn main() !void {
     };
     global_gpa_BAD = leaking_allocator;
 
+    var frame_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer frame_arena.deinit();
+
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
 
     // For programs that provide their own entry points instead of relying on SDL's main function
@@ -688,6 +691,7 @@ pub fn main() !void {
 
     var sdl_platform: PlatformGives = .{
         .gpa = gpa,
+        .frame_arena = frame_arena.allocator(),
         .mouse = mouse,
         .keyboard = keyboard,
         .setKeyChanged = setKeyChanged,
@@ -805,6 +809,7 @@ pub fn main() !void {
 
         // Update & Draw
         {
+            _ = frame_arena.reset(.retain_capacity);
             keyboard.cur_time = sdl_platform.global_seconds;
             mouse.cur_time = sdl_platform.global_seconds;
             const ns_since_last_frame = timer.lap();

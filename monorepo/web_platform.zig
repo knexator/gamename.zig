@@ -497,11 +497,14 @@ var my_game: GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
 
+var frame_area: std.heap.ArenaAllocator = .init(gpa);
+
 // TODO: remove this
 var global_gpa_BAD: std.mem.Allocator = gpa;
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
+    .frame_arena = frame_area.allocator(),
     .mouse = undefined,
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,

@@ -24,6 +24,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
     const loops = stuff.loops;
     return struct {
         gpa: std.mem.Allocator,
+        frame_arena: std.mem.Allocator,
         mouse: Mouse,
         keyboard: Keyboard,
         setKeyChanged: *const fn (key: KeyboardButton) void,
