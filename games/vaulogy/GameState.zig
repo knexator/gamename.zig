@@ -331,6 +331,33 @@ pub const Lego = struct {
         }
     }
 
+    pub fn popChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) void {
+        assert(child != .nothing and parent != .nothing);
+        switch (toybox.get(parent).specific) {
+            .area => |*area| {
+                area.popChild(toybox, child);
+            },
+            .sexpr => @panic("TODO"),
+        }
+    }
+
+    FATAL: 'child' is not enough, since 'parent' might be a sexpr and not now if it was the top or bottom child
+     parents should also produce a local int when iterating over children
+      I see no way to avoid per-Specific child indexing, which is what i wanted to avoid
+      The other option is the one sketched in the last commit, have an .exists bool that all parents respect when iterating 
+      but that seems worse, and wastes so much memory (a new lego on each move)
+
+    pub fn restoreChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) void {
+        assert(child != .nothing and parent != .nothing);
+        switch (toybox.get(parent).specific) {
+            .area => |*area| {
+                // FIXME: add it in its proper place
+                area.addChildLast(toybox, child);
+            },
+            .sexpr => @panic("TODO"),
+        }
+    }
+
     // pub fn onClicked(toybox: *Toybox, index: Lego.Index) !void {
     //     const lego = toybox.get(index);
     //     switch (lego.specific) {
@@ -396,7 +423,8 @@ const Workspace = struct {
 
     const UndoableCommand = union(enum) {
         fence,
-        destroy: Lego.Index,
+        destroy_floating: Lego.Index,
+        resurrect: struct { data: Lego, parent: Lego.Index },
         reset_data: Lego,
         // restore: Lego.Index,
         pop: struct { child: Lego.Index, parent: Lego.Index },
@@ -487,9 +515,13 @@ const Workspace = struct {
             while (workspace.undo_stack.pop()) |command| {
                 switch (command) {
                     .fence => break,
-                    .destroy => |index| {
+                    .destroy_floating => |index| {
                         // FIXME: better
                         toybox.get(index).point.pos.addInPlace(.new(0, 4));
+                    },
+                    .resurrect => |resurrect| {
+                        _ = resurrect;
+                        @panic("TODO");
                     },
                     .pop => |pop| {
                         toybox.get(pop.parent).specific.area.popChild(toybox, pop.child);
@@ -563,15 +595,16 @@ const Workspace = struct {
             try workspace.undo_stack.append(.fence);
 
             const new_element = try toybox.dupeFloating(interaction.reverse_path.items[0]);
-            try workspace.undo_stack.append(.{ .destroy = new_element.index });
+            try workspace.undo_stack.append(.{ .destroy_floating = new_element.index });
 
             const old_element = toybox.get(interaction.reverse_path.items[0]);
-            try workspace.undo_stack.append(.{ .reset_data = old_element.* });
-            // try workspace.undo_stack.append(.{ .restore = old_element.index });
-            // FIXME
-            // old_element.exists = false;
-            old_element.point.pos.addInPlace(.new(4, 0));
+            try workspace.undo_stack.append(.{ .resurrect = .{
+                .data = old_element.*,
+                .parent = interaction.reverse_path.items[1],
+            } });
+            Lego.popChild(toybox, old_element.index, interaction.reverse_path.items[1]);
 
+            assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
             try workspace.undo_stack.append(.{ .set_grabbing = .{
                 .grabbing = .nothing,
                 .hand_layer = .nothing,
