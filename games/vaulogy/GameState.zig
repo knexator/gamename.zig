@@ -278,7 +278,20 @@ pub const Lego = struct {
                 }
             },
             .sexpr => |sexpr| {
-                if (sexpr.kind == .pair) @panic("TODO");
+                if (sexpr.kind == .pair and lego.point.inverseApplyGetLocalPosition(needle_pos).magSq() < 9) {
+                    var interaction_up = try findHotAndDropzone(toybox, sexpr.children.up, needle_pos, grabbing, allocator, depth + 1);
+                    if (interaction_up.kind != .nothing) {
+                        try interaction_up.reverse_path.append(allocator, index);
+                        return interaction_up;
+                    }
+
+                    var interaction_down = try findHotAndDropzone(toybox, sexpr.children.down, needle_pos, grabbing, allocator, depth + 1);
+                    if (interaction_down.kind != .nothing) {
+                        try interaction_down.reverse_path.append(allocator, index);
+                        return interaction_down;
+                    }
+                }
+
                 if (Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
                     const interaction: Interaction.Kind = if (grabbing == .nothing)
                         .hot
@@ -314,8 +327,6 @@ pub const Lego = struct {
                 }
             },
             .sexpr => |sexpr| {
-                if (sexpr.kind == .pair) @panic("TODO");
-
                 const base_point: Point = if (!sexpr.is_pattern)
                     .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
                 else
@@ -328,6 +339,17 @@ pub const Lego = struct {
                 ), lego.hot_t + lego.dropping_t * 2));
 
                 lego.visual_offset = hovered_point;
+
+                if (sexpr.kind == .pair) {
+                    toybox.get(sexpr.children.up).point = lego.point
+                        .applyToLocalPoint(lego.visual_offset)
+                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
+                    toybox.get(sexpr.children.down).point = lego.point
+                        .applyToLocalPoint(lego.visual_offset)
+                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                    updateSprings(toybox, sexpr.children.up, mouse_pos, grabbing, dropzone, delta_seconds);
+                    updateSprings(toybox, sexpr.children.down, mouse_pos, grabbing, dropzone, delta_seconds);
+                }
             },
         }
     }
@@ -343,13 +365,17 @@ pub const Lego = struct {
                 }
             },
             .sexpr => |sexpr| {
-                if (sexpr.kind == .pair) @panic("TODO");
-
+                // TODO: don't draw if small or far from camera
                 switch (sexpr.kind) {
                     .empty => {},
                     .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
                     .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
                     .atom_var => @panic("TODO"),
+                }
+
+                if (sexpr.kind == .pair) {
+                    try draw(toybox, sexpr.children.up, camera, platform, drawer);
+                    try draw(toybox, sexpr.children.down, camera, platform, drawer);
                 }
             },
         }
@@ -362,8 +388,10 @@ pub const Lego = struct {
                 area.popChild(toybox, child);
                 toybox.free(child);
             },
-            // instead of destroying, set it to .empty
-            .sexpr => @panic("TODO"),
+            .sexpr => {
+                // instead of destroying, set it to .empty
+                toybox.get(child).specific.sexpr.kind = .empty;
+            },
         }
     }
 
@@ -374,7 +402,7 @@ pub const Lego = struct {
             .area => |*area| {
                 area.restoreChild(toybox, child_data.index);
             },
-            .sexpr => @panic("TODO"),
+            .sexpr => {},
         }
     }
 
@@ -410,7 +438,6 @@ pub const Toybox = struct {
     }
 
     pub fn add(toybox: *Toybox, specific: Lego.Specific) !*Lego {
-        std.log.debug("free head: {any}, .nothing {any}, is it .nothing? {any}", .{ toybox.free_head, @as(Lego.Index, .nothing), toybox.free_head == .nothing });
         if (toybox.free_head == .nothing) {
             const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
             result.* = .{
@@ -505,6 +532,32 @@ const Workspace = struct {
                 .children = undefined,
             } });
             sample_sexpr.point.pos = .new(0, 1);
+            main_area.specific.area.addChildLast(toybox, sample_sexpr.index);
+        }
+
+        if (true) {
+            const child_1 = try toybox.add(.{ .sexpr = .{
+                .atom_name = "true",
+                .kind = .atom_lit,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = undefined,
+            } });
+            const child_2 = try toybox.add(.{ .sexpr = .{
+                .atom_name = "false",
+                .kind = .atom_lit,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = undefined,
+            } });
+            const sample_sexpr = try toybox.add(.{ .sexpr = .{
+                .atom_name = undefined,
+                .kind = .pair,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = .{ .up = child_1.index, .down = child_2.index },
+            } });
+            sample_sexpr.point.pos = .new(4, 0);
             main_area.specific.area.addChildLast(toybox, sample_sexpr.index);
         }
     }
