@@ -139,7 +139,6 @@ workspace: Workspace,
 
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
-    exists: bool = true,
     index: Index,
     /// absolute coordinates
     point: Point = .{},
@@ -155,6 +154,9 @@ pub const Lego = struct {
     // ll = linked list
     ll_area_prev: Index = .nothing,
     ll_area_next: Index = .nothing,
+
+    /// only valid for freed nodes
+    free_next: Index = undefined,
 
     specific: Specific,
 
@@ -209,6 +211,28 @@ pub const Lego = struct {
                 } else {
                     assert(area.last == child);
                     area.last = old_prev;
+                }
+            }
+
+            pub fn restoreChild(area: *Area, toybox: *Toybox, child: Lego.Index) void {
+                assert(child != .nothing);
+                defer assert(area.first != .nothing and area.last != .nothing);
+
+                std.log.debug("restoring child {any}", .{child});
+
+                const old_prev = toybox.get(child).ll_area_prev;
+                const old_next = toybox.get(child).ll_area_next;
+
+                if (old_prev != .nothing) {
+                    toybox.get(old_prev).ll_area_next = child;
+                } else {
+                    area.first = child;
+                }
+
+                if (old_next != .nothing) {
+                    toybox.get(old_next).ll_area_prev = child;
+                } else {
+                    area.last = child;
                 }
             }
         };
@@ -331,28 +355,24 @@ pub const Lego = struct {
         }
     }
 
-    pub fn popChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) void {
+    pub fn destroyChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) void {
         assert(child != .nothing and parent != .nothing);
         switch (toybox.get(parent).specific) {
             .area => |*area| {
                 area.popChild(toybox, child);
+                toybox.free(child);
             },
+            // instead of destroying, set it to .empty
             .sexpr => @panic("TODO"),
         }
     }
 
-    FATAL: 'child' is not enough, since 'parent' might be a sexpr and not now if it was the top or bottom child
-     parents should also produce a local int when iterating over children
-      I see no way to avoid per-Specific child indexing, which is what i wanted to avoid
-      The other option is the one sketched in the last commit, have an .exists bool that all parents respect when iterating 
-      but that seems worse, and wastes so much memory (a new lego on each move)
-
-    pub fn restoreChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) void {
-        assert(child != .nothing and parent != .nothing);
+    pub fn restoreChild(toybox: *Toybox, child_data: Lego, parent: Lego.Index) void {
+        assert(child_data.index != .nothing and parent != .nothing);
+        toybox.get(child_data.index).* = child_data;
         switch (toybox.get(parent).specific) {
             .area => |*area| {
-                // FIXME: add it in its proper place
-                area.addChildLast(toybox, child);
+                area.restoreChild(toybox, child_data.index);
             },
             .sexpr => @panic("TODO"),
         }
@@ -370,10 +390,13 @@ pub const Toybox = struct {
     // TODO: use a fancy arena thing
     all_legos: std.ArrayListUnmanaged(Lego),
     all_legos_arena: std.heap.ArenaAllocator,
+    free_head: Lego.Index = .nothing,
 
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
-        dst.all_legos_arena = .init(gpa);
-        dst.all_legos = .empty;
+        dst.* = .{
+            .all_legos = .empty,
+            .all_legos_arena = .init(gpa),
+        };
         // TODO: tweak this number
         try dst.all_legos.ensureUnusedCapacity(
             dst.all_legos_arena.allocator(),
@@ -387,12 +410,31 @@ pub const Toybox = struct {
     }
 
     pub fn add(toybox: *Toybox, specific: Lego.Specific) !*Lego {
-        const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
-        result.* = .{
-            .index = @enumFromInt(toybox.all_legos.items.len - 1),
-            .specific = specific,
-        };
-        return result;
+        std.log.debug("free head: {any}, .nothing {any}, is it .nothing? {any}", .{ toybox.free_head, @as(Lego.Index, .nothing), toybox.free_head == .nothing });
+        if (toybox.free_head == .nothing) {
+            const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
+            result.* = .{
+                .index = @enumFromInt(toybox.all_legos.items.len - 1),
+                .specific = specific,
+            };
+            return result;
+        } else {
+            const index = toybox.free_head;
+            const result = toybox.get(index);
+            toybox.free_head = result.free_next;
+            result.* = .{
+                .index = index,
+                .specific = specific,
+            };
+            return result;
+        }
+    }
+
+    pub fn free(toybox: *Toybox, lego: Lego.Index) void {
+        toybox.get(lego).* = undefined;
+        toybox.get(lego).index = lego;
+        toybox.get(lego).free_next = toybox.free_head;
+        toybox.free_head = lego;
     }
 
     pub fn get(toybox: *Toybox, index: Lego.Index) *Lego {
@@ -423,12 +465,10 @@ const Workspace = struct {
 
     const UndoableCommand = union(enum) {
         fence,
-        destroy_floating: Lego.Index,
-        resurrect: struct { data: Lego, parent: Lego.Index },
-        reset_data: Lego,
-        // restore: Lego.Index,
-        pop: struct { child: Lego.Index, parent: Lego.Index },
         set_grabbing: struct { grabbing: Lego.Index, hand_layer: Lego.Index },
+        reset_data: Lego,
+        restore_child: struct { data: Lego, parent: Lego.Index },
+        destroy_child: struct { child: Lego.Index, parent: Lego.Index },
         // setGrabbing: Lego.Index,
         // addChildFirst: struct { parent: Lego.Index, new_child: Lego.Index },
         // changeChild: struct { original_child: Lego.Index, new_child: Lego.Index },
@@ -515,16 +555,17 @@ const Workspace = struct {
             while (workspace.undo_stack.pop()) |command| {
                 switch (command) {
                     .fence => break,
-                    .destroy_floating => |index| {
-                        // FIXME: better
-                        toybox.get(index).point.pos.addInPlace(.new(0, 4));
+                    .restore_child => |restore| {
+                        Lego.restoreChild(toybox, restore.data, restore.parent);
                     },
-                    .resurrect => |resurrect| {
-                        _ = resurrect;
-                        @panic("TODO");
-                    },
-                    .pop => |pop| {
-                        toybox.get(pop.parent).specific.area.popChild(toybox, pop.child);
+                    .destroy_child => |pop| {
+                        if (pop.parent == .nothing) {
+                            assert(toybox.get(pop.child).ll_area_prev == .nothing);
+                            assert(toybox.get(pop.child).ll_area_next == .nothing);
+                            toybox.free(pop.child);
+                        } else {
+                            toybox.get(pop.parent).specific.area.popChild(toybox, pop.child);
+                        }
                     },
                     .set_grabbing => |set| {
                         workspace.grabbing = set.grabbing;
@@ -587,6 +628,7 @@ const Workspace = struct {
             try workspace.draw(platform, d);
         }
 
+        // INTERACTION
         const toybox = &workspace.toybox;
         if (workspace.grabbing == .nothing and
             interaction.kind == .hot and
@@ -595,14 +637,21 @@ const Workspace = struct {
             try workspace.undo_stack.append(.fence);
 
             const new_element = try toybox.dupeFloating(interaction.reverse_path.items[0]);
-            try workspace.undo_stack.append(.{ .destroy_floating = new_element.index });
+            try workspace.undo_stack.append(.{ .destroy_child = .{
+                .child = new_element.index,
+                .parent = .nothing,
+            } });
 
             const old_element = toybox.get(interaction.reverse_path.items[0]);
-            try workspace.undo_stack.append(.{ .resurrect = .{
+            try workspace.undo_stack.append(.{ .restore_child = .{
                 .data = old_element.*,
                 .parent = interaction.reverse_path.items[1],
             } });
-            Lego.popChild(toybox, old_element.index, interaction.reverse_path.items[1]);
+            Lego.destroyChild(
+                toybox,
+                interaction.reverse_path.items[0],
+                interaction.reverse_path.items[1],
+            );
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
             try workspace.undo_stack.append(.{ .set_grabbing = .{
@@ -635,7 +684,7 @@ const Workspace = struct {
                 // TODO: could be unified with the other case, by creating a fresh last child and the overwriting it
                 assert(interaction.kind == .nothing);
                 toybox.get(workspace.main_area).specific.area.addChildLast(toybox, workspace.grabbing);
-                try workspace.undo_stack.append(.{ .pop = .{
+                try workspace.undo_stack.append(.{ .destroy_child = .{
                     .child = workspace.grabbing,
                     .parent = workspace.main_area,
                 } });
