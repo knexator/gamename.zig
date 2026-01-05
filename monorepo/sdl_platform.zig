@@ -689,6 +689,13 @@ pub fn main() !void {
         }
     };
 
+    const recording_log_file: ?std.fs.File = if (@import("builtin").mode == .Debug)
+        try std.fs.cwd().createFile("recording.txt", .{})
+    else
+        null;
+
+    defer if (recording_log_file) |*f| f.close();
+
     var sdl_platform: PlatformGives = .{
         .gpa = gpa,
         .frame_arena = frame_arena.allocator(),
@@ -732,6 +739,7 @@ pub fn main() !void {
                 _ = cursor;
             }
         }.anon,
+        .recording_log = if (recording_log_file) |*f| f.writer().any() else null,
     };
 
     if (@hasField(@TypeOf(my_game), "preload")) {
@@ -809,7 +817,6 @@ pub fn main() !void {
 
         // Update & Draw
         {
-            _ = frame_arena.reset(.retain_capacity);
             keyboard.cur_time = sdl_platform.global_seconds;
             mouse.cur_time = sdl_platform.global_seconds;
             const ns_since_last_frame = timer.lap();
@@ -823,6 +830,7 @@ pub fn main() !void {
             mouse.prev = mouse.cur;
             mouse.cur.scrolled = .none;
             keyboard.prev = keyboard.cur;
+            _ = frame_arena.reset(.retain_capacity);
         }
 
         // Sound

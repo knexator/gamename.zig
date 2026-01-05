@@ -566,6 +566,7 @@ var web_platform: PlatformGives = .{
             js.setCursor(cursor);
         }
     }.anon,
+    .recording_log = null,
 };
 
 var user_uploaded_file: ?JsReader = null;

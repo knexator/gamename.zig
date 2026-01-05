@@ -45,6 +45,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         // TODO: don't require this
         forgetUserUploadedFile: *const fn () void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
+        recording_log: ?std.io.AnyWriter,
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
             var result = self.mouse;

@@ -13,17 +13,13 @@ const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
 
-// TODO: draw order should be the reverse of hitbox testing order
-
-test "fuzz example" {
+const FuzzerContext = struct {
     const TestPlatform = struct {
         global_seconds: f32 = 0,
         delta_seconds: f32 = 0,
         mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 },
         keyboard: Keyboard = .{ .cur = .init, .prev = .init, .cur_time = 0 },
         frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator),
-
-        const TestPlatform = @This();
 
         pub fn after(self: *TestPlatform) void {
             self.mouse.prev = self.mouse.cur;
@@ -50,6 +46,7 @@ test "fuzz example" {
                 .setCursor = struct {
                     fn anon(_: Mouse.Cursor) void {}
                 }.anon,
+                .recording_log = null,
 
                 .askUserForFile = undefined,
                 .setKeyChanged = undefined,
@@ -72,29 +69,62 @@ test "fuzz example" {
         mouse_pos: Vec2,
     };
 
-    const Context = struct {
-        fn testOne(_: @This(), input: []const u8) anyerror!void {
+    const Player = struct {
+        workspace: Workspace,
+        test_platform: TestPlatform,
+
+        pub fn init() !Player {
             var workspace: Workspace = undefined;
             try workspace.init(std.testing.allocator);
-            defer workspace.deinit();
+            return .{ .workspace = workspace, .test_platform = .{} };
+        }
 
-            var test_platform: TestPlatform = .{};
-            defer test_platform.frame_arena.deinit();
+        pub fn deinit(player: *Player) void {
+            player.workspace.deinit();
+            player.test_platform.frame_arena.deinit();
+        }
 
-            var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
-            while (it.next()) |cur_input_raw| {
-                if (cur_input_raw.len == @sizeOf(FakeInput)) {
-                    const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
-                    test_platform.keyboard.cur.keys.KeyZ = cur_input.z_down;
-                    test_platform.mouse.cur.buttons.left = cur_input.mouse_left_down;
-                    test_platform.mouse.cur.position = cur_input.mouse_pos;
-                    try workspace.update(test_platform.getGives(1.0 / 60.0), null);
-                    test_platform.after();
-                }
-            }
+        pub fn advance(player: *Player, input: FakeInput) !void {
+            player.test_platform.keyboard.cur.keys.KeyZ = input.z_down;
+            player.test_platform.mouse.cur.buttons.left = input.mouse_left_down;
+            player.test_platform.mouse.cur.position = input.mouse_pos;
+            try player.workspace.update(player.test_platform.getGives(1.0 / 60.0), null);
+            player.test_platform.after();
         }
     };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+
+    fn testOne(_: @This(), input: []const u8) anyerror!void {
+        var player: Player = try .init();
+        defer player.deinit();
+
+        var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
+        while (it.next()) |cur_input_raw| {
+            if (cur_input_raw.len == @sizeOf(FakeInput)) {
+                const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
+                try player.advance(cur_input);
+            }
+        }
+    }
+};
+
+test "fuzz example" {
+    try std.testing.fuzz(FuzzerContext{}, FuzzerContext.testOne, .{});
+}
+
+test "custom replay" {
+    var player: FuzzerContext.Player = try .init();
+    defer player.deinit();
+
+    const inputs: []const FuzzerContext.FakeInput = &.{
+        GameState.FuzzerContext.FakeInput{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0.61098903, 0.38476562) },
+        GameState.FuzzerContext.FakeInput{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0.53186816, 0.46679688) },
+        GameState.FuzzerContext.FakeInput{ .z_down = false, .mouse_left_down = true, .mouse_pos = .new(0.53406596, 0.46289062) },
+        GameState.FuzzerContext.FakeInput{ .z_down = false, .mouse_left_down = true, .mouse_pos = .new(0.545055, 0.28515625) },
+        GameState.FuzzerContext.FakeInput{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0.545055, 0.28515625) },
+        GameState.FuzzerContext.FakeInput{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0.5802198, 0.22265625) },
+        GameState.FuzzerContext.FakeInput{ .z_down = true, .mouse_left_down = false, .mouse_pos = .new(0.5857143, 0.21875) },
+    };
+    for (inputs) |input| try player.advance(input);
 }
 
 test "No leaks on Workspace and Drawer" {
@@ -397,12 +427,15 @@ pub const Lego = struct {
 
     pub fn restoreChild(toybox: *Toybox, child_data: Lego, parent: Lego.Index) void {
         assert(child_data.index != .nothing and parent != .nothing);
+        // FIXME
         toybox.get(child_data.index).* = child_data;
         switch (toybox.get(parent).specific) {
             .area => |*area| {
                 area.restoreChild(toybox, child_data.index);
             },
-            .sexpr => {},
+            .sexpr => {
+                // toybox.get(child_data.index).specific.sexpr.kind = child_data.specific.sexpr.kind;
+            },
         }
     }
 
@@ -602,6 +635,28 @@ const Workspace = struct {
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer) !void {
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
+        const mouse = platform.getMouse(camera);
+
+        if (platform.recording_log) |log| {
+            const S = struct {
+                var prev_input: FuzzerContext.FakeInput = .{
+                    .mouse_left_down = false,
+                    .z_down = false,
+                    .mouse_pos = .zero,
+                };
+            };
+            // TODO: actually use this
+            const cur_input: FuzzerContext.FakeInput = .{
+                .mouse_left_down = mouse.cur.isDown(.left),
+                .z_down = platform.keyboard.cur.isDown(.KeyZ),
+                .mouse_pos = platform.getMouse(.unit).cur.position,
+            };
+            if (!std.meta.eql(cur_input, S.prev_input)) {
+                try log.print("{any},\n", .{cur_input});
+                // try log.writeStruct(cur_input);
+                S.prev_input = cur_input;
+            }
+        }
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
             const toybox = &workspace.toybox;
@@ -631,9 +686,8 @@ const Workspace = struct {
             }
         }
 
-        const mouse = platform.getMouse(camera);
-
-        const interaction: Lego.Interaction = try Lego.findHotAndDropzone(
+        // FIXME
+        var interaction: Lego.Interaction = try Lego.findHotAndDropzone(
             &workspace.toybox,
             workspace.main_area,
             mouse.cur.position,
@@ -641,6 +695,10 @@ const Workspace = struct {
             platform.frame_arena,
             0,
         );
+        if (interaction.kind == .dropzone) {
+            interaction.kind = .nothing;
+            interaction.reverse_path = .empty;
+        }
 
         // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
         // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
@@ -725,14 +783,20 @@ const Workspace = struct {
             // }
 
             if (interaction.kind == .dropzone) {
+                // FIXME
                 const index_of_overwritten = interaction.reverse_path.items[0];
                 const overwritten_data = toybox.get(index_of_overwritten).*;
                 try workspace.undo_stack.append(.{ .reset_data = overwritten_data });
                 var new_data = toybox.get(workspace.grabbing).*;
+                try workspace.undo_stack.append(.{ .restore_child = .{
+                    .data = new_data,
+                    .parent = .nothing,
+                } });
                 new_data.index = overwritten_data.index;
                 new_data.ll_area_next = overwritten_data.ll_area_next;
                 new_data.ll_area_prev = overwritten_data.ll_area_prev;
                 toybox.get(index_of_overwritten).* = new_data;
+                Lego.destroyChild(toybox, workspace.grabbing, .nothing);
             } else {
                 // TODO: could be unified with the other case, by creating a fresh last child and the overwriting it
                 assert(interaction.kind == .nothing);
