@@ -47,6 +47,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         getItem: *const fn (key: []const u8) ?std.io.AnyReader,
         setItem: *const fn (key: []const u8, value: []const u8) void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
+        recording_log: ?std.io.AnyWriter,
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
             var result = self.mouse;

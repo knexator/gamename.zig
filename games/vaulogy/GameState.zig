@@ -51,6 +51,7 @@ const FuzzerContext = struct {
                 .setCursor = struct {
                     fn anon(_: Mouse.Cursor) void {}
                 }.anon,
+                .recording_log = null,
 
                 .setItem = undefined,
                 .getItem = undefined,
@@ -4133,6 +4134,27 @@ const Workspace = struct {
             .withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         const mouse = platform.getMouse(absolute_camera);
+
+        if (platform.recording_log) |log| {
+            const S = struct {
+                var prev_input: FuzzerContext.FakeInput = .{
+                    .mouse_left_down = false,
+                    .z_down = false,
+                    .mouse_pos = .zero,
+                };
+            };
+            // TODO: actually use this
+            const cur_input: FuzzerContext.FakeInput = .{
+                .mouse_left_down = mouse.cur.isDown(.left),
+                .z_down = platform.keyboard.cur.isDown(.KeyZ),
+                .mouse_pos = platform.getMouse(.unit).cur.position,
+            };
+            if (!std.meta.eql(cur_input, S.prev_input)) {
+                try log.print("{any},\n", .{cur_input});
+                // try log.writeStruct(cur_input);
+                S.prev_input = cur_input;
+            }
+        }
 
         const undo_stack = &workspace.undo_stack;
         undo_stack.startFrame();
