@@ -411,29 +411,81 @@ pub const Lego = struct {
         }
     }
 
-    pub fn destroyChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) void {
+    // FIXME: should be true
+    const REUSE_MEM = true;
+    pub fn destroyFloating(toybox: *Toybox, thing: Lego.Index) void {
+        assert(toybox.get(thing).ll_area_prev == .nothing);
+        assert(toybox.get(thing).ll_area_next == .nothing);
+
+        if (REUSE_MEM) toybox.free(thing);
+    }
+
+    pub fn recreateFloating(toybox: *Toybox, data: Lego) void {
+        assert(data.ll_area_next == .nothing);
+        assert(data.ll_area_prev == .nothing);
+
+        if (REUSE_MEM) {
+            if (toybox.free_head == data.index) {
+                toybox.free_head = data.free_next;
+                toybox.get(data.index).* = data;
+            } else {
+                var cur = toybox.free_head;
+                while (toybox.get(cur).free_next != data.index) : (cur = toybox.get(cur).free_next) {}
+                toybox.get(cur).free_next = data.free_next;
+            }
+        } else {
+            toybox.get(data.index).* = data;
+        }
+    }
+
+    /// returns true if child could be released, false if not (which means you should make a copy of it)
+    pub fn releaseChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) bool {
         assert(child != .nothing and parent != .nothing);
         switch (toybox.get(parent).specific) {
             .area => |*area| {
                 area.popChild(toybox, child);
-                toybox.free(child);
+                return true;
             },
-            .sexpr => {
-                // instead of destroying, set it to .empty
-                toybox.get(child).specific.sexpr.kind = .empty;
+            .sexpr => return false,
+            // {
+            //     // instead of destroying, set it to .empty
+            //     toybox.get(child).specific.sexpr.kind = .empty;
+            // },
+        }
+    }
+
+    pub fn setInactive(toybox: *Toybox, thing: Lego.Index) void {
+        assert(toybox.get(thing).ll_area_prev == .nothing);
+        assert(toybox.get(thing).ll_area_next == .nothing);
+        switch (toybox.get(thing).specific) {
+            .area => unreachable,
+            .sexpr => |*sexpr| {
+                sexpr.kind = .empty;
             },
         }
     }
 
-    pub fn restoreChild(toybox: *Toybox, child_data: Lego, parent: Lego.Index) void {
+    pub fn setActive(toybox: *Toybox, original_data: Lego) void {
+        assert(toybox.get(original_data.index).ll_area_prev == .nothing);
+        assert(toybox.get(original_data.index).ll_area_next == .nothing);
+        switch (toybox.get(original_data.index).specific) {
+            .area => unreachable,
+            .sexpr => |*sexpr| {
+                sexpr.kind = original_data.specific.sexpr.kind;
+            },
+        }
+    }
+
+    pub fn recaptureChild(toybox: *Toybox, child_data: Lego, parent: Lego.Index) void {
         assert(child_data.index != .nothing and parent != .nothing);
-        // FIXME
-        toybox.get(child_data.index).* = child_data;
         switch (toybox.get(parent).specific) {
             .area => |*area| {
+                // restore the position, links, etc
+                toybox.get(child_data.index).* = child_data;
                 area.restoreChild(toybox, child_data.index);
             },
             .sexpr => {
+                @panic("FIXME");
                 // toybox.get(child_data.index).specific.sexpr.kind = child_data.specific.sexpr.kind;
             },
         }
@@ -502,12 +554,13 @@ pub const Toybox = struct {
     }
 
     pub fn dupeFloating(toybox: *Toybox, original: Lego.Index) !*Lego {
+        // TODO: should dupe children?
         const result = try toybox.add(undefined);
-        var thing = toybox.get(original).*;
-        thing.index = result.index;
-        thing.ll_area_next = .nothing;
-        thing.ll_area_prev = .nothing;
-        result.* = thing;
+        const result_index = result.index;
+        result.* = toybox.get(original).*;
+        result.index = result_index;
+        result.ll_area_next = .nothing;
+        result.ll_area_prev = .nothing;
         return result;
     }
 };
@@ -527,8 +580,11 @@ const Workspace = struct {
         fence,
         set_grabbing: struct { grabbing: Lego.Index, hand_layer: Lego.Index },
         reset_data: Lego,
-        restore_child: struct { data: Lego, parent: Lego.Index },
-        destroy_child: struct { child: Lego.Index, parent: Lego.Index },
+        recapture_child: struct { data: Lego, parent: Lego.Index },
+        release_child: struct { child: Lego.Index, parent: Lego.Index },
+        destroy_floating: Lego.Index,
+        set_active: Lego,
+        recreate_floating: Lego,
         // setGrabbing: Lego.Index,
         // addChildFirst: struct { parent: Lego.Index, new_child: Lego.Index },
         // changeChild: struct { original_child: Lego.Index, new_child: Lego.Index },
@@ -663,17 +719,20 @@ const Workspace = struct {
             while (workspace.undo_stack.pop()) |command| {
                 switch (command) {
                     .fence => break,
-                    .restore_child => |restore| {
-                        Lego.restoreChild(toybox, restore.data, restore.parent);
+                    .destroy_floating => |index| {
+                        Lego.destroyFloating(toybox, index);
                     },
-                    .destroy_child => |pop| {
-                        if (pop.parent == .nothing) {
-                            assert(toybox.get(pop.child).ll_area_prev == .nothing);
-                            assert(toybox.get(pop.child).ll_area_next == .nothing);
-                            toybox.free(pop.child);
-                        } else {
-                            toybox.get(pop.parent).specific.area.popChild(toybox, pop.child);
-                        }
+                    .recreate_floating => |data| {
+                        Lego.recreateFloating(toybox, data);
+                    },
+                    .set_active => |data| {
+                        Lego.setActive(toybox, data);
+                    },
+                    .recapture_child => |restore| {
+                        Lego.recaptureChild(toybox, restore.data, restore.parent);
+                    },
+                    .release_child => |pop| {
+                        assert(Lego.releaseChild(toybox, pop.child, pop.parent));
                     },
                     .set_grabbing => |set| {
                         workspace.grabbing = set.grabbing;
@@ -686,8 +745,7 @@ const Workspace = struct {
             }
         }
 
-        // FIXME
-        var interaction: Lego.Interaction = try Lego.findHotAndDropzone(
+        const interaction: Lego.Interaction = try Lego.findHotAndDropzone(
             &workspace.toybox,
             workspace.main_area,
             mouse.cur.position,
@@ -695,10 +753,6 @@ const Workspace = struct {
             platform.frame_arena,
             0,
         );
-        if (interaction.kind == .dropzone) {
-            interaction.kind = .nothing;
-            interaction.reverse_path = .empty;
-        }
 
         // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
         // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
@@ -741,36 +795,42 @@ const Workspace = struct {
 
         // INTERACTION
         const toybox = &workspace.toybox;
+        try workspace.undo_stack.ensureUnusedCapacity(10);
         if (workspace.grabbing == .nothing and
             interaction.kind == .hot and
             (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
         {
             try workspace.undo_stack.append(.fence);
 
-            const new_element = try toybox.dupeFloating(interaction.reverse_path.items[0]);
-            try workspace.undo_stack.append(.{ .destroy_child = .{
-                .child = new_element.index,
-                .parent = .nothing,
-            } });
+            const hot_index = interaction.reverse_path.items[0];
+            const hot_parent_index = interaction.reverse_path.items[1];
 
-            const old_element = toybox.get(interaction.reverse_path.items[0]);
-            try workspace.undo_stack.append(.{ .restore_child = .{
-                .data = old_element.*,
-                .parent = interaction.reverse_path.items[1],
-            } });
-            Lego.destroyChild(
-                toybox,
-                interaction.reverse_path.items[0],
-                interaction.reverse_path.items[1],
-            );
+            const original_hot_data = toybox.get(hot_index).*;
+            var grabbed_element_index: Lego.Index = undefined;
+            if (Lego.releaseChild(toybox, hot_index, hot_parent_index)) {
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .recapture_child = .{
+                        .data = original_hot_data,
+                        .parent = hot_parent_index,
+                    },
+                });
+                grabbed_element_index = hot_index;
+            } else {
+                const new_element = try toybox.dupeFloating(hot_index);
+                try workspace.undo_stack.append(.{ .destroy_floating = new_element.index });
+                grabbed_element_index = new_element.index;
+
+                Lego.setInactive(toybox, hot_index);
+                try workspace.undo_stack.append(.{ .set_active = original_hot_data });
+            }
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
             try workspace.undo_stack.append(.{ .set_grabbing = .{
                 .grabbing = .nothing,
                 .hand_layer = .nothing,
             } });
-            workspace.grabbing = new_element.index;
-            workspace.hand_layer = new_element.index;
+            workspace.grabbing = grabbed_element_index;
+            workspace.hand_layer = grabbed_element_index;
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
@@ -783,25 +843,25 @@ const Workspace = struct {
             // }
 
             if (interaction.kind == .dropzone) {
-                // FIXME
                 const index_of_overwritten = interaction.reverse_path.items[0];
                 const overwritten_data = toybox.get(index_of_overwritten).*;
-                try workspace.undo_stack.append(.{ .reset_data = overwritten_data });
-                var new_data = toybox.get(workspace.grabbing).*;
-                try workspace.undo_stack.append(.{ .restore_child = .{
-                    .data = new_data,
-                    .parent = .nothing,
-                } });
+                const grabbed_data = toybox.get(workspace.grabbing).*;
+
+                var new_data = grabbed_data;
                 new_data.index = overwritten_data.index;
                 new_data.ll_area_next = overwritten_data.ll_area_next;
                 new_data.ll_area_prev = overwritten_data.ll_area_prev;
                 toybox.get(index_of_overwritten).* = new_data;
-                Lego.destroyChild(toybox, workspace.grabbing, .nothing);
+                workspace.undo_stack.appendAssumeCapacity(.{ .reset_data = overwritten_data });
+
+                Lego.destroyFloating(toybox, workspace.grabbing);
+                @panic("recreate_floating cannot ensure that the index is the same, due to cell reuse.");
+                workspace.undo_stack.appendAssumeCapacity(.{ .recreate_floating = grabbed_data });
             } else {
                 // TODO: could be unified with the other case, by creating a fresh last child and the overwriting it
                 assert(interaction.kind == .nothing);
                 toybox.get(workspace.main_area).specific.area.addChildLast(toybox, workspace.grabbing);
-                try workspace.undo_stack.append(.{ .destroy_child = .{
+                try workspace.undo_stack.append(.{ .release_child = .{
                     .child = workspace.grabbing,
                     .parent = workspace.main_area,
                 } });
