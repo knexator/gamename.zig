@@ -2060,7 +2060,7 @@ const Fnkbox = struct {
         mem: *core.VeryPermamentGameStuff,
     ) !Fnkbox {
         const result: Fnkbox = .{
-            .text = "custom fnk",
+            .text = "custom machine",
             .handle = .{ .point = original.handle.point },
             .executor = try .init(original.executorPoint(), &mem.hover_pool),
             .fnkname = try .fromSexpr(&mem.hover_pool, new_fnkname, original.fnkname.point, true),
@@ -3942,7 +3942,17 @@ const Workspace = struct {
         postit_pos.addInPlace(.new(35, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
 
-        postit_pos.addInPlace(.new(35 * 8, 0));
+        postit_pos.addInPlace(.new(35 * 6, 0));
+        postit_pos.addInPlace(.new(-7, -7));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The first example", "is an empty list." }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The second one", "is a list with only", "one element, 'a'." }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(-7, 7));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The third example", "is the list ['a', 'b']" }, postit_pos.addX(7)));
+        postit_pos.addInPlace(.new(7, 0));
+        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The next one", "is ['a', 'b', 'c']" }, postit_pos.addX(7)));
+
+        postit_pos.addInPlace(.new(35 * 2, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
         postit_pos.addInPlace(.new(35, 0));
         try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
