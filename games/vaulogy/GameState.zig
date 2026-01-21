@@ -1327,8 +1327,8 @@ const Executor = struct {
     /// in 0..1; 1 is braked, 0.5 is normal speed, 0 is speedup
     brake_t: f32 = 0.5,
 
-    brake_handle: Handle,
-    crank_handle: Handle,
+    brake_handle: Handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
+    crank_handle: Handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
 
     const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
     const relative_garland_point: Point = .{ .pos = .new(4, 0) };
@@ -1348,12 +1348,31 @@ const Executor = struct {
             .handle = .{ .point = point, .enabled = handle_enabled },
             .garland = garland,
             .input = input,
-            .brake_handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
-            .crank_handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
         };
         result.recomputeBrakeHandlePos();
         result.recomputeCrankHandlePos();
         return result;
+    }
+
+    pub fn save(executor: *const Executor, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
+        try executor.handle.save(out, scratch);
+        try executor.input.save(out, scratch);
+        try executor.garland.save(out, scratch);
+        try executor.brake_handle.save(out, scratch);
+        try executor.crank_handle.save(out, scratch);
+        try writeF32(out, executor.brake_t);
+    }
+
+    pub fn load(dst: *Executor, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
+        assert(version == 0);
+        dst.* = kommon.meta.initDefaultFields(Executor);
+        try dst.handle.load(in, version, mem);
+        try dst.input.load(in, version, mem);
+        try dst.garland.load(in, version, mem);
+        try dst.brake_handle.load(in, version, mem);
+        try dst.crank_handle.load(in, version, mem);
+        dst.brake_t = try readF32(in);
+        dst.animation = null;
     }
 
     fn recomputeBrakeHandlePos(executor: *Executor) void {
@@ -1927,11 +1946,17 @@ const Fnkbox = struct {
 
     pub fn save(fnkbox: *const Fnkbox, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
         try fnkbox.handle.save(out, scratch);
-        try fnkbox.input.save(out, scratch);
+        try fnkbox.executor.save(out, scratch);
+        if (fnkbox.execution) |e| {
+            try writeBool(out, true);
+            try e.original_garland.save(out, scratch);
+        } else {
+            try writeBool(out, false);
+        }
         try fnkbox.fnkname.save(out, scratch);
-        try fnkbox.garland.save(out, scratch);
         try writeString(out, fnkbox.text);
         try writeBool(out, fnkbox.folded);
+        try writeF32(out, fnkbox.scroll_testcases);
 
         // TODO: don't save testcases for default fnks
         try out.writeInt(u32, @intCast(fnkbox.testcases.items.len), .little);
@@ -1943,20 +1968,25 @@ const Fnkbox = struct {
     pub fn load(dst: *Fnkbox, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
         assert(version == 0);
         try dst.handle.load(in, version, mem);
-        try dst.input.load(in, version, mem);
+        try dst.executor.load(in, version, mem);
+        if (try readBool(in)) {
+            try dst.executor.garland.load(in, version, mem);
+            dst.executor.input = try .empty(dst.executor.input.point, &mem.hover_pool, dst.executor.input.is_pattern);
+        }
         try dst.fnkname.load(in, version, mem);
-        try dst.garland.load(in, version, mem);
         dst.text = try readString(in, mem.gpa);
         dst.folded = try readBool(in);
         dst.folded_t = if (dst.folded) 1 else 0;
+        dst.scroll_testcases = try readF32(in);
         dst.execution = null;
+        assert(dst.executor.animation == null);
 
         // TODO: avoid jumping
         dst.status_bar = .{ .rect = .unit, .kind = .see_failing_case };
-        dst.fold_button = .{ .rect = .unit };
-        dst.scroll_button_up = .{ .rect = .unit };
-        dst.scroll_button_down = .{ .rect = .unit };
-        dst.scroll_button_handle = .{ .rect = .unit };
+        dst.fold_button = .{ .rect = .unit, .kind = .unknown };
+        dst.scroll_button_up = .{ .rect = .unit, .kind = .unknown };
+        dst.scroll_button_down = .{ .rect = .unit, .kind = .unknown };
+        dst.scroll_button_handle = .{ .rect = .unit, .kind = .unknown };
 
         const n_testcases: usize = @intCast(try in.readInt(u32, .little));
         dst.testcases = .fromOwnedSlice(try mem.gpa.alloc(TestCase, n_testcases));
@@ -2680,6 +2710,58 @@ const WorkspaceArea = struct {
         workspace.fnkboxes.deinit(workspace.gpa_for_arraylists);
         workspace.traces.deinit(workspace.gpa_for_arraylists);
         workspace.postits.deinit(workspace.gpa_for_arraylists);
+    }
+
+    pub fn save(workspace: *const WorkspaceArea, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        // TODO: don't use tags, instead store the length of the array
+        for (workspace.sexprs.items) |s| {
+            try writeEnum(out, SerializedTag, .VeryPhysicalSexpr, .little);
+            try s.save(out, scratch);
+        }
+        for (workspace.cases.items) |s| {
+            try writeEnum(out, SerializedTag, .VeryPhysicalCase, .little);
+            try s.save(out, scratch);
+        }
+        for (workspace.garlands.items) |s| {
+            try writeEnum(out, SerializedTag, .VeryPhysicalGarland, .little);
+            try s.save(out, scratch);
+        }
+        for (workspace.fnkboxes.items) |s| {
+            try writeEnum(out, SerializedTag, .Fnkbox, .little);
+            try s.save(out, scratch);
+        }
+    }
+
+    pub fn load(dst: *WorkspaceArea, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
+        dst.init(.main_area, mem.gpa);
+
+        while (in.readEnum(SerializedTag, .little) catch |err| switch (err) {
+            error.EndOfStream => null,
+            else => return err,
+        }) |tag| {
+            switch (tag) {
+                .VeryPhysicalSexpr => {
+                    var x: VeryPhysicalSexpr = undefined;
+                    try x.load(in, version, mem);
+                    try dst.sexprs.append(dst.gpa_for_arraylists, x);
+                },
+                .VeryPhysicalCase => {
+                    var x: VeryPhysicalCase = undefined;
+                    try x.load(in, version, mem);
+                    try dst.cases.append(dst.gpa_for_arraylists, x);
+                },
+                .VeryPhysicalGarland => {
+                    var x: VeryPhysicalGarland = undefined;
+                    try x.load(in, version, mem);
+                    try dst.garlands.append(dst.gpa_for_arraylists, x);
+                },
+                .Fnkbox => {
+                    var x: Fnkbox = undefined;
+                    try x.load(in, version, mem);
+                    try dst.fnkboxes.append(dst.gpa_for_arraylists, x);
+                },
+            }
+        }
     }
 
     pub fn draw(workspace: *WorkspaceArea, camera: Rect, holding: VeryPhysicalCase.Holding, platform: PlatformGives, drawer: *Drawer) !void {
@@ -3990,73 +4072,21 @@ const Workspace = struct {
         const version: u32 = 0;
         try out.writeInt(u32, version, .little);
         try out.writeStructEndian(workspace.camera, .little);
-        // TODO: don't use tags
-        for (workspace.sexprs.items) |s| {
-            try writeEnum(out, SerializedTag, .VeryPhysicalSexpr, .little);
-            try s.save(out, scratch);
-        }
-        for (workspace.cases.items) |s| {
-            try writeEnum(out, SerializedTag, .VeryPhysicalCase, .little);
-            try s.save(out, scratch);
-        }
-        for (workspace.garlands.items) |s| {
-            try writeEnum(out, SerializedTag, .VeryPhysicalGarland, .little);
-            try s.save(out, scratch);
-        }
-        for (workspace.fnkboxes.items) |s| {
-            try writeEnum(out, SerializedTag, .Fnkbox, .little);
-            try s.save(out, scratch);
-        }
+        try workspace.main_area.save(out, scratch);
     }
 
     pub fn load(dst: *Workspace, in: std.io.AnyReader, mem: *core.VeryPermamentGameStuff) !void {
-        dst.* = kommon.meta.initDefaultFields(Workspace);
-        dst.undo_stack = .init(mem.gpa);
-        dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
-        dst.lenses = .init(mem.gpa);
-        dst.sexprs = .init(mem.gpa);
-        dst.cases = .init(mem.gpa);
-        dst.garlands = .init(mem.gpa);
-        dst.executors = .init(mem.gpa);
-        dst.fnkviewers = .init(mem.gpa);
-        dst.fnkboxes = .init(mem.gpa);
-        dst.traces = .init(mem.gpa);
-        dst.postits = .init(mem.gpa);
-        dst.toolbar_case = try dst.freshToolbarCase(mem);
-        dst.toolbar_trash = .{ .rect = .unit };
-
         const version = try in.readInt(u32, .little);
         assert(version == 0);
 
+        dst.* = kommon.meta.initDefaultFields(Workspace);
+        dst.undo_stack = .init(mem.gpa);
+        dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
         dst.camera = try in.readStructEndian(Rect, .little);
-
-        while (in.readEnum(SerializedTag, .little) catch |err| switch (err) {
-            error.EndOfStream => null,
-            else => return err,
-        }) |tag| {
-            switch (tag) {
-                .VeryPhysicalSexpr => {
-                    var x: VeryPhysicalSexpr = undefined;
-                    try x.load(in, version, mem);
-                    try dst.sexprs.append(x);
-                },
-                .VeryPhysicalCase => {
-                    var x: VeryPhysicalCase = undefined;
-                    try x.load(in, version, mem);
-                    try dst.cases.append(x);
-                },
-                .VeryPhysicalGarland => {
-                    var x: VeryPhysicalGarland = undefined;
-                    try x.load(in, version, mem);
-                    try dst.garlands.append(x);
-                },
-                .Fnkbox => {
-                    var x: Fnkbox = undefined;
-                    try x.load(in, version, mem);
-                    try dst.fnkboxes.append(x);
-                },
-            }
-        }
+        dst.hand.init(.hand, mem.gpa);
+        dst.toolbar.init(.toolbar, mem.gpa);
+        try dst.main_area.load(in, version, mem);
+        dst.toolbar_trash = .{ .rect = .unit };
 
         try dst.canonizeAfterChanges(mem);
     }
