@@ -4079,14 +4079,20 @@ const Workspace = struct {
         const version = try in.readInt(u32, .little);
         assert(version == 0);
 
-        dst.* = kommon.meta.initDefaultFields(Workspace);
-        dst.undo_stack = .init(mem.gpa);
-        dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
+        try dst.init(mem, 0);
         dst.camera = try in.readStructEndian(Rect, .little);
-        dst.hand.init(.hand, mem.gpa);
-        dst.toolbar.init(.toolbar, mem.gpa);
+        const old_postits = dst.main_area.postits;
         try dst.main_area.load(in, version, mem);
-        dst.toolbar_trash = .{ .rect = .unit };
+        dst.main_area.postits = old_postits;
+
+        // dst.* = kommon.meta.initDefaultFields(Workspace);
+        // dst.undo_stack = .init(mem.gpa);
+        // dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
+        // dst.camera = try in.readStructEndian(Rect, .little);
+        // dst.hand.init(.hand, mem.gpa);
+        // dst.toolbar.init(.toolbar, mem.gpa);
+        // try dst.main_area.load(in, version, mem);
+        // dst.toolbar_trash = .{ .rect = .unit };
 
         try dst.canonizeAfterChanges(mem);
     }
@@ -4643,6 +4649,18 @@ const Workspace = struct {
             workspace.fnkboxes.items[0].status == .solved and
                 workspace.fnkboxes.items[1].status == .solved and
                 workspace.fnkboxes.items[2].status == .solved;
+    }
+
+    pub fn canAutosaveNow(workspace: *const Workspace) bool {
+        if (workspace.focus.grabbing.kind != .nothing) return false;
+        if (workspace.focus.ui_active.kind != .nothing) return false;
+        for (workspace.main_area.fnkboxes.items) |fnkbox| {
+            if (fnkbox.execution != null) return false;
+        }
+        for (workspace.main_area.executors.items) |fnkbox| {
+            if (fnkbox.animation != null) return false;
+        }
+        return true;
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
@@ -5542,18 +5560,48 @@ pub fn afterHotReload(self: *GameState) !void {
     // try self.workspace.init(&self.core_mem, 0);
 }
 
+var first_frame_done = false;
+
+var seconds_since_last_save: f32 = 0;
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
 
-    if (false and platform.keyboard.wasPressed(.KeyQ)) {
+    if (!first_frame_done) {
+        first_frame_done = true;
+        if (platform.getItem("vaulogy_save")) |reader| {
+            // TODO: debug why we can't directly use reader
+            // try self.workspace.load(reader, &self.core_mem);
+
+            const data = try reader.readAllAlloc(self.core_mem.scratch.allocator(), std.math.maxInt(usize));
+            var fbs = std.io.fixedBufferStream(data);
+            try self.workspace.load(fbs.reader().any(), &self.core_mem);
+        }
+    }
+
+    if (false and platform.keyboard.wasPressed(.KeyT)) {
+        const original = try platform.gpa.alloc(u8, 173380);
+        var random: std.Random.DefaultPrng = .init(0);
+        random.random().bytes(original);
+        platform.setItem("testing", original);
+
+        if (platform.getItem("testing")) |reader| {
+            const actual = try reader.readAllAlloc(platform.gpa, std.math.maxInt(usize));
+            if (!std.mem.eql(u8, original, actual)) @panic("bad");
+            std.log.debug("yay", .{});
+        } else @panic("nope");
+    }
+
+    if (seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
-        std.log.debug("save size in bytes: {d}", .{asdf.items.len});
-        var fbs = std.io.fixedBufferStream(asdf.items);
-        try self.workspace.load(fbs.reader().any(), &self.core_mem);
+        platform.setItem("vaulogy_save", asdf.items);
+        seconds_since_last_save = 0;
+        std.log.debug("autosaved", .{});
     }
+    seconds_since_last_save += platform.delta_seconds;
 
     platform.gl.clear(COLORS.bg);
     try self.workspace.update(platform, &self.drawer, &self.core_mem, self.drawer.canvas.frame_arena.allocator());

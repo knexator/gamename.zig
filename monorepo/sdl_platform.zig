@@ -723,6 +723,19 @@ pub fn main() !void {
         }.anon,
         .forgetUserUploadedFile = undefined,
         // TODO
+        .getItem = struct {
+            pub fn anon(key: []const u8) ?std.io.AnyReader {
+                _ = key;
+                return null;
+            }
+        }.anon,
+        .setItem = struct {
+            pub fn anon(key: []const u8, value: []const u8) void {
+                _ = key;
+                _ = value;
+            }
+        }.anon,
+        // TODO
         .setCursor = struct {
             pub fn anon(cursor: Mouse.Cursor) void {
                 _ = cursor;

@@ -163,10 +163,12 @@ function wasmMem() {
   return new Uint8Array(wasm_memory.buffer);
 }
 
+function getBytes(ptr, len) {
+  return wasmMem().subarray(ptr, ptr + len);
+}
+
 function getString(ptr, len) {
-  return text_decoder.decode(
-    wasmMem().subarray(ptr, ptr + len),
-  );
+  return text_decoder.decode(getBytes(ptr, len));
 }
 
 function getNullTerminatedString(ptr) {
@@ -186,6 +188,28 @@ function storeString(str, ptr, max_len) {
   const len = Math.min(bytes.length, max_len);
   wasm_mem.set(bytes.subarray(0, len), ptr);
   return len;
+}
+
+// TODO: use IndexedDB
+function base64FromUint8Array(uint8Array) {
+  let binary = '';
+  const chunkSize = 0x8000; // avoid call stack limits
+
+  for (let i = 0; i < uint8Array.length; i += chunkSize) {
+    binary += String.fromCharCode(...uint8Array.subarray(i, i + chunkSize));
+  }
+
+  return btoa(binary);
+}
+function uint8ArrayFromBase64(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
 }
 
 async function getWasm() {
@@ -433,6 +457,28 @@ async function getWasm() {
         fileInput.click();
 
         return readers.length - 1; // Return the index of the reader
+      },
+
+      getItem: (key_ptr, key_len) => {
+        const key = getString(key_ptr, key_len);
+        const value_base64 = localStorage.getItem(key);
+
+        if (value_base64 != null) {
+          const js_reader = new JsReader();
+          readers.push(js_reader);
+          js_reader.buffer = uint8ArrayFromBase64(value_base64);
+          js_reader.position = 0;
+          js_reader.loaded = true;
+          return readers.length - 1;
+        } else {
+          return 0;
+        }
+      },
+      setItem: (key_ptr, key_len, value_ptr, value_len) => {
+        const key = getString(key_ptr, key_len);
+        const value = getBytes(value_ptr, value_len);
+        const value_base64 = base64FromUint8Array(value);
+        localStorage.setItem(key, value_base64);
       },
 
       isLoaded: (reader_index) => readers[reader_index].loaded,

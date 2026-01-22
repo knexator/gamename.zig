@@ -43,6 +43,8 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         userUploadedFile: *const fn () ?std.io.AnyReader,
         // TODO: don't require this
         forgetUserUploadedFile: *const fn () void,
+        getItem: *const fn (key: []const u8) ?std.io.AnyReader,
+        setItem: *const fn (key: []const u8, value: []const u8) void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
