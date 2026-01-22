@@ -420,19 +420,17 @@ pub const Lego = struct {
         if (REUSE_MEM) toybox.free(thing);
     }
 
-    pub fn recreateFloating(toybox: *Toybox, data: Lego) void {
+    // TODO: change the name so this warning is not needed
+    /// WARNING: does not recreate it with the same index!
+    pub fn recreateFloating(toybox: *Toybox, data: Lego) !void {
         assert(data.ll_area_next == .nothing);
         assert(data.ll_area_prev == .nothing);
 
         if (REUSE_MEM) {
-            if (toybox.free_head == data.index) {
-                toybox.free_head = data.free_next;
-                toybox.get(data.index).* = data;
-            } else {
-                var cur = toybox.free_head;
-                while (toybox.get(cur).free_next != data.index) : (cur = toybox.get(cur).free_next) {}
-                toybox.get(cur).free_next = data.free_next;
-            }
+            const new_thing = try toybox.add(undefined);
+            const index = new_thing.index;
+            new_thing.* = data;
+            new_thing.index = index;
         } else {
             toybox.get(data.index).* = data;
         }
@@ -723,7 +721,7 @@ const Workspace = struct {
                         Lego.destroyFloating(toybox, index);
                     },
                     .recreate_floating => |data| {
-                        Lego.recreateFloating(toybox, data);
+                        try Lego.recreateFloating(toybox, data);
                     },
                     .set_active => |data| {
                         Lego.setActive(toybox, data);
@@ -855,7 +853,7 @@ const Workspace = struct {
                 workspace.undo_stack.appendAssumeCapacity(.{ .reset_data = overwritten_data });
 
                 Lego.destroyFloating(toybox, workspace.grabbing);
-                @panic("recreate_floating cannot ensure that the index is the same, due to cell reuse.");
+                // @panic("recreate_floating cannot ensure that the index is the same, due to cell reuse.");
                 workspace.undo_stack.appendAssumeCapacity(.{ .recreate_floating = grabbed_data });
             } else {
                 // TODO: could be unified with the other case, by creating a fresh last child and the overwriting it
