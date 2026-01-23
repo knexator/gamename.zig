@@ -442,18 +442,6 @@ pub const Lego = struct {
         return index;
     }
 
-    pub fn recaptureChild(toybox: *Toybox, child_data: Lego, parent: Lego.Index) void {
-        assert(child_data.index != .nothing and parent != .nothing);
-        switch (toybox.get(parent).specific) {
-            .area => |*area| {
-                // restore the position, links, etc
-                toybox.get(child_data.index).* = child_data;
-                area.restoreChild(toybox, child_data.index);
-            },
-            .sexpr => unreachable,
-        }
-    }
-
     // pub fn onClicked(toybox: *Toybox, index: Lego.Index) !void {
     //     const lego = toybox.get(index);
     //     switch (lego.specific) {
@@ -543,7 +531,7 @@ const Workspace = struct {
         fence,
         set_grabbing: struct { grabbing: Lego.Index, hand_layer: Lego.Index },
         reset_data: Lego,
-        recapture_child: struct { data: Lego, parent: Lego.Index },
+        area_unpop_child: struct { area: Lego.Index, child: Lego },
         area_pop_child: struct { area: Lego.Index, child: Lego.Index },
         destroy_floating: Lego.Index,
         recreate_floating_and_maybe_set_it_grabbing_and_hand_layer: Lego,
@@ -690,8 +678,10 @@ const Workspace = struct {
                         if (workspace.grabbing == data.index) workspace.grabbing = new_index;
                         if (workspace.hand_layer == data.index) workspace.hand_layer = new_index;
                     },
-                    .recapture_child => |restore| {
-                        Lego.recaptureChild(toybox, restore.data, restore.parent);
+                    .area_unpop_child => |unpop| {
+                        // TODO: should only unpop, not recreate
+                        toybox.get(unpop.child.index).* = unpop.child;
+                        toybox.get(unpop.area).specific.area.restoreChild(toybox, unpop.child.index);
                     },
                     .area_pop_child => |pop| {
                         toybox.get(pop.area).specific.area.popChild(toybox, pop.child);
@@ -775,9 +765,9 @@ const Workspace = struct {
                 // Case A.1: plucking a top-level thing from an area
                 area.popChild(toybox, hot_index);
                 workspace.undo_stack.appendAssumeCapacity(.{
-                    .recapture_child = .{
-                        .data = original_hot_data,
-                        .parent = hot_parent_index,
+                    .area_unpop_child = .{
+                        .area = hot_parent_index,
+                        .child = original_hot_data,
                     },
                 });
                 grabbed_element_index = hot_index;
