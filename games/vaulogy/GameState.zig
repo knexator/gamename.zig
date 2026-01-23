@@ -194,8 +194,23 @@ pub const Lego = struct {
         sexpr: Sexpr,
         area: Area,
 
-        pub fn tag(specific: *const Specific) std.meta.Tag(Specific) {
+        pub const Tag = std.meta.Tag(Specific);
+
+        pub fn tag(specific: *const Specific) Tag {
             return std.meta.activeTag(specific.*);
+        }
+
+        pub fn Tagged(comptime specific_tag: Tag) type {
+            inline for (@typeInfo(Specific).@"union".fields) |field| {
+                if (std.mem.eql(u8, field.name, @tagName(specific_tag))) return field.type;
+            } else comptime unreachable;
+        }
+
+        pub fn as(specific: *Specific, comptime specific_tag: Tag) ?*Tagged(specific_tag) {
+            return switch (specific.*) {
+                specific_tag => |*x| x,
+                else => null,
+            };
         }
 
         pub const Area = struct {
@@ -247,8 +262,6 @@ pub const Lego = struct {
             pub fn restoreChild(area: *Area, toybox: *Toybox, child: Lego.Index) void {
                 assert(child != .nothing);
                 defer assert(area.first != .nothing and area.last != .nothing);
-
-                std.log.debug("restoring child {any}", .{child});
 
                 const old_prev = toybox.get(child).ll_area_prev;
                 const old_next = toybox.get(child).ll_area_next;
@@ -411,29 +424,22 @@ pub const Lego = struct {
         }
     }
 
-    // FIXME: should be true
-    const REUSE_MEM = true;
     pub fn destroyFloating(toybox: *Toybox, thing: Lego.Index) void {
         assert(toybox.get(thing).ll_area_prev == .nothing);
         assert(toybox.get(thing).ll_area_next == .nothing);
-
-        if (REUSE_MEM) toybox.free(thing);
+        toybox.free(thing);
     }
 
-    // TODO: change the name so this warning is not needed
-    /// WARNING: does not recreate it with the same index!
-    pub fn recreateFloating(toybox: *Toybox, data: Lego) !void {
-        assert(data.ll_area_next == .nothing);
-        assert(data.ll_area_prev == .nothing);
+    pub fn recreateFloating(toybox: *Toybox, data_ignoring_index: Lego) !Lego.Index {
+        assert(data_ignoring_index.ll_area_next == .nothing);
+        assert(data_ignoring_index.ll_area_prev == .nothing);
 
-        if (REUSE_MEM) {
-            const new_thing = try toybox.add(undefined);
-            const index = new_thing.index;
-            new_thing.* = data;
-            new_thing.index = index;
-        } else {
-            toybox.get(data.index).* = data;
-        }
+        const new_thing = try toybox.add(undefined);
+        const index = new_thing.index;
+        new_thing.* = data_ignoring_index;
+        new_thing.index = index;
+
+        return index;
     }
 
     /// returns true if child could be released, false if not (which means you should make a copy of it)
@@ -449,28 +455,6 @@ pub const Lego = struct {
             //     // instead of destroying, set it to .empty
             //     toybox.get(child).specific.sexpr.kind = .empty;
             // },
-        }
-    }
-
-    pub fn setInactive(toybox: *Toybox, thing: Lego.Index) void {
-        assert(toybox.get(thing).ll_area_prev == .nothing);
-        assert(toybox.get(thing).ll_area_next == .nothing);
-        switch (toybox.get(thing).specific) {
-            .area => unreachable,
-            .sexpr => |*sexpr| {
-                sexpr.kind = .empty;
-            },
-        }
-    }
-
-    pub fn setActive(toybox: *Toybox, original_data: Lego) void {
-        assert(toybox.get(original_data.index).ll_area_prev == .nothing);
-        assert(toybox.get(original_data.index).ll_area_next == .nothing);
-        switch (toybox.get(original_data.index).specific) {
-            .area => unreachable,
-            .sexpr => |*sexpr| {
-                sexpr.kind = original_data.specific.sexpr.kind;
-            },
         }
     }
 
@@ -581,8 +565,7 @@ const Workspace = struct {
         recapture_child: struct { data: Lego, parent: Lego.Index },
         release_child: struct { child: Lego.Index, parent: Lego.Index },
         destroy_floating: Lego.Index,
-        set_active: Lego,
-        recreate_floating: Lego,
+        recreate_floating_and_maybe_set_it_grabbing_and_hand_layer: Lego,
         // setGrabbing: Lego.Index,
         // addChildFirst: struct { parent: Lego.Index, new_child: Lego.Index },
         // changeChild: struct { original_child: Lego.Index, new_child: Lego.Index },
@@ -720,11 +703,11 @@ const Workspace = struct {
                     .destroy_floating => |index| {
                         Lego.destroyFloating(toybox, index);
                     },
-                    .recreate_floating => |data| {
-                        try Lego.recreateFloating(toybox, data);
-                    },
-                    .set_active => |data| {
-                        Lego.setActive(toybox, data);
+                    .recreate_floating_and_maybe_set_it_grabbing_and_hand_layer => |data| {
+                        const new_index = try Lego.recreateFloating(toybox, data);
+                        // Some things might be pointing to the old index, so we update them here
+                        if (workspace.grabbing == data.index) workspace.grabbing = new_index;
+                        if (workspace.hand_layer == data.index) workspace.hand_layer = new_index;
                     },
                     .recapture_child => |restore| {
                         Lego.recaptureChild(toybox, restore.data, restore.parent);
@@ -771,10 +754,11 @@ const Workspace = struct {
                 lego.index == interaction.reverse_path.items[0]) 1 else 0, 0.6, platform.delta_seconds);
             comptime assert(!@hasField(Lego, "active_t"));
             comptime assert(!@hasField(Lego, "dropzone_t"));
-            math.lerp_towards(&lego.dropping_t, if (interaction.kind == .dropzone and lego.index == workspace.grabbing) 1 else 0, 0.6, platform.delta_seconds);
+            math.lerp_towards(&lego.dropping_t, if (interaction.kind == .dropzone and
+                lego.index == workspace.grabbing) 1 else 0, 0.6, platform.delta_seconds);
         }
 
-        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor and the grabbed thing
+        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
         for ([2]Lego.Index{ workspace.main_area, workspace.hand_layer }) |root| {
             if (root == .nothing) continue;
             Lego.updateSprings(
@@ -798,6 +782,7 @@ const Workspace = struct {
             interaction.kind == .hot and
             (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
         {
+            // Main case A: plucking/grabbing/clicking something
             try workspace.undo_stack.append(.fence);
 
             const hot_index = interaction.reverse_path.items[0];
@@ -805,7 +790,9 @@ const Workspace = struct {
 
             const original_hot_data = toybox.get(hot_index).*;
             var grabbed_element_index: Lego.Index = undefined;
-            if (Lego.releaseChild(toybox, hot_index, hot_parent_index)) {
+            if (toybox.get(hot_parent_index).specific.as(.area)) |area| {
+                // Case A.1: plucking a top-level thing from an area
+                area.popChild(toybox, hot_index);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .recapture_child = .{
                         .data = original_hot_data,
@@ -813,14 +800,15 @@ const Workspace = struct {
                     },
                 });
                 grabbed_element_index = hot_index;
-            } else {
+            } else if (toybox.get(hot_index).specific.as(.sexpr)) |sexpr| {
+                // Case A.2: plucking a nested sexpr
                 const new_element = try toybox.dupeFloating(hot_index);
                 try workspace.undo_stack.append(.{ .destroy_floating = new_element.index });
                 grabbed_element_index = new_element.index;
 
-                Lego.setInactive(toybox, hot_index);
-                try workspace.undo_stack.append(.{ .set_active = original_hot_data });
-            }
+                sexpr.kind = .empty;
+                try workspace.undo_stack.append(.{ .reset_data = original_hot_data });
+            } else unreachable;
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
             try workspace.undo_stack.append(.{ .set_grabbing = .{
@@ -832,6 +820,8 @@ const Workspace = struct {
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
+            // Main case B: droping/releasing something
+
             // const overwritten_lego_index = if (interaction.kind == .dropzone)
             //     interaction.reverse_path.items[0]
             // else blk: {
@@ -841,22 +831,35 @@ const Workspace = struct {
             // }
 
             if (interaction.kind == .dropzone) {
-                const index_of_overwritten = interaction.reverse_path.items[0];
-                const overwritten_data = toybox.get(index_of_overwritten).*;
-                const grabbed_data = toybox.get(workspace.grabbing).*;
+                const dropzone_index = interaction.reverse_path.items[0];
 
-                var new_data = grabbed_data;
-                new_data.index = overwritten_data.index;
-                new_data.ll_area_next = overwritten_data.ll_area_next;
-                new_data.ll_area_prev = overwritten_data.ll_area_prev;
-                toybox.get(index_of_overwritten).* = new_data;
-                workspace.undo_stack.appendAssumeCapacity(.{ .reset_data = overwritten_data });
+                if (toybox.get(dropzone_index).specific.tag() == .sexpr) {
+                    // Case B.1: dropping a sexpr on a sexpr
+                    // the grabbed sexpr gets destroyed and the dropzone one gets modified,
+                    // so that the parent of the dropzone one sees no changes
+                    assert(toybox.get(workspace.grabbing).specific.tag() == .sexpr);
 
-                Lego.destroyFloating(toybox, workspace.grabbing);
-                // @panic("recreate_floating cannot ensure that the index is the same, due to cell reuse.");
-                workspace.undo_stack.appendAssumeCapacity(.{ .recreate_floating = grabbed_data });
+                    const index_of_overwritten = dropzone_index;
+                    const overwritten_data = toybox.get(index_of_overwritten).*;
+                    const grabbed_data = toybox.get(workspace.grabbing).*;
+
+                    // overwrite it completely, except its area relation and its index
+                    var new_data = grabbed_data;
+                    new_data.index = overwritten_data.index;
+                    new_data.ll_area_next = overwritten_data.ll_area_next;
+                    new_data.ll_area_prev = overwritten_data.ll_area_prev;
+                    toybox.get(index_of_overwritten).* = new_data;
+                    workspace.undo_stack.appendAssumeCapacity(.{ .reset_data = overwritten_data });
+
+                    Lego.destroyFloating(toybox, workspace.grabbing);
+                    workspace.undo_stack.appendAssumeCapacity(.{ .recreate_floating_and_maybe_set_it_grabbing_and_hand_layer = grabbed_data });
+                } else unreachable;
             } else {
-                // TODO: could be unified with the other case, by creating a fresh last child and the overwriting it
+                // Case B.2: dropping something on fresh space
+                // we directly set it as the area's last child
+
+                // could be unified with the other case, by creating a fresh last child and then overwriting it
+                // but that seems to complicate rather than simplify
                 assert(interaction.kind == .nothing);
                 toybox.get(workspace.main_area).specific.area.addChildLast(toybox, workspace.grabbing);
                 try workspace.undo_stack.append(.{ .release_child = .{
@@ -864,6 +867,10 @@ const Workspace = struct {
                     .parent = workspace.main_area,
                 } });
             }
+
+            // if workspace.grabbing was destroyed, this index will be wrong!
+            // It should be the index returned by .recreateFloating, which we
+            // fix by hardcoding the fix in the undo command (TODO: less hacky?)
             try workspace.undo_stack.append(.{ .set_grabbing = .{
                 .grabbing = workspace.grabbing,
                 .hand_layer = workspace.hand_layer,
