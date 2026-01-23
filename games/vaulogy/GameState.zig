@@ -451,10 +451,6 @@ pub const Lego = struct {
                 return true;
             },
             .sexpr => return false,
-            // {
-            //     // instead of destroying, set it to .empty
-            //     toybox.get(child).specific.sexpr.kind = .empty;
-            // },
         }
     }
 
@@ -466,10 +462,7 @@ pub const Lego = struct {
                 toybox.get(child_data.index).* = child_data;
                 area.restoreChild(toybox, child_data.index);
             },
-            .sexpr => {
-                @panic("FIXME");
-                // toybox.get(child_data.index).specific.sexpr.kind = child_data.specific.sexpr.kind;
-            },
+            .sexpr => unreachable,
         }
     }
 
