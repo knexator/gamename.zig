@@ -829,6 +829,10 @@ const Workspace = struct {
                     .area_unpop_child => |unpop| {
                         // sets the original position, etc
                         toybox.get(unpop.child.index).* = unpop.child;
+                        // TODO: remove this HACK
+                        if (toybox.get(unpop.child.index).specific.as(.sexpr)) |sexpr| {
+                            sexpr.propagateIsPatternToChildren(toybox, sexpr.is_pattern);
+                        }
                         toybox.get(unpop.area).specific.area.restoreChild(toybox, unpop.child.index);
                     },
                     .area_pop_child => |pop| {
