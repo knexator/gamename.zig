@@ -296,6 +296,19 @@ pub const Lego = struct {
                     .pair => .pair,
                 });
             }
+
+            pub fn propagateIsPatternToChildren(sexpr: *Sexpr, toybox: *Toybox, is_pattern: bool) void {
+                if (sexpr.kind == .pair) {
+                    inline for (.{
+                        &toybox.get(sexpr.children.up).specific.sexpr,
+                        &toybox.get(sexpr.children.down).specific.sexpr,
+                    }) |child| {
+                        child.is_pattern = is_pattern;
+                        child.is_pattern_t = if (is_pattern) 1 else 0;
+                        child.propagateIsPatternToChildren(toybox, is_pattern);
+                    }
+                }
+            }
         };
 
         pub const Case = struct {
@@ -387,6 +400,7 @@ pub const Lego = struct {
                 const is_pattern: bool = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).specific.sexpr.is_pattern;
                 sexpr.is_pattern = is_pattern;
                 math.lerp_towards(&sexpr.is_pattern_t, if (is_pattern) 1 else 0, 0.6, delta_seconds);
+                sexpr.propagateIsPatternToChildren(toybox, is_pattern);
             }
         }
         switch (lego.specific) {
