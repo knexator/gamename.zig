@@ -191,8 +191,9 @@ pub const Lego = struct {
     specific: Specific,
 
     pub const Specific = union(enum) {
-        sexpr: Sexpr,
         area: Area,
+        sexpr: Sexpr,
+        case: Case,
 
         pub const Tag = std.meta.Tag(Specific);
 
@@ -296,6 +297,12 @@ pub const Lego = struct {
                 });
             }
         };
+
+        pub const Case = struct {
+            pattern: Lego.Index,
+            template: Lego.Index,
+            fnkname: Lego.Index,
+        };
     };
 
     pub const Index = enum(u32) { nothing = std.math.maxInt(u32), _ };
@@ -350,6 +357,22 @@ pub const Lego = struct {
                     }
                 }
             },
+            .case => |case| {
+                inline for (.{ case.pattern, case.template, case.fnkname }) |child_sexpr| {
+                    var interaction_child = try findHotAndDropzone(
+                        toybox,
+                        child_sexpr,
+                        needle_pos,
+                        grabbing,
+                        allocator,
+                        depth + 1,
+                    );
+                    if (interaction_child.kind != .nothing) {
+                        try interaction_child.reverse_path.append(allocator, index);
+                        return interaction_child;
+                    }
+                }
+            },
         }
 
         return .{ .kind = .nothing };
@@ -360,7 +383,11 @@ pub const Lego = struct {
         if (index == grabbing) {
             const target: Point = if (dropzone == .nothing) .{ .pos = mouse_pos } else toybox.get(dropzone).point;
             lego.point.lerp_towards(target, 0.6, delta_seconds);
-            // TODO: set 'is_pattern'
+            if (toybox.get(grabbing).specific.as(.sexpr)) |sexpr| {
+                const is_pattern: bool = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).specific.sexpr.is_pattern;
+                sexpr.is_pattern = is_pattern;
+                math.lerp_towards(&sexpr.is_pattern_t, if (is_pattern) 1 else 0, 0.6, delta_seconds);
+            }
         }
         switch (lego.specific) {
             .area => |area| {
@@ -394,6 +421,24 @@ pub const Lego = struct {
                     updateSprings(toybox, sexpr.children.down, mouse_pos, grabbing, dropzone, delta_seconds);
                 }
             },
+            .case => |case| {
+                inline for (
+                    .{
+                        case.pattern,
+                        case.template,
+                        case.fnkname,
+                    },
+                    [3]Point{
+                        .{ .pos = .xneg },
+                        .{ .pos = .xpos },
+                        .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
+                    },
+                ) |child_sexpr, offset| {
+                    toybox.get(child_sexpr).point = lego.point
+                        .applyToLocalPoint(offset);
+                    updateSprings(toybox, child_sexpr, mouse_pos, grabbing, dropzone, delta_seconds);
+                }
+            },
         }
     }
 
@@ -419,6 +464,12 @@ pub const Lego = struct {
                 if (sexpr.kind == .pair) {
                     try draw(toybox, sexpr.children.up, camera, platform, drawer);
                     try draw(toybox, sexpr.children.down, camera, platform, drawer);
+                }
+            },
+            .case => |case| {
+                // TODO: don't draw if small or far from camera
+                inline for (.{ case.pattern, case.template, case.fnkname }) |child_index| {
+                    try draw(toybox, child_index, camera, platform, drawer);
                 }
             },
         }
@@ -598,6 +649,37 @@ const Workspace = struct {
             } });
             sample_sexpr.point.pos = .new(4, 0);
             main_area.specific.area.addChildLast(toybox, sample_sexpr.index);
+        }
+
+        if (true) {
+            const pattern = try toybox.add(.{ .sexpr = .{
+                .atom_name = "false",
+                .kind = .atom_lit,
+                .is_pattern = true,
+                .is_pattern_t = 1,
+                .children = undefined,
+            } });
+            const template = try toybox.add(.{ .sexpr = .{
+                .atom_name = "true",
+                .kind = .atom_lit,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = undefined,
+            } });
+            const fnkname = try toybox.add(.{ .sexpr = .{
+                .atom_name = undefined,
+                .kind = .empty,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = undefined,
+            } });
+            const sample_case = try toybox.add(.{ .case = .{
+                .pattern = pattern.index,
+                .template = template.index,
+                .fnkname = fnkname.index,
+            } });
+            sample_case.point.pos = .new(0, 3);
+            main_area.specific.area.addChildLast(toybox, sample_case.index);
         }
     }
 
