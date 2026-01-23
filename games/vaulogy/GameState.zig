@@ -442,18 +442,6 @@ pub const Lego = struct {
         return index;
     }
 
-    /// returns true if child could be released, false if not (which means you should make a copy of it)
-    pub fn releaseChild(toybox: *Toybox, child: Lego.Index, parent: Lego.Index) bool {
-        assert(child != .nothing and parent != .nothing);
-        switch (toybox.get(parent).specific) {
-            .area => |*area| {
-                area.popChild(toybox, child);
-                return true;
-            },
-            .sexpr => return false,
-        }
-    }
-
     pub fn recaptureChild(toybox: *Toybox, child_data: Lego, parent: Lego.Index) void {
         assert(child_data.index != .nothing and parent != .nothing);
         switch (toybox.get(parent).specific) {
@@ -556,7 +544,7 @@ const Workspace = struct {
         set_grabbing: struct { grabbing: Lego.Index, hand_layer: Lego.Index },
         reset_data: Lego,
         recapture_child: struct { data: Lego, parent: Lego.Index },
-        release_child: struct { child: Lego.Index, parent: Lego.Index },
+        area_pop_child: struct { area: Lego.Index, child: Lego.Index },
         destroy_floating: Lego.Index,
         recreate_floating_and_maybe_set_it_grabbing_and_hand_layer: Lego,
         // setGrabbing: Lego.Index,
@@ -705,8 +693,8 @@ const Workspace = struct {
                     .recapture_child => |restore| {
                         Lego.recaptureChild(toybox, restore.data, restore.parent);
                     },
-                    .release_child => |pop| {
-                        assert(Lego.releaseChild(toybox, pop.child, pop.parent));
+                    .area_pop_child => |pop| {
+                        toybox.get(pop.area).specific.area.popChild(toybox, pop.child);
                     },
                     .set_grabbing => |set| {
                         workspace.grabbing = set.grabbing;
@@ -855,9 +843,9 @@ const Workspace = struct {
                 // but that seems to complicate rather than simplify
                 assert(interaction.kind == .nothing);
                 toybox.get(workspace.main_area).specific.area.addChildLast(toybox, workspace.grabbing);
-                try workspace.undo_stack.append(.{ .release_child = .{
+                try workspace.undo_stack.append(.{ .area_pop_child = .{
+                    .area = workspace.main_area,
                     .child = workspace.grabbing,
-                    .parent = workspace.main_area,
                 } });
             }
 
