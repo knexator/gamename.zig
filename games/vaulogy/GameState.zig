@@ -385,6 +385,11 @@ pub const Lego = struct {
                         return interaction_child;
                     }
                 }
+                if (grabbing == .nothing and lego.asHandle(.case_existing).overlapped(needle_pos)) {
+                    var path: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(allocator, depth + 1);
+                    path.appendAssumeCapacity(index);
+                    return .{ .reverse_path = path, .kind = .hot };
+                }
             },
         }
 
@@ -485,6 +490,7 @@ pub const Lego = struct {
                 inline for (.{ case.pattern, case.template, case.fnkname }) |child_index| {
                     try draw(toybox, child_index, camera, platform, drawer);
                 }
+                try lego.asHandle(.case_existing).draw(drawer, camera);
             },
         }
     }
@@ -513,6 +519,52 @@ pub const Lego = struct {
     //         .area => unreachable,
     //     }
     // }
+
+    fn asHandle(lego: *const Lego, kind: enum {
+        case_existing,
+
+        pub fn toSize(radius: @This()) Handle.Size {
+            return switch (radius) {
+                .case_existing => .default,
+            };
+        }
+    }) Handle {
+        return .{
+            .point = lego.point,
+            .hot_t = lego.hot_t,
+            .radius = kind.toSize(),
+        };
+    }
+};
+
+pub const Handle = struct {
+    point: Point,
+    radius: Size,
+    hot_t: f32,
+    // TODO: remove default value
+    alpha: f32 = 1,
+    // TODO: remove?
+    enabled: bool = true,
+
+    pub const Size = extern struct {
+        base: f32,
+        hot: f32,
+        hitbox: f32,
+
+        pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
+    };
+
+    pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect) !void {
+        if (handle.enabled) {
+            const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
+            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(handle.alpha));
+            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(handle.alpha));
+        }
+    }
+
+    pub fn overlapped(handle: *const Handle, pos: Vec2) bool {
+        return handle.enabled and pos.distTo(handle.point.pos) < handle.radius.hitbox * handle.point.scale;
+    }
 };
 
 pub const Toybox = struct {
@@ -816,6 +868,8 @@ const Workspace = struct {
         );
 
         // update _t
+        // Should technically be inside updateSprings,
+        // but I suspect this is faster (and simpler).
         for (workspace.toybox.all_legos.items) |*lego| {
             math.lerp_towards(&lego.hot_t, if (interaction.kind == .hot and
                 lego.index == interaction.reverse_path.items[0]) 1 else 0, 0.6, platform.delta_seconds);
