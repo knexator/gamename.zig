@@ -679,7 +679,7 @@ const Workspace = struct {
                         if (workspace.hand_layer == data.index) workspace.hand_layer = new_index;
                     },
                     .area_unpop_child => |unpop| {
-                        // TODO: should only unpop, not recreate
+                        // sets the original position, etc
                         toybox.get(unpop.child.index).* = unpop.child;
                         toybox.get(unpop.area).specific.area.restoreChild(toybox, unpop.child.index);
                     },
