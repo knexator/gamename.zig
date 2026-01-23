@@ -621,15 +621,32 @@ pub const Toybox = struct {
         return &toybox.all_legos.items[@intFromEnum(index)];
     }
 
-    pub fn dupeFloating(toybox: *Toybox, original: Lego.Index) !*Lego {
-        // TODO: should dupe children?
+    pub fn dupeIntoFloating(toybox: *Toybox, original: Lego.Index, dupe_children: bool) !Lego.Index {
         const result = try toybox.add(undefined);
         const result_index = result.index;
         result.* = toybox.get(original).*;
         result.index = result_index;
         result.ll_area_next = .nothing;
         result.ll_area_prev = .nothing;
-        return result;
+
+        if (dupe_children) {
+            switch (result.specific) {
+                .sexpr => |*sexpr| {
+                    if (sexpr.kind == .pair) {
+                        sexpr.children.up = try dupeIntoFloating(toybox, sexpr.children.up, true);
+                        sexpr.children.down = try dupeIntoFloating(toybox, sexpr.children.down, true);
+                    }
+                },
+                .case => |*case| {
+                    case.pattern = try dupeIntoFloating(toybox, case.pattern, true);
+                    case.template = try dupeIntoFloating(toybox, case.template, true);
+                    case.fnkname = try dupeIntoFloating(toybox, case.fnkname, true);
+                },
+                .area => @panic("TODO"),
+            }
+        }
+
+        return result_index;
     }
 };
 
@@ -699,12 +716,26 @@ const Workspace = struct {
                 .is_pattern_t = 0,
                 .children = undefined,
             } });
-            const child_2 = try toybox.add(.{ .sexpr = .{
+            const child_2_1 = try toybox.add(.{ .sexpr = .{
                 .atom_name = "false",
                 .kind = .atom_lit,
                 .is_pattern = false,
                 .is_pattern_t = 0,
                 .children = undefined,
+            } });
+            const child_2_2 = try toybox.add(.{ .sexpr = .{
+                .atom_name = "nil",
+                .kind = .atom_lit,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = undefined,
+            } });
+            const child_2 = try toybox.add(.{ .sexpr = .{
+                .atom_name = undefined,
+                .kind = .pair,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+                .children = .{ .up = child_2_1.index, .down = child_2_2.index },
             } });
             const sample_sexpr = try toybox.add(.{ .sexpr = .{
                 .atom_name = undefined,
@@ -915,7 +946,12 @@ const Workspace = struct {
 
             const original_hot_data = toybox.get(hot_index).*;
             var grabbed_element_index: Lego.Index = undefined;
-            if (toybox.get(hot_parent_index).specific.as(.area)) |area| {
+            if (mouse.wasPressed(.right)) {
+                // Case A.0: duplicating
+                const new_element_index = try toybox.dupeIntoFloating(hot_index, true);
+                try workspace.undo_stack.append(.{ .destroy_floating = new_element_index });
+                grabbed_element_index = new_element_index;
+            } else if (toybox.get(hot_parent_index).specific.as(.area)) |area| {
                 // Case A.1: plucking a top-level thing from an area
                 area.popChild(toybox, hot_index);
                 workspace.undo_stack.appendAssumeCapacity(.{
@@ -927,9 +963,9 @@ const Workspace = struct {
                 grabbed_element_index = hot_index;
             } else if (toybox.get(hot_index).specific.as(.sexpr)) |sexpr| {
                 // Case A.2: plucking a nested sexpr
-                const new_element = try toybox.dupeFloating(hot_index);
-                try workspace.undo_stack.append(.{ .destroy_floating = new_element.index });
-                grabbed_element_index = new_element.index;
+                const new_element_index = try toybox.dupeIntoFloating(hot_index, false);
+                try workspace.undo_stack.append(.{ .destroy_floating = new_element_index });
+                grabbed_element_index = new_element_index;
 
                 sexpr.kind = .empty;
                 try workspace.undo_stack.append(.{ .reset_data = original_hot_data });
