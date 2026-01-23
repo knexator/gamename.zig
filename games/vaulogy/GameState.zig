@@ -336,9 +336,9 @@ pub const Lego = struct {
                 }
 
                 if (Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
-                    const interaction: Interaction.Kind = if (grabbing == .nothing)
+                    const interaction: Interaction.Kind = if (grabbing == .nothing and sexpr.kind != .empty)
                         .hot
-                    else if (toybox.get(grabbing).specific.tag() == .sexpr)
+                    else if (grabbing != .nothing and toybox.get(grabbing).specific.tag() == .sexpr)
                         .dropzone
                     else
                         .nothing;
