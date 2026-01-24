@@ -194,6 +194,8 @@ pub const Lego = struct {
         area: Area,
         sexpr: Sexpr,
         case: Case,
+        microscope: Microscope,
+        lens: Lens,
 
         pub const Tag = std.meta.Tag(Specific);
 
@@ -316,6 +318,65 @@ pub const Lego = struct {
             template: Lego.Index,
             fnkname: Lego.Index,
         };
+
+        pub const Microscope = struct {
+            lens_source: Lego.Index,
+            lens_target: Lego.Index,
+            area: Lego.Index,
+
+            /// To understand this, think of the fixed point of the lenses zoom
+            pub const Transform = struct {
+                center: Vec2,
+                scale: f32,
+
+                pub const identity: Transform = .{ .center = .zero, .scale = 1 };
+
+                pub fn inverse(transform: Transform) Transform {
+                    return .{ .center = transform.center, .scale = 1.0 / transform.scale };
+                }
+
+                pub fn actOn(transform: Transform, point: Point) Point {
+                    return .{
+                        .pos = transform.center.add(
+                            point.pos.sub(transform.center).scale(transform.scale),
+                        ),
+                        .scale = point.scale * transform.scale,
+                        .turns = point.turns,
+                    };
+                }
+
+                pub fn combine(first: Transform, second: Transform) Transform {
+                    // center is the fixed point of applying first, then second
+                    return .{
+                        .center = Vec2.add(
+                            first.center.scale((1.0 - first.scale) * second.scale),
+                            second.center.scale(1.0 - second.scale),
+                        ).scale(1.0 / (1.0 - first.scale * second.scale)),
+                        .scale = first.scale * second.scale,
+                    };
+                }
+            };
+
+            pub fn getTransform(microscope: *const Microscope, toybox: *Toybox) Transform {
+                const source_pos = toybox.get(microscope.lens_source).point.pos;
+                const target_pos = toybox.get(microscope.lens_target).point.pos;
+                const source_radius = toybox.get(microscope.lens_source).specific.lens.radius;
+                const target_radius = toybox.get(microscope.lens_target).specific.lens.radius;
+                const scale = target_radius / source_radius;
+                const delta = target_pos.sub(source_pos);
+                return .{
+                    .center = source_pos.sub(delta.scale(1.0 / (scale - 1.0))),
+                    .scale = scale,
+                };
+            }
+        };
+
+        pub const Lens = struct {
+            radius: f32,
+
+            pub const source: Lens = .{ .radius = 0.25 };
+            pub const target: Lens = .{ .radius = 1 };
+        };
     };
 
     pub const Index = enum(u32) { nothing = std.math.maxInt(u32), _ };
@@ -385,7 +446,33 @@ pub const Lego = struct {
                         return interaction_child;
                     }
                 }
-                if (grabbing == .nothing and lego.asHandle(.case_existing).overlapped(needle_pos)) {
+                if (grabbing == .nothing and lego.asHandle().overlapped(needle_pos)) {
+                    var path: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(allocator, depth + 1);
+                    path.appendAssumeCapacity(index);
+                    return .{ .reverse_path = path, .kind = .hot };
+                }
+            },
+            .microscope => |microscope| {
+                inline for (.{ microscope.lens_source, microscope.lens_target }) |child| {
+                    var interaction_child = try findHotAndDropzone(toybox, child, needle_pos, grabbing, allocator, depth + 1);
+                    if (interaction_child.kind != .nothing) {
+                        try interaction_child.reverse_path.append(allocator, index);
+                        return interaction_child;
+                    }
+                }
+
+                const lens_target = toybox.get(microscope.lens_target);
+                if (lens_target.point.inRange(needle_pos, lens_target.specific.lens.radius)) {
+                    const transform = microscope.getTransform(toybox);
+                    var interaction_nested = try findHotAndDropzone(toybox, microscope.area, transform.inverse().actOn(.{ .pos = needle_pos }).pos, grabbing, allocator, depth + 1);
+                    if (interaction_nested.kind != .nothing) {
+                        try interaction_nested.reverse_path.append(allocator, index);
+                        return interaction_nested;
+                    }
+                }
+            },
+            .lens => |_| {
+                if (grabbing == .nothing and lego.asHandle().overlapped(needle_pos)) {
                     var path: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(allocator, depth + 1);
                     path.appendAssumeCapacity(index);
                     return .{ .reverse_path = path, .kind = .hot };
@@ -399,7 +486,10 @@ pub const Lego = struct {
     pub fn updateSprings(toybox: *Toybox, index: Lego.Index, mouse_pos: Vec2, grabbing: Lego.Index, dropzone: Lego.Index, delta_seconds: f32) void {
         const lego = toybox.get(index);
         if (index == grabbing) {
-            const target: Point = if (dropzone == .nothing) .{ .pos = mouse_pos } else toybox.get(dropzone).point;
+            const target: Point = if (dropzone == .nothing)
+                .{ .pos = mouse_pos.sub(lego.handleOffset()) }
+            else
+                toybox.get(dropzone).point;
             lego.point.lerp_towards(target, 0.6, delta_seconds);
             if (toybox.get(grabbing).specific.as(.sexpr)) |sexpr| {
                 const is_pattern: bool = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).specific.sexpr.is_pattern;
@@ -458,10 +548,17 @@ pub const Lego = struct {
                     updateSprings(toybox, child_sexpr, mouse_pos, grabbing, dropzone, delta_seconds);
                 }
             },
+            .microscope => |microscope| {
+                inline for (.{ microscope.lens_source, microscope.lens_target }) |child| {
+                    updateSprings(toybox, child, mouse_pos, grabbing, dropzone, delta_seconds);
+                }
+            },
+            .lens => {},
         }
     }
 
     pub fn draw(toybox: *Toybox, index: Lego.Index, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
+        // TODO: don't draw if small or far from camera
         const lego = toybox.get(index);
         const point = lego.point.applyToLocalPoint(lego.visual_offset);
         switch (lego.specific) {
@@ -490,7 +587,30 @@ pub const Lego = struct {
                 inline for (.{ case.pattern, case.template, case.fnkname }) |child_index| {
                     try draw(toybox, child_index, camera, platform, drawer);
                 }
-                try lego.asHandle(.case_existing).draw(drawer, camera);
+                try lego.asHandle().draw(drawer, camera);
+            },
+            .microscope => |microscope| {
+                // TODO: nested microscopes don't work
+
+                const lens_target = toybox.get(microscope.lens_target);
+                if (camera.plusMargin(lens_target.specific.lens.radius + 1).contains(lens_target.point.pos)) {
+                    platform.gl.startStencil();
+                    drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, .white);
+                    platform.gl.doneStencil();
+                    defer platform.gl.stopStencil();
+
+                    // FIXME
+                    // const transform = microscope.getTransform(toybox);
+                    // try draw(toybox, microscope.area, camera, platform, drawer);
+                }
+
+                inline for (.{ microscope.lens_source, microscope.lens_target }) |child_index| {
+                    try draw(toybox, child_index, camera, platform, drawer);
+                }
+            },
+            .lens => |lens| {
+                drawer.canvas.strokeCircle(128, camera, lego.point.pos, lego.point.scale * lens.radius, lego.point.scale * 0.05, .black);
+                try lego.asHandle().draw(drawer, camera);
             },
         }
     }
@@ -520,19 +640,24 @@ pub const Lego = struct {
     //     }
     // }
 
-    fn asHandle(lego: *const Lego, kind: enum {
-        case_existing,
-
-        pub fn toSize(radius: @This()) Handle.Size {
-            return switch (radius) {
-                .case_existing => .default,
-            };
-        }
-    }) Handle {
+    // TODO: move into a Lego field to simplify the code
+    fn asHandle(lego: *const Lego) Handle {
+        const radius: Handle.Size = switch (lego.specific) {
+            .case => .default,
+            .lens => .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 },
+            else => unreachable,
+        };
         return .{
-            .point = lego.point,
+            .point = lego.point.applyToLocalPoint(.{ .pos = lego.handleOffset() }),
             .hot_t = lego.hot_t,
-            .radius = kind.toSize(),
+            .radius = radius,
+        };
+    }
+
+    pub fn handleOffset(lego: *const Lego) Vec2 {
+        return switch (lego.specific) {
+            .lens => |lens| .fromPolar(lens.radius + 0.21, 1.0 / 8.0),
+            else => .zero,
         };
     }
 };
@@ -643,6 +768,7 @@ pub const Toybox = struct {
                     case.fnkname = try dupeIntoFloating(toybox, case.fnkname, true);
                 },
                 .area => @panic("TODO"),
+                .microscope, .lens => @panic("TODO"),
             }
         }
 
@@ -777,6 +903,20 @@ const Workspace = struct {
             } });
             sample_case.point.pos = .new(0, 3);
             main_area.specific.area.addChildLast(toybox, sample_case.index);
+        }
+
+        if (true) {
+            const lens_source = try toybox.add(.{ .lens = .source });
+            lens_source.point.pos = .new(3, 3);
+            const lens_target = try toybox.add(.{ .lens = .target });
+            lens_target.point.pos = .new(5, 3);
+            const microscope = try toybox.add(.{ .microscope = .{
+                .lens_source = lens_source.index,
+                .lens_target = lens_target.index,
+                .area = main_area.index,
+            } });
+            microscope.point.pos = .new(4, 3);
+            main_area.specific.area.addChildLast(toybox, microscope.index);
         }
     }
 
@@ -969,6 +1109,9 @@ const Workspace = struct {
 
                 sexpr.kind = .empty;
                 try workspace.undo_stack.append(.{ .reset_data = original_hot_data });
+            } else if (toybox.get(hot_parent_index).specific.tag() == .microscope) {
+                // Case A.3: grabbing without plucking
+                grabbed_element_index = hot_index;
             } else unreachable;
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
