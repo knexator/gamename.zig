@@ -145,7 +145,7 @@ pub const Sexpr = struct {
 
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
-    // exists: bool,
+    exists: bool = false,
     index: Index,
     /// absolute coordinates
     point: Point = .{},
@@ -178,9 +178,28 @@ pub const Lego = struct {
         next: Index,
         prev: Index,
         parent: Index,
+
+        pub fn isFloating(tree: Tree) bool {
+            if (tree.parent == .nothing) {
+                assert(tree.next == .nothing);
+                assert(tree.prev == .nothing);
+                return true;
+            } else return false;
+        }
+
+        pub fn equals(a: Tree, b: Tree) bool {
+            return std.meta.eql(a, b);
+        }
     };
 
-    pub const Index = enum(u32) { nothing = std.math.maxInt(u32), _ };
+    pub const Index = enum(u32) {
+        nothing = std.math.maxInt(u32),
+        _,
+
+        pub fn asI32(index: Index) i32 {
+            return @bitCast(@intFromEnum(index));
+        }
+    };
 };
 
 pub const Toybox = struct {
@@ -207,6 +226,7 @@ pub const Toybox = struct {
         const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
         result.* = kommon.meta.initDefaultFields(Lego);
         result.index = @enumFromInt(toybox.all_legos.items.len - 1);
+        result.exists = true;
         return result;
     }
 
@@ -215,6 +235,7 @@ pub const Toybox = struct {
     }
 
     pub fn addChildFirst(toybox: *Toybox, parent: Lego.Index, new_child: Lego.Index) void {
+        // TODO: call insert?
         assert(parent != .nothing);
         if (new_child == .nothing) return;
         const parent_tree = &toybox.get(parent).tree;
@@ -232,8 +253,76 @@ pub const Toybox = struct {
         comptime assert(!@hasField(Lego.Tree, "last"));
     }
 
+    pub fn isFloating(toybox: *Toybox, index: Lego.Index) bool {
+        return toybox.get(index).tree.isFloating();
+    }
+
+    pub fn destroyFloating(toybox: *Toybox, index: Lego.Index) void {
+        assert(toybox.isFloating(index));
+        if (toybox.get(index).tree.first != .nothing) @panic("TODO: destroy children");
+        toybox.get(index).* = undefined;
+        toybox.get(index).index = index;
+        toybox.get(index).exists = false;
+        // toybox.get(lego).free_next = toybox.free_head;
+        // FIXME: free the memory
+        // @panic("TODO");
+    }
+
+    pub fn recreateFloating(toybox: *Toybox, data: Lego) void {
+        assert(data.tree.isFloating());
+        assert(!toybox.get(data.index).exists);
+        toybox.get(data.index).* = data;
+    }
+
+    pub fn dupeIntoFloating(toybox: *Toybox, original: Lego.Index, dupe_children: bool) !Lego.Index {
+        const result = try toybox.add();
+        const result_index = result.index;
+        result.* = toybox.get(original).*;
+        result.index = result_index;
+        result.tree.parent = .nothing;
+        result.tree.next = .nothing;
+        result.tree.prev = .nothing;
+
+        if (dupe_children) {
+            if (result.tree.first != .nothing) @panic("TODO: dupe children");
+        }
+
+        return result_index;
+    }
+
+    pub fn pop(toybox: *Toybox, child: Lego.Index) void {
+        assert(!toybox.isFloating(child));
+        changeChild(toybox, child, .nothing);
+    }
+
+    pub fn insert(toybox: *Toybox, child: Lego.Index, where: Lego.Tree) void {
+        assert(toybox.isFloating(child));
+        assert(!where.isFloating());
+        defer assert(toybox.get(child).tree.equals(where));
+
+        comptime assert(!@hasField(Lego.Tree, "last"));
+
+        if (where.prev != .nothing) {
+            assert(toybox.get(where.prev).tree.next == where.next);
+            toybox.get(where.prev).tree.next = child;
+        } else {
+            toybox.get(where.parent).tree.first = child;
+        }
+
+        if (where.next != .nothing) {
+            assert(toybox.get(where.next).tree.prev == where.prev);
+            toybox.get(where.next).tree.prev = child;
+        }
+
+        toybox.get(child).tree = where;
+    }
+
+    /// things that pointed to original, now will point to new
+    /// original will be left floating
     pub fn changeChild(toybox: *Toybox, original_child: Lego.Index, new_child: Lego.Index) void {
         assert(original_child != .nothing);
+        assert(new_child == .nothing or toybox.isFloating(new_child));
+        defer assert(toybox.isFloating(original_child));
         const original_tree: Lego.Tree = toybox.get(original_child).tree;
         assert(original_tree.parent != .nothing);
         const parent_tree: *Lego.Tree = &toybox.get(original_tree.parent).tree;
@@ -342,7 +431,7 @@ const Workspace = struct {
     toybox: Toybox,
 
     main_area: Lego.Index,
-    hand_layer: Lego.Index,
+    hand_layer: Lego.Index = .nothing,
 
     grabbing: Lego.Index = .nothing,
 
@@ -350,18 +439,25 @@ const Workspace = struct {
     undo_stack: std.ArrayList(UndoableCommand),
 
     const UndoableCommand = union(enum) {
-        plucked: Plucked,
-        dropped: Dropped,
-        // TODO: for cranks, implement 'grabbed/released'
+        fence,
+        set_data_except_tree: Lego,
 
-        pub const Plucked = struct {
-            original: Lego,
-            substitution: Lego.Index,
-        };
-        pub const Dropped = struct {
-            overwritten: Lego.Index,
+        destroy_floating: Lego.Index,
+        recreate_floating: Lego,
+
+        change_child: struct {
             original: Lego.Index,
-        };
+            new: Lego.Index,
+        },
+
+        insert: struct {
+            where: Lego.Tree,
+            what: Lego.Index,
+        },
+        pop: Lego.Index,
+
+        set_grabbing: Lego.Index,
+        set_handlayer: Lego.Index,
     };
 
     pub fn init(dst: *Workspace, gpa: std.mem.Allocator) !void {
@@ -370,7 +466,6 @@ const Workspace = struct {
         try dst.toybox.init(gpa);
 
         dst.main_area = (try dst.toybox.add()).index;
-        dst.hand_layer = (try dst.toybox.add()).index;
 
         {
             const sample_sexpr = try dst.toybox.add();
@@ -494,20 +589,52 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer) !void {
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
 
+        if (platform.keyboard.wasPressed(.KeyQ)) {
+            std.log.debug("-----", .{});
+            for (workspace.toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (lego.exists) {
+                    std.log.debug("{d} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d}", .{
+                        k,
+                        lego.tree.parent.asI32(),
+                        lego.tree.next.asI32(),
+                        lego.tree.prev.asI32(),
+                        lego.tree.first.asI32(),
+                    });
+                }
+            }
+        }
+
         if (platform.keyboard.wasPressed(.KeyZ)) {
-            if (workspace.undo_stack.pop()) |command| {
-                again: switch (command) {
-                    .plucked => |plucked| {
-                        workspace.toybox.get(plucked.original.index).point = plucked.original.point;
-                        workspace.toybox.changeChild(plucked.original.index, .nothing);
-                        if (plucked.substitution != .nothing) @panic("TODO: remove old substitution");
-                        workspace.toybox.setChild(plucked.original.tree, workspace.grabbing);
+            const toybox = &workspace.toybox;
+            while (workspace.undo_stack.pop()) |command| {
+                switch (command) {
+                    .fence => break,
+                    .destroy_floating => |index| {
+                        toybox.destroyFloating(index);
                     },
-                    .dropped => |dropped| {
-                        workspace.toybox.changeChild(dropped.original, dropped.overwritten);
-                        workspace.toybox.addChildFirst(workspace.hand_layer, dropped.original);
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        continue :again next_cmd;
+                    .recreate_floating => |data| {
+                        toybox.recreateFloating(data);
+                    },
+                    .insert => |insert| {
+                        toybox.insert(insert.what, insert.where);
+                    },
+                    .set_data_except_tree => |data| {
+                        const original_tree = toybox.get(data.index).tree;
+                        toybox.get(data.index).* = data;
+                        toybox.get(data.index).tree = original_tree;
+                    },
+                    .pop => |index| {
+                        toybox.pop(index);
+                    },
+                    .set_grabbing => |index| {
+                        workspace.grabbing = index;
+                    },
+                    .set_handlayer => |index| {
+                        workspace.hand_layer = index;
+                    },
+                    .change_child => |change| {
+                        toybox.changeChild(change.original, change.new);
                     },
                 }
             }
@@ -546,48 +673,82 @@ const Workspace = struct {
         }
 
         const toybox = &workspace.toybox;
-        var commands: std.BoundedArray(UndoableCommand, 2) = .{};
+        try workspace.undo_stack.ensureUnusedCapacity(32);
         if (workspace.grabbing == .nothing and
             hot_and_dropzone.hot != .nothing and
             (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
         {
-            commands.appendAssumeCapacity(.{
-                .plucked = .{
-                    .original = toybox.get(hot_and_dropzone.hot).*,
-                    // TODO: for a nested sexpr, it should be a fresh .empty sexpr
-                    .substitution = .nothing,
-                },
+            // Main case A: plucking/grabbing/clicking something
+            try workspace.undo_stack.append(.fence);
+
+            const hot_index = hot_and_dropzone.hot;
+            const original_hot_data = toybox.get(hot_index).*;
+
+            var grabbed_element_index: Lego.Index = undefined;
+
+            if (mouse.wasPressed(.right)) {
+                // Case A.0: duplicating
+                const new_element_index = try toybox.dupeIntoFloating(hot_index, true);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .destroy_floating = new_element_index,
+                });
+                grabbed_element_index = new_element_index;
+            } else {
+                // Case A.1: plucking a top-level thing
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_data_except_tree = original_hot_data,
+                });
+
+                toybox.pop(hot_index);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .insert = .{
+                        .what = hot_index,
+                        .where = original_hot_data.tree,
+                    },
+                });
+
+                grabbed_element_index = hot_index;
+            }
+
+            assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
+            workspace.grabbing = grabbed_element_index;
+            workspace.undo_stack.appendAssumeCapacity(.{
+                .set_grabbing = .nothing,
+            });
+            workspace.hand_layer = grabbed_element_index;
+            workspace.undo_stack.appendAssumeCapacity(.{
+                .set_handlayer = .nothing,
             });
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
-            commands.appendAssumeCapacity(.{
-                .dropped = .{
-                    .original = workspace.grabbing,
-                    .overwritten = hot_and_dropzone.dropzone,
-                },
-            });
-        }
+            const dropzone_index = hot_and_dropzone.dropzone;
 
-        try workspace.undo_stack.ensureUnusedCapacity(commands.len);
-        for (commands.constSlice()) |new_command| {
-            switch (new_command) {
-                .plucked => |plucked| {
-                    workspace.grabbing = plucked.original.index;
-                    toybox.changeChild(workspace.grabbing, plucked.substitution);
-                    toybox.addChildFirst(workspace.hand_layer, workspace.grabbing);
-                },
-                .dropped => |dropped| {
-                    toybox.changeChild(workspace.grabbing, .nothing);
-                    if (dropped.overwritten == .nothing) {
-                        toybox.addChildFirst(workspace.main_area, workspace.grabbing);
-                    } else {
-                        toybox.changeChild(dropped.overwritten, workspace.grabbing);
-                    }
-                    workspace.grabbing = .nothing;
-                },
+            if (dropzone_index == .nothing) {
+                toybox.addChildFirst(workspace.main_area, workspace.grabbing);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .pop = workspace.grabbing,
+                });
+            } else {
+                toybox.changeChild(dropzone_index, workspace.grabbing);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .change_child = .{
+                        .original = workspace.grabbing,
+                        .new = dropzone_index,
+                    },
+                });
+
+                const overwritten_data = toybox.get(dropzone_index).*;
+                toybox.destroyFloating(dropzone_index);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .recreate_floating = overwritten_data,
+                });
             }
-            workspace.undo_stack.appendAssumeCapacity(new_command);
+
+            workspace.undo_stack.appendAssumeCapacity(.{ .set_grabbing = workspace.grabbing });
+            workspace.undo_stack.appendAssumeCapacity(.{ .set_handlayer = workspace.grabbing });
+            workspace.grabbing = .nothing;
+            workspace.hand_layer = .nothing;
         }
 
         workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, true);
