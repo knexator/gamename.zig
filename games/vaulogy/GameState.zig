@@ -335,6 +335,10 @@ pub const Lego = struct {
                     return .{ .center = transform.center, .scale = 1.0 / transform.scale };
                 }
 
+                pub fn actOnPosition(transform: Transform, position: Vec2) Vec2 {
+                    return transform.actOn(.{ .pos = position }).pos;
+                }
+
                 pub fn actOn(transform: Transform, point: Point) Point {
                     return .{
                         .pos = transform.center.add(
@@ -355,6 +359,20 @@ pub const Lego = struct {
                         .scale = first.scale * second.scale,
                     };
                 }
+
+                pub fn getCamera(transform: Transform, original_camera: Rect) Rect {
+                    return .fromCorners(
+                        transform.inverse().actOnPosition(original_camera.top_left),
+                        transform.inverse().actOnPosition(original_camera.get(.bottom_right)),
+                    );
+                }
+
+                test getCamera {
+                    const original_camera: Rect = .unit;
+                    const transform: Transform = fromLenses(.new(1.5, 0.5), 0.25, .new(0.5, 0.5), 0.5);
+                    const expected_camera: Rect = .fromCenterAndSize(.new(1.5, 0.5), .both(0.5));
+                    try Rect.expectApproxEqAbs(expected_camera, transform.getCamera(original_camera), 0.001);
+                }
             };
 
             pub fn getTransform(microscope: *const Microscope, toybox: *Toybox) Transform {
@@ -362,6 +380,10 @@ pub const Lego = struct {
                 const target_pos = toybox.get(microscope.lens_target).point.pos;
                 const source_radius = toybox.get(microscope.lens_source).specific.lens.radius;
                 const target_radius = toybox.get(microscope.lens_target).specific.lens.radius;
+                return fromLenses(source_pos, source_radius, target_pos, target_radius);
+            }
+
+            fn fromLenses(source_pos: Vec2, source_radius: f32, target_pos: Vec2, target_radius: f32) Transform {
                 const scale = target_radius / source_radius;
                 const delta = target_pos.sub(source_pos);
                 return .{
@@ -598,10 +620,10 @@ pub const Lego = struct {
                     drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, .white);
                     platform.gl.doneStencil();
                     defer platform.gl.stopStencil();
+                    drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, COLORS.bg);
 
-                    // FIXME
-                    // const transform = microscope.getTransform(toybox);
-                    // try draw(toybox, microscope.area, camera, platform, drawer);
+                    const transform = microscope.getTransform(toybox);
+                    try draw(toybox, microscope.area, transform.getCamera(camera), platform, drawer);
                 }
 
                 inline for (.{ microscope.lens_source, microscope.lens_target }) |child_index| {
@@ -656,7 +678,7 @@ pub const Lego = struct {
 
     pub fn handleOffset(lego: *const Lego) Vec2 {
         return switch (lego.specific) {
-            .lens => |lens| .fromPolar(lens.radius + 0.21, 1.0 / 8.0),
+            .lens => |lens| .fromPolar(lens.radius + 0.1, 1.0 / 8.0),
             else => .zero,
         };
     }
@@ -780,12 +802,18 @@ const Workspace = struct {
     toybox: Toybox,
 
     main_area: Lego.Index,
+    lenses_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
 
     grabbing: Lego.Index = .nothing,
+    grabbing_extrainfo: GrabbingExtrainfo = undefined,
 
     camera: Rect = .fromCenterAndSize(.zero, Vec2.new(16, 9).scale(2.75)),
     undo_stack: std.ArrayList(UndoableCommand),
+
+    const GrabbingExtrainfo = struct {
+        plucked: bool,
+    };
 
     const UndoableCommand = union(enum) {
         fence,
@@ -810,6 +838,9 @@ const Workspace = struct {
 
         const main_area = try toybox.add(.{ .area = .{} });
         dst.main_area = main_area.index;
+
+        const lenses_layer = try toybox.add(.{ .area = .{} });
+        dst.lenses_layer = lenses_layer.index;
 
         if (true) {
             const sample_sexpr = try toybox.add(.{ .sexpr = .{
@@ -916,7 +947,7 @@ const Workspace = struct {
                 .area = main_area.index,
             } });
             microscope.point.pos = .new(4, 3);
-            main_area.specific.area.addChildLast(toybox, microscope.index);
+            lenses_layer.specific.area.addChildLast(toybox, microscope.index);
         }
     }
 
@@ -932,7 +963,7 @@ const Workspace = struct {
         const camera = workspace.camera;
         const toybox = &workspace.toybox;
 
-        const roots: [2]Lego.Index = .{ workspace.main_area, workspace.hand_layer };
+        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.lenses_layer, workspace.hand_layer };
         for (&roots) |root| {
             if (root == .nothing) continue;
             try Lego.draw(
@@ -1020,14 +1051,27 @@ const Workspace = struct {
             }
         }
 
-        const interaction: Lego.Interaction = try Lego.findHotAndDropzone(
-            &workspace.toybox,
-            workspace.main_area,
-            mouse.cur.position,
-            workspace.grabbing,
-            platform.frame_arena,
-            0,
-        );
+        const interaction: Lego.Interaction = blk: {
+            const a = try Lego.findHotAndDropzone(
+                &workspace.toybox,
+                workspace.lenses_layer,
+                mouse.cur.position,
+                workspace.grabbing,
+                platform.frame_arena,
+                0,
+            );
+
+            if (a.kind != .nothing) break :blk a;
+
+            break :blk try Lego.findHotAndDropzone(
+                &workspace.toybox,
+                workspace.main_area,
+                mouse.cur.position,
+                workspace.grabbing,
+                platform.frame_arena,
+                0,
+            );
+        };
 
         // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
         // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
@@ -1055,7 +1099,7 @@ const Workspace = struct {
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
-        for ([2]Lego.Index{ workspace.main_area, workspace.hand_layer }) |root| {
+        for ([3]Lego.Index{ workspace.main_area, workspace.lenses_layer, workspace.hand_layer }) |root| {
             if (root == .nothing) continue;
             Lego.updateSprings(
                 &workspace.toybox,
@@ -1086,6 +1130,8 @@ const Workspace = struct {
 
             const original_hot_data = toybox.get(hot_index).*;
             var grabbed_element_index: Lego.Index = undefined;
+            var plucked: bool = true;
+
             if (mouse.wasPressed(.right)) {
                 // Case A.0: duplicating
                 const new_element_index = try toybox.dupeIntoFloating(hot_index, true);
@@ -1111,7 +1157,9 @@ const Workspace = struct {
                 try workspace.undo_stack.append(.{ .reset_data = original_hot_data });
             } else if (toybox.get(hot_parent_index).specific.tag() == .microscope) {
                 // Case A.3: grabbing without plucking
+                try workspace.undo_stack.append(.{ .reset_data = original_hot_data });
                 grabbed_element_index = hot_index;
+                plucked = false;
             } else unreachable;
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
@@ -1119,8 +1167,9 @@ const Workspace = struct {
                 .grabbing = .nothing,
                 .hand_layer = .nothing,
             } });
+            workspace.hand_layer = if (plucked) grabbed_element_index else .nothing;
             workspace.grabbing = grabbed_element_index;
-            workspace.hand_layer = grabbed_element_index;
+            workspace.grabbing_extrainfo = .{ .plucked = plucked };
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
@@ -1135,6 +1184,7 @@ const Workspace = struct {
             // }
 
             if (interaction.kind == .dropzone) {
+                assert(workspace.grabbing_extrainfo.plucked);
                 const dropzone_index = interaction.reverse_path.items[0];
 
                 if (toybox.get(dropzone_index).specific.tag() == .sexpr) {
@@ -1158,8 +1208,11 @@ const Workspace = struct {
                     Lego.destroyFloating(toybox, workspace.grabbing);
                     workspace.undo_stack.appendAssumeCapacity(.{ .recreate_floating_and_maybe_set_it_grabbing_and_hand_layer = grabbed_data });
                 } else unreachable;
+            } else if (!workspace.grabbing_extrainfo.plucked) {
+                // Case B.2: releasing a grabbed thing
+                assert(interaction.kind == .nothing);
             } else {
-                // Case B.2: dropping something on fresh space
+                // Case B.3: dropping a floating thing on fresh space
                 // we directly set it as the area's last child
 
                 // could be unified with the other case, by creating a fresh last child and then overwriting it
@@ -1226,7 +1279,7 @@ pub fn beforeHotReload(self: *GameState) !void {
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    // try self.workspace.init(&self.core_mem, 0);
+    try self.workspace.init(self.usual.mem.gpa);
 }
 
 /// returns true if should quit
