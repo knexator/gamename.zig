@@ -306,24 +306,22 @@ pub const Toybox = struct {
         return &toybox.all_legos.items[@intFromEnum(index)];
     }
 
-    pub fn addChildFirst(toybox: *Toybox, parent: Lego.Index, new_child: Lego.Index) void {
+    pub fn addChildLast(toybox: *Toybox, parent: Lego.Index, new_child: Lego.Index) void {
         // TODO: call insert?
         assert(parent != .nothing);
         if (new_child == .nothing) return;
         const parent_tree = &toybox.get(parent).tree;
         const child_tree = &toybox.get(new_child).tree;
-        assert(child_tree.parent == .nothing and
-            child_tree.next == .nothing and
-            child_tree.prev == .nothing);
+        assert(child_tree.isFloating());
         child_tree.parent = parent;
-        child_tree.next = parent_tree.first;
-        child_tree.prev = .nothing;
-        if (parent_tree.first != .nothing) {
-            toybox.get(parent_tree.first).tree.prev = new_child;
+        child_tree.prev = parent_tree.last;
+        child_tree.next = .nothing;
+        if (parent_tree.last != .nothing) {
+            toybox.get(parent_tree.last).tree.next = new_child;
         }
-        parent_tree.first = new_child;
-        if (parent_tree.last == .nothing) {
-            parent_tree.last = new_child;
+        parent_tree.last = new_child;
+        if (parent_tree.first == .nothing) {
+            parent_tree.first = new_child;
         }
     }
 
@@ -365,12 +363,12 @@ pub const Toybox = struct {
         result.tree.prev = .nothing;
 
         if (dupe_children) {
-            var cur = result.tree.last;
+            var cur = result.tree.first;
             result.tree.first = .nothing;
             result.tree.last = .nothing;
-            while (cur != .nothing) : (cur = toybox.get(cur).tree.prev) {
+            while (cur != .nothing) : (cur = toybox.get(cur).tree.next) {
                 const new_child_index = try toybox.dupeIntoFloating(cur, true);
-                toybox.addChildFirst(result_index, new_child_index);
+                toybox.addChildLast(result_index, new_child_index);
             }
         } else {
             result.tree.first = .nothing;
@@ -486,6 +484,30 @@ pub const Toybox = struct {
         return result;
     }
 
+    /// root to leaf, from last to first child
+    pub fn next_postordered(toybox: *Toybox, current: Lego.Index, root: Lego.Index) VisitStep {
+        assert(root != .nothing and current != .nothing);
+        var result: VisitStep = .{ .next = .nothing };
+        // var result: VisitStep = .{ .next = .nothing, .pop_count = 0, .push_count = 0 };
+        const cur = toybox.get(current);
+        if (cur.tree.last != .nothing) {
+            result.next = cur.tree.last;
+            // result.push_count = 1;
+        } else {
+            var p = current;
+            while (p != .nothing and p != root) : (p = toybox.get(p).tree.parent) {
+                const next = toybox.get(p).tree.prev;
+                if (next != .nothing) {
+                    result.next = next;
+                    break;
+                } else {
+                    // result.pop_count += 1;
+                }
+            }
+        }
+        return result;
+    }
+
     test "iteration order" {
         var toybox: Toybox = undefined;
         try toybox.init(std.testing.allocator);
@@ -498,14 +520,14 @@ pub const Toybox = struct {
         const grandchild_2_1 = try toybox.add();
         const grandchild_2_2 = try toybox.add();
 
-        toybox.addChildFirst(root.index, child_2.index);
-        toybox.addChildFirst(root.index, child_1.index);
+        toybox.addChildLast(root.index, child_1.index);
+        toybox.addChildLast(root.index, child_2.index);
 
-        toybox.addChildFirst(child_1.index, grandchild_1_2.index);
-        toybox.addChildFirst(child_1.index, grandchild_1_1.index);
+        toybox.addChildLast(child_1.index, grandchild_1_1.index);
+        toybox.addChildLast(child_1.index, grandchild_1_2.index);
 
-        toybox.addChildFirst(child_2.index, grandchild_2_2.index);
-        toybox.addChildFirst(child_2.index, grandchild_2_1.index);
+        toybox.addChildLast(child_2.index, grandchild_2_1.index);
+        toybox.addChildLast(child_2.index, grandchild_2_2.index);
 
         const expected_order: [7]VisitStep = .{
             .{ .next = root.index },
@@ -548,8 +570,8 @@ pub const Toybox = struct {
         switch (value) {
             else => {},
             .pair => |pair| {
-                toybox.addChildFirst(result.index, pair.down);
-                toybox.addChildFirst(result.index, pair.up);
+                toybox.addChildLast(result.index, pair.up);
+                toybox.addChildLast(result.index, pair.down);
             },
         }
         return result.index;
@@ -564,9 +586,9 @@ pub const Toybox = struct {
         result.point = point;
         result.case = true;
         result.handle_kind = .existing_case;
-        toybox.addChildFirst(result.index, data.fnkname);
-        toybox.addChildFirst(result.index, data.template);
-        toybox.addChildFirst(result.index, data.pattern);
+        toybox.addChildLast(result.index, data.pattern);
+        toybox.addChildLast(result.index, data.template);
+        toybox.addChildLast(result.index, data.fnkname);
         return result.index;
     }
 };
@@ -619,11 +641,11 @@ const Workspace = struct {
                 .is_pattern = false,
                 .is_pattern_t = 0,
             };
-            dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
+            dst.toybox.addChildLast(dst.main_area, sample_sexpr.index);
         }
 
         if (true) {
-            dst.toybox.addChildFirst(dst.main_area, try dst.toybox.buildSexpr(
+            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(0, 1) },
                 .{ .atom_lit = "false" },
                 false,
@@ -631,7 +653,7 @@ const Workspace = struct {
         }
 
         if (true) {
-            dst.toybox.addChildFirst(dst.main_area, try dst.toybox.buildSexpr(
+            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(3, 0) },
                 .{ .pair = .{
                     .up = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, false),
@@ -642,7 +664,7 @@ const Workspace = struct {
         }
 
         if (true) {
-            dst.toybox.addChildFirst(dst.main_area, try dst.toybox.buildCase(
+            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildCase(
                 .{ .pos = .new(0, 4) },
                 .{
                     .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
@@ -665,7 +687,7 @@ const Workspace = struct {
         const grabbing = workspace.grabbing;
 
         var cur: Lego.Index = root;
-        while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
+        while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
             const lego = toybox.get(cur);
             if (lego.sexpr) |sexpr| {
                 if (Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
@@ -953,7 +975,7 @@ const Workspace = struct {
             const dropzone_index = hot_and_dropzone.dropzone;
 
             if (dropzone_index == .nothing) {
-                toybox.addChildFirst(workspace.main_area, workspace.grabbing);
+                toybox.addChildLast(workspace.main_area, workspace.grabbing);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .pop = workspace.grabbing,
                 });
