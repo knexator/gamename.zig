@@ -237,6 +237,10 @@ pub const Lego = struct {
         _ = lego;
         return .zero;
     }
+
+    pub fn isArea(lego: *const Lego) bool {
+        return lego.sexpr == null and !lego.case;
+    }
 };
 
 pub const Handle = struct {
@@ -368,6 +372,9 @@ pub const Toybox = struct {
                 const new_child_index = try toybox.dupeIntoFloating(cur, true);
                 toybox.addChildFirst(result_index, new_child_index);
             }
+        } else {
+            result.tree.first = .nothing;
+            result.tree.last = .nothing;
         }
 
         return result_index;
@@ -688,8 +695,23 @@ const Workspace = struct {
             while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
                 const lego = toybox.get(cur);
                 if (cur == workspace.grabbing) {
-                    const target: Point = if (dropzone == .nothing) .{ .pos = mouse_pos } else toybox.get(dropzone).point;
+                    const target: Point = if (dropzone == .nothing)
+                        .{ .pos = mouse_pos.sub(lego.handleOffset()) }
+                    else
+                        toybox.get(dropzone).point;
                     lego.point.lerp_towards(target, 0.6, delta_seconds);
+
+                    if (lego.sexpr) |sexpr| {
+                        const is_pattern: bool = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).sexpr.?.is_pattern;
+                        // set is_pattern for all children, instantly snapping the _t value for children
+                        if (is_pattern != sexpr.is_pattern) {
+                            var sexpr_child = cur;
+                            while (sexpr_child != .nothing) : (sexpr_child = toybox.next_preordered(sexpr_child, cur).next) {
+                                toybox.get(sexpr_child).sexpr.?.is_pattern = is_pattern;
+                                if (sexpr_child != cur) toybox.get(sexpr_child).sexpr.?.is_pattern_t = if (is_pattern) 1 else 0;
+                            }
+                        }
+                    }
                 }
                 if (lego.sexpr) |sexpr| {
                     const base_point: Point = if (!sexpr.is_pattern)
@@ -847,6 +869,10 @@ const Workspace = struct {
             comptime assert(!@hasField(Lego, "active_t"));
             comptime assert(!@hasField(Lego, "dropzone_t"));
             math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, platform.delta_seconds);
+
+            if (lego.sexpr) |*sexpr| {
+                math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
+            }
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor and the grabbed thing
@@ -878,21 +904,8 @@ const Workspace = struct {
                     .destroy_floating = new_element_index,
                 });
                 grabbed_element_index = new_element_index;
-            } else if (hot_parent != .nothing and toybox.get(hot_parent).sexpr != null) {
-                // Case A.1: plucking a nested sexpr
-                const new_empty_sexpr = try toybox.dupeIntoFloating(hot_index, false);
-                toybox.get(new_empty_sexpr).sexpr.?.kind = .empty;
-                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_empty_sexpr });
-
-                toybox.changeChild(hot_index, new_empty_sexpr);
-                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                    .new = hot_index,
-                    .original = new_empty_sexpr,
-                } });
-
-                grabbed_element_index = hot_index;
-            } else {
-                // Case A.2: plucking a top-level thing
+            } else if (hot_parent != .nothing and toybox.get(hot_parent).isArea()) {
+                // Case A.1: plucking a top-level thing
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_data_except_tree = original_hot_data,
                 });
@@ -904,6 +917,23 @@ const Workspace = struct {
                         .where = original_hot_data.tree,
                     },
                 });
+
+                grabbed_element_index = hot_index;
+            } else {
+                // Case A.2: plucking a nested sexpr
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_data_except_tree = original_hot_data,
+                });
+
+                const new_empty_sexpr = try toybox.dupeIntoFloating(hot_index, false);
+                toybox.get(new_empty_sexpr).sexpr.?.kind = .empty;
+                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_empty_sexpr });
+
+                toybox.changeChild(hot_index, new_empty_sexpr);
+                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                    .new = hot_index,
+                    .original = new_empty_sexpr,
+                } });
 
                 grabbed_element_index = hot_index;
             }
