@@ -842,12 +842,14 @@ const Workspace = struct {
                         toybox.destroyFloating(index);
                     },
                     .recreate_floating => |data| {
+                        // TODO: recreate children too!
                         toybox.recreateFloating(data);
                     },
                     .insert => |insert| {
                         toybox.insert(insert.what, insert.where);
                     },
                     .set_data_except_tree => |data| {
+                        // TODO: set the children data too!
                         const original_tree = toybox.get(data.index).tree;
                         toybox.get(data.index).* = data;
                         toybox.get(data.index).tree = original_tree;
