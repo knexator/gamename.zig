@@ -133,7 +133,7 @@ drawer: Drawer,
 workspace: Workspace,
 
 pub const Sexpr = struct {
-    pub const Kind = enum { pair, empty, atom_var, atom_lit };
+    pub const Kind = enum { empty, atom_lit, atom_var, pair };
 
     pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
         return ViewHelper.overlapsAtom(is_pattern, sexpr_point, needle_pos, switch (kind) {
@@ -164,6 +164,18 @@ pub const Lego = struct {
         is_pattern: bool,
         is_pattern_t: f32,
     } = null,
+    case: bool = false,
+    handle_kind: enum {
+        none,
+        existing_case,
+
+        pub fn getSize(kind: @This()) Handle.Size {
+            return switch (kind) {
+                .none => unreachable,
+                .existing_case => .default,
+            };
+        }
+    } = .none,
 
     tree: Tree = .{
         .first = .nothing,
@@ -188,6 +200,16 @@ pub const Lego = struct {
             } else return false;
         }
 
+        pub fn isChildless(tree: Tree) bool {
+            if (tree.first == .nothing) {
+                assert(tree.last == .nothing);
+                return true;
+            } else {
+                assert(tree.last != .nothing);
+                return false;
+            }
+        }
+
         pub fn equals(a: Tree, b: Tree) bool {
             return std.meta.eql(a, b);
         }
@@ -201,6 +223,51 @@ pub const Lego = struct {
             return @bitCast(@intFromEnum(index));
         }
     };
+
+    pub fn handle(lego: *const Lego) ?Handle {
+        if (lego.handle_kind == .none) return null;
+        return .{
+            .point = lego.point.applyToLocalPoint(.{ .pos = lego.handleOffset() }),
+            .hot_t = lego.hot_t,
+            .radius = lego.handle_kind.getSize(),
+        };
+    }
+
+    fn handleOffset(lego: *const Lego) Vec2 {
+        _ = lego;
+        return .zero;
+    }
+};
+
+pub const Handle = struct {
+    point: Point,
+    radius: Size,
+    hot_t: f32,
+    // TODO: remove default value
+    alpha: f32 = 1,
+    // TODO: remove
+    comptime enabled: bool = true,
+
+    pub const Size = extern struct {
+        base: f32,
+        hot: f32,
+        hitbox: f32,
+
+        pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
+        pub const zero: Size = .{ .base = 0, .hot = 0, .hitbox = 0 };
+    };
+
+    pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect) !void {
+        if (handle.enabled) {
+            const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
+            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(handle.alpha));
+            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(handle.alpha));
+        }
+    }
+
+    pub fn overlapped(handle: *const Handle, pos: Vec2) bool {
+        return handle.enabled and pos.distTo(handle.point.pos) < handle.radius.hitbox * handle.point.scale;
+    }
 };
 
 pub const Toybox = struct {
@@ -453,6 +520,48 @@ pub const Toybox = struct {
 
         try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
     }
+
+    pub fn buildSexpr(toybox: *Toybox, point: Point, value: union(Sexpr.Kind) {
+        empty,
+        atom_lit: []const u8,
+        atom_var: []const u8,
+        pair: struct { up: Lego.Index, down: Lego.Index },
+    }, is_pattern: bool) !Lego.Index {
+        const result = try toybox.add();
+        result.point = point;
+        result.sexpr = .{
+            .is_pattern = is_pattern,
+            .is_pattern_t = if (is_pattern) 1 else 0,
+            .atom_name = switch (value) {
+                .atom_lit, .atom_var => |v| v,
+                else => undefined,
+            },
+            .kind = value,
+        };
+        switch (value) {
+            else => {},
+            .pair => |pair| {
+                toybox.addChildFirst(result.index, pair.down);
+                toybox.addChildFirst(result.index, pair.up);
+            },
+        }
+        return result.index;
+    }
+
+    pub fn buildCase(toybox: *Toybox, point: Point, data: struct {
+        pattern: Lego.Index,
+        template: Lego.Index,
+        fnkname: Lego.Index,
+    }) !Lego.Index {
+        const result = try toybox.add();
+        result.point = point;
+        result.case = true;
+        result.handle_kind = .existing_case;
+        toybox.addChildFirst(result.index, data.fnkname);
+        toybox.addChildFirst(result.index, data.template);
+        toybox.addChildFirst(result.index, data.pattern);
+        return result.index;
+    }
 };
 
 const Workspace = struct {
@@ -495,7 +604,7 @@ const Workspace = struct {
 
         dst.main_area = (try dst.toybox.add()).index;
 
-        {
+        if (true) {
             const sample_sexpr = try dst.toybox.add();
             sample_sexpr.sexpr = .{
                 .atom_name = "true",
@@ -505,43 +614,35 @@ const Workspace = struct {
             };
             dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
         }
-        {
-            const sample_sexpr = try dst.toybox.add();
-            sample_sexpr.sexpr = .{
-                .atom_name = "false",
-                .kind = .atom_lit,
-                .is_pattern = false,
-                .is_pattern_t = 0,
-            };
-            sample_sexpr.point.pos = .new(0, 1);
-            dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
+
+        if (true) {
+            dst.toybox.addChildFirst(dst.main_area, try dst.toybox.buildSexpr(
+                .{ .pos = .new(0, 1) },
+                .{ .atom_lit = "false" },
+                false,
+            ));
         }
-        {
-            const child_1 = try dst.toybox.add();
-            child_1.sexpr = .{
-                .atom_name = "true",
-                .kind = .atom_lit,
-                .is_pattern = false,
-                .is_pattern_t = 0,
-            };
-            const child_2 = try dst.toybox.add();
-            child_2.sexpr = .{
-                .atom_name = "false",
-                .kind = .atom_lit,
-                .is_pattern = false,
-                .is_pattern_t = 0,
-            };
-            const sample_sexpr = try dst.toybox.add();
-            sample_sexpr.sexpr = .{
-                .atom_name = undefined,
-                .kind = .pair,
-                .is_pattern = false,
-                .is_pattern_t = 0,
-            };
-            dst.toybox.addChildFirst(sample_sexpr.index, child_2.index);
-            dst.toybox.addChildFirst(sample_sexpr.index, child_1.index);
-            sample_sexpr.point.pos = .new(3, 0);
-            dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
+
+        if (true) {
+            dst.toybox.addChildFirst(dst.main_area, try dst.toybox.buildSexpr(
+                .{ .pos = .new(3, 0) },
+                .{ .pair = .{
+                    .up = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, false),
+                    .down = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                } },
+                false,
+            ));
+        }
+
+        if (true) {
+            dst.toybox.addChildFirst(dst.main_area, try dst.toybox.buildCase(
+                .{ .pos = .new(0, 4) },
+                .{
+                    .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
+                    .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                    .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
+                },
+            ));
         }
     }
 
@@ -566,6 +667,11 @@ const Workspace = struct {
                     } else if (toybox.get(grabbing).sexpr != null) {
                         return .{ .dropzone = cur };
                     }
+                }
+            }
+            if (lego.handle()) |handle| {
+                if (grabbing == .nothing and handle.overlapped(needle_pos)) {
+                    return .{ .hot = cur };
                 }
             }
         }
@@ -601,13 +707,24 @@ const Workspace = struct {
 
                     if (sexpr.kind == .pair) {
                         const child_up, const child_down = toybox.getChildrenExact(2, cur);
-                        // const children: [2]Lego.Index = toybox.getChildrenExact(2, cur);
                         toybox.get(child_up).point = lego.point
                             .applyToLocalPoint(lego.visual_offset)
                             .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
                         toybox.get(child_down).point = lego.point
                             .applyToLocalPoint(lego.visual_offset)
                             .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                    }
+                }
+                if (lego.case) {
+                    const offsets: [3]Point = .{
+                        .{ .pos = .xneg },
+                        .{ .pos = .xpos },
+                        .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
+                    };
+                    // const pattern, const template, const fnkname = toybox.getChildrenExact(3, cur);
+                    // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
+                    for (toybox.getChildrenExact(3, cur), offsets) |i, offset| {
+                        toybox.get(i).point = lego.point.applyToLocalPoint(offset);
                     }
                 }
             }
@@ -635,6 +752,7 @@ const Workspace = struct {
                         .atom_var => @panic("TODO"),
                     }
                 }
+                if (lego.handle()) |handle| try handle.draw(drawer, camera);
             }
         }
 
