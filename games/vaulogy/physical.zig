@@ -186,6 +186,14 @@ pub const ViewHelper = struct {
             sexprTemplateChildView(parent, address);
     }
 
+    pub fn offsetFor(is_pattern: bool, which: enum { up, down }) Point {
+        const offsets: Offsets = if (is_pattern) OFFSET_PATTERN else OFFSET_TEMPLATE;
+        return switch (which) {
+            .up => offsets.LEFT,
+            .down => offsets.RIGHT,
+        };
+    }
+
     const Offsets = struct {
         LEFT: Point,
         RIGHT: Point,

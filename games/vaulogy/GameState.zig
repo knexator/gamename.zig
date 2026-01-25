@@ -167,6 +167,7 @@ pub const Lego = struct {
 
     tree: Tree = .{
         .first = .nothing,
+        .last = .nothing,
         .next = .nothing,
         .prev = .nothing,
         .parent = .nothing,
@@ -174,7 +175,7 @@ pub const Lego = struct {
 
     pub const Tree = struct {
         first: Index,
-        // last: Index,
+        last: Index,
         next: Index,
         prev: Index,
         parent: Index,
@@ -250,7 +251,9 @@ pub const Toybox = struct {
             toybox.get(parent_tree.first).tree.prev = new_child;
         }
         parent_tree.first = new_child;
-        comptime assert(!@hasField(Lego.Tree, "last"));
+        if (parent_tree.last == .nothing) {
+            parent_tree.last = new_child;
+        }
     }
 
     pub fn isFloating(toybox: *Toybox, index: Lego.Index) bool {
@@ -259,10 +262,17 @@ pub const Toybox = struct {
 
     pub fn destroyFloating(toybox: *Toybox, index: Lego.Index) void {
         assert(toybox.isFloating(index));
-        if (toybox.get(index).tree.first != .nothing) @panic("TODO: destroy children");
-        toybox.get(index).* = undefined;
-        toybox.get(index).index = index;
-        toybox.get(index).exists = false;
+
+        var cur: Lego.Index = index;
+        while (cur != .nothing) {
+            const next = toybox.next_preordered(cur, index).next;
+            // TODO: set undefined to catch bugs, can't do it now since it would mess the iteration
+            // toybox.get(cur).* = undefined;
+            // toybox.get(cur).index = index;
+            toybox.get(cur).exists = false;
+            cur = next;
+        }
+
         // toybox.get(lego).free_next = toybox.free_head;
         // FIXME: free the memory
         // @panic("TODO");
@@ -284,10 +294,28 @@ pub const Toybox = struct {
         result.tree.prev = .nothing;
 
         if (dupe_children) {
-            if (result.tree.first != .nothing) @panic("TODO: dupe children");
+            var cur = result.tree.last;
+            result.tree.first = .nothing;
+            result.tree.last = .nothing;
+            while (cur != .nothing) : (cur = toybox.get(cur).tree.prev) {
+                const new_child_index = try toybox.dupeIntoFloating(cur, true);
+                toybox.addChildFirst(result_index, new_child_index);
+            }
         }
 
         return result_index;
+    }
+
+    pub fn getChildrenExact(toybox: *Toybox, comptime expected_count: usize, parent: Lego.Index) [expected_count]Lego.Index {
+        var cur = toybox.get(parent).tree.first;
+        var result: [expected_count]Lego.Index = undefined;
+        for (&result) |*dst| {
+            assert(cur != .nothing);
+            dst.* = cur;
+            cur = toybox.get(cur).tree.next;
+        }
+        assert(cur == .nothing);
+        return result;
     }
 
     pub fn pop(toybox: *Toybox, child: Lego.Index) void {
@@ -300,8 +328,6 @@ pub const Toybox = struct {
         assert(!where.isFloating());
         defer assert(toybox.get(child).tree.equals(where));
 
-        comptime assert(!@hasField(Lego.Tree, "last"));
-
         if (where.prev != .nothing) {
             assert(toybox.get(where.prev).tree.next == where.next);
             toybox.get(where.prev).tree.next = child;
@@ -312,6 +338,8 @@ pub const Toybox = struct {
         if (where.next != .nothing) {
             assert(toybox.get(where.next).tree.prev == where.prev);
             toybox.get(where.next).tree.prev = child;
+        } else {
+            toybox.get(where.parent).tree.last = child;
         }
 
         toybox.get(child).tree = where;
@@ -488,6 +516,33 @@ const Workspace = struct {
             sample_sexpr.point.pos = .new(0, 1);
             dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
         }
+        {
+            const child_1 = try dst.toybox.add();
+            child_1.sexpr = .{
+                .atom_name = "true",
+                .kind = .atom_lit,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+            };
+            const child_2 = try dst.toybox.add();
+            child_2.sexpr = .{
+                .atom_name = "false",
+                .kind = .atom_lit,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+            };
+            const sample_sexpr = try dst.toybox.add();
+            sample_sexpr.sexpr = .{
+                .atom_name = undefined,
+                .kind = .pair,
+                .is_pattern = false,
+                .is_pattern_t = 0,
+            };
+            dst.toybox.addChildFirst(sample_sexpr.index, child_2.index);
+            dst.toybox.addChildFirst(sample_sexpr.index, child_1.index);
+            sample_sexpr.point.pos = .new(3, 0);
+            dst.toybox.addChildFirst(dst.main_area, sample_sexpr.index);
+        }
     }
 
     pub fn deinit(workspace: *Workspace) void {
@@ -543,6 +598,17 @@ const Workspace = struct {
                     ), lego.hot_t + lego.dropping_t * 2));
 
                     lego.visual_offset = hovered_point;
+
+                    if (sexpr.kind == .pair) {
+                        const child_up, const child_down = toybox.getChildrenExact(2, cur);
+                        // const children: [2]Lego.Index = toybox.getChildrenExact(2, cur);
+                        toybox.get(child_up).point = lego.point
+                            .applyToLocalPoint(lego.visual_offset)
+                            .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
+                        toybox.get(child_down).point = lego.point
+                            .applyToLocalPoint(lego.visual_offset)
+                            .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                    }
                 }
             }
         }
@@ -683,6 +749,7 @@ const Workspace = struct {
 
             const hot_index = hot_and_dropzone.hot;
             const original_hot_data = toybox.get(hot_index).*;
+            const hot_parent = original_hot_data.tree.parent;
 
             var grabbed_element_index: Lego.Index = undefined;
 
@@ -693,8 +760,21 @@ const Workspace = struct {
                     .destroy_floating = new_element_index,
                 });
                 grabbed_element_index = new_element_index;
+            } else if (hot_parent != .nothing and toybox.get(hot_parent).sexpr != null) {
+                // Case A.1: plucking a nested sexpr
+                const new_empty_sexpr = try toybox.dupeIntoFloating(hot_index, false);
+                toybox.get(new_empty_sexpr).sexpr.?.kind = .empty;
+                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_empty_sexpr });
+
+                toybox.changeChild(hot_index, new_empty_sexpr);
+                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                    .new = hot_index,
+                    .original = new_empty_sexpr,
+                } });
+
+                grabbed_element_index = hot_index;
             } else {
-                // Case A.1: plucking a top-level thing
+                // Case A.2: plucking a top-level thing
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_data_except_tree = original_hot_data,
                 });
