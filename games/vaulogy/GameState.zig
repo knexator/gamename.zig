@@ -13,8 +13,6 @@ const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
 
-// TODO: draw order should be the reverse of hitbox testing order
-
 test "fuzz example" {
     const TestPlatform = struct {
         global_seconds: f32 = 0,
@@ -260,6 +258,14 @@ pub const Lego = struct {
 
         pub const Lens = struct {
             radius: f32,
+            /// set by the parent each frame
+            transform: Microscope.Transform = undefined,
+            /// set by the parent each frame
+            is_target: bool = undefined,
+            /// set by the parent each frame
+            roots_to_interact: []Lego.Index = undefined,
+            /// set by the parent each frame
+            roots_to_draw: []Lego.Index = undefined,
 
             pub const source: Lens = .{ .radius = 0.25 };
             pub const target: Lens = .{ .radius = 1 };
@@ -642,15 +648,6 @@ pub const Toybox = struct {
         try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
     }
 
-    pub fn getMicroscopeTransform(toybox: *Toybox, microscope: Lego.Index) Lego.Specific.Microscope.Transform {
-        const source, const target = toybox.getChildrenExact(2, microscope);
-        const source_pos = toybox.get(source).point.pos;
-        const target_pos = toybox.get(target).point.pos;
-        const source_radius = toybox.get(source).specific.lens.radius;
-        const target_radius = toybox.get(target).specific.lens.radius;
-        return .fromLenses(source_pos, source_radius, target_pos, target_radius);
-    }
-
     pub fn buildSexpr(toybox: *Toybox, point: Point, value: union(Lego.Specific.Sexpr.Kind) {
         empty,
         atom_lit: []const u8,
@@ -802,46 +799,52 @@ const Workspace = struct {
         }
     };
     fn findHotAndDropzone(workspace: *Workspace, needle_pos: Vec2) HotAndDropzone {
-        const toybox = &workspace.toybox;
-        const grabbing = workspace.grabbing;
-
-        const a = _findHotAndDropzone(toybox, workspace.lenses_layer, needle_pos, grabbing);
-        if (!a.empty()) return a;
-
-        const b = _findHotAndDropzone(toybox, workspace.main_area, needle_pos, grabbing);
-        return b;
+        return _findHotAndDropzone(
+            &workspace.toybox,
+            &.{ workspace.main_area, workspace.lenses_layer },
+            needle_pos,
+            workspace.grabbing,
+        );
     }
 
-    fn _findHotAndDropzone(toybox: *Toybox, root: Lego.Index, needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
-        var cur: Lego.Index = root;
-        while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
-            const lego = toybox.get(cur);
-            switch (lego.specific) {
-                .sexpr => |sexpr| {
-                    if (Lego.Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
-                        if (grabbing == .nothing and sexpr.kind != .empty) {
-                            return .{ .hot = cur };
-                        } else if (grabbing != .nothing and toybox.get(grabbing).specific.tag() == .sexpr) {
-                            return .{ .dropzone = cur };
+    fn _findHotAndDropzone(toybox: *Toybox, roots_in_draw_order: []const Lego.Index, needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
+        var it = std.mem.reverseIterator(roots_in_draw_order);
+        while (it.next()) |root| {
+            var cur: Lego.Index = root;
+            while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
+                const lego = toybox.get(cur);
+                switch (lego.specific) {
+                    .sexpr => |sexpr| {
+                        if (Lego.Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
+                            if (grabbing == .nothing and sexpr.kind != .empty) {
+                                return .{ .hot = cur };
+                            } else if (grabbing != .nothing and toybox.get(grabbing).specific.tag() == .sexpr) {
+                                return .{ .dropzone = cur };
+                            }
                         }
-                    }
-                },
-                .microscope => |microscope| {
-                    _, const target = toybox.getChildrenExact(2, cur);
-                    const lens_target = toybox.get(target);
-                    if (lens_target.point.inRange(needle_pos, lens_target.specific.lens.radius)) {
-                        const transform = toybox.getMicroscopeTransform(cur);
-                        const interaction_nested = _findHotAndDropzone(toybox, microscope.area, transform.inverse().actOn(.{ .pos = needle_pos }).pos, grabbing);
-                        if (!std.meta.eql(interaction_nested, .{})) {
-                            return interaction_nested;
+                    },
+                    .lens => |lens| {
+                        if (lens.is_target and lego.point.inRange(needle_pos, lens.radius)) {
+                            const interaction_nested = _findHotAndDropzone(
+                                toybox,
+                                lens.roots_to_interact,
+                                lens.transform.inverse().actOnPosition(needle_pos),
+                                grabbing,
+                            );
+                            if (!std.meta.eql(interaction_nested, .{})) {
+                                return interaction_nested;
+                            }
+
+                            // Avoid interacting with things hidden by the lens
+                            return .{};
                         }
+                    },
+                    .area, .case, .microscope => {},
+                }
+                if (lego.handle()) |handle| {
+                    if (grabbing == .nothing and handle.overlapped(needle_pos)) {
+                        return .{ .hot = cur };
                     }
-                },
-                .area, .case, .lens => {},
-            }
-            if (lego.handle()) |handle| {
-                if (grabbing == .nothing and handle.overlapped(needle_pos)) {
-                    return .{ .hot = cur };
                 }
             }
         }
@@ -926,7 +929,7 @@ const Workspace = struct {
 
         const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
         for (&roots) |root| {
-            try _draw(toybox, root, workspace.hand_layer, camera, platform, drawer);
+            try _draw(toybox, root, camera, platform, drawer);
         }
 
         if (display_fps) try drawer.canvas.drawText(
@@ -943,15 +946,7 @@ const Workspace = struct {
         );
     }
 
-    fn _draw(
-        toybox: *Toybox,
-        root: Lego.Index,
-        /// used for microscope drawing
-        hand_layer: Lego.Index,
-        camera: Rect,
-        platform: PlatformGives,
-        drawer: *Drawer,
-    ) !void {
+    fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
         var cur: Lego.Index = root;
         while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
             const lego = toybox.get(cur);
@@ -966,38 +961,37 @@ const Workspace = struct {
                         .atom_var => @panic("TODO"),
                     }
                 },
-                .microscope => |microscope| {
+                .lens => |lens| {
                     // TODO: nested microscopes don't work
+                    // TODO: lens distortion effect, on source and target
 
-                    _, const target = toybox.getChildrenExact(2, cur);
-                    const lens_target = toybox.get(target);
-                    if (camera.plusMargin(lens_target.specific.lens.radius + 1).contains(lens_target.point.pos)) {
+                    if (lens.is_target and camera.plusMargin(lens.radius + 1).contains(lego.point.pos)) {
                         platform.gl.startStencil();
-                        drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, .white);
+                        drawer.canvas.fillCircle(camera, lego.point.pos, lens.radius, .white);
                         platform.gl.doneStencil();
                         defer platform.gl.stopStencil();
-                        drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, COLORS.bg);
+                        drawer.canvas.fillCircle(camera, lego.point.pos, lens.radius, COLORS.bg);
 
-                        const transform = toybox.getMicroscopeTransform(cur);
-                        try _draw(toybox, microscope.area, hand_layer, transform.getCamera(camera), platform, drawer);
-                        try _draw(toybox, hand_layer, .nothing, transform.getCamera(camera), platform, drawer);
+                        for (lens.roots_to_draw) |asdf| {
+                            try _draw(toybox, asdf, lens.transform.getCamera(camera), platform, drawer);
+                        }
                     }
-                },
-                .lens => |lens| {
+
                     drawer.canvas.strokeCircle(128, camera, lego.point.pos, lego.point.scale * lens.radius, lego.point.scale * 0.05, .black);
                 },
-                .area, .case => {},
+                .area, .case, .microscope => {},
             }
             if (lego.handle()) |handle| try handle.draw(drawer, camera);
         }
     }
 
-    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer) !void {
+    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
+        const toybox = &workspace.toybox;
 
         if (platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
-            for (workspace.toybox.all_legos.items, 0..) |lego, k| {
+            for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (lego.exists) {
                     std.log.debug("{d} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d}", .{
@@ -1012,7 +1006,6 @@ const Workspace = struct {
         }
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
-            const toybox = &workspace.toybox;
             while (workspace.undo_stack.pop()) |command| {
                 switch (command) {
                     .fence => break,
@@ -1066,7 +1059,9 @@ const Workspace = struct {
         );
 
         // update _t
-        for (workspace.toybox.all_legos.items) |*lego| {
+        // Should technically be inside updateSprings,
+        // but I suspect this is faster (and simpler).
+        for (toybox.all_legos.items) |*lego| {
             math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, platform.delta_seconds);
             comptime assert(!@hasField(Lego, "active_t"));
             comptime assert(!@hasField(Lego, "dropzone_t"));
@@ -1080,14 +1075,39 @@ const Workspace = struct {
             }
         }
 
-        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor and the grabbed thing
+        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
         workspace.updateSprings(mouse.cur.position, hot_and_dropzone.dropzone, platform.delta_seconds);
+
+        // update other misc data that doesn't depend on tree order
+        for (toybox.all_legos.items) |*lego| {
+            switch (lego.specific) {
+                .microscope => |microscope| {
+                    const source, const target = workspace.toybox.getChildrenExact(2, lego.index);
+                    const source_pos = toybox.get(source).point.pos;
+                    const target_pos = toybox.get(target).point.pos;
+                    const source_radius = toybox.get(source).specific.lens.radius;
+                    const target_radius = toybox.get(target).specific.lens.radius;
+                    // TODO: include previous microscopes here
+                    const all_roots = try scratch.dupe(Lego.Index, &.{ microscope.area, workspace.hand_layer });
+                    const all_roots_except_hand = all_roots[0 .. all_roots.len - 1];
+                    // TODO: check codegen of this
+                    toybox.get(source).specific.lens.transform = .identity;
+                    toybox.get(source).specific.lens.is_target = false;
+                    toybox.get(source).specific.lens.roots_to_draw = all_roots;
+                    toybox.get(source).specific.lens.roots_to_interact = &.{};
+                    toybox.get(target).specific.lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
+                    toybox.get(target).specific.lens.is_target = true;
+                    toybox.get(target).specific.lens.roots_to_draw = all_roots;
+                    toybox.get(target).specific.lens.roots_to_interact = all_roots_except_hand;
+                },
+                .sexpr, .area, .case, .lens => {},
+            }
+        }
 
         if (drawer) |d| {
             try workspace.draw(platform, d);
         }
 
-        const toybox = &workspace.toybox;
         try workspace.undo_stack.ensureUnusedCapacity(32);
         if (workspace.grabbing == .nothing and
             hot_and_dropzone.hot != .nothing and
@@ -1259,7 +1279,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     platform.gl.clear(COLORS.bg);
-    try self.workspace.update(platform, &self.drawer);
+    try self.workspace.update(platform, &self.drawer, self.usual.mem.frame.allocator());
 
     return false;
 }
