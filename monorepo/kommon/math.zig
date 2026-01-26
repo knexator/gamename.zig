@@ -1866,6 +1866,10 @@ pub const Point = extern struct {
         };
     }
 
+    pub fn inRange(center: Point, needle_pos: Vec2, inclusive_dist: f32) bool {
+        return center.inverseApplyGetLocalPosition(needle_pos).magSq() <= (inclusive_dist * inclusive_dist);
+    }
+
     pub fn plusTurns(original: Point, extra_turns: f32) Point {
         return .{ .pos = original.pos, .turns = original.turns + extra_turns, .scale = original.scale };
     }

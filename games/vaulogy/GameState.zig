@@ -147,18 +147,6 @@ pub const Lego = struct {
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
     immutable: bool = false,
-    case: bool = false,
-    handle_kind: enum {
-        none,
-        existing_case,
-
-        pub fn getSize(kind: @This()) Handle.Size {
-            return switch (kind) {
-                .none => unreachable,
-                .existing_case => .default,
-            };
-        }
-    } = .none,
 
     tree: Tree = .empty,
 
@@ -167,9 +155,9 @@ pub const Lego = struct {
     pub const Specific = union(enum) {
         area,
         sexpr: Sexpr,
-        case: Case,
-        // microscope: Microscope,
-        // lens: Lens,
+        case,
+        microscope: Microscope,
+        lens: Lens,
 
         pub const Tag = std.meta.Tag(Specific);
 
@@ -190,8 +178,6 @@ pub const Lego = struct {
             };
         }
 
-        pub const Area = void;
-
         pub const Sexpr = struct {
             kind: Kind,
             is_pattern: bool,
@@ -208,7 +194,76 @@ pub const Lego = struct {
             }
         };
 
-        pub const Case = void;
+        pub const Microscope = struct {
+            area: Lego.Index,
+
+            /// To understand this, think of the fixed point of the lenses zoom
+            pub const Transform = struct {
+                center: Vec2,
+                scale: f32,
+
+                pub const identity: Transform = .{ .center = .zero, .scale = 1 };
+
+                pub fn inverse(transform: Transform) Transform {
+                    return .{ .center = transform.center, .scale = 1.0 / transform.scale };
+                }
+
+                pub fn actOnPosition(transform: Transform, position: Vec2) Vec2 {
+                    return transform.actOn(.{ .pos = position }).pos;
+                }
+
+                pub fn actOn(transform: Transform, point: Point) Point {
+                    return .{
+                        .pos = transform.center.add(
+                            point.pos.sub(transform.center).scale(transform.scale),
+                        ),
+                        .scale = point.scale * transform.scale,
+                        .turns = point.turns,
+                    };
+                }
+
+                pub fn combine(first: Transform, second: Transform) Transform {
+                    // center is the fixed point of applying first, then second
+                    return .{
+                        .center = Vec2.add(
+                            first.center.scale((1.0 - first.scale) * second.scale),
+                            second.center.scale(1.0 - second.scale),
+                        ).scale(1.0 / (1.0 - first.scale * second.scale)),
+                        .scale = first.scale * second.scale,
+                    };
+                }
+
+                pub fn getCamera(transform: Transform, original_camera: Rect) Rect {
+                    return .fromCorners(
+                        transform.inverse().actOnPosition(original_camera.top_left),
+                        transform.inverse().actOnPosition(original_camera.get(.bottom_right)),
+                    );
+                }
+
+                test getCamera {
+                    const original_camera: Rect = .unit;
+                    const transform: Transform = fromLenses(.new(1.5, 0.5), 0.25, .new(0.5, 0.5), 0.5);
+                    const expected_camera: Rect = .fromCenterAndSize(.new(1.5, 0.5), .both(0.5));
+                    try Rect.expectApproxEqAbs(expected_camera, transform.getCamera(original_camera), 0.001);
+                }
+
+                fn fromLenses(source_pos: Vec2, source_radius: f32, target_pos: Vec2, target_radius: f32) Transform {
+                    const scale = target_radius / source_radius;
+                    const delta = target_pos.sub(source_pos);
+                    return .{
+                        .center = source_pos.sub(delta.scale(1.0 / (scale - 1.0))),
+                        .scale = scale,
+                    };
+                }
+            };
+        };
+
+        pub const Lens = struct {
+            radius: f32,
+
+            pub const source: Lens = .{ .radius = 0.25 };
+            pub const target: Lens = .{ .radius = 1 };
+        };
     };
 
     pub const Tree = struct {
@@ -259,17 +314,23 @@ pub const Lego = struct {
     };
 
     pub fn handle(lego: *const Lego) ?Handle {
-        if (lego.handle_kind == .none) return null;
+        const radius: Handle.Size = switch (lego.specific) {
+            .sexpr, .area, .microscope => return null,
+            .case => .default,
+            .lens => .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 },
+        };
         return .{
             .point = lego.point.applyToLocalPoint(.{ .pos = lego.handleOffset() }),
             .hot_t = lego.hot_t,
-            .radius = lego.handle_kind.getSize(),
+            .radius = radius,
         };
     }
 
     fn handleOffset(lego: *const Lego) Vec2 {
-        _ = lego;
-        return .zero;
+        return switch (lego.specific) {
+            .lens => |lens| .fromPolar(lens.radius + 0.1, 1.0 / 8.0),
+            else => .zero,
+        };
     }
 };
 
@@ -374,7 +435,7 @@ pub const Toybox = struct {
         }
 
         // toybox.get(lego).free_next = toybox.free_head;
-        // FIXME: free the memory
+        // TODO: free the memory
         // @panic("TODO");
     }
 
@@ -581,6 +642,15 @@ pub const Toybox = struct {
         try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
     }
 
+    pub fn getMicroscopeTransform(toybox: *Toybox, microscope: Lego.Index) Lego.Specific.Microscope.Transform {
+        const source, const target = toybox.getChildrenExact(2, microscope);
+        const source_pos = toybox.get(source).point.pos;
+        const target_pos = toybox.get(target).point.pos;
+        const source_radius = toybox.get(source).specific.lens.radius;
+        const target_radius = toybox.get(target).specific.lens.radius;
+        return .fromLenses(source_pos, source_radius, target_pos, target_radius);
+    }
+
     pub fn buildSexpr(toybox: *Toybox, point: Point, value: union(Lego.Specific.Sexpr.Kind) {
         empty,
         atom_lit: []const u8,
@@ -614,10 +684,20 @@ pub const Toybox = struct {
     }) !Lego.Index {
         const result = try toybox.add(.case);
         result.point = point;
-        result.handle_kind = .existing_case;
         toybox.addChildLast(result.index, data.pattern);
         toybox.addChildLast(result.index, data.template);
         toybox.addChildLast(result.index, data.fnkname);
+        return result.index;
+    }
+
+    pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2, watched_area: Lego.Index) !Lego.Index {
+        const lens_source = try toybox.add(.{ .lens = .{ .radius = 0.25 } });
+        lens_source.point.pos = source;
+        const lens_target = try toybox.add(.{ .lens = .{ .radius = 1 } });
+        lens_target.point.pos = target;
+        const result = try toybox.add(.{ .microscope = .{ .area = watched_area } });
+        toybox.addChildLast(result.index, lens_source.index);
+        toybox.addChildLast(result.index, lens_target.index);
         return result.index;
     }
 };
@@ -696,6 +776,14 @@ const Workspace = struct {
                 },
             ));
         }
+
+        if (true) {
+            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildMicroscope(
+                .new(2, 2),
+                .new(4, 3),
+                dst.main_area,
+            ));
+        }
     }
 
     pub fn deinit(workspace: *Workspace) void {
@@ -709,6 +797,10 @@ const Workspace = struct {
         const root = workspace.main_area;
         const grabbing = workspace.grabbing;
 
+        return _findHotAndDropzone(toybox, root, needle_pos, grabbing);
+    }
+
+    fn _findHotAndDropzone(toybox: *Toybox, root: Lego.Index, needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
         var cur: Lego.Index = root;
         while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
             const lego = toybox.get(cur);
@@ -722,7 +814,18 @@ const Workspace = struct {
                         }
                     }
                 },
-                .area, .case => {},
+                .microscope => |microscope| {
+                    _, const target = toybox.getChildrenExact(2, cur);
+                    const lens_target = toybox.get(target);
+                    if (lens_target.point.inRange(needle_pos, lens_target.specific.lens.radius)) {
+                        const transform = toybox.getMicroscopeTransform(cur);
+                        const interaction_nested = _findHotAndDropzone(toybox, microscope.area, transform.inverse().actOn(.{ .pos = needle_pos }).pos, grabbing);
+                        if (!std.meta.eql(interaction_nested, .{})) {
+                            return interaction_nested;
+                        }
+                    }
+                },
+                .area, .case, .lens => {},
             }
             if (lego.handle()) |handle| {
                 if (grabbing == .nothing and handle.overlapped(needle_pos)) {
@@ -796,7 +899,7 @@ const Workspace = struct {
                             toybox.get(i).point = lego.point.applyToLocalPoint(offset);
                         }
                     },
-                    .area => {},
+                    .area, .microscope, .lens => {},
                 }
             }
         }
@@ -823,6 +926,26 @@ const Workspace = struct {
                             .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
                             .atom_var => @panic("TODO"),
                         }
+                    },
+                    .microscope => |microscope| {
+                        // TODO: nested microscopes don't work
+                        // FIXME: everything
+                        _ = microscope;
+
+                        // const lens_target = toybox.get(microscope.lens_target);
+                        // if (camera.plusMargin(lens_target.specific.lens.radius + 1).contains(lens_target.point.pos)) {
+                        //     platform.gl.startStencil();
+                        //     drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, .white);
+                        //     platform.gl.doneStencil();
+                        //     defer platform.gl.stopStencil();
+                        //     drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, COLORS.bg);
+
+                        //     const transform = microscope.getTransform(toybox);
+                        //     try draw(toybox, microscope.area, transform.getCamera(camera), platform, drawer);
+                        // }
+                    },
+                    .lens => |lens| {
+                        drawer.canvas.strokeCircle(128, camera, lego.point.pos, lego.point.scale * lens.radius, lego.point.scale * 0.05, .black);
                     },
                     .area, .case => {},
                 }
@@ -928,7 +1051,7 @@ const Workspace = struct {
                 .sexpr => |*sexpr| {
                     math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
                 },
-                .area, .case => {},
+                .area, .case, .microscope, .lens => {},
             }
         }
 
@@ -953,6 +1076,7 @@ const Workspace = struct {
             const hot_parent = original_hot_data.tree.parent;
 
             var grabbed_element_index: Lego.Index = undefined;
+            var plucked: bool = true;
 
             if (mouse.wasPressed(.right)) {
                 // Case A.0: duplicating
@@ -976,7 +1100,7 @@ const Workspace = struct {
                 });
 
                 grabbed_element_index = hot_index;
-            } else {
+            } else if (original_hot_data.specific.tag() == .sexpr) {
                 // Case A.2: plucking a nested sexpr
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_data_except_tree = original_hot_data,
@@ -993,28 +1117,33 @@ const Workspace = struct {
                 } });
 
                 grabbed_element_index = hot_index;
-            }
+            } else if (original_hot_data.specific.tag() == .lens) {
+                // Case A.3: grabbing rather than plucking
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_data_except_tree = original_hot_data,
+                });
+                grabbed_element_index = hot_index;
+                plucked = false;
+            } else unreachable;
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
             workspace.grabbing = grabbed_element_index;
             workspace.undo_stack.appendAssumeCapacity(.{
                 .set_grabbing = .nothing,
             });
-            workspace.hand_layer = grabbed_element_index;
-            workspace.undo_stack.appendAssumeCapacity(.{
-                .set_handlayer = .nothing,
-            });
+            if (plucked) {
+                workspace.hand_layer = grabbed_element_index;
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_handlayer = .nothing,
+                });
+            }
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
         {
             const dropzone_index = hot_and_dropzone.dropzone;
 
-            if (dropzone_index == .nothing) {
-                toybox.addChildLast(workspace.main_area, workspace.grabbing);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .pop = workspace.grabbing,
-                });
-            } else {
+            if (dropzone_index != .nothing) {
+                assert(toybox.isFloating(workspace.grabbing));
                 toybox.changeChild(dropzone_index, workspace.grabbing);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .change_child = .{
@@ -1028,10 +1157,19 @@ const Workspace = struct {
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .recreate_floating = overwritten_data,
                 });
+            } else if (!toybox.isFloating(workspace.grabbing)) {
+                // Case B.2: releasing a grabbed thing
+                assert(dropzone_index == .nothing);
+            } else {
+                // Case B.3: dropping a floating thing on fresh space
+                toybox.addChildLast(workspace.main_area, workspace.grabbing);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .pop = workspace.grabbing,
+                });
             }
 
             workspace.undo_stack.appendAssumeCapacity(.{ .set_grabbing = workspace.grabbing });
-            workspace.undo_stack.appendAssumeCapacity(.{ .set_handlayer = workspace.grabbing });
+            workspace.undo_stack.appendAssumeCapacity(.{ .set_handlayer = workspace.hand_layer });
             workspace.grabbing = .nothing;
             workspace.hand_layer = .nothing;
         }
