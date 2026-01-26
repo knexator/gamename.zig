@@ -852,7 +852,7 @@ const Workspace = struct {
     fn updateSprings(workspace: *Workspace, mouse_pos: Vec2, dropzone: Lego.Index, delta_seconds: f32) void {
         const toybox = &workspace.toybox;
 
-        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.lenses_layer, workspace.hand_layer };
+        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
         for (&roots) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
@@ -924,9 +924,9 @@ const Workspace = struct {
         const camera = workspace.camera;
         const toybox = &workspace.toybox;
 
-        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.lenses_layer, workspace.hand_layer };
+        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
         for (&roots) |root| {
-            try _draw(toybox, root, camera, platform, drawer);
+            try _draw(toybox, root, workspace.hand_layer, camera, platform, drawer);
         }
 
         if (display_fps) try drawer.canvas.drawText(
@@ -943,7 +943,15 @@ const Workspace = struct {
         );
     }
 
-    fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
+    fn _draw(
+        toybox: *Toybox,
+        root: Lego.Index,
+        /// used for microscope drawing
+        hand_layer: Lego.Index,
+        camera: Rect,
+        platform: PlatformGives,
+        drawer: *Drawer,
+    ) !void {
         var cur: Lego.Index = root;
         while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
             const lego = toybox.get(cur);
@@ -971,7 +979,8 @@ const Workspace = struct {
                         drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, COLORS.bg);
 
                         const transform = toybox.getMicroscopeTransform(cur);
-                        try _draw(toybox, microscope.area, transform.getCamera(camera), platform, drawer);
+                        try _draw(toybox, microscope.area, hand_layer, transform.getCamera(camera), platform, drawer);
+                        try _draw(toybox, hand_layer, .nothing, transform.getCamera(camera), platform, drawer);
                     }
                 },
                 .lens => |lens| {
