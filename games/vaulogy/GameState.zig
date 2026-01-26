@@ -132,17 +132,6 @@ usual: kommon.Usual,
 drawer: Drawer,
 workspace: Workspace,
 
-pub const Sexpr = struct {
-    pub const Kind = enum { empty, atom_lit, atom_var, pair };
-
-    pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
-        return ViewHelper.overlapsAtom(is_pattern, sexpr_point, needle_pos, switch (kind) {
-            .atom_var, .atom_lit, .empty => .atom,
-            .pair => .pair,
-        });
-    }
-};
-
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
     exists: bool = false,
@@ -158,12 +147,6 @@ pub const Lego = struct {
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
     immutable: bool = false,
-    sexpr: ?struct {
-        kind: Sexpr.Kind,
-        atom_name: []const u8,
-        is_pattern: bool,
-        is_pattern_t: f32,
-    } = null,
     case: bool = false,
     handle_kind: enum {
         none,
@@ -177,13 +160,56 @@ pub const Lego = struct {
         }
     } = .none,
 
-    tree: Tree = .{
-        .first = .nothing,
-        .last = .nothing,
-        .next = .nothing,
-        .prev = .nothing,
-        .parent = .nothing,
-    },
+    tree: Tree = .empty,
+
+    specific: Specific,
+
+    pub const Specific = union(enum) {
+        area,
+        sexpr: Sexpr,
+        case: Case,
+        // microscope: Microscope,
+        // lens: Lens,
+
+        pub const Tag = std.meta.Tag(Specific);
+
+        pub fn tag(specific: *const Specific) Tag {
+            return std.meta.activeTag(specific.*);
+        }
+
+        pub fn Tagged(comptime specific_tag: Tag) type {
+            inline for (@typeInfo(Specific).@"union".fields) |field| {
+                if (std.mem.eql(u8, field.name, @tagName(specific_tag))) return field.type;
+            } else comptime unreachable;
+        }
+
+        pub fn as(specific: *Specific, comptime specific_tag: Tag) ?*Tagged(specific_tag) {
+            return switch (specific.*) {
+                specific_tag => |*x| x,
+                else => null,
+            };
+        }
+
+        pub const Area = void;
+
+        pub const Sexpr = struct {
+            kind: Kind,
+            is_pattern: bool,
+            is_pattern_t: f32,
+            atom_name: []const u8,
+
+            pub const Kind = enum { empty, atom_lit, atom_var, pair };
+
+            pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
+                return ViewHelper.overlapsAtom(is_pattern, sexpr_point, needle_pos, switch (kind) {
+                    .atom_var, .atom_lit, .empty => .atom,
+                    .pair => .pair,
+                });
+            }
+        };
+
+        pub const Case = void;
+    };
 
     pub const Tree = struct {
         first: Index,
@@ -191,6 +217,14 @@ pub const Lego = struct {
         next: Index,
         prev: Index,
         parent: Index,
+
+        pub const empty: Tree = .{
+            .first = .nothing,
+            .last = .nothing,
+            .next = .nothing,
+            .prev = .nothing,
+            .parent = .nothing,
+        };
 
         pub fn isFloating(tree: Tree) bool {
             if (tree.parent == .nothing) {
@@ -236,10 +270,6 @@ pub const Lego = struct {
     fn handleOffset(lego: *const Lego) Vec2 {
         _ = lego;
         return .zero;
-    }
-
-    pub fn isArea(lego: *const Lego) bool {
-        return lego.sexpr == null and !lego.case;
     }
 };
 
@@ -294,11 +324,12 @@ pub const Toybox = struct {
         self.all_legos_arena.deinit();
     }
 
-    pub fn add(toybox: *Toybox) !*Lego {
+    pub fn add(toybox: *Toybox, specific: Lego.Specific) !*Lego {
         const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
         result.* = kommon.meta.initDefaultFields(Lego);
         result.index = @enumFromInt(toybox.all_legos.items.len - 1);
         result.exists = true;
+        result.specific = specific;
         return result;
     }
 
@@ -354,7 +385,7 @@ pub const Toybox = struct {
     }
 
     pub fn dupeIntoFloating(toybox: *Toybox, original: Lego.Index, dupe_children: bool) !Lego.Index {
-        const result = try toybox.add();
+        const result = try toybox.add(undefined);
         const result_index = result.index;
         result.* = toybox.get(original).*;
         result.index = result_index;
@@ -550,15 +581,13 @@ pub const Toybox = struct {
         try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
     }
 
-    pub fn buildSexpr(toybox: *Toybox, point: Point, value: union(Sexpr.Kind) {
+    pub fn buildSexpr(toybox: *Toybox, point: Point, value: union(Lego.Specific.Sexpr.Kind) {
         empty,
         atom_lit: []const u8,
         atom_var: []const u8,
         pair: struct { up: Lego.Index, down: Lego.Index },
     }, is_pattern: bool) !Lego.Index {
-        const result = try toybox.add();
-        result.point = point;
-        result.sexpr = .{
+        const result = try toybox.add(.{ .sexpr = .{
             .is_pattern = is_pattern,
             .is_pattern_t = if (is_pattern) 1 else 0,
             .atom_name = switch (value) {
@@ -566,7 +595,8 @@ pub const Toybox = struct {
                 else => undefined,
             },
             .kind = value,
-        };
+        } });
+        result.point = point;
         switch (value) {
             else => {},
             .pair => |pair| {
@@ -582,9 +612,8 @@ pub const Toybox = struct {
         template: Lego.Index,
         fnkname: Lego.Index,
     }) !Lego.Index {
-        const result = try toybox.add();
+        const result = try toybox.add(.case);
         result.point = point;
-        result.case = true;
         result.handle_kind = .existing_case;
         toybox.addChildLast(result.index, data.pattern);
         toybox.addChildLast(result.index, data.template);
@@ -631,20 +660,14 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         try dst.toybox.init(gpa);
 
-        dst.main_area = (try dst.toybox.add()).index;
+        dst.main_area = (try dst.toybox.add(.area)).index;
 
         if (true) {
-            const sample_sexpr = try dst.toybox.add();
-            sample_sexpr.sexpr = .{
-                .atom_name = "true",
-                .kind = .atom_lit,
-                .is_pattern = false,
-                .is_pattern_t = 0,
-            };
-            dst.toybox.addChildLast(dst.main_area, sample_sexpr.index);
-        }
-
-        if (true) {
+            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
+                .{ .pos = .new(0, 0) },
+                .{ .atom_lit = "true" },
+                false,
+            ));
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(0, 1) },
                 .{ .atom_lit = "false" },
@@ -689,14 +712,17 @@ const Workspace = struct {
         var cur: Lego.Index = root;
         while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
             const lego = toybox.get(cur);
-            if (lego.sexpr) |sexpr| {
-                if (Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
-                    if (grabbing == .nothing) {
-                        return .{ .hot = cur };
-                    } else if (toybox.get(grabbing).sexpr != null) {
-                        return .{ .dropzone = cur };
+            switch (lego.specific) {
+                .sexpr => |sexpr| {
+                    if (Lego.Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
+                        if (grabbing == .nothing) {
+                            return .{ .hot = cur };
+                        } else if (toybox.get(grabbing).specific.tag() == .sexpr) {
+                            return .{ .dropzone = cur };
+                        }
                     }
-                }
+                },
+                .area, .case => {},
             }
             if (lego.handle()) |handle| {
                 if (grabbing == .nothing and handle.overlapped(needle_pos)) {
@@ -722,51 +748,55 @@ const Workspace = struct {
                     else
                         toybox.get(dropzone).point;
                     lego.point.lerp_towards(target, 0.6, delta_seconds);
-
-                    if (lego.sexpr) |*sexpr| {
-                        sexpr.is_pattern = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).sexpr.?.is_pattern;
-                    }
                 }
-                if (lego.sexpr) |sexpr| {
-                    const base_point: Point = if (!sexpr.is_pattern)
-                        .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
-                    else
-                        .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
 
-                    const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
-                        .{ .turns = -0.01, .pos = .new(0.25, 0) },
-                        .{ .turns = 0.01, .pos = .new(-0.25, 0) },
-                        sexpr.is_pattern_t,
-                    ), lego.hot_t + lego.dropping_t * 2));
+                switch (lego.specific) {
+                    .sexpr => |*sexpr| {
+                        if (cur == workspace.grabbing) {
+                            sexpr.is_pattern = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).specific.sexpr.is_pattern;
+                        }
 
-                    lego.visual_offset = hovered_point;
+                        const base_point: Point = if (!sexpr.is_pattern)
+                            .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
+                        else
+                            .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
 
-                    if (sexpr.kind == .pair) {
-                        const child_up, const child_down = toybox.getChildrenExact(2, cur);
-                        toybox.get(child_up).point = lego.point
-                            .applyToLocalPoint(lego.visual_offset)
-                            .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
-                        toybox.get(child_down).point = lego.point
-                            .applyToLocalPoint(lego.visual_offset)
-                            .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                        const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
+                            .{ .turns = -0.01, .pos = .new(0.25, 0) },
+                            .{ .turns = 0.01, .pos = .new(-0.25, 0) },
+                            sexpr.is_pattern_t,
+                        ), lego.hot_t + lego.dropping_t * 2));
 
-                        toybox.get(child_up).sexpr.?.is_pattern = sexpr.is_pattern;
-                        toybox.get(child_up).sexpr.?.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
-                        toybox.get(child_down).sexpr.?.is_pattern = sexpr.is_pattern;
-                        toybox.get(child_down).sexpr.?.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
-                    }
-                }
-                if (lego.case) {
-                    const offsets: [3]Point = .{
-                        .{ .pos = .xneg },
-                        .{ .pos = .xpos },
-                        .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
-                    };
-                    // const pattern, const template, const fnkname = toybox.getChildrenExact(3, cur);
-                    // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
-                    for (toybox.getChildrenExact(3, cur), offsets) |i, offset| {
-                        toybox.get(i).point = lego.point.applyToLocalPoint(offset);
-                    }
+                        lego.visual_offset = hovered_point;
+
+                        if (sexpr.kind == .pair) {
+                            const child_up, const child_down = toybox.getChildrenExact(2, cur);
+                            toybox.get(child_up).point = lego.point
+                                .applyToLocalPoint(lego.visual_offset)
+                                .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
+                            toybox.get(child_down).point = lego.point
+                                .applyToLocalPoint(lego.visual_offset)
+                                .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+
+                            toybox.get(child_up).specific.sexpr.is_pattern = sexpr.is_pattern;
+                            toybox.get(child_up).specific.sexpr.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
+                            toybox.get(child_down).specific.sexpr.is_pattern = sexpr.is_pattern;
+                            toybox.get(child_down).specific.sexpr.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
+                        }
+                    },
+                    .case => {
+                        const offsets: [3]Point = .{
+                            .{ .pos = .xneg },
+                            .{ .pos = .xpos },
+                            .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
+                        };
+                        // const pattern, const template, const fnkname = toybox.getChildrenExact(3, cur);
+                        // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
+                        for (toybox.getChildrenExact(3, cur), offsets) |i, offset| {
+                            toybox.get(i).point = lego.point.applyToLocalPoint(offset);
+                        }
+                    },
+                    .area => {},
                 }
             }
         }
@@ -785,13 +815,16 @@ const Workspace = struct {
             while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
                 const lego = toybox.get(cur);
                 const point = lego.point.applyToLocalPoint(lego.visual_offset);
-                if (lego.sexpr) |sexpr| {
-                    switch (sexpr.kind) {
-                        .empty => {},
-                        .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                        .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                        .atom_var => @panic("TODO"),
-                    }
+                switch (lego.specific) {
+                    .sexpr => |sexpr| {
+                        switch (sexpr.kind) {
+                            .empty => {},
+                            .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
+                            .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
+                            .atom_var => @panic("TODO"),
+                        }
+                    },
+                    .area, .case => {},
                 }
                 if (lego.handle()) |handle| try handle.draw(drawer, camera);
             }
@@ -891,8 +924,11 @@ const Workspace = struct {
             comptime assert(!@hasField(Lego, "dropzone_t"));
             math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, platform.delta_seconds);
 
-            if (lego.sexpr) |*sexpr| {
-                math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
+            switch (lego.specific) {
+                .sexpr => |*sexpr| {
+                    math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
+                },
+                .area, .case => {},
             }
         }
 
@@ -925,7 +961,7 @@ const Workspace = struct {
                     .destroy_floating = new_element_index,
                 });
                 grabbed_element_index = new_element_index;
-            } else if (hot_parent != .nothing and toybox.get(hot_parent).isArea()) {
+            } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .area) {
                 // Case A.1: plucking a top-level thing
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_data_except_tree = original_hot_data,
@@ -947,7 +983,7 @@ const Workspace = struct {
                 });
 
                 const new_empty_sexpr = try toybox.dupeIntoFloating(hot_index, false);
-                toybox.get(new_empty_sexpr).sexpr.?.kind = .empty;
+                toybox.get(new_empty_sexpr).specific.sexpr.kind = .empty;
                 workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_empty_sexpr });
 
                 toybox.changeChild(hot_index, new_empty_sexpr);
