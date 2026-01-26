@@ -715,9 +715,9 @@ const Workspace = struct {
             switch (lego.specific) {
                 .sexpr => |sexpr| {
                     if (Lego.Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
-                        if (grabbing == .nothing) {
+                        if (grabbing == .nothing and sexpr.kind != .empty) {
                             return .{ .hot = cur };
-                        } else if (toybox.get(grabbing).specific.tag() == .sexpr) {
+                        } else if (grabbing != .nothing and toybox.get(grabbing).specific.tag() == .sexpr) {
                             return .{ .dropzone = cur };
                         }
                     }
