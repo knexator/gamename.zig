@@ -604,13 +604,13 @@ pub const Toybox = struct {
         var toybox: Toybox = undefined;
         try toybox.init(std.testing.allocator);
         defer toybox.deinit();
-        const root = try toybox.add();
-        const child_1 = try toybox.add();
-        const child_2 = try toybox.add();
-        const grandchild_1_1 = try toybox.add();
-        const grandchild_1_2 = try toybox.add();
-        const grandchild_2_1 = try toybox.add();
-        const grandchild_2_2 = try toybox.add();
+        const root = try toybox.add(undefined);
+        const child_1 = try toybox.add(undefined);
+        const child_2 = try toybox.add(undefined);
+        const grandchild_1_1 = try toybox.add(undefined);
+        const grandchild_1_2 = try toybox.add(undefined);
+        const grandchild_2_1 = try toybox.add(undefined);
+        const grandchild_2_2 = try toybox.add(undefined);
 
         toybox.addChildLast(root.index, child_1.index);
         toybox.addChildLast(root.index, child_2.index);
@@ -706,6 +706,7 @@ const Workspace = struct {
     toybox: Toybox,
 
     main_area: Lego.Index,
+    lenses_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
 
     grabbing: Lego.Index = .nothing,
@@ -741,6 +742,7 @@ const Workspace = struct {
         try dst.toybox.init(gpa);
 
         dst.main_area = (try dst.toybox.add(.area)).index;
+        dst.lenses_layer = (try dst.toybox.add(.area)).index;
 
         if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
@@ -778,7 +780,7 @@ const Workspace = struct {
         }
 
         if (true) {
-            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildMicroscope(
+            dst.toybox.addChildLast(dst.lenses_layer, try dst.toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
                 dst.main_area,
@@ -791,13 +793,23 @@ const Workspace = struct {
         workspace.undo_stack.deinit();
     }
 
-    const HotAndDropzone = struct { hot: Lego.Index = .nothing, dropzone: Lego.Index = .nothing };
+    const HotAndDropzone = struct {
+        hot: Lego.Index = .nothing,
+        dropzone: Lego.Index = .nothing,
+
+        pub fn empty(x: @This()) bool {
+            return x.hot == .nothing and x.dropzone == .nothing;
+        }
+    };
     fn findHotAndDropzone(workspace: *Workspace, needle_pos: Vec2) HotAndDropzone {
         const toybox = &workspace.toybox;
-        const root = workspace.main_area;
         const grabbing = workspace.grabbing;
 
-        return _findHotAndDropzone(toybox, root, needle_pos, grabbing);
+        const a = _findHotAndDropzone(toybox, workspace.lenses_layer, needle_pos, grabbing);
+        if (!a.empty()) return a;
+
+        const b = _findHotAndDropzone(toybox, workspace.main_area, needle_pos, grabbing);
+        return b;
     }
 
     fn _findHotAndDropzone(toybox: *Toybox, root: Lego.Index, needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
@@ -840,7 +852,7 @@ const Workspace = struct {
     fn updateSprings(workspace: *Workspace, mouse_pos: Vec2, dropzone: Lego.Index, delta_seconds: f32) void {
         const toybox = &workspace.toybox;
 
-        const roots: [2]Lego.Index = .{ workspace.main_area, workspace.hand_layer };
+        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.lenses_layer, workspace.hand_layer };
         for (&roots) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
@@ -912,45 +924,9 @@ const Workspace = struct {
         const camera = workspace.camera;
         const toybox = &workspace.toybox;
 
-        const roots: [2]Lego.Index = .{ workspace.main_area, workspace.hand_layer };
+        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.lenses_layer, workspace.hand_layer };
         for (&roots) |root| {
-            var cur: Lego.Index = root;
-            while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
-                const lego = toybox.get(cur);
-                const point = lego.point.applyToLocalPoint(lego.visual_offset);
-                switch (lego.specific) {
-                    .sexpr => |sexpr| {
-                        switch (sexpr.kind) {
-                            .empty => {},
-                            .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                            .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                            .atom_var => @panic("TODO"),
-                        }
-                    },
-                    .microscope => |microscope| {
-                        // TODO: nested microscopes don't work
-                        // FIXME: everything
-                        _ = microscope;
-
-                        // const lens_target = toybox.get(microscope.lens_target);
-                        // if (camera.plusMargin(lens_target.specific.lens.radius + 1).contains(lens_target.point.pos)) {
-                        //     platform.gl.startStencil();
-                        //     drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, .white);
-                        //     platform.gl.doneStencil();
-                        //     defer platform.gl.stopStencil();
-                        //     drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, COLORS.bg);
-
-                        //     const transform = microscope.getTransform(toybox);
-                        //     try draw(toybox, microscope.area, transform.getCamera(camera), platform, drawer);
-                        // }
-                    },
-                    .lens => |lens| {
-                        drawer.canvas.strokeCircle(128, camera, lego.point.pos, lego.point.scale * lens.radius, lego.point.scale * 0.05, .black);
-                    },
-                    .area, .case => {},
-                }
-                if (lego.handle()) |handle| try handle.draw(drawer, camera);
-            }
+            try _draw(toybox, root, camera, platform, drawer);
         }
 
         if (display_fps) try drawer.canvas.drawText(
@@ -965,6 +941,46 @@ const Workspace = struct {
             workspace.camera.size.y * 0.05,
             .black,
         );
+    }
+
+    fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
+        var cur: Lego.Index = root;
+        while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
+            const lego = toybox.get(cur);
+            // TODO: don't draw if small or far from camera
+            const point = lego.point.applyToLocalPoint(lego.visual_offset);
+            switch (lego.specific) {
+                .sexpr => |sexpr| {
+                    switch (sexpr.kind) {
+                        .empty => {},
+                        .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
+                        .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
+                        .atom_var => @panic("TODO"),
+                    }
+                },
+                .microscope => |microscope| {
+                    // TODO: nested microscopes don't work
+
+                    _, const target = toybox.getChildrenExact(2, cur);
+                    const lens_target = toybox.get(target);
+                    if (camera.plusMargin(lens_target.specific.lens.radius + 1).contains(lens_target.point.pos)) {
+                        platform.gl.startStencil();
+                        drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, .white);
+                        platform.gl.doneStencil();
+                        defer platform.gl.stopStencil();
+                        drawer.canvas.fillCircle(camera, lens_target.point.pos, lens_target.specific.lens.radius, COLORS.bg);
+
+                        const transform = toybox.getMicroscopeTransform(cur);
+                        try _draw(toybox, microscope.area, transform.getCamera(camera), platform, drawer);
+                    }
+                },
+                .lens => |lens| {
+                    drawer.canvas.strokeCircle(128, camera, lego.point.pos, lego.point.scale * lens.radius, lego.point.scale * 0.05, .black);
+                },
+                .area, .case => {},
+            }
+            if (lego.handle()) |handle| try handle.draw(drawer, camera);
+        }
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer) !void {
