@@ -723,16 +723,8 @@ const Workspace = struct {
                         toybox.get(dropzone).point;
                     lego.point.lerp_towards(target, 0.6, delta_seconds);
 
-                    if (lego.sexpr) |sexpr| {
-                        const is_pattern: bool = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).sexpr.?.is_pattern;
-                        // set is_pattern for all children, instantly snapping the _t value for children
-                        if (is_pattern != sexpr.is_pattern) {
-                            var sexpr_child = cur;
-                            while (sexpr_child != .nothing) : (sexpr_child = toybox.next_preordered(sexpr_child, cur).next) {
-                                toybox.get(sexpr_child).sexpr.?.is_pattern = is_pattern;
-                                if (sexpr_child != cur) toybox.get(sexpr_child).sexpr.?.is_pattern_t = if (is_pattern) 1 else 0;
-                            }
-                        }
+                    if (lego.sexpr) |*sexpr| {
+                        sexpr.is_pattern = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).sexpr.?.is_pattern;
                     }
                 }
                 if (lego.sexpr) |sexpr| {
@@ -757,6 +749,11 @@ const Workspace = struct {
                         toybox.get(child_down).point = lego.point
                             .applyToLocalPoint(lego.visual_offset)
                             .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+
+                        toybox.get(child_up).sexpr.?.is_pattern = sexpr.is_pattern;
+                        toybox.get(child_up).sexpr.?.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
+                        toybox.get(child_down).sexpr.?.is_pattern = sexpr.is_pattern;
+                        toybox.get(child_down).sexpr.?.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
                     }
                 }
                 if (lego.case) {
