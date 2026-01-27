@@ -294,8 +294,8 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("withFirstUppercased"),
-        .description = "Change the top half to be uppercase.",
+        .fnk_name = &Sexpr.doLit("withBottomUppercased"),
+        .description = "Change the bottom half to be uppercase.",
         .initial_definition = null,
         // .{ .cases = &.{
         //     .{
@@ -338,7 +338,7 @@ pub const levels: []const Level = &.{
                 if (k2 < Vals.lowercase.len) {
                     return .{
                         .input = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.lowercase[k2])),
-                        .expected = try store(pool, Sexpr.doPair(Vals.uppercase[k1], Vals.lowercase[k2])),
+                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.uppercase[k2])),
                     };
                 } else return null;
             }
