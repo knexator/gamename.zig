@@ -5020,7 +5020,14 @@ const Workspace = struct {
                 workspace.fnkboxes(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
             },
             .case_handle => |p| workspace.caseHandleRef(p, workspace.focus.grabbing.area).point = mouse_point,
-            .garland_handle => |p| workspace.garlandHandleRef(p, workspace.focus.grabbing.area).point = mouse_point,
+            .garland_handle => |p| {
+                const target: Point = switch (dropzone.kind) {
+                    .nothing => mouse_point,
+                    .garland_handle => |h| workspace.garlandHandleRef(h, dropzone.area).point,
+                    else => unreachable,
+                };
+                workspace.garlandHandleRef(p, workspace.focus.grabbing.area).point.lerp_towards(target, 0.6, platform.delta_seconds);
+            },
             .sexpr => |g| {
                 assert(g.local.len == 0);
                 assert(workspace.focus.grabbing.area == .hand);
@@ -5037,10 +5044,7 @@ const Workspace = struct {
                         ),
                         s.local,
                     ),
-                    .nothing => .{
-                        .pos = mouse.cur.position,
-                        .scale = 1,
-                    },
+                    .nothing => .{ .pos = mouse.cur.position },
                     else => unreachable,
                 };
                 grabbed.point.lerp_towards(target, 0.6, platform.delta_seconds);
