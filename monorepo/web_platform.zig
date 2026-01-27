@@ -603,6 +603,9 @@ const web_gl = struct {
         .blackStencil = blackStencil,
         .doneStencil = doneStencil,
         .stopStencil = stopStencil,
+        .stencilFunc = stencilFunc,
+        .stencilOp = stencilOp,
+        .colorMask = colorMask,
     };
 
     fn startStencil() void {
@@ -631,6 +634,25 @@ const web_gl = struct {
 
     fn stopStencil() void {
         js.webgl2.disable(.STENCIL_TEST);
+    }
+
+    fn stencilFunc(func: Gl.StencilFunc, ref: i32) void {
+        js.webgl2.stencilFunc(switch (func) {
+            .ALWAYS => .ALWAYS,
+            .EQUAL => .EQUAL,
+        }, ref, 0xFF);
+    }
+
+    fn stencilOp(fail: Gl.StencilOp, zfail: Gl.StencilOp, zpass: Gl.StencilOp) void {
+        js.webgl2.stencilOp(
+            @enumFromInt(@intFromEnum(fail)),
+            @enumFromInt(@intFromEnum(zfail)),
+            @enumFromInt(@intFromEnum(zpass)),
+        );
+    }
+
+    fn colorMask(red: bool, green: bool, blue: bool, alpha: bool) void {
+        js.webgl2.colorMask(red, green, blue, alpha);
     }
 
     pub fn clear(color: FColor) void {

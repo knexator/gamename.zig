@@ -109,6 +109,9 @@ whiteStencil: *const fn () void,
 blackStencil: *const fn () void,
 doneStencil: *const fn () void,
 stopStencil: *const fn () void,
+stencilFunc: *const fn (func: StencilFunc, ref: i32) void,
+stencilOp: *const fn (fail: Gl.StencilOp, zfail: Gl.StencilOp, zpass: Gl.StencilOp) void,
+colorMask: *const fn (red: bool, green: bool, blue: bool, alpha: bool) void,
 
 pub const VertexInfo = struct {
     // TODO: kind
@@ -295,6 +298,23 @@ pub const Texture = struct {
 
 pub const UsageMode = enum { static, dynamic };
 
+pub const StencilFunc = enum {
+    ALWAYS,
+    EQUAL,
+    // TODO: there are others
+};
+
+pub const StencilOp = enum(u32) {
+    ZERO = 0,
+    KEEP = 0x1E00,
+    REPLACE = 0x1E01,
+    INCR = 0x1E02,
+    INCR_WRAP = 0x8507,
+    DECR = 0x1E03,
+    DECR_WRAP = 0x8508,
+    INVERT = 0x150A,
+};
+
 const Gl = @This();
 pub const stub = Stub.vtable;
 
@@ -315,6 +335,9 @@ const Stub = struct {
         .blackStencil = blackStencil,
         .doneStencil = doneStencil,
         .stopStencil = stopStencil,
+        .stencilFunc = stencilFunc,
+        .stencilOp = stencilOp,
+        .colorMask = colorMask,
     };
 
     fn startStencil() void {}
@@ -323,6 +346,9 @@ const Stub = struct {
     fn whiteStencil() void {}
     fn blackStencil() void {}
     fn clear(_: FColor) void {}
+    fn stencilFunc(_: Gl.StencilFunc, _: i32) void {}
+    fn stencilOp(_: Gl.StencilOp, _: Gl.StencilOp, _: Gl.StencilOp) void {}
+    fn colorMask(_: bool, _: bool, _: bool, _: bool) void {}
 
     fn loadTextureDataFromBase64(_: []const u8) *const anyopaque {
         return undefined;

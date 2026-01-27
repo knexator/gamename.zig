@@ -193,8 +193,6 @@ pub const Lego = struct {
         };
 
         pub const Microscope = struct {
-            area: Lego.Index,
-
             /// To understand this, think of the fixed point of the lenses zoom
             pub const Transform = struct {
                 center: Vec2,
@@ -488,6 +486,28 @@ pub const Toybox = struct {
         return result;
     }
 
+    pub fn getChildrenUnknown(toybox: *Toybox, allocator: std.mem.Allocator, parent: Lego.Index) ![]Lego.Index {
+        const children_count: usize = blk: {
+            var count: usize = 0;
+            var cur = toybox.get(parent).tree.first;
+            while (cur != .nothing) {
+                count += 1;
+                cur = toybox.get(cur).tree.next;
+            }
+            break :blk count;
+        };
+
+        const result = try allocator.alloc(Lego.Index, children_count);
+        var cur = toybox.get(parent).tree.first;
+        for (result) |*dst| {
+            assert(cur != .nothing);
+            dst.* = cur;
+            cur = toybox.get(cur).tree.next;
+        }
+        assert(cur == .nothing);
+        return result;
+    }
+
     pub fn pop(toybox: *Toybox, child: Lego.Index) void {
         assert(!toybox.isFloating(child));
         changeChild(toybox, child, .nothing);
@@ -687,12 +707,12 @@ pub const Toybox = struct {
         return result.index;
     }
 
-    pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2, watched_area: Lego.Index) !Lego.Index {
+    pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2) !Lego.Index {
         const lens_source = try toybox.add(.{ .lens = .{ .radius = 0.25 } });
         lens_source.point.pos = source;
         const lens_target = try toybox.add(.{ .lens = .{ .radius = 1 } });
         lens_target.point.pos = target;
-        const result = try toybox.add(.{ .microscope = .{ .area = watched_area } });
+        const result = try toybox.add(.microscope);
         toybox.addChildLast(result.index, lens_source.index);
         toybox.addChildLast(result.index, lens_target.index);
         return result.index;
@@ -780,7 +800,10 @@ const Workspace = struct {
             dst.toybox.addChildLast(dst.lenses_layer, try dst.toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
-                dst.main_area,
+            ));
+            dst.toybox.addChildLast(dst.lenses_layer, try dst.toybox.buildMicroscope(
+                .new(4, 3),
+                .new(6, 2),
             ));
         }
     }
@@ -927,6 +950,9 @@ const Workspace = struct {
         const camera = workspace.camera;
         const toybox = &workspace.toybox;
 
+        drawer.canvas.clipper.reset();
+        drawer.canvas.clipper.use(drawer.canvas);
+
         const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
         for (&roots) |root| {
             try _draw(toybox, root, camera, platform, drawer);
@@ -962,18 +988,23 @@ const Workspace = struct {
                     }
                 },
                 .lens => |lens| {
-                    // TODO: nested microscopes don't work
                     // TODO: lens distortion effect, on source and target
 
                     if (lens.is_target and camera.plusMargin(lens.radius + 1).contains(lego.point.pos)) {
-                        platform.gl.startStencil();
-                        drawer.canvas.fillCircle(camera, lego.point.pos, lens.radius, .white);
-                        platform.gl.doneStencil();
-                        defer platform.gl.stopStencil();
-                        drawer.canvas.fillCircle(camera, lego.point.pos, lens.radius, COLORS.bg);
+                        const lens_circle: math.Circle = .{ .center = lego.point.pos, .radius = lens.radius };
+                        if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
+                            drawer.canvas.clipper.use(drawer.canvas);
+                            defer {
+                                drawer.canvas.clipper.pop();
+                                drawer.canvas.clipper.use(drawer.canvas);
+                            }
+                            drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
 
-                        for (lens.roots_to_draw) |asdf| {
-                            try _draw(toybox, asdf, lens.transform.getCamera(camera), platform, drawer);
+                            for (lens.roots_to_draw) |asdf| {
+                                try _draw(toybox, asdf, lens.transform.getCamera(camera), platform, drawer);
+                            }
+                        } else |_| {
+                            std.log.err("reached max lens depth, TODO: improve", .{});
                         }
                     }
 
@@ -1078,29 +1109,38 @@ const Workspace = struct {
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
         workspace.updateSprings(mouse.cur.position, hot_and_dropzone.dropzone, platform.delta_seconds);
 
-        // update other misc data that doesn't depend on tree order
-        for (toybox.all_legos.items) |*lego| {
-            switch (lego.specific) {
-                .microscope => |microscope| {
-                    const source, const target = workspace.toybox.getChildrenExact(2, lego.index);
-                    const source_pos = toybox.get(source).point.pos;
-                    const target_pos = toybox.get(target).point.pos;
-                    const source_radius = toybox.get(source).specific.lens.radius;
-                    const target_radius = toybox.get(target).specific.lens.radius;
-                    // TODO: include previous microscopes here
-                    const all_roots = try scratch.dupe(Lego.Index, &.{ microscope.area, workspace.hand_layer });
-                    const all_roots_except_hand = all_roots[0 .. all_roots.len - 1];
-                    // TODO: check codegen of this
-                    toybox.get(source).specific.lens.transform = .identity;
-                    toybox.get(source).specific.lens.is_target = false;
-                    toybox.get(source).specific.lens.roots_to_draw = all_roots;
-                    toybox.get(source).specific.lens.roots_to_interact = &.{};
-                    toybox.get(target).specific.lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
-                    toybox.get(target).specific.lens.is_target = true;
-                    toybox.get(target).specific.lens.roots_to_draw = all_roots;
-                    toybox.get(target).specific.lens.roots_to_interact = all_roots_except_hand;
-                },
-                .sexpr, .area, .case, .lens => {},
+        // update other misc data that doesn't depend on tree order:
+
+        if (true) {
+            // set lenses data
+            const microscopes = try toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
+            for (microscopes, 0..) |microscope, k| {
+                const source, const target = workspace.toybox.getChildrenExact(2, microscope);
+                const source_pos = toybox.get(source).point.pos;
+                const target_pos = toybox.get(target).point.pos;
+                const source_lens = &toybox.get(source).specific.lens;
+                const source_radius = source_lens.radius;
+                const target_lens = &toybox.get(target).specific.lens;
+                const target_radius = target_lens.radius;
+
+                source_lens.transform = .identity;
+                source_lens.is_target = false;
+                target_lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
+                target_lens.is_target = true;
+
+                var all_roots: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, 2 + k);
+                all_roots.appendAssumeCapacity(workspace.main_area);
+                all_roots.appendAssumeCapacity(workspace.hand_layer);
+                all_roots.appendSliceAssumeCapacity(microscopes[0..k]);
+
+                var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, 1 + k);
+                all_roots_except_hand.appendAssumeCapacity(workspace.main_area);
+                all_roots_except_hand.appendSliceAssumeCapacity(microscopes[0..k]);
+
+                source_lens.roots_to_draw = all_roots.items;
+                source_lens.roots_to_interact = &.{};
+                target_lens.roots_to_draw = all_roots.items;
+                target_lens.roots_to_interact = all_roots_except_hand.items;
             }
         }
 
@@ -1125,11 +1165,14 @@ const Workspace = struct {
 
             if (mouse.wasPressed(.right)) {
                 // Case A.0: duplicating
+                // TODO
+                // if (original_hot_data.canDuplicate()) {
                 const new_element_index = try toybox.dupeIntoFloating(hot_index, true);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .destroy_floating = new_element_index,
                 });
                 grabbed_element_index = new_element_index;
+                // }
             } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .area) {
                 // Case A.1: plucking a top-level thing
                 workspace.undo_stack.appendAssumeCapacity(.{

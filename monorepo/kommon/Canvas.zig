@@ -5,6 +5,7 @@
 frame_arena: std.heap.ArenaAllocator,
 /// only valid for a frame!
 gl: Gl,
+clipper: Clipper,
 
 fill_instanced_shapes_renderable: Gl.InstancedRenderable,
 fill_instanced_circles_renderable: Gl.InstancedRenderable,
@@ -136,6 +137,7 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
 
     return .{
         .gl = gl,
+        .clipper = .{},
         .frame_arena = .init(gpa),
         .sprite_renderable = try gl.buildRenderable(
             sprite_renderable_vertex_src,
@@ -1794,6 +1796,60 @@ pub const TextRenderer = struct {
 
 //     // pub fn end(self: *SpritesheetRenderer, camera: Rect) void {}
 // };
+
+// TODO: use this to avoid drawing stuff out of bounds
+pub const Clipper = struct {
+    /// visible area is the intersection of these shapes
+    // masks: std.BoundedArray(Mask, 5) = .{},
+    const max_depth = if (@import("builtin").cpu.arch.isWasm() and @import("builtin").mode == .Debug)
+        // For some reason, a big std.BoundedArray fails on wasm+debug
+        16
+    else
+        // The bit depth of the stencil buffer
+        255;
+    masks: std.BoundedArray(Mask, max_depth) = .{},
+
+    pub const Mask = struct {
+        camera: Rect,
+        shape: union(enum) { circle: math.Circle, rect: math.Rect },
+    };
+
+    pub fn push(clipper: *Clipper, mask: Mask) !void {
+        try clipper.masks.append(mask);
+    }
+
+    pub fn pop(clipper: *Clipper) void {
+        assert(clipper.masks.len > 0);
+        _ = clipper.masks.pop().?;
+    }
+
+    pub fn reset(clipper: *Clipper) void {
+        clipper.masks.clear();
+    }
+
+    pub fn use(clipper: *const Clipper, canvas: *const Canvas) void {
+        if (clipper.masks.len == 0) {
+            canvas.gl.stopStencil();
+        } else {
+            canvas.gl.startStencil();
+            canvas.gl.stencilFunc(.ALWAYS, 0);
+            canvas.gl.stencilOp(.KEEP, .KEEP, .INCR);
+            for (clipper.masks.constSlice()) |mask| {
+                switch (mask.shape) {
+                    .circle => |circle| {
+                        canvas.fillCircle(mask.camera, circle.center, circle.radius, .white);
+                    },
+                    .rect => |rect| {
+                        canvas.fillRect(mask.camera, rect, .white);
+                    },
+                }
+            }
+            canvas.gl.colorMask(true, true, true, true);
+            canvas.gl.stencilFunc(.EQUAL, @intCast(clipper.masks.len));
+            canvas.gl.stencilOp(.KEEP, .KEEP, .KEEP);
+        }
+    }
+};
 
 const std = @import("std");
 const assert = std.debug.assert;
