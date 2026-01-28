@@ -2631,7 +2631,7 @@ pub fn getGarlandForFnk(
             else
                 k.executor.garland).clone(mem.gpa, hover_pool);
             garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
-            garland.kinematicUpdate(new_point, null, undefined);
+            garland.kinematicUpdate(new_point, null, std.math.inf(f32));
             return garland;
         }
     } else return null;
