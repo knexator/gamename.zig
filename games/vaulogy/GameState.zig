@@ -13,19 +13,19 @@ const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
 
-test "fuzz example" {
+const FuzzerContext = struct {
     const TestPlatform = struct {
         global_seconds: f32 = 0,
         delta_seconds: f32 = 0,
         mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 },
         keyboard: Keyboard = .{ .cur = .init, .prev = .init, .cur_time = 0 },
-
-        const TestPlatform = @This();
+        frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator),
 
         pub fn after(self: *TestPlatform) void {
             self.mouse.prev = self.mouse.cur;
             self.mouse.cur.scrolled = .none;
             self.keyboard.prev = self.keyboard.cur;
+            _ = self.frame_arena.reset(.retain_capacity);
         }
 
         pub fn getGives(self: *TestPlatform, delta_seconds: f32) PlatformGives {
@@ -37,6 +37,7 @@ test "fuzz example" {
                 .mouse = self.mouse,
                 .keyboard = self.keyboard,
                 .gpa = std.testing.allocator,
+                .frame_arena = self.frame_arena.allocator(),
 
                 .aspect_ratio = stuff.metadata.desired_aspect_ratio,
                 .delta_seconds = delta_seconds,
@@ -67,27 +68,56 @@ test "fuzz example" {
         mouse_pos: Vec2,
     };
 
-    const Context = struct {
-        fn testOne(_: @This(), input: []const u8) anyerror!void {
+    const Player = struct {
+        workspace: Workspace,
+        test_platform: TestPlatform,
+
+        pub fn init() !Player {
             var workspace: Workspace = undefined;
             try workspace.init(std.testing.allocator);
-            defer workspace.deinit();
+            return .{ .workspace = workspace, .test_platform = .{} };
+        }
 
-            var test_platform: TestPlatform = .{};
+        pub fn deinit(player: *Player) void {
+            player.workspace.deinit();
+            player.test_platform.frame_arena.deinit();
+        }
 
-            var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
-            while (it.next()) |cur_input_raw| {
-                if (cur_input_raw.len == @sizeOf(FakeInput)) {
-                    const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
-                    test_platform.keyboard.cur.keys.KeyZ = cur_input.z_down;
-                    test_platform.mouse.cur.buttons.left = cur_input.mouse_left_down;
-                    test_platform.mouse.cur.position = cur_input.mouse_pos;
-                    try workspace.update(test_platform.getGives(1.0 / 60.0), null);
-                }
-            }
+        pub fn advance(player: *Player, input: FakeInput) !void {
+            player.test_platform.keyboard.cur.keys.KeyZ = input.z_down;
+            player.test_platform.mouse.cur.buttons.left = input.mouse_left_down;
+            player.test_platform.mouse.cur.position = input.mouse_pos;
+            try player.workspace.update(player.test_platform.getGives(1.0 / 60.0), null, player.test_platform.frame_arena.allocator());
+            player.test_platform.after();
         }
     };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+
+    fn testOne(_: @This(), input: []const u8) anyerror!void {
+        var player: Player = try .init();
+        defer player.deinit();
+
+        var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
+        while (it.next()) |cur_input_raw| {
+            if (cur_input_raw.len == @sizeOf(FakeInput)) {
+                const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
+                try player.advance(cur_input);
+            }
+        }
+    }
+};
+
+test "fuzz example" {
+    try std.testing.fuzz(FuzzerContext{}, FuzzerContext.testOne, .{});
+}
+
+test "custom replay" {
+    var player: FuzzerContext.Player = try .init();
+    defer player.deinit();
+
+    const inputs: []const FuzzerContext.FakeInput = &.{
+        // .{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0, 0) },
+    };
+    for (inputs) |input| try player.advance(input);
 }
 
 test "No leaks on Workspace and Drawer" {
@@ -943,7 +973,7 @@ const Workspace = struct {
         }
     }
 
-    fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
+    fn draw(workspace: *Workspace, fps: f32, drawer: *Drawer) !void {
         const asdf = tracy.initZone(@src(), .{ .name = "draw" });
         defer asdf.deinit();
 
@@ -955,13 +985,13 @@ const Workspace = struct {
 
         const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
         for (&roots) |root| {
-            try _draw(toybox, root, camera, platform, drawer);
+            try _draw(toybox, root, camera, drawer);
         }
 
         if (display_fps) try drawer.canvas.drawText(
             0,
             camera,
-            try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
+            try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{fps}),
             .{
                 .pos = workspace.camera.top_left,
                 .hor = .left,
@@ -972,7 +1002,7 @@ const Workspace = struct {
         );
     }
 
-    fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, platform: PlatformGives, drawer: *Drawer) !void {
+    fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, drawer: *Drawer) !void {
         var cur: Lego.Index = root;
         while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
             const lego = toybox.get(cur);
@@ -1001,7 +1031,7 @@ const Workspace = struct {
                             drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
 
                             for (lens.roots_to_draw) |asdf| {
-                                try _draw(toybox, asdf, lens.transform.getCamera(camera), platform, drawer);
+                                try _draw(toybox, asdf, lens.transform.getCamera(camera), drawer);
                             }
                         } else |_| {
                             std.log.err("reached max lens depth, TODO: improve", .{});
@@ -1145,7 +1175,7 @@ const Workspace = struct {
         }
 
         if (drawer) |d| {
-            try workspace.draw(platform, d);
+            try workspace.draw(1.0 / platform.delta_seconds, d);
         }
 
         try workspace.undo_stack.ensureUnusedCapacity(32);

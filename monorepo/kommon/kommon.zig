@@ -35,7 +35,7 @@ pub const Key = enum(u64) {
 };
 
 comptime {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
 
 pub fn moveIndex(original: usize, delta: isize, arr_size: usize, mode: enum { clamp, mod }) usize {

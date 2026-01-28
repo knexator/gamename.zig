@@ -497,11 +497,14 @@ var my_game: GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
 
+var frame_arena: std.heap.ArenaAllocator = .init(gpa);
+
 // TODO: remove this
 var global_gpa_BAD: std.mem.Allocator = gpa;
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
+    .frame_arena = frame_arena.allocator(),
     .mouse = undefined,
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,
@@ -1101,6 +1104,7 @@ export fn update(delta_seconds: f32) void {
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
     keyboard.prev = keyboard.cur;
+    _ = frame_arena.reset(.retain_capacity);
 
     // sounds
     if (@typeInfo(Sounds).@"enum".fields.len > 0) {
