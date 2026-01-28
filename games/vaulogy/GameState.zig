@@ -162,6 +162,7 @@ workspace: Workspace,
 
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
+    // TODO: remove in release modes
     exists: bool = false,
     index: Index,
     /// absolute coordinates
@@ -174,7 +175,6 @@ pub const Lego = struct {
     // active_t: f32 = 0,
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
-    immutable: bool = false,
 
     tree: Tree = .empty,
 
@@ -405,8 +405,10 @@ pub const Toybox = struct {
     all_legos_arena: std.heap.ArenaAllocator,
 
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
-        dst.all_legos_arena = .init(gpa);
-        dst.all_legos = .empty;
+        dst.* = .{
+            .all_legos_arena = .init(gpa),
+            .all_legos = .empty,
+        };
         // TODO: tweak this number
         try dst.all_legos.ensureUnusedCapacity(
             dst.all_legos_arena.allocator(),
