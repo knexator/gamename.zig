@@ -785,6 +785,21 @@ const Workspace = struct {
         set_handlayer: Lego.Index,
     };
 
+    /// in draw order
+    fn roots(workspace: Workspace, config: struct {
+        include_hand: bool,
+        include_lenses: bool,
+
+        pub const all: @This() = .{ .include_hand = true, .include_lenses = true };
+        pub const interactable: @This() = .{ .include_hand = false, .include_lenses = true };
+    }) std.BoundedArray(Lego.Index, 4) {
+        var result: std.BoundedArray(Lego.Index, 4) = .{};
+        result.appendAssumeCapacity(workspace.main_area);
+        if (config.include_hand) result.appendAssumeCapacity(workspace.hand_layer);
+        if (config.include_lenses) result.appendAssumeCapacity(workspace.lenses_layer);
+        return result;
+    }
+
     pub fn init(dst: *Workspace, gpa: std.mem.Allocator) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
         dst.undo_stack = .init(gpa);
@@ -856,7 +871,7 @@ const Workspace = struct {
     fn findHotAndDropzone(workspace: *Workspace, needle_pos: Vec2) HotAndDropzone {
         return _findHotAndDropzone(
             &workspace.toybox,
-            &.{ workspace.main_area, workspace.lenses_layer },
+            workspace.roots(.interactable).constSlice(),
             needle_pos,
             workspace.grabbing,
         );
@@ -910,8 +925,7 @@ const Workspace = struct {
     fn updateSprings(workspace: *Workspace, mouse_pos: Vec2, dropzone: Lego.Index, delta_seconds: f32) void {
         const toybox = &workspace.toybox;
 
-        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
-        for (&roots) |root| {
+        for (workspace.roots(.all).constSlice()) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
                 const lego = toybox.get(cur);
@@ -985,8 +999,7 @@ const Workspace = struct {
         drawer.canvas.clipper.reset();
         drawer.canvas.clipper.use(drawer.canvas);
 
-        const roots: [3]Lego.Index = .{ workspace.main_area, workspace.hand_layer, workspace.lenses_layer };
-        for (&roots) |root| {
+        for (workspace.roots(.all).constSlice()) |root| {
             try _draw(toybox, root, camera, drawer);
         }
 
@@ -1160,14 +1173,19 @@ const Workspace = struct {
                 target_lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
                 target_lens.is_target = true;
 
-                var all_roots: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, 2 + k);
-                all_roots.appendAssumeCapacity(workspace.main_area);
-                all_roots.appendAssumeCapacity(workspace.hand_layer);
-                all_roots.appendSliceAssumeCapacity(microscopes[0..k]);
+                var all_roots: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                try all_roots.appendSlice(scratch, workspace.roots(.{
+                    .include_hand = true,
+                    .include_lenses = false,
+                }).constSlice());
+                try all_roots.appendSlice(scratch, microscopes[0..k]);
 
-                var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, 1 + k);
-                all_roots_except_hand.appendAssumeCapacity(workspace.main_area);
-                all_roots_except_hand.appendSliceAssumeCapacity(microscopes[0..k]);
+                var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                try all_roots_except_hand.appendSlice(scratch, workspace.roots(.{
+                    .include_hand = false,
+                    .include_lenses = false,
+                }).constSlice());
+                try all_roots_except_hand.appendSlice(scratch, microscopes[0..k]);
 
                 source_lens.roots_to_draw = all_roots.items;
                 source_lens.roots_to_interact = &.{};
