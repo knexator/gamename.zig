@@ -1866,8 +1866,8 @@ pub const Point = extern struct {
         };
     }
 
-    pub fn inRange(center: Point, needle_pos: Vec2, inclusive_dist: f32) bool {
-        return center.inverseApplyGetLocalPosition(needle_pos).magSq() <= (inclusive_dist * inclusive_dist);
+    pub fn inRange(center: Point, needle_pos: Vec2, local_inclusive_dist: f32) bool {
+        return center.inverseApplyGetLocalPosition(needle_pos).magSq() <= (local_inclusive_dist * local_inclusive_dist);
     }
 
     pub fn plusTurns(original: Point, extra_turns: f32) Point {
@@ -1926,6 +1926,18 @@ pub const Point = extern struct {
         try std.testing.expectApproxEqAbs(expected.scale, actual.scale, tolerance);
         try std.testing.expectApproxEqAbs(expected.turns, actual.turns, tolerance);
         try Vec2.expectApproxEqAbs(expected.pos, actual.pos, tolerance);
+    }
+
+    pub fn equalsRel(a: Point, b: Point, tolerance: anytype) bool {
+        if (expectApproxEqRel(a, b, tolerance)) {
+            return true;
+        } else |_| return false;
+    }
+
+    pub fn equalsAbs(a: Point, b: Point, tolerance: anytype) bool {
+        if (expectApproxEqAbs(a, b, tolerance)) {
+            return true;
+        } else |_| return false;
     }
 
     // TODO: document these

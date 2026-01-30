@@ -165,8 +165,10 @@ pub const Lego = struct {
     // TODO: remove in release modes
     exists: bool = false,
     index: Index,
-    /// absolute coordinates
-    point: Point = .{},
+    /// respect to parent
+    local_point: Point,
+    /// computed each frame
+    absolute_point: Point = undefined,
     /// local coordinates
     visual_offset: Point = .{},
     hot_t: f32 = 0,
@@ -285,7 +287,7 @@ pub const Lego = struct {
         };
 
         pub const Lens = struct {
-            radius: f32,
+            local_radius: f32,
             /// set by the parent each frame
             transform: Microscope.Transform = undefined,
             /// set by the parent each frame
@@ -295,8 +297,8 @@ pub const Lego = struct {
             /// set by the parent each frame
             roots_to_draw: []Lego.Index = undefined,
 
-            pub const source: Lens = .{ .radius = 0.25 };
-            pub const target: Lens = .{ .radius = 1 };
+            pub const source: Lens = .{ .local_radius = 0.25 };
+            pub const target: Lens = .{ .local_radius = 1 };
         };
     };
 
@@ -354,15 +356,15 @@ pub const Lego = struct {
             .lens => .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 },
         };
         return .{
-            .point = lego.point.applyToLocalPoint(.{ .pos = lego.handleOffset() }),
+            .point = lego.absolute_point.applyToLocalPoint(.{ .pos = lego.handleLocalOffset() }),
             .hot_t = lego.hot_t,
             .radius = radius,
         };
     }
 
-    fn handleOffset(lego: *const Lego) Vec2 {
+    fn handleLocalOffset(lego: *const Lego) Vec2 {
         return switch (lego.specific) {
-            .lens => |lens| .fromPolar(lens.radius + 0.1, 1.0 / 8.0),
+            .lens => |lens| .fromPolar(lens.local_radius + 0.1, 1.0 / 8.0),
             else => .zero,
         };
     }
@@ -421,12 +423,14 @@ pub const Toybox = struct {
         self.all_legos_arena.deinit();
     }
 
-    pub fn add(toybox: *Toybox, specific: Lego.Specific) !*Lego {
+    pub fn add(toybox: *Toybox, local_point: Point, specific: Lego.Specific) !*Lego {
         const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
-        result.* = kommon.meta.initDefaultFields(Lego);
-        result.index = @enumFromInt(toybox.all_legos.items.len - 1);
-        result.exists = true;
-        result.specific = specific;
+        result.* = .{
+            .index = @enumFromInt(toybox.all_legos.items.len - 1),
+            .exists = true,
+            .local_point = local_point,
+            .specific = specific,
+        };
         return result;
     }
 
@@ -482,7 +486,7 @@ pub const Toybox = struct {
     }
 
     pub fn dupeIntoFloating(toybox: *Toybox, original: Lego.Index, dupe_children: bool) !Lego.Index {
-        const result = try toybox.add(undefined);
+        const result = try toybox.add(undefined, undefined);
         const result_index = result.index;
         result.* = toybox.get(original).*;
         result.index = result_index;
@@ -662,13 +666,13 @@ pub const Toybox = struct {
         var toybox: Toybox = undefined;
         try toybox.init(std.testing.allocator);
         defer toybox.deinit();
-        const root = try toybox.add(undefined);
-        const child_1 = try toybox.add(undefined);
-        const child_2 = try toybox.add(undefined);
-        const grandchild_1_1 = try toybox.add(undefined);
-        const grandchild_1_2 = try toybox.add(undefined);
-        const grandchild_2_1 = try toybox.add(undefined);
-        const grandchild_2_2 = try toybox.add(undefined);
+        const root = try toybox.add(undefined, undefined);
+        const child_1 = try toybox.add(undefined, undefined);
+        const child_2 = try toybox.add(undefined, undefined);
+        const grandchild_1_1 = try toybox.add(undefined, undefined);
+        const grandchild_1_2 = try toybox.add(undefined, undefined);
+        const grandchild_2_1 = try toybox.add(undefined, undefined);
+        const grandchild_2_2 = try toybox.add(undefined, undefined);
 
         toybox.addChildLast(root.index, child_1.index);
         toybox.addChildLast(root.index, child_2.index);
@@ -700,13 +704,35 @@ pub const Toybox = struct {
         try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
     }
 
-    pub fn buildSexpr(toybox: *Toybox, point: Point, value: union(Lego.Specific.Sexpr.Kind) {
+    pub fn parentAbsolutePoint(toybox: *Toybox, index: Lego.Index) Point {
+        assert(index != .nothing);
+        const parent = toybox.get(index).tree.parent;
+        if (parent == .nothing) return .{};
+        return toybox.get(parent).absolute_point;
+    }
+
+    pub fn refreshAbsolutePoints(toybox: *Toybox, roots: []const Lego.Index) void {
+        for (roots) |root| {
+            var cur: Lego.Index = root;
+            while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
+                toybox.get(cur).absolute_point = toybox
+                    .parentAbsolutePoint(cur)
+                    .applyToLocalPoint(toybox.get(cur).local_point);
+            }
+        }
+    }
+
+    pub fn changeCoordinates(toybox: *Toybox, index: Lego.Index, old_parent: Point, new_parent: Point) void {
+        toybox.get(index).local_point = new_parent.inverseApplyGetLocal(old_parent.applyToLocalPoint(toybox.get(index).local_point));
+    }
+
+    pub fn buildSexpr(toybox: *Toybox, local_point: Point, value: union(Lego.Specific.Sexpr.Kind) {
         empty,
         atom_lit: []const u8,
         atom_var: []const u8,
         pair: struct { up: Lego.Index, down: Lego.Index },
     }, is_pattern: bool) !Lego.Index {
-        const result = try toybox.add(.{ .sexpr = .{
+        const result = try toybox.add(local_point, .{ .sexpr = .{
             .is_pattern = is_pattern,
             .is_pattern_t = if (is_pattern) 1 else 0,
             .atom_name = switch (value) {
@@ -715,7 +741,6 @@ pub const Toybox = struct {
             },
             .kind = value,
         } });
-        result.point = point;
         switch (value) {
             else => {},
             .pair => |pair| {
@@ -726,13 +751,12 @@ pub const Toybox = struct {
         return result.index;
     }
 
-    pub fn buildCase(toybox: *Toybox, point: Point, data: struct {
+    pub fn buildCase(toybox: *Toybox, local_point: Point, data: struct {
         pattern: Lego.Index,
         template: Lego.Index,
         fnkname: Lego.Index,
     }) !Lego.Index {
-        const result = try toybox.add(.case);
-        result.point = point;
+        const result = try toybox.add(local_point, .case);
         toybox.addChildLast(result.index, data.pattern);
         toybox.addChildLast(result.index, data.template);
         toybox.addChildLast(result.index, data.fnkname);
@@ -740,11 +764,9 @@ pub const Toybox = struct {
     }
 
     pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2) !Lego.Index {
-        const lens_source = try toybox.add(.{ .lens = .{ .radius = 0.25 } });
-        lens_source.point.pos = source;
-        const lens_target = try toybox.add(.{ .lens = .{ .radius = 1 } });
-        lens_target.point.pos = target;
-        const result = try toybox.add(.microscope);
+        const lens_source = try toybox.add(.{ .pos = source }, .{ .lens = .source });
+        const lens_target = try toybox.add(.{ .pos = target }, .{ .lens = .target });
+        const result = try toybox.add(.{}, .microscope);
         toybox.addChildLast(result.index, lens_source.index);
         toybox.addChildLast(result.index, lens_target.index);
         return result.index;
@@ -760,7 +782,6 @@ const Workspace = struct {
 
     grabbing: Lego.Index = .nothing,
 
-    camera: Rect = .fromCenterAndSize(.zero, Vec2.new(16, 9).scale(2.75)),
     undo_stack: std.ArrayList(UndoableCommand),
 
     const UndoableCommand = union(enum) {
@@ -805,8 +826,8 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         try dst.toybox.init(gpa);
 
-        dst.main_area = (try dst.toybox.add(.area)).index;
-        dst.lenses_layer = (try dst.toybox.add(.area)).index;
+        dst.main_area = (try dst.toybox.add(.{ .scale = 0.1 }, .area)).index;
+        dst.lenses_layer = (try dst.toybox.add(undefined, .area)).index;
 
         if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
@@ -814,6 +835,9 @@ const Workspace = struct {
                 .{ .atom_lit = "true" },
                 false,
             ));
+        }
+
+        if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(0, 1) },
                 .{ .atom_lit = "false" },
@@ -848,6 +872,9 @@ const Workspace = struct {
                 .new(2, 2),
                 .new(4, 3),
             ));
+        }
+
+        if (true) {
             dst.toybox.addChildLast(dst.lenses_layer, try dst.toybox.buildMicroscope(
                 .new(4, 3),
                 .new(6, 2),
@@ -863,21 +890,22 @@ const Workspace = struct {
     const HotAndDropzone = struct {
         hot: Lego.Index = .nothing,
         dropzone: Lego.Index = .nothing,
+        over_background: Lego.Index,
 
         pub fn empty(x: @This()) bool {
             return x.hot == .nothing and x.dropzone == .nothing;
         }
     };
-    fn findHotAndDropzone(workspace: *Workspace, needle_pos: Vec2) HotAndDropzone {
+    fn findHotAndDropzone(workspace: *Workspace, absolute_needle_pos: Vec2) HotAndDropzone {
         return _findHotAndDropzone(
             &workspace.toybox,
             workspace.roots(.interactable).constSlice(),
-            needle_pos,
+            absolute_needle_pos,
             workspace.grabbing,
         );
     }
 
-    fn _findHotAndDropzone(toybox: *Toybox, roots_in_draw_order: []const Lego.Index, needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
+    fn _findHotAndDropzone(toybox: *Toybox, roots_in_draw_order: []const Lego.Index, absolute_needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
         var it = std.mem.reverseIterator(roots_in_draw_order);
         while (it.next()) |root| {
             var cur: Lego.Index = root;
@@ -885,62 +913,69 @@ const Workspace = struct {
                 const lego = toybox.get(cur);
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
-                        if (Lego.Specific.Sexpr.contains(lego.point, sexpr.is_pattern, sexpr.kind, needle_pos)) {
+                        if (Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos)) {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
-                                return .{ .hot = cur };
+                                return .{ .hot = cur, .over_background = root };
                             } else if (grabbing != .nothing and toybox.get(grabbing).specific.tag() == .sexpr) {
-                                return .{ .dropzone = cur };
+                                return .{ .dropzone = cur, .over_background = root };
                             }
                         }
                     },
                     .lens => |lens| {
-                        if (lens.is_target and lego.point.inRange(needle_pos, lens.radius)) {
+                        if (lens.is_target and lego.absolute_point.inRange(absolute_needle_pos, lens.local_radius)) {
                             const interaction_nested = _findHotAndDropzone(
                                 toybox,
                                 lens.roots_to_interact,
-                                lens.transform.inverse().actOnPosition(needle_pos),
+                                lens.transform.inverse().actOnPosition(absolute_needle_pos),
                                 grabbing,
                             );
-                            if (!std.meta.eql(interaction_nested, .{})) {
+                            if (!interaction_nested.empty()) {
                                 return interaction_nested;
                             }
 
                             // Avoid interacting with things hidden by the lens
-                            return .{};
+                            return .{ .over_background = root };
                         }
                     },
                     .area, .case, .microscope => {},
                 }
                 if (lego.handle()) |handle| {
-                    if (grabbing == .nothing and handle.overlapped(needle_pos)) {
-                        return .{ .hot = cur };
+                    if (grabbing == .nothing and handle.overlapped(absolute_needle_pos)) {
+                        return .{ .hot = cur, .over_background = root };
                     }
                 }
             }
         }
 
-        return .{};
+        return .{ .over_background = roots_in_draw_order[0] };
     }
 
-    fn updateSprings(workspace: *Workspace, mouse_pos: Vec2, dropzone: Lego.Index, delta_seconds: f32) void {
+    fn updateSprings(workspace: *Workspace, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
         const toybox = &workspace.toybox;
 
+        defer toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
         for (workspace.roots(.all).constSlice()) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
                 const lego = toybox.get(cur);
                 if (cur == workspace.grabbing) {
-                    const target: Point = if (dropzone == .nothing)
-                        .{ .pos = mouse_pos.sub(lego.handleOffset()) }
+                    const target: Point = if (interaction.dropzone == .nothing)
+                        // TODO: i don't like the scale hack
+                        (Point{
+                            .pos = absolute_mouse_pos,
+                            .scale = toybox.get(interaction.over_background).absolute_point.scale,
+                        }).applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
                     else
-                        toybox.get(dropzone).point;
-                    lego.point.lerp_towards(target, 0.6, delta_seconds);
+                        toybox.get(interaction.dropzone).absolute_point;
+
+                    lego.local_point.lerp_towards(toybox.parentAbsolutePoint(cur)
+                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
                 }
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
                         if (cur == workspace.grabbing) {
-                            sexpr.is_pattern = if (dropzone == .nothing) sexpr.is_pattern else toybox.get(dropzone).specific.sexpr.is_pattern;
+                            sexpr.is_pattern = if (interaction.dropzone == .nothing) sexpr.is_pattern else toybox.get(interaction.dropzone).specific.sexpr.is_pattern;
                         }
 
                         const base_point: Point = if (!sexpr.is_pattern)
@@ -958,10 +993,10 @@ const Workspace = struct {
 
                         if (sexpr.kind == .pair) {
                             const child_up, const child_down = toybox.getChildrenExact(2, cur);
-                            toybox.get(child_up).point = lego.point
+                            toybox.get(child_up).local_point = (Point{})
                                 .applyToLocalPoint(lego.visual_offset)
                                 .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
-                            toybox.get(child_down).point = lego.point
+                            toybox.get(child_down).local_point = (Point{})
                                 .applyToLocalPoint(lego.visual_offset)
                                 .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
 
@@ -980,7 +1015,7 @@ const Workspace = struct {
                         // const pattern, const template, const fnkname = toybox.getChildrenExact(3, cur);
                         // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
                         for (toybox.getChildrenExact(3, cur), offsets) |i, offset| {
-                            toybox.get(i).point = lego.point.applyToLocalPoint(offset);
+                            toybox.get(i).local_point = offset;
                         }
                     },
                     .area, .microscope, .lens => {},
@@ -989,11 +1024,13 @@ const Workspace = struct {
         }
     }
 
-    fn draw(workspace: *Workspace, fps: f32, drawer: *Drawer) !void {
+    fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
         const asdf = tracy.initZone(@src(), .{ .name = "draw" });
         defer asdf.deinit();
 
-        const camera = workspace.camera;
+        const camera = Rect
+            .fromCenterAndSize(.zero, .both(2))
+            .withAspectRatio(platform.aspect_ratio, .grow, .center);
         const toybox = &workspace.toybox;
 
         drawer.canvas.clipper.reset();
@@ -1006,13 +1043,13 @@ const Workspace = struct {
         if (display_fps) try drawer.canvas.drawText(
             0,
             camera,
-            try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{fps}),
+            try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
             .{
-                .pos = workspace.camera.top_left,
+                .pos = camera.top_left,
                 .hor = .left,
                 .ver = .ascender,
             },
-            workspace.camera.size.y * 0.05,
+            camera.size.y * 0.05,
             .black,
         );
     }
@@ -1022,7 +1059,7 @@ const Workspace = struct {
         while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
             const lego = toybox.get(cur);
             // TODO: don't draw if small or far from camera
-            const point = lego.point.applyToLocalPoint(lego.visual_offset);
+            const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
             switch (lego.specific) {
                 .sexpr => |sexpr| {
                     switch (sexpr.kind) {
@@ -1035,8 +1072,8 @@ const Workspace = struct {
                 .lens => |lens| {
                     // TODO: lens distortion effect, on source and target
 
-                    if (lens.is_target and camera.plusMargin(lens.radius + 1).contains(lego.point.pos)) {
-                        const lens_circle: math.Circle = .{ .center = lego.point.pos, .radius = lens.radius };
+                    if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
+                        const lens_circle: math.Circle = .{ .center = lego.absolute_point.pos, .radius = lens.local_radius * lego.absolute_point.scale };
                         if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
                             drawer.canvas.clipper.use(drawer.canvas);
                             defer {
@@ -1053,7 +1090,14 @@ const Workspace = struct {
                         }
                     }
 
-                    drawer.canvas.strokeCircle(128, camera, lego.point.pos, lego.point.scale * lens.radius, lego.point.scale * 0.05, .black);
+                    drawer.canvas.strokeCircle(
+                        128,
+                        camera,
+                        lego.absolute_point.pos,
+                        lego.absolute_point.scale * lens.local_radius,
+                        lego.absolute_point.scale * 0.05,
+                        .black,
+                    );
                 },
                 .area, .case, .microscope => {},
             }
@@ -1062,7 +1106,6 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
-        const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
         const toybox = &workspace.toybox;
 
         if (platform.keyboard.wasPressed(.KeyQ)) {
@@ -1070,12 +1113,14 @@ const Workspace = struct {
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (lego.exists) {
-                    std.log.debug("{d} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d}", .{
+                    std.log.debug("{d} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d} \t rel: {any} \tabs: {any}", .{
                         k,
                         lego.tree.parent.asI32(),
                         lego.tree.next.asI32(),
                         lego.tree.prev.asI32(),
                         lego.tree.first.asI32(),
+                        lego.local_point,
+                        lego.absolute_point,
                     });
                 }
             }
@@ -1117,7 +1162,9 @@ const Workspace = struct {
             }
         }
 
-        const mouse = platform.getMouse(camera);
+        const mouse = platform.getMouse(Rect
+            .fromCenterAndSize(.zero, .both(2))
+            .withAspectRatio(platform.aspect_ratio, .grow, .center));
 
         const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
@@ -1151,22 +1198,40 @@ const Workspace = struct {
             }
         }
 
+        if (true) { // move camera
+            // TODO: center zoom on mouse
+            const p = &toybox.get(workspace.main_area).local_point;
+            p.scale *= switch (mouse.cur.scrolled) {
+                .none => 1.0,
+                .up => 1.1,
+                .down => 0.9,
+            };
+            inline for (KeyboardButton.directional_keys) |kv| {
+                for (kv.keys) |key| {
+                    if (platform.keyboard.cur.isDown(key)) {
+                        p.pos.addInPlace(kv.dir.scale(platform.delta_seconds * -2));
+                    }
+                }
+            }
+
+            toybox.get(workspace.lenses_layer).local_point = toybox.get(workspace.main_area).local_point;
+
+            toybox.refreshAbsolutePoints(&.{ workspace.main_area, workspace.lenses_layer });
+        }
+
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
-        workspace.updateSprings(mouse.cur.position, hot_and_dropzone.dropzone, platform.delta_seconds);
+        workspace.updateSprings(mouse.cur.position, hot_and_dropzone, platform.delta_seconds);
 
-        // update other misc data that doesn't depend on tree order:
-
-        if (true) {
-            // set lenses data
+        if (true) { // set lenses data
             const microscopes = try toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
             for (microscopes, 0..) |microscope, k| {
                 const source, const target = workspace.toybox.getChildrenExact(2, microscope);
-                const source_pos = toybox.get(source).point.pos;
-                const target_pos = toybox.get(target).point.pos;
+                const source_pos = toybox.get(source).absolute_point.pos;
+                const target_pos = toybox.get(target).absolute_point.pos;
                 const source_lens = &toybox.get(source).specific.lens;
-                const source_radius = source_lens.radius;
+                const source_radius = source_lens.local_radius * toybox.get(source).absolute_point.scale;
                 const target_lens = &toybox.get(target).specific.lens;
-                const target_radius = target_lens.radius;
+                const target_radius = target_lens.local_radius * toybox.get(target).absolute_point.scale;
 
                 source_lens.transform = .identity;
                 source_lens.is_target = false;
@@ -1195,7 +1260,7 @@ const Workspace = struct {
         }
 
         if (drawer) |d| {
-            try workspace.draw(1.0 / platform.delta_seconds, d);
+            try workspace.draw(platform, d);
         }
 
         try workspace.undo_stack.ensureUnusedCapacity(32);
@@ -1209,6 +1274,7 @@ const Workspace = struct {
             const hot_index = hot_and_dropzone.hot;
             const original_hot_data = toybox.get(hot_index).*;
             const hot_parent = original_hot_data.tree.parent;
+            const original_parent_absolute_point = toybox.parentAbsolutePoint(hot_index);
 
             var grabbed_element_index: Lego.Index = undefined;
             var plucked: bool = true;
@@ -1274,6 +1340,8 @@ const Workspace = struct {
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_handlayer = .nothing,
                 });
+                toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
+                toybox.refreshAbsolutePoints(&.{grabbed_element_index});
             }
         } else if (workspace.grabbing != .nothing and
             !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
@@ -1282,6 +1350,8 @@ const Workspace = struct {
 
             if (dropzone_index != .nothing) {
                 assert(toybox.isFloating(workspace.grabbing));
+                toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
+                toybox.refreshAbsolutePoints(&.{workspace.grabbing});
                 toybox.changeChild(dropzone_index, workspace.grabbing);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .change_child = .{
@@ -1300,6 +1370,8 @@ const Workspace = struct {
                 assert(dropzone_index == .nothing);
             } else {
                 // Case B.3: dropping a floating thing on fresh space
+                toybox.changeCoordinates(workspace.grabbing, .{}, toybox.get(workspace.main_area).absolute_point);
+                toybox.refreshAbsolutePoints(&.{workspace.grabbing});
                 toybox.addChildLast(workspace.main_area, workspace.grabbing);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .pop = workspace.grabbing,
@@ -1311,8 +1383,6 @@ const Workspace = struct {
             workspace.grabbing = .nothing;
             workspace.hand_layer = .nothing;
         }
-
-        workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, true);
     }
 };
 
