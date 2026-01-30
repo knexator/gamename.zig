@@ -662,6 +662,52 @@ pub const Toybox = struct {
         return result;
     }
 
+    pub fn treeIterator(toybox: *Toybox, root: Lego.Index) TreeIterator {
+        return .{
+            .toybox = toybox,
+            .root = root,
+            .cur = root,
+        };
+    }
+
+    pub const TreeIterator = struct {
+        toybox: *Toybox,
+        root: Lego.Index,
+        cur: Lego.Index,
+        going_up: bool = false,
+
+        pub const Step = struct {
+            index: Lego.Index,
+            children_already_visited: bool,
+        };
+
+        pub fn next(it: *TreeIterator) ?Step {
+            if (it.cur == .nothing) return null;
+            const result: Step = .{
+                .children_already_visited = it.going_up,
+                .index = it.cur,
+            };
+            const tree = it.toybox.get(it.cur).tree;
+            if (it.going_up) {
+                if (it.cur == it.root) {
+                    it.cur = .nothing;
+                } else if (tree.next != .nothing) {
+                    it.cur = tree.next;
+                    it.going_up = false;
+                } else {
+                    it.cur = tree.parent;
+                }
+            } else {
+                if (tree.first != .nothing) {
+                    it.cur = tree.first;
+                } else {
+                    it.going_up = true;
+                }
+            }
+            return result;
+        }
+    };
+
     test "iteration order" {
         var toybox: Toybox = undefined;
         try toybox.init(std.testing.allocator);
@@ -683,25 +729,56 @@ pub const Toybox = struct {
         toybox.addChildLast(child_2.index, grandchild_2_1.index);
         toybox.addChildLast(child_2.index, grandchild_2_2.index);
 
-        const expected_order: [7]VisitStep = .{
-            .{ .next = root.index },
-            .{ .next = child_1.index },
-            .{ .next = grandchild_1_1.index },
-            .{ .next = grandchild_1_2.index },
-            .{ .next = child_2.index },
-            .{ .next = grandchild_2_1.index },
-            .{ .next = grandchild_2_2.index },
-        };
+        if (true) {
+            const expected_order: [7]VisitStep = .{
+                .{ .next = root.index },
+                .{ .next = child_1.index },
+                .{ .next = grandchild_1_1.index },
+                .{ .next = grandchild_1_2.index },
+                .{ .next = child_2.index },
+                .{ .next = grandchild_2_1.index },
+                .{ .next = grandchild_2_2.index },
+            };
 
-        var actual_order: std.ArrayListUnmanaged(VisitStep) = try .initCapacity(std.testing.allocator, expected_order.len);
-        defer actual_order.deinit(std.testing.allocator);
+            var actual_order: std.ArrayListUnmanaged(VisitStep) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
 
-        var cur: VisitStep = .{ .next = root.index };
-        while (cur.next != .nothing) : (cur = toybox.next_preordered(cur.next, root.index)) {
-            try actual_order.append(std.testing.allocator, cur);
+            var cur: VisitStep = .{ .next = root.index };
+            while (cur.next != .nothing) : (cur = toybox.next_preordered(cur.next, root.index)) {
+                try actual_order.append(std.testing.allocator, cur);
+            }
+
+            try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
         }
 
-        try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
+        if (true) {
+            const expected_order: [14]TreeIterator.Step = .{
+                .{ .children_already_visited = false, .index = root.index },
+                .{ .children_already_visited = false, .index = child_1.index },
+                .{ .children_already_visited = false, .index = grandchild_1_1.index },
+                .{ .children_already_visited = true, .index = grandchild_1_1.index },
+                .{ .children_already_visited = false, .index = grandchild_1_2.index },
+                .{ .children_already_visited = true, .index = grandchild_1_2.index },
+                .{ .children_already_visited = true, .index = child_1.index },
+                .{ .children_already_visited = false, .index = child_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = grandchild_2_1.index },
+                .{ .children_already_visited = false, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = child_2.index },
+                .{ .children_already_visited = true, .index = root.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var it = toybox.treeIterator(root.index);
+            while (it.next()) |step| {
+                try actual_order.append(std.testing.allocator, step);
+            }
+
+            try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
+        }
     }
 
     pub fn parentAbsolutePoint(toybox: *Toybox, index: Lego.Index) Point {
@@ -714,7 +791,7 @@ pub const Toybox = struct {
     pub fn refreshAbsolutePoints(toybox: *Toybox, roots: []const Lego.Index) void {
         for (roots) |root| {
             var cur: Lego.Index = root;
-            while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
+            while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
                 toybox.get(cur).absolute_point = toybox
                     .parentAbsolutePoint(cur)
                     .applyToLocalPoint(toybox.get(cur).local_point);
