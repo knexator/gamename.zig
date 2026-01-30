@@ -183,7 +183,7 @@ pub const Lego = struct {
     specific: Specific,
 
     pub const Specific = union(enum) {
-        area,
+        area: Area,
         sexpr: Sexpr,
         case,
         microscope: Microscope,
@@ -207,6 +207,25 @@ pub const Lego = struct {
                 else => null,
             };
         }
+
+        pub const Area = struct {
+            /// kind of a collider
+            bg: Bg,
+
+            pub const Bg = union(enum) {
+                none,
+                all,
+                local_rect: Rect,
+
+                pub fn contains(bg_kind: Bg, area_absolute_point: Point, needle_absolute_pos: Vec2) bool {
+                    return switch (bg_kind) {
+                        .none => false,
+                        .all => true,
+                        .local_rect => |rect| rect.contains(area_absolute_point.inverseApplyGetLocalPosition(needle_absolute_pos)),
+                    };
+                }
+            };
+        };
 
         pub const Sexpr = struct {
             kind: Kind,
@@ -662,11 +681,12 @@ pub const Toybox = struct {
         return result;
     }
 
-    pub fn treeIterator(toybox: *Toybox, root: Lego.Index) TreeIterator {
+    pub fn treeIterator(toybox: *Toybox, root: Lego.Index, first_to_last: bool) TreeIterator {
         return .{
             .toybox = toybox,
             .root = root,
             .cur = root,
+            .first_to_last = first_to_last,
         };
     }
 
@@ -675,6 +695,7 @@ pub const Toybox = struct {
         root: Lego.Index,
         cur: Lego.Index,
         going_up: bool = false,
+        first_to_last: bool,
 
         pub const Step = struct {
             index: Lego.Index,
@@ -688,18 +709,21 @@ pub const Toybox = struct {
                 .index = it.cur,
             };
             const tree = it.toybox.get(it.cur).tree;
+            const child = if (it.first_to_last) tree.first else tree.last;
+            const sibling = if (it.first_to_last) tree.next else tree.prev;
+
             if (it.going_up) {
                 if (it.cur == it.root) {
                     it.cur = .nothing;
-                } else if (tree.next != .nothing) {
-                    it.cur = tree.next;
+                } else if (sibling != .nothing) {
+                    it.cur = sibling;
                     it.going_up = false;
                 } else {
                     it.cur = tree.parent;
                 }
             } else {
-                if (tree.first != .nothing) {
-                    it.cur = tree.first;
+                if (child != .nothing) {
+                    it.cur = child;
                 } else {
                     it.going_up = true;
                 }
@@ -772,7 +796,7 @@ pub const Toybox = struct {
             var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
             defer actual_order.deinit(std.testing.allocator);
 
-            var it = toybox.treeIterator(root.index);
+            var it = toybox.treeIterator(root.index, true);
             while (it.next()) |step| {
                 try actual_order.append(std.testing.allocator, step);
             }
@@ -903,8 +927,8 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         try dst.toybox.init(gpa);
 
-        dst.main_area = (try dst.toybox.add(.{ .scale = 0.1 }, .area)).index;
-        dst.lenses_layer = (try dst.toybox.add(undefined, .area)).index;
+        dst.main_area = (try dst.toybox.add(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } })).index;
+        dst.lenses_layer = (try dst.toybox.add(undefined, .{ .area = .{ .bg = .none } })).index;
 
         if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
@@ -983,14 +1007,18 @@ const Workspace = struct {
     }
 
     fn _findHotAndDropzone(toybox: *Toybox, roots_in_draw_order: []const Lego.Index, absolute_needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
-        var it = std.mem.reverseIterator(roots_in_draw_order);
-        while (it.next()) |root| {
-            var cur: Lego.Index = root;
-            while (cur != .nothing) : (cur = toybox.next_postordered(cur, root).next) {
+        var roots_it = std.mem.reverseIterator(roots_in_draw_order);
+        while (roots_it.next()) |root| {
+            var it = toybox.treeIterator(root, false);
+            while (it.next()) |step| {
+                const cur = step.index;
                 const lego = toybox.get(cur);
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
-                        if (Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos)) {
+                        // TODO: skip children if needle is far
+                        if (!step.children_already_visited and
+                            Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos))
+                        {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root };
                             } else if (grabbing != .nothing and toybox.get(grabbing).specific.tag() == .sexpr) {
@@ -999,7 +1027,10 @@ const Workspace = struct {
                         }
                     },
                     .lens => |lens| {
-                        if (lens.is_target and lego.absolute_point.inRange(absolute_needle_pos, lens.local_radius)) {
+                        if (step.children_already_visited and
+                            lens.is_target and
+                            lego.absolute_point.inRange(absolute_needle_pos, lens.local_radius))
+                        {
                             const interaction_nested = _findHotAndDropzone(
                                 toybox,
                                 lens.roots_to_interact,
@@ -1014,17 +1045,26 @@ const Workspace = struct {
                             return .{ .over_background = root };
                         }
                     },
-                    .area, .case, .microscope => {},
+                    .area => |area| {
+                        if (step.children_already_visited and
+                            area.bg.contains(lego.absolute_point, absolute_needle_pos))
+                        {
+                            return .{ .over_background = cur };
+                        }
+                    },
+                    .case, .microscope => {},
                 }
-                if (lego.handle()) |handle| {
-                    if (grabbing == .nothing and handle.overlapped(absolute_needle_pos)) {
-                        return .{ .hot = cur, .over_background = root };
+                if (step.children_already_visited and grabbing == .nothing) {
+                    if (lego.handle()) |handle| {
+                        if (handle.overlapped(absolute_needle_pos)) {
+                            return .{ .hot = cur, .over_background = root };
+                        }
                     }
                 }
             }
         }
 
-        return .{ .over_background = roots_in_draw_order[0] };
+        unreachable;
     }
 
     fn updateSprings(workspace: *Workspace, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
