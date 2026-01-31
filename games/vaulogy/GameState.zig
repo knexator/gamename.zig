@@ -74,7 +74,7 @@ const FuzzerContext = struct {
 
         pub fn init() !Player {
             var workspace: Workspace = undefined;
-            try workspace.init(std.testing.allocator);
+            try workspace.init(std.testing.allocator, std.testing.random_seed);
             return .{ .workspace = workspace, .test_platform = .{} };
         }
 
@@ -122,7 +122,7 @@ test "custom replay" {
 
 test "No leaks on Workspace and Drawer" {
     var workspace: Workspace = undefined;
-    try workspace.init(std.testing.allocator);
+    try workspace.init(std.testing.allocator, std.testing.random_seed);
     defer workspace.deinit();
     var usual: kommon.Usual = undefined;
     usual.init(
@@ -886,6 +886,8 @@ const Workspace = struct {
     grabbing: Lego.Index = .nothing,
 
     undo_stack: std.ArrayList(UndoableCommand),
+    random_instance: std.Random.DefaultPrng,
+    arena_for_atom_names: std.heap.ArenaAllocator,
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
 
@@ -927,9 +929,11 @@ const Workspace = struct {
         return result;
     }
 
-    pub fn init(dst: *Workspace, gpa: std.mem.Allocator) !void {
+    pub fn init(dst: *Workspace, gpa: std.mem.Allocator, random_seed: u64) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
         dst.undo_stack = .init(gpa);
+        dst.random_instance = .init(random_seed);
+        dst.arena_for_atom_names = .init(gpa);
         try dst.toybox.init(gpa);
 
         dst.main_area = (try dst.toybox.add(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } })).index;
@@ -943,13 +947,7 @@ const Workspace = struct {
         })).index;
         dst.lenses_layer = (try dst.toybox.add(undefined, .{ .area = .{ .bg = .none } })).index;
 
-        if (true) {
-            dst.toybox.addChildLast(dst.toolbar_left, try dst.toybox.buildSexpr(
-                .{ .pos = .new(2, 3) },
-                .{ .atom_lit = "nil" },
-                false,
-            ));
-        }
+        try dst.regenerateToolbarLeft();
 
         if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
@@ -1007,6 +1005,7 @@ const Workspace = struct {
     pub fn deinit(workspace: *Workspace) void {
         workspace.toybox.deinit();
         workspace.undo_stack.deinit();
+        workspace.arena_for_atom_names.deinit();
     }
 
     const HotAndDropzone = struct {
@@ -1204,7 +1203,7 @@ const Workspace = struct {
                         .empty => {},
                         .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
                         .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                        .atom_var => @panic("TODO"),
+                        .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
                     }
                 },
                 .lens => |lens| {
@@ -1367,13 +1366,18 @@ const Workspace = struct {
             toybox.refreshAbsolutePoints(&.{ workspace.main_area, workspace.lenses_layer });
         }
 
-        if (true) { // open/close left toolbar
+        if (true) { // open/close left toolbar, and regenerate its contents
+            const old_t = workspace.toolbar_left_unfolded_t;
             math.lerpTowards(
                 &workspace.toolbar_left_unfolded_t,
                 if (hot_and_dropzone.over_background == workspace.toolbar_left) 1 else 0,
                 .slow,
                 platform.delta_seconds,
             );
+            const new_t = workspace.toolbar_left_unfolded_t;
+            if (old_t <= 0.01 and new_t > 0.01) {
+                try workspace.regenerateToolbarLeft();
+            }
 
             const rect = toolbar_left_rect;
             const hot_t = workspace.toolbar_left_unfolded_t;
@@ -1431,6 +1435,7 @@ const Workspace = struct {
             try workspace.draw(platform, d);
         }
 
+        // INTERACTION
         try workspace.undo_stack.ensureUnusedCapacity(32);
         if (workspace.grabbing == .nothing and
             hot_and_dropzone.hot != .nothing and
@@ -1553,6 +1558,44 @@ const Workspace = struct {
             workspace.hand_layer = .nothing;
         }
     }
+
+    fn regenerateToolbarLeft(workspace: *Workspace) !void {
+        const toybox = &workspace.toybox;
+        try workspace.undo_stack.ensureUnusedCapacity(32);
+
+        if (true) { // delete all current children
+            var cur = toybox.get(workspace.toolbar_left).tree.first;
+            while (cur != .nothing) {
+                const original_tree = toybox.get(cur).tree;
+                toybox.pop(cur);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .insert = .{
+                        .what = cur,
+                        .where = original_tree,
+                    },
+                });
+                cur = original_tree.next;
+            }
+        }
+
+        if (true) { // add a fresh case
+            const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+
+            const index = try toybox.buildCase(.{ .pos = .new(2.5, 5) }, .{
+                .pattern = try toybox.buildSexpr(.{}, .{ .atom_var = new_name }, true),
+                .template = try toybox.buildSexpr(.{}, .{ .pair = .{
+                    .up = try toybox.buildSexpr(.{}, .{ .atom_var = new_name }, false),
+                    .down = try toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false),
+                } }, false),
+                .fnkname = try toybox.buildSexpr(.{}, .empty, false),
+            });
+
+            workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = index });
+            toybox.addChildLast(workspace.toolbar_left, index);
+            workspace.undo_stack.appendAssumeCapacity(.{ .pop = index });
+        }
+    }
 };
 
 pub fn init(
@@ -1577,7 +1620,7 @@ pub fn init(
     // tweakable.fcolor("bg", &COLORS.bg);
 
     dst.drawer = try .init(&dst.usual);
-    try dst.workspace.init(gpa);
+    try dst.workspace.init(gpa, random_seed);
 }
 
 // TODO: take gl parameter
