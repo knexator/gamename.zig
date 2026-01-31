@@ -878,6 +878,8 @@ const Workspace = struct {
     toybox: Toybox,
 
     main_area: Lego.Index,
+    toolbar_left: Lego.Index,
+    toolbar_left_unfolded_t: f32 = 0,
     lenses_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
 
@@ -917,6 +919,7 @@ const Workspace = struct {
     }) std.BoundedArray(Lego.Index, 4) {
         var result: std.BoundedArray(Lego.Index, 4) = .{};
         result.appendAssumeCapacity(workspace.main_area);
+        result.appendAssumeCapacity(workspace.toolbar_left);
         if (config.include_hand) result.appendAssumeCapacity(workspace.hand_layer);
         if (config.include_lenses) result.appendAssumeCapacity(workspace.lenses_layer);
         return result;
@@ -928,7 +931,21 @@ const Workspace = struct {
         try dst.toybox.init(gpa);
 
         dst.main_area = (try dst.toybox.add(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } })).index;
+        dst.toolbar_left = (try dst.toybox.add(.{}, .{ .area = .{ .bg = .{
+            .local_rect = .{
+                .top_left = .zero,
+                .size = .new(6, 15),
+            },
+        } } })).index;
         dst.lenses_layer = (try dst.toybox.add(undefined, .{ .area = .{ .bg = .none } })).index;
+
+        if (true) {
+            dst.toybox.addChildLast(dst.toolbar_left, try dst.toybox.buildSexpr(
+                .{ .pos = .new(2, 3) },
+                .{ .atom_lit = "nil" },
+                false,
+            ));
+        }
 
         if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
@@ -1216,7 +1233,16 @@ const Workspace = struct {
                         .black,
                     );
                 },
-                .area, .case, .microscope => {},
+                .area => |area| {
+                    switch (area.bg) {
+                        // TODO: .all background
+                        .all, .none => {},
+                        .local_rect => |rect| {
+                            drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                        },
+                    }
+                },
+                .case, .microscope => {},
             }
             if (lego.handle()) |handle| try handle.draw(drawer, camera);
         }
@@ -1279,9 +1305,10 @@ const Workspace = struct {
             }
         }
 
-        const mouse = platform.getMouse(Rect
+        const absolute_camera = Rect
             .fromCenterAndSize(.zero, .both(2))
-            .withAspectRatio(platform.aspect_ratio, .grow, .center));
+            .withAspectRatio(platform.aspect_ratio, .grow, .center);
+        const mouse = platform.getMouse(absolute_camera);
 
         const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
@@ -1334,6 +1361,26 @@ const Workspace = struct {
             toybox.get(workspace.lenses_layer).local_point = toybox.get(workspace.main_area).local_point;
 
             toybox.refreshAbsolutePoints(&.{ workspace.main_area, workspace.lenses_layer });
+        }
+
+        if (true) { // open/close left toolbar
+            math.lerpTowards(
+                &workspace.toolbar_left_unfolded_t,
+                if (hot_and_dropzone.over_background == workspace.toolbar_left) 1 else 0,
+                .slow,
+                platform.delta_seconds,
+            );
+
+            const rect = toybox.get(workspace.toolbar_left).specific.area.bg.local_rect;
+            const hot_t = workspace.toolbar_left_unfolded_t;
+            const p = &toybox.get(workspace.toolbar_left).local_point;
+            p.* = .{
+                .scale = absolute_camera.size.y / rect.size.y,
+                .pos = absolute_camera.top_left,
+            };
+            p.* = p.applyToLocalPoint(.{ .pos = .new(-(rect.size.x - 1) * (1 - hot_t), 0) });
+
+            toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
@@ -1487,9 +1534,10 @@ const Workspace = struct {
                 assert(dropzone_index == .nothing);
             } else {
                 // Case B.3: dropping a floating thing on fresh space
-                toybox.changeCoordinates(workspace.grabbing, .{}, toybox.get(workspace.main_area).absolute_point);
+                const target_area = hot_and_dropzone.over_background;
+                toybox.changeCoordinates(workspace.grabbing, .{}, toybox.get(target_area).absolute_point);
                 toybox.refreshAbsolutePoints(&.{workspace.grabbing});
-                toybox.addChildLast(workspace.main_area, workspace.grabbing);
+                toybox.addChildLast(target_area, workspace.grabbing);
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .pop = workspace.grabbing,
                 });

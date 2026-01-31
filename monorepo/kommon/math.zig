@@ -80,6 +80,28 @@ pub fn lerp_towards_pure(current: f32, goal: f32, halflife: f32, delta_seconds: 
     return goal + (current - goal) * std.math.exp2(-delta_seconds / halflife);
 }
 
+/// in <duration> seconds, the distance will be <precision> times the original distance
+pub const LerpSpeed = struct {
+    duration: f32,
+    precision: f32,
+
+    pub const old: LerpSpeed = .{ .duration = 1.0 / 60.0, .precision = 1.0 - 0.6 };
+    pub const fast: LerpSpeed = old;
+    pub const slow: LerpSpeed = .{ .duration = 0.2, .precision = 0.01 };
+
+    pub fn halflife(speed: LerpSpeed) f32 {
+        return halflife_from_duration_and_precision(speed.duration, speed.precision);
+    }
+};
+
+pub fn lerpTowards(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) void {
+    v.* = lerpTowardsPure(v.*, goal, speed, delta_seconds);
+}
+
+pub fn lerpTowardsPure(current: f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) f32 {
+    return goal + (current - goal) * std.math.exp2(-delta_seconds / speed.halflife());
+}
+
 pub fn halflife_from_duration_and_precision(duration: f32, precision: f32) f32 {
     return -duration / std.math.log2(precision);
 }
@@ -376,7 +398,7 @@ pub const Vec2 = extern struct {
     }
 
     pub fn lerpTowards(v: *Self, goal: Self, ratio: f32, delta_seconds: f32) void {
-        v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+        v.* = Vec2.lerpTowardsPure(v.*, goal, ratio, delta_seconds);
     }
 
     pub fn awayFrom(v: Self, goal: Self, min_dist: f32) Self {
@@ -1055,7 +1077,7 @@ pub const Rect = extern struct {
     }
 
     pub fn lerpTowards(v: *Rect, goal: Rect, ratio: f32, delta_seconds: f32) void {
-        v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+        v.* = Rect.lerpTowardsPure(v.*, goal, ratio, delta_seconds);
     }
 
     /// local_sub is in 0..1 space
@@ -1914,6 +1936,13 @@ pub const Point = extern struct {
             .scale = parent.scale * local.scale,
             .turns = parent.turns + local.turns,
         };
+    }
+
+    pub fn applyToLocalRect(parent: Point, local: Rect) Rect {
+        return .fromCorners(
+            parent.applyToLocalPosition(local.top_left),
+            parent.applyToLocalPosition(local.get(.bottom_right)),
+        );
     }
 
     pub fn expectApproxEqRel(expected: Point, actual: Point, tolerance: anytype) !void {
