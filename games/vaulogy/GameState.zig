@@ -115,7 +115,7 @@ test "custom replay" {
     defer player.deinit();
 
     const inputs: []const FuzzerContext.FakeInput = &.{
-        // .{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0, 0) },
+        .{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0, 0) },
     };
     for (inputs) |input| try player.advance(input);
 }
@@ -186,6 +186,7 @@ pub const Lego = struct {
         area: Area,
         sexpr: Sexpr,
         case,
+        garland: Garland,
         microscope: Microscope,
         lens: Lens,
 
@@ -241,6 +242,10 @@ pub const Lego = struct {
                     .pair => .pair,
                 });
             }
+        };
+
+        pub const Garland = struct {
+            visible: bool = undefined,
         };
 
         pub const Microscope = struct {
@@ -371,13 +376,18 @@ pub const Lego = struct {
     pub fn handle(lego: *const Lego) ?Handle {
         const radius: Handle.Size = switch (lego.specific) {
             .sexpr, .area, .microscope => return null,
-            .case => .default,
+            .case, .garland => .default,
             .lens => .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 },
+        };
+        const enabled: bool = switch (lego.specific) {
+            else => true,
+            .garland => |garland| garland.visible,
         };
         return .{
             .point = lego.absolute_point.applyToLocalPoint(.{ .pos = lego.handleLocalOffset() }),
             .hot_t = lego.hot_t,
             .radius = radius,
+            .enabled = enabled,
         };
     }
 
@@ -395,8 +405,7 @@ pub const Handle = struct {
     hot_t: f32,
     // TODO: remove default value
     alpha: f32 = 1,
-    // TODO: remove
-    comptime enabled: bool = true,
+    enabled: bool,
 
     pub const Size = extern struct {
         base: f32,
@@ -805,6 +814,16 @@ pub const Toybox = struct {
         }
     }
 
+    pub fn oldestAncestor(toybox: *Toybox, index: Lego.Index) Lego.Index {
+        assert(index != .nothing);
+        var cur = index;
+        while (true) {
+            const next = toybox.get(cur).tree.parent;
+            if (next == .nothing) return cur;
+            cur = next;
+        }
+    }
+
     pub fn parentAbsolutePoint(toybox: *Toybox, index: Lego.Index) Point {
         assert(index != .nothing);
         const parent = toybox.get(index).tree.parent;
@@ -856,12 +875,18 @@ pub const Toybox = struct {
         pattern: Lego.Index,
         template: Lego.Index,
         fnkname: Lego.Index,
+        next: ?Lego.Index = null,
     }) !Lego.Index {
         const result = try toybox.add(local_point, .case);
         toybox.addChildLast(result.index, data.pattern);
         toybox.addChildLast(result.index, data.template);
         toybox.addChildLast(result.index, data.fnkname);
+        toybox.addChildLast(result.index, data.next orelse try toybox.buildGarland(local_point));
         return result.index;
+    }
+
+    pub fn buildGarland(toybox: *Toybox, local_point: Point) !Lego.Index {
+        return (try toybox.add(local_point, .{ .garland = .{} })).index;
     }
 
     pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2) !Lego.Index {
@@ -1072,7 +1097,7 @@ const Workspace = struct {
                             return .{ .over_background = cur };
                         }
                     },
-                    .case, .microscope => {},
+                    .case, .microscope, .garland => {},
                 }
                 if (step.children_already_visited and grabbing == .nothing) {
                     if (lego.handle()) |handle| {
@@ -1144,15 +1169,22 @@ const Workspace = struct {
                         }
                     },
                     .case => {
-                        const offsets: [3]Point = .{
+                        const offsets: [4]Point = .{
                             .{ .pos = .xneg },
                             .{ .pos = .xpos },
                             .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
+                            .{ .pos = .new(8, 1) },
                         };
                         // const pattern, const template, const fnkname = toybox.getChildrenExact(3, cur);
                         // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
-                        for (toybox.getChildrenExact(3, cur), offsets) |i, offset| {
+                        for (toybox.getChildrenExact(4, cur), offsets) |i, offset| {
                             toybox.get(i).local_point = offset;
+                        }
+                    },
+                    .garland => {
+                        if (lego.tree.first != .nothing) {
+                            // FIXME
+                            toybox.get(lego.tree.first).local_point = .{ .pos = .new(0, 1) };
                         }
                     },
                     .area, .microscope, .lens => {},
@@ -1245,7 +1277,7 @@ const Workspace = struct {
                         },
                     }
                 },
-                .case, .microscope => {},
+                .case, .garland, .microscope => {},
             }
             if (lego.handle()) |handle| try handle.draw(drawer, camera);
         }
@@ -1341,7 +1373,23 @@ const Workspace = struct {
                 .sexpr => |*sexpr| {
                     math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
                 },
-                .area, .case, .microscope, .lens => {},
+                .area, .case, .garland, .microscope, .lens => {},
+            }
+        }
+
+        // TODO: a bit hacky
+        if (true) { // set garlands visibility
+            const grabbing_garland_or_case: bool = if (workspace.grabbing == .nothing)
+                false
+            else switch (toybox.get(workspace.grabbing).specific) {
+                .case, .garland => true,
+                else => false,
+            };
+            for (toybox.all_legos.items) |*lego| {
+                const in_toolbar = toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
+                if (lego.specific.as(.garland)) |garland| {
+                    garland.visible = !in_toolbar and (grabbing_garland_or_case or lego.tree.first != .nothing);
+                }
             }
         }
 
