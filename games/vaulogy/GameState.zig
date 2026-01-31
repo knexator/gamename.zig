@@ -887,6 +887,8 @@ const Workspace = struct {
 
     undo_stack: std.ArrayList(UndoableCommand),
 
+    pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
+
     const UndoableCommand = union(enum) {
         fence,
         set_data_except_tree: Lego,
@@ -931,12 +933,14 @@ const Workspace = struct {
         try dst.toybox.init(gpa);
 
         dst.main_area = (try dst.toybox.add(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } })).index;
-        dst.toolbar_left = (try dst.toybox.add(.{}, .{ .area = .{ .bg = .{
-            .local_rect = .{
-                .top_left = .zero,
-                .size = .new(6, 15),
+        dst.toolbar_left = (try dst.toybox.add(.{}, .{
+            .area = .{
+                .bg = .{
+                    // ensure that "mouse off-screen on the left" also overlaps the toolbar
+                    .local_rect = toolbar_left_rect.plusMargin3(.left, 100),
+                },
             },
-        } } })).index;
+        })).index;
         dst.lenses_layer = (try dst.toybox.add(undefined, .{ .area = .{ .bg = .none } })).index;
 
         if (true) {
@@ -1371,7 +1375,7 @@ const Workspace = struct {
                 platform.delta_seconds,
             );
 
-            const rect = toybox.get(workspace.toolbar_left).specific.area.bg.local_rect;
+            const rect = toolbar_left_rect;
             const hot_t = workspace.toolbar_left_unfolded_t;
             const p = &toybox.get(workspace.toolbar_left).local_point;
             p.* = .{
