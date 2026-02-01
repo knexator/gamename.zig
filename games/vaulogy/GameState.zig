@@ -1474,13 +1474,12 @@ const Workspace = struct {
         }
 
         if (true) { // move camera
-            // TODO: center zoom on mouse
             const p = &toybox.get(workspace.main_area).local_point;
-            p.scale *= switch (mouse.cur.scrolled) {
+            p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
                 .none => 1.0,
                 .up => 1.1,
                 .down => 0.9,
-            };
+            });
             inline for (KeyboardButton.directional_keys) |kv| {
                 for (kv.keys) |key| {
                     if (platform.keyboard.cur.isDown(key)) {
