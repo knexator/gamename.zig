@@ -564,17 +564,18 @@ pub const Toybox = struct {
         return result;
     }
 
-    pub fn getChildrenUnknown(toybox: *Toybox, allocator: std.mem.Allocator, parent: Lego.Index) ![]Lego.Index {
-        const children_count: usize = blk: {
-            var count: usize = 0;
-            var cur = toybox.get(parent).tree.first;
-            while (cur != .nothing) {
-                count += 1;
-                cur = toybox.get(cur).tree.next;
-            }
-            break :blk count;
-        };
+    pub fn childCount(toybox: *Toybox, index: Lego.Index) usize {
+        var count: usize = 0;
+        var cur = toybox.get(index).tree.first;
+        while (cur != .nothing) {
+            count += 1;
+            cur = toybox.get(cur).tree.next;
+        }
+        return count;
+    }
 
+    pub fn getChildrenUnknown(toybox: *Toybox, allocator: std.mem.Allocator, parent: Lego.Index) ![]Lego.Index {
+        const children_count: usize = toybox.childCount(parent);
         const result = try allocator.alloc(Lego.Index, children_count);
         var cur = toybox.get(parent).tree.first;
         for (result) |*dst| {
@@ -1140,7 +1141,7 @@ const Workspace = struct {
                             .garland => if (grabbing == .nothing)
                                 .{ true, .hot }
                             else if (toybox.get(grabbing).specific.tag() == .garland)
-                                .{ true, .hot }
+                                .{ true, .drop }
                             else
                                 .{ false, undefined },
                         };
@@ -1652,6 +1653,22 @@ const Workspace = struct {
                         .where = original_parent_tree,
                     },
                 });
+
+                grabbed_element_index = hot_index;
+            } else if (toybox.get(hot_index).specific.tag() == .garland) {
+                // Case A.5: plucking a garland, and replacing it with an empty one
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_data_except_tree = original_hot_data,
+                });
+
+                const new_garland = try toybox.buildGarland(original_hot_data.local_point, &.{});
+                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_garland });
+
+                toybox.changeChild(hot_index, new_garland);
+                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                    .new = hot_index,
+                    .original = new_garland,
+                } });
 
                 grabbed_element_index = hot_index;
             } else unreachable;
