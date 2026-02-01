@@ -173,7 +173,7 @@ pub const Lego = struct {
     visual_offset: Point = .{},
     hot_t: f32 = 0,
     // 1 if there is an element being dropped on this one
-    // dropzone_t: f32 = 0,
+    dropzone_t: f32 = 0,
     // active_t: f32 = 0,
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
@@ -187,6 +187,8 @@ pub const Lego = struct {
         sexpr: Sexpr,
         case,
         garland: Garland,
+        /// cable between cases, and the handle to create new ones
+        newcase: NewCase,
         microscope: Microscope,
         lens: Lens,
 
@@ -246,6 +248,12 @@ pub const Lego = struct {
 
         pub const Garland = struct {
             visible: bool = undefined,
+        };
+
+        pub const NewCase = struct {
+            length: f32 = undefined,
+            /// if 1, the newcase handle is right at the end of the cable
+            handle_t: f32 = undefined,
         };
 
         pub const Microscope = struct {
@@ -376,8 +384,10 @@ pub const Lego = struct {
     pub fn handle(lego: *const Lego) ?Handle {
         const radius: Handle.Size = switch (lego.specific) {
             .sexpr, .area, .microscope => return null,
-            .case, .garland => .default,
-            .lens => .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 },
+            .case => .case,
+            .newcase => .new_case,
+            .garland => .garland,
+            .lens => .lens,
         };
         const enabled: bool = switch (lego.specific) {
             else => true,
@@ -385,7 +395,7 @@ pub const Lego = struct {
         };
         return .{
             .point = lego.absolute_point.applyToLocalPoint(.{ .pos = lego.handleLocalOffset() }),
-            .hot_t = lego.hot_t,
+            .hot_t = lego.hot_t + lego.dropzone_t,
             .radius = radius,
             .enabled = enabled,
         };
@@ -394,6 +404,7 @@ pub const Lego = struct {
     fn handleLocalOffset(lego: *const Lego) Vec2 {
         return switch (lego.specific) {
             .lens => |lens| .fromPolar(lens.local_radius + 0.1, 1.0 / 8.0),
+            .newcase => |newcase| .new(0, newcase.length * newcase.handle_t),
             else => .zero,
         };
     }
@@ -413,7 +424,10 @@ pub const Handle = struct {
         hitbox: f32,
 
         pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
-        pub const zero: Size = .{ .base = 0, .hot = 0, .hitbox = 0 };
+        pub const case: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
+        pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.5 };
+        pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 };
+        pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
     };
 
     pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect) !void {
@@ -881,12 +895,21 @@ pub const Toybox = struct {
         toybox.addChildLast(result.index, data.pattern);
         toybox.addChildLast(result.index, data.template);
         toybox.addChildLast(result.index, data.fnkname);
-        toybox.addChildLast(result.index, data.next orelse try toybox.buildGarland(local_point));
+        toybox.addChildLast(result.index, data.next orelse try toybox.buildGarland(local_point, &.{}));
         return result.index;
     }
 
-    pub fn buildGarland(toybox: *Toybox, local_point: Point) !Lego.Index {
-        return (try toybox.add(local_point, .{ .garland = .{} })).index;
+    /// The garland's children are a linear list of newcase, all except the last one with a child case
+    /// the newcase position is the very top of the segment
+    pub fn buildGarland(toybox: *Toybox, local_point: Point, child_cases: []const Lego.Index) !Lego.Index {
+        const result = try toybox.add(local_point, .{ .garland = .{} });
+        for (child_cases) |case| {
+            const new_segment = try toybox.add(.{}, .{ .newcase = .{} });
+            toybox.addChildLast(new_segment.index, case);
+            toybox.addChildLast(result.index, new_segment.index);
+        }
+        toybox.addChildLast(result.index, (try toybox.add(.{}, .{ .newcase = .{} })).index);
+        return result.index;
     }
 
     pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2) !Lego.Index {
@@ -974,23 +997,19 @@ const Workspace = struct {
 
         try dst.regenerateToolbarLeft();
 
-        if (true) {
+        if (false) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(0, 0) },
                 .{ .atom_lit = "true" },
                 false,
             ));
-        }
 
-        if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(0, 1) },
                 .{ .atom_lit = "false" },
                 false,
             ));
-        }
 
-        if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildSexpr(
                 .{ .pos = .new(3, 0) },
                 .{ .pair = .{
@@ -999,9 +1018,7 @@ const Workspace = struct {
                 } },
                 false,
             ));
-        }
 
-        if (true) {
             dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildCase(
                 .{ .pos = .new(0, 4) },
                 .{
@@ -1013,13 +1030,28 @@ const Workspace = struct {
         }
 
         if (true) {
+            const case_1 = try dst.toybox.buildCase(.{}, .{
+                .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
+                .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
+            });
+            const case_2 = try dst.toybox.buildCase(.{}, .{
+                .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
+                .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
+            });
+            dst.toybox.addChildLast(dst.main_area, try dst.toybox.buildGarland(
+                .{ .pos = .new(7, 4) },
+                &.{ case_1, case_2 },
+            ));
+        }
+
+        if (false) {
             dst.toybox.addChildLast(dst.lenses_layer, try dst.toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
             ));
-        }
 
-        if (true) {
             dst.toybox.addChildLast(dst.lenses_layer, try dst.toybox.buildMicroscope(
                 .new(4, 3),
                 .new(6, 2),
@@ -1097,12 +1129,27 @@ const Workspace = struct {
                             return .{ .over_background = cur };
                         }
                     },
-                    .case, .microscope, .garland => {},
+                    .case, .newcase, .microscope, .garland => {},
                 }
-                if (step.children_already_visited and grabbing == .nothing) {
+                if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
-                        if (handle.overlapped(absolute_needle_pos)) {
-                            return .{ .hot = cur, .over_background = root };
+                        const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
+                            .sexpr, .area, .microscope => unreachable,
+                            .case, .lens => .{ grabbing == .nothing, .hot },
+                            .newcase => .{ grabbing != .nothing and toybox.get(grabbing).specific.tag() == .case, .drop },
+                            .garland => if (grabbing == .nothing)
+                                .{ true, .hot }
+                            else if (toybox.get(grabbing).specific.tag() == .garland)
+                                .{ true, .hot }
+                            else
+                                .{ false, undefined },
+                        };
+
+                        if (overlappable and handle.overlapped(absolute_needle_pos)) {
+                            switch (kind) {
+                                .hot => return .{ .hot = cur, .over_background = root },
+                                .drop => return .{ .dropzone = cur, .over_background = root },
+                            }
                         }
                     }
                 }
@@ -1128,7 +1175,7 @@ const Workspace = struct {
                             .scale = toybox.get(interaction.over_background).absolute_point.scale,
                         }).applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
                     else
-                        toybox.get(interaction.dropzone).absolute_point;
+                        toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = toybox.get(interaction.dropzone).handleLocalOffset() });
 
                     lego.local_point.lerp_towards(toybox.parentAbsolutePoint(cur)
                         .inverseApplyGetLocal(target), 0.6, delta_seconds);
@@ -1182,10 +1229,32 @@ const Workspace = struct {
                         }
                     },
                     .garland => {
-                        if (lego.tree.first != .nothing) {
-                            // FIXME
-                            toybox.get(lego.tree.first).local_point = .{ .pos = .new(0, 1) };
+                        var a = toybox.get(lego.tree.first);
+                        var offset: Vec2 = .zero;
+                        while (true) {
+                            assert(a.specific.tag() == .newcase);
+                            a.local_point = .{ .pos = offset };
+                            offset.addInPlace(.new(0, a.specific.newcase.length));
+
+                            if (a.tree.next == .nothing) break;
+                            a = toybox.get(a.tree.next);
                         }
+                    },
+                    .newcase => |*newcase| {
+                        const target_length: f32, const target_handle_t: f32 = blk: {
+                            if (lego.tree.first != .nothing) {
+                                assert(lego.tree.last == lego.tree.first);
+                                assert(lego.tree.next != .nothing);
+                                assert(toybox.get(lego.tree.first).specific.tag() == .case);
+                                toybox.get(lego.tree.first).local_point = .{ .pos = .new(0, newcase.length) };
+                                break :blk .{ 2.5, 0.5 };
+                            } else {
+                                assert(lego.tree.next == .nothing);
+                                break :blk .{ 1, 1 };
+                            }
+                        };
+                        math.lerpTowards(&newcase.handle_t, target_handle_t, .fast, delta_seconds);
+                        math.lerpTowards(&newcase.length, target_length * (lego.dropzone_t + 1), .slow, delta_seconds);
                     },
                     .area, .microscope, .lens => {},
                 }
@@ -1224,62 +1293,72 @@ const Workspace = struct {
     }
 
     fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, drawer: *Drawer) !void {
-        var cur: Lego.Index = root;
-        while (cur != .nothing) : (cur = toybox.next_preordered(cur, root).next) {
+        var it = toybox.treeIterator(root, true);
+        while (it.next()) |step| {
+            const cur = step.index;
             const lego = toybox.get(cur);
             // TODO: don't draw if small or far from camera
-            const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
-            switch (lego.specific) {
-                .sexpr => |sexpr| {
-                    switch (sexpr.kind) {
-                        .empty => {},
-                        .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                        .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                        .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                    }
-                },
-                .lens => |lens| {
-                    // TODO: lens distortion effect, on source and target
-
-                    if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
-                        const lens_circle: math.Circle = .{ .center = lego.absolute_point.pos, .radius = lens.local_radius * lego.absolute_point.scale };
-                        if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
-                            drawer.canvas.clipper.use(drawer.canvas);
-                            defer {
-                                drawer.canvas.clipper.pop();
-                                drawer.canvas.clipper.use(drawer.canvas);
-                            }
-                            drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
-
-                            for (lens.roots_to_draw) |asdf| {
-                                try _draw(toybox, asdf, lens.transform.getCamera(camera), drawer);
-                            }
-                        } else |_| {
-                            std.log.err("reached max lens depth, TODO: improve", .{});
+            if (step.children_already_visited) {
+                if (lego.handle()) |handle| try handle.draw(drawer, camera);
+            } else {
+                const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
+                switch (lego.specific) {
+                    .sexpr => |sexpr| {
+                        switch (sexpr.kind) {
+                            .empty => {},
+                            .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
+                            .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
+                            .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
                         }
-                    }
+                    },
+                    .lens => |lens| {
+                        // TODO: lens distortion effect, on source and target
 
-                    drawer.canvas.strokeCircle(
-                        128,
-                        camera,
-                        lego.absolute_point.pos,
-                        lego.absolute_point.scale * lens.local_radius,
-                        lego.absolute_point.scale * 0.05,
-                        .black,
-                    );
-                },
-                .area => |area| {
-                    switch (area.bg) {
-                        // TODO: .all background
-                        .all, .none => {},
-                        .local_rect => |rect| {
-                            drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
-                        },
-                    }
-                },
-                .case, .garland, .microscope => {},
+                        if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
+                            const lens_circle: math.Circle = .{ .center = lego.absolute_point.pos, .radius = lens.local_radius * lego.absolute_point.scale };
+                            if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
+                                drawer.canvas.clipper.use(drawer.canvas);
+                                defer {
+                                    drawer.canvas.clipper.pop();
+                                    drawer.canvas.clipper.use(drawer.canvas);
+                                }
+                                drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
+
+                                for (lens.roots_to_draw) |asdf| {
+                                    try _draw(toybox, asdf, lens.transform.getCamera(camera), drawer);
+                                }
+                            } else |_| {
+                                std.log.err("reached max lens depth, TODO: improve", .{});
+                            }
+                        }
+
+                        drawer.canvas.strokeCircle(
+                            128,
+                            camera,
+                            lego.absolute_point.pos,
+                            lego.absolute_point.scale * lens.local_radius,
+                            lego.absolute_point.scale * 0.05,
+                            .black,
+                        );
+                    },
+                    .area => |area| {
+                        switch (area.bg) {
+                            // TODO: .all background
+                            .all, .none => {},
+                            .local_rect => |rect| {
+                                drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                            },
+                        }
+                    },
+                    .newcase => |newcase| {
+                        drawer.canvas.line(camera, &.{
+                            lego.absolute_point.pos,
+                            lego.absolute_point.pos.addY(newcase.length * lego.absolute_point.scale),
+                        }, 0.05 * lego.absolute_point.scale, .black);
+                    },
+                    .case, .garland, .microscope => {},
+                }
             }
-            if (lego.handle()) |handle| try handle.draw(drawer, camera);
         }
     }
 
@@ -1291,8 +1370,9 @@ const Workspace = struct {
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (lego.exists) {
-                    std.log.debug("{d} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d} \t rel: {any} \tabs: {any}", .{
+                    std.log.debug("{d} \t{s} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d} \t rel: {any} \tabs: {any}", .{
                         k,
+                        @tagName(lego.specific.tag()),
                         lego.tree.parent.asI32(),
                         lego.tree.next.asI32(),
                         lego.tree.prev.asI32(),
@@ -1366,14 +1446,14 @@ const Workspace = struct {
         for (toybox.all_legos.items) |*lego| {
             math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, platform.delta_seconds);
             comptime assert(!@hasField(Lego, "active_t"));
-            comptime assert(!@hasField(Lego, "dropzone_t"));
+            math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, platform.delta_seconds);
             math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, platform.delta_seconds);
 
             switch (lego.specific) {
                 .sexpr => |*sexpr| {
                     math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
                 },
-                .area, .case, .garland, .microscope, .lens => {},
+                .area, .case, .newcase, .garland, .microscope, .lens => {},
             }
         }
 
@@ -1549,6 +1629,32 @@ const Workspace = struct {
                 });
                 grabbed_element_index = hot_index;
                 plucked = false;
+            } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .newcase) {
+                // Case A.4: plucking a case from a garland
+                assert(original_hot_data.specific.tag() == .case);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_data_except_tree = original_hot_data,
+                });
+
+                toybox.pop(hot_index);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .insert = .{
+                        .what = hot_index,
+                        .where = original_hot_data.tree,
+                    },
+                });
+
+                const original_parent_tree = toybox.get(hot_parent).tree;
+                toybox.get(original_parent_tree.next).specific.newcase.length += toybox.get(hot_parent).specific.newcase.length;
+                toybox.pop(hot_parent);
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .insert = .{
+                        .what = hot_parent,
+                        .where = original_parent_tree,
+                    },
+                });
+
+                grabbed_element_index = hot_index;
             } else unreachable;
 
             assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
@@ -1571,21 +1677,40 @@ const Workspace = struct {
 
             if (dropzone_index != .nothing) {
                 assert(toybox.isFloating(workspace.grabbing));
-                toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
-                toybox.refreshAbsolutePoints(&.{workspace.grabbing});
-                toybox.changeChild(dropzone_index, workspace.grabbing);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .change_child = .{
-                        .original = workspace.grabbing,
-                        .new = dropzone_index,
-                    },
-                });
+                if (toybox.get(dropzone_index).specific.tag() == .newcase) {
+                    // TODO: avoid jumpyness
+                    assert(toybox.get(workspace.grabbing).specific.tag() == .case);
+                    const newcase = try toybox.add(.{}, .{ .newcase = .{} });
+                    workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = newcase.index });
+                    const original_tree = toybox.get(dropzone_index).tree;
+                    toybox.insert(newcase.index, .{
+                        .parent = original_tree.parent,
+                        .prev = original_tree.prev,
+                        .next = dropzone_index,
+                        .first = .nothing,
+                        .last = .nothing,
+                    });
+                    workspace.undo_stack.appendAssumeCapacity(.{ .pop = newcase.index });
+                    toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
+                    toybox.addChildLast(newcase.index, workspace.grabbing);
+                    workspace.undo_stack.appendAssumeCapacity(.{ .pop = workspace.grabbing });
+                } else {
+                    toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
+                    toybox.refreshAbsolutePoints(&.{workspace.grabbing});
+                    toybox.changeChild(dropzone_index, workspace.grabbing);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .change_child = .{
+                            .original = workspace.grabbing,
+                            .new = dropzone_index,
+                        },
+                    });
 
-                const overwritten_data = toybox.get(dropzone_index).*;
-                toybox.destroyFloating(dropzone_index);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .recreate_floating = overwritten_data,
-                });
+                    const overwritten_data = toybox.get(dropzone_index).*;
+                    toybox.destroyFloating(dropzone_index);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .recreate_floating = overwritten_data,
+                    });
+                }
             } else if (!toybox.isFloating(workspace.grabbing)) {
                 // Case B.2: releasing a grabbed thing
                 assert(dropzone_index == .nothing);
