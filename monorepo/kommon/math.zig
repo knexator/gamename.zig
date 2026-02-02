@@ -1623,6 +1623,26 @@ pub const Rect = extern struct {
         std.debug.assert(std.meta.eql(options, .{}));
         try writer.print("Rect(tl: {any}, size: {any})", .{ value.top_left, value.size });
     }
+
+    test "move camera to focus on parent point" {
+        const local_pos: Vec2 = .new(3, 4);
+        const parent: Point = .{ .pos = .new(5, 6), .scale = 2 };
+        const absolute_camera: Rect = .{ .top_left = .new(-2, -4), .size = .new(7, 5) };
+
+        const expected = absolute_camera.localFromWorldPosition(parent.applyToLocalPosition(local_pos));
+
+        const local_camera = absolute_camera.reparentCamera(parent);
+        const actual = local_camera.localFromWorldPosition(local_pos);
+
+        try Vec2.expectApproxEqAbs(expected, actual, 0.001);
+    }
+
+    pub fn reparentCamera(original: Rect, new_parent: Point) Rect {
+        return .fromCorners(
+            new_parent.inverseApplyGetLocalPosition(original.top_left),
+            new_parent.inverseApplyGetLocalPosition(original.get(.bottom_right)),
+        );
+    }
 };
 
 pub const FColor = extern struct {
