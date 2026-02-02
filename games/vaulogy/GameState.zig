@@ -248,6 +248,7 @@ pub const Lego = struct {
 
         pub const Garland = struct {
             visible: bool = undefined,
+            computed_height: f32 = 0,
         };
 
         pub const NewCase = struct {
@@ -1229,7 +1230,7 @@ const Workspace = struct {
                             toybox.get(i).local_point = offset;
                         }
                     },
-                    .garland => {
+                    .garland => |*garland| {
                         var a = toybox.get(lego.tree.first);
                         var offset: Vec2 = .zero;
                         while (true) {
@@ -1240,22 +1241,34 @@ const Workspace = struct {
                             if (a.tree.next == .nothing) break;
                             a = toybox.get(a.tree.next);
                         }
+                        garland.computed_height = offset.y;
                     },
                     .newcase => |*newcase| {
                         const target_length: f32, const target_handle_t: f32 = blk: {
+                            const prev_height: f32 = if (lego.tree.prev == .nothing)
+                                0
+                            else blk2: {
+                                const case_of_prev_segment = toybox.get(lego.tree.prev).tree.first;
+                                const garland_of_case_of_prev_segment = toybox.get(case_of_prev_segment).tree.last;
+                                if (garland_of_case_of_prev_segment == interaction.dropzone) {
+                                    break :blk2 toybox.get(workspace.grabbing).specific.garland.computed_height;
+                                } else {
+                                    break :blk2 toybox.get(garland_of_case_of_prev_segment).specific.garland.computed_height;
+                                }
+                            };
                             if (lego.tree.first != .nothing) {
                                 assert(lego.tree.last == lego.tree.first);
                                 assert(lego.tree.next != .nothing);
                                 assert(toybox.get(lego.tree.first).specific.tag() == .case);
                                 toybox.get(lego.tree.first).local_point = .{ .pos = .new(0, newcase.length) };
-                                break :blk .{ 2.5, 0.5 };
+                                break :blk .{ 1.5 + prev_height, 0.5 };
                             } else {
                                 assert(lego.tree.next == .nothing);
-                                break :blk .{ 1, 1 };
+                                break :blk .{ 1 + prev_height, 1 };
                             }
                         };
                         math.lerpTowards(&newcase.handle_t, target_handle_t, .fast, delta_seconds);
-                        math.lerpTowards(&newcase.length, target_length * (lego.dropzone_t + 1), .slow, delta_seconds);
+                        math.lerpTowards(&newcase.length, target_length + 2.5 * 0.5 * lego.dropzone_t, .slow, delta_seconds);
                     },
                     .area, .microscope, .lens => {},
                 }
