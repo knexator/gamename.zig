@@ -193,6 +193,7 @@ pub const Lego = struct {
         executor: Executor,
         fnkbox: Fnkbox,
         fnkbox_box: FnkboxBox,
+        testcase: Testcase,
         microscope: Microscope,
         lens: Lens,
 
@@ -295,7 +296,7 @@ pub const Lego = struct {
                 .new(0, 0.75),
                 .new(16, box_height),
             );
-            const relative_top_testcase_point: Point = .{ .pos = .new(0, box_height - testcases_height) };
+            const relative_top_testcase_pos: Vec2 = .new(0, box_height - testcases_height);
             const text_height: f32 = 2.4;
             const status_bar_height: f32 = 1;
             const testcases_header_height: f32 = 0.85;
@@ -338,6 +339,24 @@ pub const Lego = struct {
                     .box = asdf[0],
                     .fnkname = asdf[1],
                     .executor = asdf[2],
+                };
+            }
+        };
+
+        pub const Testcase = struct {
+            pub fn children(toybox: *Toybox, index: Lego.Index) struct {
+                input: Lego.Index,
+                expected: Lego.Index,
+                actual: Lego.Index,
+                play_button: Lego.Index,
+            } {
+                assert(toybox.get(index).specific.tag() == .testcase);
+                const asdf = toybox.getChildrenExact(4, index);
+                return .{
+                    .input = asdf[0],
+                    .expected = asdf[1],
+                    .actual = asdf[2],
+                    .play_button = asdf[3],
                 };
             }
         };
@@ -477,6 +496,7 @@ pub const Lego = struct {
             .fnkbox_description,
             .fnkbox_testcases,
             .executor,
+            .testcase,
             => return null,
             .case => .default,
             .newcase => .new_case,
@@ -1017,7 +1037,7 @@ pub const Toybox = struct {
         // TODO: take *const Sepxr
         fnkname: Lego.Index,
         text: []const u8,
-        // testcases_values
+        testcases: []const [2]Lego.Index,
         initial_definition: ?Lego.Index,
     ) !Lego.Index {
         const result = try toybox.add(local_point, .{ .fnkbox = .{} });
@@ -1032,9 +1052,19 @@ pub const Toybox = struct {
                 .local_rect = .fromMeasureAndSizeV2(.top_center, .zero, .new(16, 1)),
             },
         })).index);
-        toybox.addChildLast(box.index, (try toybox.add(.{}, .{
+        const fnkbox_testcases = try toybox.add(.{}, .{
             .fnkbox_testcases = .{},
-        })).index);
+        });
+        for (testcases) |values| {
+            const testcase = try toybox.add(.{}, .{ .testcase = .{} });
+            toybox.addChildLast(testcase.index, values[0]);
+            toybox.addChildLast(testcase.index, values[1]);
+            toybox.addChildLast(testcase.index, try toybox.buildSexpr(.{}, .empty, false));
+            toybox.addChildLast(testcase.index, (try toybox.add(.{}, .{ .button = .{ .local_rect = .unit } })).index);
+
+            toybox.addChildLast(fnkbox_testcases.index, testcase.index);
+        }
+        toybox.addChildLast(box.index, fnkbox_testcases.index);
         toybox.addChildLast(result.index, box.index);
         toybox.addChildLast(result.index, fnkname);
         const executor = try toybox.add(.{}, .{ .executor = .{} });
@@ -1140,6 +1170,12 @@ const Workspace = struct {
                         true,
                     ),
                     "do lowercase",
+                    &.{
+                        .{
+                            try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, false),
+                            try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false),
+                        },
+                    },
                     null,
                 ),
             );
@@ -1289,12 +1325,13 @@ const Workspace = struct {
                     .fnkbox_box,
                     .fnkbox_description,
                     .fnkbox_testcases,
+                    .testcase,
                     => {},
                 }
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
-                            .sexpr, .area, .microscope, .fnkbox_description, .fnkbox_testcases, .button, .executor, .fnkbox_box => unreachable,
+                            .sexpr, .area, .microscope, .fnkbox_description, .fnkbox_testcases, .button, .executor, .fnkbox_box, .testcase => unreachable,
                             .case, .lens, .fnkbox => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and toybox.get(grabbing).specific.tag() == .case, .drop },
                             .garland => if (grabbing == .nothing)
@@ -1442,7 +1479,6 @@ const Workspace = struct {
                         toybox.get(children.status_bar).local_point = .{};
                         toybox.get(children.status_bar).specific.button.local_rect = FnkboxBox.status_bar_goal;
                         toybox.get(children.description).local_point = .{};
-                        // FIXME
                         toybox.get(children.testcases_area).local_point = .{};
                     },
                     .executor => {
@@ -1452,7 +1488,23 @@ const Workspace = struct {
                         toybox.get(children.input).local_point = Executor.relative_input_point;
                     },
                     .fnkbox_testcases => {
-                        // FIXME
+                        var k: usize = 0;
+                        var cur_case: Lego.Index = lego.tree.first;
+                        while (cur_case != .nothing) {
+                            toybox.get(cur_case).local_point = .{ .pos = Lego.Specific.FnkboxBox.relative_top_testcase_pos
+                                .addY(2 + 2.5 * (tof32(k) - 0)) };
+                            k += 1;
+                            cur_case = toybox.get(cur_case).tree.next;
+                        }
+                    },
+                    .testcase => {
+                        const Testcase = Lego.Specific.Testcase;
+                        const children = Testcase.children(toybox, cur);
+                        toybox.get(children.input).local_point = .{ .pos = .new(-4, 0) };
+                        toybox.get(children.expected).local_point = .{ .pos = .new(0, 0) };
+                        toybox.get(children.actual).local_point = .{ .pos = .new(4, 0) };
+                        toybox.get(children.play_button).local_point = .{};
+                        toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
                     },
                     .area, .microscope, .lens, .button, .fnkbox_description => {},
                 }
@@ -1585,7 +1637,7 @@ const Workspace = struct {
                             .black,
                         );
                     },
-                    .case, .garland, .microscope, .executor, .fnkbox, .fnkbox_box => {},
+                    .case, .garland, .microscope, .executor, .fnkbox, .fnkbox_box, .testcase => {},
                 }
             }
         }
@@ -1694,6 +1746,7 @@ const Workspace = struct {
                 .fnkbox_box,
                 .fnkbox_testcases,
                 .button,
+                .testcase,
                 => {},
             }
         }
