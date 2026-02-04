@@ -1616,9 +1616,7 @@ const Workspace = struct {
         drawer.canvas.clipper.reset();
         drawer.canvas.clipper.use(drawer.canvas);
 
-        for (workspace.roots(.all).constSlice()) |root| {
-            try _draw(toybox, root, camera, drawer);
-        }
+        try _draw(toybox, workspace.roots(.all).constSlice(), camera, drawer);
 
         if (display_fps) try drawer.canvas.drawText(
             0,
@@ -1634,102 +1632,102 @@ const Workspace = struct {
         );
     }
 
-    fn _draw(toybox: *Toybox, root: Lego.Index, camera: Rect, drawer: *Drawer) !void {
-        var it = toybox.treeIterator(root, true);
-        while (it.next()) |step| {
-            const cur = step.index;
-            const lego = toybox.get(cur);
-            // TODO: don't draw if small or far from camera
-            if (step.children_already_visited) {
-                if (lego.handle()) |handle| try handle.draw(drawer, camera);
-                switch (lego.specific) {
-                    .fnkbox_testcases => drawer.canvas.clipper.pop(),
-                    .fnkbox_box => {
-                        const relative_camera = camera.reparentCamera(lego.absolute_point);
-                        drawer.canvas.borderRect(relative_camera, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
-                    },
-                    else => {},
-                }
-            } else {
-                const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
-                switch (lego.specific) {
-                    .sexpr => |sexpr| {
-                        switch (sexpr.kind) {
-                            .empty => {},
-                            .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                            .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                            .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                        }
-                    },
-                    .lens => |lens| {
-                        // TODO: lens distortion effect, on source and target
-
-                        if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
-                            const lens_circle: math.Circle = .{ .center = lego.absolute_point.pos, .radius = lens.local_radius * lego.absolute_point.scale };
-                            if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
-                                drawer.canvas.clipper.use(drawer.canvas);
-                                defer {
-                                    drawer.canvas.clipper.pop();
-                                    drawer.canvas.clipper.use(drawer.canvas);
-                                }
-                                drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
-
-                                for (lens.roots_to_draw) |asdf| {
-                                    try _draw(toybox, asdf, lens.transform.getCamera(camera), drawer);
-                                }
-                            } else |_| {
-                                std.log.err("reached max lens depth, TODO: improve", .{});
+    fn _draw(toybox: *Toybox, roots_in_draw_order: []const Lego.Index, camera: Rect, drawer: *Drawer) !void {
+        for (roots_in_draw_order) |root| {
+            var it = toybox.treeIterator(root, true);
+            while (it.next()) |step| {
+                const cur = step.index;
+                const lego = toybox.get(cur);
+                // TODO: don't draw if small or far from camera
+                if (step.children_already_visited) {
+                    if (lego.handle()) |handle| try handle.draw(drawer, camera);
+                    switch (lego.specific) {
+                        .fnkbox_testcases => drawer.canvas.clipper.pop(),
+                        .fnkbox_box => {
+                            const relative_camera = camera.reparentCamera(lego.absolute_point);
+                            drawer.canvas.borderRect(relative_camera, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
+                        },
+                        else => {},
+                    }
+                } else {
+                    const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
+                    switch (lego.specific) {
+                        .sexpr => |sexpr| {
+                            switch (sexpr.kind) {
+                                .empty => {},
+                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
+                                .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
+                                .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
                             }
-                        }
+                        },
+                        .lens => |lens| {
+                            // TODO: lens distortion effect, on source and target
 
-                        drawer.canvas.strokeCircle(
-                            128,
-                            camera,
-                            lego.absolute_point.pos,
-                            lego.absolute_point.scale * lens.local_radius,
-                            lego.absolute_point.scale * 0.05,
-                            .black,
-                        );
-                    },
-                    .area => |area| {
-                        switch (area.bg) {
-                            // TODO: .all background
-                            .all, .none => {},
-                            .local_rect => |rect| {
-                                drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
-                            },
-                        }
-                    },
-                    .button => |button| {
-                        drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(button.local_rect), .gray(0.4));
-                    },
-                    .fnkbox_testcases => {
-                        drawer.canvas.clipper.push(.{
-                            .camera = camera,
-                            .shape = .{
-                                // FIXME
-                                .rect = .unit,
-                            },
-                        }) catch @panic("TOO DEEP");
-                    },
-                    .newcase => |newcase| {
-                        // TODO: use .reparentCamera
-                        drawer.canvas.line(camera, &.{
-                            lego.absolute_point.pos,
-                            lego.absolute_point.pos.addY(newcase.length * lego.absolute_point.scale),
-                        }, 0.05 * lego.absolute_point.scale, .black);
-                    },
-                    .fnkbox_description => |fnkbox_description| {
-                        try drawer.canvas.drawText(
-                            0,
-                            camera.reparentCamera(lego.absolute_point),
-                            fnkbox_description.text,
-                            .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
-                            0.8,
-                            .black,
-                        );
-                    },
-                    .case, .garland, .microscope, .executor, .fnkbox, .fnkbox_box, .testcase => {},
+                            if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
+                                const lens_circle: math.Circle = .{ .center = lego.absolute_point.pos, .radius = lens.local_radius * lego.absolute_point.scale };
+                                if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
+                                    drawer.canvas.clipper.use(drawer.canvas);
+                                    defer {
+                                        drawer.canvas.clipper.pop();
+                                        drawer.canvas.clipper.use(drawer.canvas);
+                                    }
+                                    drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
+
+                                    try _draw(toybox, lens.roots_to_draw, lens.transform.getCamera(camera), drawer);
+                                } else |_| {
+                                    std.log.err("reached max lens depth, TODO: improve", .{});
+                                }
+                            }
+
+                            drawer.canvas.strokeCircle(
+                                128,
+                                camera,
+                                lego.absolute_point.pos,
+                                lego.absolute_point.scale * lens.local_radius,
+                                lego.absolute_point.scale * 0.05,
+                                .black,
+                            );
+                        },
+                        .area => |area| {
+                            switch (area.bg) {
+                                // TODO: .all background
+                                .all, .none => {},
+                                .local_rect => |rect| {
+                                    drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                                },
+                            }
+                        },
+                        .button => |button| {
+                            drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(button.local_rect), .gray(0.4));
+                        },
+                        .fnkbox_testcases => {
+                            drawer.canvas.clipper.push(.{
+                                .camera = camera,
+                                .shape = .{
+                                    // FIXME
+                                    .rect = .unit,
+                                },
+                            }) catch @panic("TOO DEEP");
+                        },
+                        .newcase => |newcase| {
+                            // TODO: use .reparentCamera
+                            drawer.canvas.line(camera, &.{
+                                lego.absolute_point.pos,
+                                lego.absolute_point.pos.addY(newcase.length * lego.absolute_point.scale),
+                            }, 0.05 * lego.absolute_point.scale, .black);
+                        },
+                        .fnkbox_description => |fnkbox_description| {
+                            try drawer.canvas.drawText(
+                                0,
+                                camera.reparentCamera(lego.absolute_point),
+                                fnkbox_description.text,
+                                .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
+                                0.8,
+                                .black,
+                            );
+                        },
+                        .case, .garland, .microscope, .executor, .fnkbox, .fnkbox_box, .testcase => {},
+                    }
                 }
             }
         }
