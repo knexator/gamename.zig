@@ -282,7 +282,7 @@ pub const Lego = struct {
         };
 
         pub const Executor = struct {
-            is_input_controlled_by_parent_fnkbox: bool = false,
+            controlled_by_parent_fnkbox: bool,
             animation: ?struct {
                 // t: f32 = 0,
                 // active_case: Lego.Index,
@@ -364,12 +364,11 @@ pub const Lego = struct {
                 },
                 /// only valid if source is testcase
                 old_testcase_actual_value: Lego.Index,
-                /// only valid if source is testcase and state is .starting
-                original_input_point: Point,
+                /// only valid if source is testcase and state is .starting or .ending
+                original_or_final_input_point: Point,
                 /// if source is input, this is ignored
                 state: enum { scrolling_towards_case, starting, executing, ending },
                 state_t: f32,
-                final_result: Lego.Index = .nothing,
             } = null,
 
             const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
@@ -391,6 +390,7 @@ pub const Lego = struct {
         };
 
         pub const Testcase = struct {
+            pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
             pub fn children(toybox: *Toybox, index: Lego.Index) struct {
                 input: Lego.Index,
                 expected: Lego.Index,
@@ -1134,7 +1134,7 @@ pub const Toybox = struct {
         toybox.addChildLast(box.index, fnkbox_testcases.index);
         toybox.addChildLast(result.index, box.index);
         toybox.addChildLast(result.index, fnkname);
-        const executor = try toybox.add(.{}, .{ .executor = .{} });
+        const executor = try toybox.add(.{}, .{ .executor = .{ .controlled_by_parent_fnkbox = true } });
         toybox.addChildLast(executor.index, try toybox.buildSexpr(.{}, .empty, false));
         toybox.addChildLast(executor.index, initial_definition orelse try toybox.buildGarland(.{}, &.{}));
         toybox.addChildLast(result.index, executor.index);
@@ -1162,9 +1162,11 @@ const Workspace = struct {
 
     grabbing: Lego.Index = .nothing,
 
-    undo_stack: std.ArrayList(UndoableCommand),
+    undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
     arena_for_atom_names: std.heap.ArenaAllocator,
+
+    pub const UndoStack = std.ArrayList(UndoableCommand);
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
 
@@ -1251,7 +1253,18 @@ const Workspace = struct {
                             try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false),
                         },
                     },
-                    null,
+                    try dst.toybox.buildGarland(.{}, &.{
+                        try dst.toybox.buildCase(.{}, .{
+                            .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, true),
+                            .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false),
+                            .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
+                        }),
+                        try dst.toybox.buildCase(.{}, .{
+                            .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, true),
+                            .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
+                            .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
+                        }),
+                    }),
                 ),
             );
         }
@@ -1560,7 +1573,7 @@ const Workspace = struct {
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(toybox, cur);
                         toybox.get(children.garland).local_point = Executor.relative_garland_point;
-                        if (!executor.is_input_controlled_by_parent_fnkbox) {
+                        if (!executor.controlled_by_parent_fnkbox) {
                             toybox.get(children.input).local_point = Executor.relative_input_point;
                         }
                     },
@@ -1579,7 +1592,7 @@ const Workspace = struct {
                         const children = Testcase.children(toybox, cur);
                         toybox.get(children.input).local_point = .{ .pos = .new(-4, 0) };
                         toybox.get(children.expected).local_point = .{ .pos = .new(0, 0) };
-                        toybox.get(children.actual).local_point = .{ .pos = .new(4, 0) };
+                        toybox.get(children.actual).local_point = Testcase.relative_actual_point;
                         toybox.get(children.play_button).local_point = .{};
                         toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
                     },
@@ -2137,7 +2150,7 @@ const Workspace = struct {
                                     .source = .{ .testcase = testcase_index },
                                     .old_testcase_actual_value = old_actual,
                                     .original_garland = backup_garland_index,
-                                    .original_input_point = undefined,
+                                    .original_or_final_input_point = undefined,
                                     .state_t = undefined,
                                     .state = .scrolling_towards_case,
                                 };
@@ -2167,13 +2180,13 @@ const Workspace = struct {
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
+                        const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
                         switch (execution.source) {
                             .testcase => |testcase| switch (execution.state) {
                                 .scrolling_towards_case => {
                                     const offset_from_top: f32 = (toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
                                     const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
                                     if (offset_error == 0) {
-                                        const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
                                         const old_input = Lego.Specific.Executor.children(toybox, executor_index).input;
                                         assert(toybox.get(old_input).specific.sexpr.kind == .empty);
                                         const new_input = try toybox.dupeIntoFloating(Lego.Specific.Testcase.children(toybox, testcase).input, true);
@@ -2186,8 +2199,7 @@ const Workspace = struct {
                                         } });
                                         execution.state = .starting;
                                         execution.state_t = 0;
-                                        execution.original_input_point = toybox.get(new_input).local_point;
-                                        toybox.get(executor_index).specific.executor.is_input_controlled_by_parent_fnkbox = true;
+                                        execution.original_or_final_input_point = toybox.get(new_input).local_point;
                                     } else {
                                         const scroll = &toybox.get(toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll;
                                         const target_scroll = scroll.* + offset_error;
@@ -2196,12 +2208,9 @@ const Workspace = struct {
                                     }
                                 },
                                 .starting => {
-                                    // const source_input_point = toybox.get(Lego.Specific.Testcase.children(toybox, testcase).input).absolute_point;
-                                    // const target_input_point = toybox.get(executor_index).absolute_point.applyToLocalPoint(Lego.Specific.Executor.relative_input_point);
-                                    const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
                                     const input = Lego.Specific.Executor.children(toybox, executor_index).input;
                                     toybox.get(input).local_point = .lerp(
-                                        execution.original_input_point,
+                                        execution.original_or_final_input_point,
                                         Lego.Specific.Executor.relative_input_point,
                                         execution.state_t,
                                     );
@@ -2209,10 +2218,61 @@ const Workspace = struct {
                                     if (execution.state_t >= 1) {
                                         execution.state = .executing;
                                         execution.state_t = 0;
-                                        toybox.get(executor_index).specific.executor.is_input_controlled_by_parent_fnkbox = false;
                                     }
                                 },
-                                else => @panic("TODO"),
+                                .executing => {
+                                    try advanceExecutorAnimation(toybox, executor_index, &workspace.undo_stack);
+                                    if (toybox.get(executor_index).specific.executor.animation == null) {
+                                        execution.state = .ending;
+                                        execution.state_t = 0;
+                                        // TODO: execution traces?
+                                        // trace = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
+
+                                        execution.original_or_final_input_point = toybox.get(executor_index).absolute_point.inverseApplyGetLocal(
+                                            toybox.get(
+                                                Lego.Specific.Testcase.children(toybox, testcase).actual,
+                                            ).absolute_point,
+                                        );
+
+                                        // FIXME: when to call this? we want the executor input to still be present
+                                        // try resetExecutor(toybox, executor_index, execution.original_garland, &workspace.undo_stack);
+                                    }
+                                },
+                                .ending => {
+                                    const final_result = Lego.Specific.Executor.children(toybox, executor_index).input;
+                                    toybox.get(final_result).local_point = .lerp(
+                                        Lego.Specific.Executor.relative_input_point,
+                                        execution.original_or_final_input_point,
+                                        execution.state_t,
+                                    );
+                                    // TODO: also lerp the testcases scroll
+                                    execution.state_t += platform.delta_seconds / 0.8;
+                                    if (execution.state_t >= 1) {
+                                        // fnkbox.testcases.items[testcase_index].actual = execution.final_result;
+
+                                        const new_executor_input = try toybox.buildSexpr(.{}, .empty, false);
+                                        workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_executor_input });
+                                        const new_actual = final_result;
+                                        toybox.changeCoordinates(new_actual, toybox.get(executor_index).absolute_point, toybox.get(testcase).absolute_point);
+                                        toybox.changeChild(new_actual, new_executor_input);
+                                        workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                                            .new = new_executor_input,
+                                            .original = new_actual,
+                                        } });
+
+                                        const old_actual = Lego.Specific.Testcase.children(toybox, testcase).actual;
+                                        assert(toybox.get(old_actual).specific.sexpr.kind == .empty);
+                                        toybox.changeChild(old_actual, new_actual);
+                                        workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                                            .new = old_actual,
+                                            .original = new_actual,
+                                        } });
+                                        fnkbox.execution = null;
+                                        // TODO: call this
+                                        // TODO: call this somewhere else
+                                        // try fnkbox.updateStatus(known_fnks, mem);
+                                    }
+                                },
                             },
                             .input => @panic("TODO"),
                         }
@@ -2231,6 +2291,8 @@ const Workspace = struct {
             try workspace.undo_stack.ensureUnusedCapacity(32);
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.executor)) |executor| {
+                    if (executor.controlled_by_parent_fnkbox) continue;
+
                     if (executor.animation) |*animation| {
                         _ = animation;
                         @panic("TODO");
@@ -2280,6 +2342,26 @@ const Workspace = struct {
             toybox.addChildLast(workspace.toolbar_left, index);
             workspace.undo_stack.appendAssumeCapacity(.{ .pop = index });
         }
+    }
+
+    fn resetExecutor(toybox: *Toybox, executor_index: Lego.Index, original_garland: Lego.Index, undo_stack: *UndoStack) !void {
+        // FIXME
+        _ = toybox;
+        _ = executor_index;
+        _ = original_garland;
+        _ = undo_stack;
+        // fnkbox.executor.garland = original_garland;
+        // fnkbox.executor.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
+        // fnkbox.executor.prev_pills.clearRetainingCapacity();
+        // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
+        // fnkbox.executor.animation = null;
+    }
+
+    fn advanceExecutorAnimation(toybox: *Toybox, executor_index: Lego.Index, undo_stack: *UndoStack) !void {
+        // TODO
+        _ = executor_index;
+        _ = toybox;
+        _ = undo_stack;
     }
 };
 
