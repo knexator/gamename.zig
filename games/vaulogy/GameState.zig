@@ -282,17 +282,18 @@ pub const Lego = struct {
         };
 
         pub const Executor = struct {
-            // animation: ?struct {
-            //     t: f32 = 0,
-            //     active_case: Lego.Index,
-            //     matching: bool,
-            //     invoked_fnk: ?Lego.Index,
-            //     parent_pill: ?usize,
-            //     new_bindings: []const core.Binding,
-            //     original_point: Point,
-            //     garland_fnkname: ?Lego.Index,
-            //     paused: bool = false,
-            // } = null,
+            is_input_controlled_by_parent_fnkbox: bool = false,
+            animation: ?struct {
+                // t: f32 = 0,
+                // active_case: Lego.Index,
+                // matching: bool,
+                // invoked_fnk: ?Lego.Index,
+                // parent_pill: ?usize,
+                // new_bindings: []const core.Binding,
+                // original_point: Point,
+                // garland_fnkname: ?Lego.Index,
+                // paused: bool = false,
+            } = null,
 
             const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
             const relative_garland_point: Point = .{ .pos = .new(4, 0) };
@@ -308,6 +309,15 @@ pub const Lego = struct {
                     .input = asdf[0],
                     .garland = asdf[1],
                 };
+            }
+
+            pub fn shouldStartExecution(executor_index: Lego.Index, toybox: *Toybox) bool {
+                const executor = toybox.get(executor_index).specific.executor;
+                const garland = children(toybox, executor_index).garland;
+                const input = children(toybox, executor_index).input;
+                return executor.animation == null and
+                    toybox.childCount(garland) > 1 and
+                    toybox.get(input).specific.sexpr.kind != .empty;
             }
         };
 
@@ -354,6 +364,8 @@ pub const Lego = struct {
                 },
                 /// only valid if source is testcase
                 old_testcase_actual_value: Lego.Index,
+                /// only valid if source is testcase and state is .starting
+                original_input_point: Point,
                 /// if source is input, this is ignored
                 state: enum { scrolling_towards_case, starting, executing, ending },
                 state_t: f32,
@@ -1544,11 +1556,13 @@ const Workspace = struct {
                         toybox.get(children.description).local_point = .{};
                         toybox.get(children.testcases_area).local_point = .{};
                     },
-                    .executor => {
+                    .executor => |executor| {
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(toybox, cur);
                         toybox.get(children.garland).local_point = Executor.relative_garland_point;
-                        toybox.get(children.input).local_point = Executor.relative_input_point;
+                        if (!executor.is_input_controlled_by_parent_fnkbox) {
+                            toybox.get(children.input).local_point = Executor.relative_input_point;
+                        }
                     },
                     .fnkbox_testcases => |fnkbox_testcases| {
                         var k: usize = 0;
@@ -1915,8 +1929,241 @@ const Workspace = struct {
             }
         }
 
-        try workspace.undo_stack.ensureUnusedCapacity(32);
-        if (true) { // advance fnkboxes animations
+        if (drawer) |d| {
+            try workspace.draw(platform, d);
+        }
+
+        if (true) { // INTERACTION
+            try workspace.undo_stack.ensureUnusedCapacity(32);
+            if (workspace.grabbing == .nothing and
+                hot_and_dropzone.hot != .nothing and
+                (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
+            {
+                // Main case A: plucking/grabbing/clicking something
+                try workspace.undo_stack.append(.fence);
+
+                const hot_index = hot_and_dropzone.hot;
+                const original_hot_data = toybox.get(hot_index).*;
+                const hot_parent = original_hot_data.tree.parent;
+                const original_parent_absolute_point = toybox.parentAbsolutePoint(hot_index);
+
+                var grabbed_element_index: Lego.Index = undefined;
+                var plucked: bool = true;
+
+                if (mouse.wasPressed(.right)) {
+                    // Case A.0: duplicating
+                    // TODO
+                    // if (original_hot_data.canDuplicate()) {
+                    const new_element_index = try toybox.dupeIntoFloating(hot_index, true);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .destroy_floating = new_element_index,
+                    });
+                    grabbed_element_index = new_element_index;
+                    // }
+                } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .area) {
+                    // Case A.1: plucking a top-level thing
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_data_except_tree = original_hot_data,
+                    });
+
+                    toybox.pop(hot_index);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .insert = .{
+                            .what = hot_index,
+                            .where = original_hot_data.tree,
+                        },
+                    });
+
+                    grabbed_element_index = hot_index;
+                } else if (original_hot_data.specific.tag() == .sexpr) {
+                    // Case A.2: plucking a nested sexpr
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_data_except_tree = original_hot_data,
+                    });
+
+                    const new_empty_sexpr = try toybox.dupeIntoFloating(hot_index, false);
+                    toybox.get(new_empty_sexpr).specific.sexpr.kind = .empty;
+                    workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_empty_sexpr });
+
+                    toybox.changeChild(hot_index, new_empty_sexpr);
+                    workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                        .new = hot_index,
+                        .original = new_empty_sexpr,
+                    } });
+
+                    grabbed_element_index = hot_index;
+                } else if (original_hot_data.specific.tag() == .lens) {
+                    // Case A.3: grabbing rather than plucking
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_data_except_tree = original_hot_data,
+                    });
+                    grabbed_element_index = hot_index;
+                    plucked = false;
+                } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .newcase) {
+                    // Case A.4: plucking a case from a garland
+                    assert(original_hot_data.specific.tag() == .case);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_data_except_tree = original_hot_data,
+                    });
+
+                    toybox.pop(hot_index);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .insert = .{
+                            .what = hot_index,
+                            .where = original_hot_data.tree,
+                        },
+                    });
+
+                    const original_parent_tree = toybox.get(hot_parent).tree;
+                    toybox.get(original_parent_tree.next).specific.newcase.length += toybox.get(hot_parent).specific.newcase.length;
+                    toybox.pop(hot_parent);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .insert = .{
+                            .what = hot_parent,
+                            .where = original_parent_tree,
+                        },
+                    });
+
+                    grabbed_element_index = hot_index;
+                } else if (toybox.get(hot_index).specific.tag() == .garland) {
+                    // Case A.5: plucking a garland, and replacing it with an empty one
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_data_except_tree = original_hot_data,
+                    });
+
+                    const new_garland = try toybox.buildGarland(original_hot_data.local_point, &.{});
+                    workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_garland });
+
+                    toybox.changeChild(hot_index, new_garland);
+                    workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                        .new = hot_index,
+                        .original = new_garland,
+                    } });
+
+                    grabbed_element_index = hot_index;
+                } else if (toybox.get(hot_index).specific.tag() == .button) {
+                    // Case A.6: pressing a button
+                    plucked = false;
+                    if (toybox.get(hot_index).specific.button.instant()) {
+                        grabbed_element_index = .nothing;
+                        @panic("TODO");
+                    } else {
+                        grabbed_element_index = hot_index;
+                    }
+                } else unreachable;
+
+                assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
+                workspace.grabbing = grabbed_element_index;
+                workspace.undo_stack.appendAssumeCapacity(.{
+                    .set_grabbing = .nothing,
+                });
+                if (plucked) {
+                    workspace.hand_layer = grabbed_element_index;
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_handlayer = .nothing,
+                    });
+                    toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
+                    toybox.refreshAbsolutePoints(&.{grabbed_element_index});
+                }
+            } else if (workspace.grabbing != .nothing and
+                !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
+            {
+                const dropzone_index = hot_and_dropzone.dropzone;
+
+                if (dropzone_index != .nothing) {
+                    assert(toybox.isFloating(workspace.grabbing));
+                    if (toybox.get(dropzone_index).specific.tag() == .newcase) {
+                        // TODO: avoid jumpyness
+                        assert(toybox.get(workspace.grabbing).specific.tag() == .case);
+                        const newcase = try toybox.add(.{}, .{ .newcase = .{} });
+                        workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = newcase.index });
+                        const original_tree = toybox.get(dropzone_index).tree;
+                        toybox.insert(newcase.index, .{
+                            .parent = original_tree.parent,
+                            .prev = original_tree.prev,
+                            .next = dropzone_index,
+                            .first = .nothing,
+                            .last = .nothing,
+                        });
+                        workspace.undo_stack.appendAssumeCapacity(.{ .pop = newcase.index });
+                        toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
+                        toybox.addChildLast(newcase.index, workspace.grabbing);
+                        workspace.undo_stack.appendAssumeCapacity(.{ .pop = workspace.grabbing });
+                    } else {
+                        toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
+                        toybox.refreshAbsolutePoints(&.{workspace.grabbing});
+                        toybox.changeChild(dropzone_index, workspace.grabbing);
+                        workspace.undo_stack.appendAssumeCapacity(.{
+                            .change_child = .{
+                                .original = workspace.grabbing,
+                                .new = dropzone_index,
+                            },
+                        });
+
+                        const overwritten_data = toybox.get(dropzone_index).*;
+                        toybox.destroyFloating(dropzone_index);
+                        workspace.undo_stack.appendAssumeCapacity(.{
+                            .recreate_floating = overwritten_data,
+                        });
+                    }
+                } else if (!toybox.isFloating(workspace.grabbing)) {
+                    // Case B.2: releasing a grabbed thing, which might be a button
+                    assert(dropzone_index == .nothing);
+                    if (toybox.get(workspace.grabbing).specific.as(.button)) |button| {
+                        switch (button.action) {
+                            else => @panic("FIXME"),
+                            .launch_testcase => {
+                                // TODO: proper interaction with undo
+                                const testcase_index = toybox.get(workspace.grabbing).tree.parent;
+                                assert(toybox.get(testcase_index).specific.tag() == .testcase);
+                                const fnkbox_index = toybox.findAncestor(testcase_index, .fnkbox);
+                                const fnkbox = &toybox.get(fnkbox_index).specific.fnkbox;
+                                assert(fnkbox.execution == null);
+                                const executor_index = Lego.Specific.Fnkbox.children(toybox, fnkbox_index).executor;
+
+                                const old_actual = Lego.Specific.Testcase.children(toybox, testcase_index).actual;
+                                const new_actual = try toybox.buildSexpr(toybox.get(old_actual).local_point, .empty, false);
+                                toybox.changeChild(old_actual, new_actual);
+                                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+                                    .original = new_actual,
+                                    .new = old_actual,
+                                } });
+
+                                const original_garland_index = Lego.Specific.Executor.children(toybox, executor_index).garland;
+                                const backup_garland_index = try toybox.dupeIntoFloating(original_garland_index, true);
+                                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = backup_garland_index });
+
+                                fnkbox.execution = .{
+                                    .source = .{ .testcase = testcase_index },
+                                    .old_testcase_actual_value = old_actual,
+                                    .original_garland = backup_garland_index,
+                                    .original_input_point = undefined,
+                                    .state_t = undefined,
+                                    .state = .scrolling_towards_case,
+                                };
+                            },
+                        }
+                    }
+                } else {
+                    // Case B.3: dropping a floating thing on fresh space
+                    const target_area = hot_and_dropzone.over_background;
+                    toybox.changeCoordinates(workspace.grabbing, .{}, toybox.get(target_area).absolute_point);
+                    toybox.refreshAbsolutePoints(&.{workspace.grabbing});
+                    toybox.addChildLast(target_area, workspace.grabbing);
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .pop = workspace.grabbing,
+                    });
+                }
+
+                workspace.undo_stack.appendAssumeCapacity(.{ .set_grabbing = workspace.grabbing });
+                workspace.undo_stack.appendAssumeCapacity(.{ .set_handlayer = workspace.hand_layer });
+                workspace.grabbing = .nothing;
+                workspace.hand_layer = .nothing;
+            }
+        }
+
+        if (true) { // start and advance fnkboxes animations
+            try workspace.undo_stack.ensureUnusedCapacity(32);
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
@@ -1926,262 +2173,74 @@ const Workspace = struct {
                                     const offset_from_top: f32 = (toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
                                     const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
                                     if (offset_error == 0) {
-                                        execution.state = .starting;
-                                        execution.state_t = 0;
                                         const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
                                         const old_input = Lego.Specific.Executor.children(toybox, executor_index).input;
+                                        assert(toybox.get(old_input).specific.sexpr.kind == .empty);
                                         const new_input = try toybox.dupeIntoFloating(Lego.Specific.Testcase.children(toybox, testcase).input, true);
                                         workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_input });
+                                        toybox.changeCoordinates(new_input, toybox.get(testcase).absolute_point, toybox.get(executor_index).absolute_point);
                                         toybox.changeChild(old_input, new_input);
                                         workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
                                             .new = old_input,
                                             .original = new_input,
                                         } });
+                                        execution.state = .starting;
+                                        execution.state_t = 0;
+                                        execution.original_input_point = toybox.get(new_input).local_point;
+                                        toybox.get(executor_index).specific.executor.is_input_controlled_by_parent_fnkbox = true;
                                     } else {
                                         const scroll = &toybox.get(toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll;
                                         const target_scroll = scroll.* + offset_error;
-                                        math.lerpTowards(scroll, target_scroll, .slow, platform.delta_seconds);
+                                        math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, platform.delta_seconds);
                                         math.towards(scroll, target_scroll, 0.1 * platform.delta_seconds);
+                                    }
+                                },
+                                .starting => {
+                                    // const source_input_point = toybox.get(Lego.Specific.Testcase.children(toybox, testcase).input).absolute_point;
+                                    // const target_input_point = toybox.get(executor_index).absolute_point.applyToLocalPoint(Lego.Specific.Executor.relative_input_point);
+                                    const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
+                                    const input = Lego.Specific.Executor.children(toybox, executor_index).input;
+                                    toybox.get(input).local_point = .lerp(
+                                        execution.original_input_point,
+                                        Lego.Specific.Executor.relative_input_point,
+                                        execution.state_t,
+                                    );
+                                    execution.state_t += platform.delta_seconds / 0.8;
+                                    if (execution.state_t >= 1) {
+                                        execution.state = .executing;
+                                        execution.state_t = 0;
+                                        toybox.get(executor_index).specific.executor.is_input_controlled_by_parent_fnkbox = false;
                                     }
                                 },
                                 else => @panic("TODO"),
                             },
                             .input => @panic("TODO"),
                         }
+                    } else {
+                        const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
+                        if (Lego.Specific.Executor.shouldStartExecution(executor_index, toybox)) {
+                            // fnkbox.execution = .{ ... };
+                            @panic("TODO");
+                        }
                     }
                 }
             }
         }
 
-        if (drawer) |d| {
-            try workspace.draw(platform, d);
-        }
+        if (true) { // start and advance executors animations
+            try workspace.undo_stack.ensureUnusedCapacity(32);
+            for (toybox.all_legos.items) |*lego| {
+                if (lego.specific.as(.executor)) |executor| {
+                    if (executor.animation) |*animation| {
+                        _ = animation;
+                        @panic("TODO");
+                    }
 
-        // INTERACTION
-        try workspace.undo_stack.ensureUnusedCapacity(32);
-        if (workspace.grabbing == .nothing and
-            hot_and_dropzone.hot != .nothing and
-            (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
-        {
-            // Main case A: plucking/grabbing/clicking something
-            try workspace.undo_stack.append(.fence);
-
-            const hot_index = hot_and_dropzone.hot;
-            const original_hot_data = toybox.get(hot_index).*;
-            const hot_parent = original_hot_data.tree.parent;
-            const original_parent_absolute_point = toybox.parentAbsolutePoint(hot_index);
-
-            var grabbed_element_index: Lego.Index = undefined;
-            var plucked: bool = true;
-
-            if (mouse.wasPressed(.right)) {
-                // Case A.0: duplicating
-                // TODO
-                // if (original_hot_data.canDuplicate()) {
-                const new_element_index = try toybox.dupeIntoFloating(hot_index, true);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .destroy_floating = new_element_index,
-                });
-                grabbed_element_index = new_element_index;
-                // }
-            } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .area) {
-                // Case A.1: plucking a top-level thing
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_data_except_tree = original_hot_data,
-                });
-
-                toybox.pop(hot_index);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .insert = .{
-                        .what = hot_index,
-                        .where = original_hot_data.tree,
-                    },
-                });
-
-                grabbed_element_index = hot_index;
-            } else if (original_hot_data.specific.tag() == .sexpr) {
-                // Case A.2: plucking a nested sexpr
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_data_except_tree = original_hot_data,
-                });
-
-                const new_empty_sexpr = try toybox.dupeIntoFloating(hot_index, false);
-                toybox.get(new_empty_sexpr).specific.sexpr.kind = .empty;
-                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_empty_sexpr });
-
-                toybox.changeChild(hot_index, new_empty_sexpr);
-                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                    .new = hot_index,
-                    .original = new_empty_sexpr,
-                } });
-
-                grabbed_element_index = hot_index;
-            } else if (original_hot_data.specific.tag() == .lens) {
-                // Case A.3: grabbing rather than plucking
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_data_except_tree = original_hot_data,
-                });
-                grabbed_element_index = hot_index;
-                plucked = false;
-            } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .newcase) {
-                // Case A.4: plucking a case from a garland
-                assert(original_hot_data.specific.tag() == .case);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_data_except_tree = original_hot_data,
-                });
-
-                toybox.pop(hot_index);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .insert = .{
-                        .what = hot_index,
-                        .where = original_hot_data.tree,
-                    },
-                });
-
-                const original_parent_tree = toybox.get(hot_parent).tree;
-                toybox.get(original_parent_tree.next).specific.newcase.length += toybox.get(hot_parent).specific.newcase.length;
-                toybox.pop(hot_parent);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .insert = .{
-                        .what = hot_parent,
-                        .where = original_parent_tree,
-                    },
-                });
-
-                grabbed_element_index = hot_index;
-            } else if (toybox.get(hot_index).specific.tag() == .garland) {
-                // Case A.5: plucking a garland, and replacing it with an empty one
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_data_except_tree = original_hot_data,
-                });
-
-                const new_garland = try toybox.buildGarland(original_hot_data.local_point, &.{});
-                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_garland });
-
-                toybox.changeChild(hot_index, new_garland);
-                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                    .new = hot_index,
-                    .original = new_garland,
-                } });
-
-                grabbed_element_index = hot_index;
-            } else if (toybox.get(hot_index).specific.tag() == .button) {
-                // Case A.6: pressing a button
-                plucked = false;
-                if (toybox.get(hot_index).specific.button.instant()) {
-                    grabbed_element_index = .nothing;
-                    @panic("TODO");
-                } else {
-                    grabbed_element_index = hot_index;
-                }
-            } else unreachable;
-
-            assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
-            workspace.grabbing = grabbed_element_index;
-            workspace.undo_stack.appendAssumeCapacity(.{
-                .set_grabbing = .nothing,
-            });
-            if (plucked) {
-                workspace.hand_layer = grabbed_element_index;
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_handlayer = .nothing,
-                });
-                toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
-                toybox.refreshAbsolutePoints(&.{grabbed_element_index});
-            }
-        } else if (workspace.grabbing != .nothing and
-            !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
-        {
-            const dropzone_index = hot_and_dropzone.dropzone;
-
-            if (dropzone_index != .nothing) {
-                assert(toybox.isFloating(workspace.grabbing));
-                if (toybox.get(dropzone_index).specific.tag() == .newcase) {
-                    // TODO: avoid jumpyness
-                    assert(toybox.get(workspace.grabbing).specific.tag() == .case);
-                    const newcase = try toybox.add(.{}, .{ .newcase = .{} });
-                    workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = newcase.index });
-                    const original_tree = toybox.get(dropzone_index).tree;
-                    toybox.insert(newcase.index, .{
-                        .parent = original_tree.parent,
-                        .prev = original_tree.prev,
-                        .next = dropzone_index,
-                        .first = .nothing,
-                        .last = .nothing,
-                    });
-                    workspace.undo_stack.appendAssumeCapacity(.{ .pop = newcase.index });
-                    toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
-                    toybox.addChildLast(newcase.index, workspace.grabbing);
-                    workspace.undo_stack.appendAssumeCapacity(.{ .pop = workspace.grabbing });
-                } else {
-                    toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
-                    toybox.refreshAbsolutePoints(&.{workspace.grabbing});
-                    toybox.changeChild(dropzone_index, workspace.grabbing);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .change_child = .{
-                            .original = workspace.grabbing,
-                            .new = dropzone_index,
-                        },
-                    });
-
-                    const overwritten_data = toybox.get(dropzone_index).*;
-                    toybox.destroyFloating(dropzone_index);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .recreate_floating = overwritten_data,
-                    });
-                }
-            } else if (!toybox.isFloating(workspace.grabbing)) {
-                // Case B.2: releasing a grabbed thing, which might be a button
-                assert(dropzone_index == .nothing);
-                if (toybox.get(workspace.grabbing).specific.as(.button)) |button| {
-                    switch (button.action) {
-                        else => @panic("FIXME"),
-                        .launch_testcase => {
-                            // TODO: proper interaction with undo
-                            const testcase_index = toybox.get(workspace.grabbing).tree.parent;
-                            assert(toybox.get(testcase_index).specific.tag() == .testcase);
-                            const fnkbox_index = toybox.findAncestor(testcase_index, .fnkbox);
-                            const fnkbox = &toybox.get(fnkbox_index).specific.fnkbox;
-                            assert(fnkbox.execution == null);
-                            const executor_index = Lego.Specific.Fnkbox.children(toybox, fnkbox_index).executor;
-
-                            const old_actual = Lego.Specific.Testcase.children(toybox, testcase_index).actual;
-                            const new_actual = try toybox.buildSexpr(toybox.get(old_actual).local_point, .empty, false);
-                            toybox.changeChild(old_actual, new_actual);
-                            workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                                .original = new_actual,
-                                .new = old_actual,
-                            } });
-
-                            const original_garland_index = Lego.Specific.Executor.children(toybox, executor_index).garland;
-                            const backup_garland_index = try toybox.dupeIntoFloating(original_garland_index, true);
-                            workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = backup_garland_index });
-
-                            fnkbox.execution = .{
-                                .source = .{ .testcase = testcase_index },
-                                .old_testcase_actual_value = old_actual,
-                                .original_garland = backup_garland_index,
-                                .state_t = undefined,
-                                .state = .scrolling_towards_case,
-                            };
-                        },
+                    if (Lego.Specific.Executor.shouldStartExecution(lego.index, toybox)) {
+                        @panic("TODO");
                     }
                 }
-            } else {
-                // Case B.3: dropping a floating thing on fresh space
-                const target_area = hot_and_dropzone.over_background;
-                toybox.changeCoordinates(workspace.grabbing, .{}, toybox.get(target_area).absolute_point);
-                toybox.refreshAbsolutePoints(&.{workspace.grabbing});
-                toybox.addChildLast(target_area, workspace.grabbing);
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .pop = workspace.grabbing,
-                });
             }
-
-            workspace.undo_stack.appendAssumeCapacity(.{ .set_grabbing = workspace.grabbing });
-            workspace.undo_stack.appendAssumeCapacity(.{ .set_handlayer = workspace.hand_layer });
-            workspace.grabbing = .nothing;
-            workspace.hand_layer = .nothing;
         }
     }
 
