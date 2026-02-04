@@ -227,6 +227,7 @@ pub const Lego = struct {
         pub const Button = struct {
             local_rect: Rect,
             action: enum { launch_testcase, see_failing_testcase },
+            enabled: bool = true,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
@@ -1399,6 +1400,7 @@ const Workspace = struct {
                     },
                     .button => |button| {
                         if (step.children_already_visited and
+                            button.enabled and
                             button.local_rect.contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
                             return .{ .hot = cur, .over_background = root };
@@ -1900,6 +1902,17 @@ const Workspace = struct {
             p.* = p.applyToLocalPoint(.{ .pos = .new(-(rect.size.x - 1) * (1 - hot_t), 0) });
 
             toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
+        }
+
+        if (true) { // enable/disable buttons
+            for (toybox.all_legos.items) |*lego| {
+                if (lego.specific.as(.button)) |button| {
+                    button.enabled = switch (button.action) {
+                        .launch_testcase => toybox.get(toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
+                        .see_failing_testcase => false,
+                    };
+                }
+            }
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
