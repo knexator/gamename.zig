@@ -1924,8 +1924,8 @@ const Workspace = struct {
                             .testcase => |testcase| switch (execution.state) {
                                 .scrolling_towards_case => {
                                     const offset_from_top: f32 = (toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
-                                    std.log.debug("cur: {d}", .{offset_from_top});
-                                    if (math.inRangeClosed(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1)) {
+                                    const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
+                                    if (offset_error == 0) {
                                         execution.state = .starting;
                                         execution.state_t = 0;
                                         const executor_index = Lego.Specific.Fnkbox.children(toybox, lego.index).executor;
@@ -1937,7 +1937,12 @@ const Workspace = struct {
                                             .new = old_input,
                                             .original = new_input,
                                         } });
-                                    } else @panic("TODO");
+                                    } else {
+                                        const scroll = &toybox.get(toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll;
+                                        const target_scroll = scroll.* + offset_error;
+                                        math.lerpTowards(scroll, target_scroll, .slow, platform.delta_seconds);
+                                        math.towards(scroll, target_scroll, 0.1 * platform.delta_seconds);
+                                    }
                                 },
                                 else => @panic("TODO"),
                             },
