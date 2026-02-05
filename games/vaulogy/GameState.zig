@@ -328,6 +328,7 @@ pub const Lego = struct {
                 .new(0, 0.75),
                 .new(16, box_height),
             );
+            const testcases_box: Rect = relative_box.plusMargin3(.top, box_height - testcases_height);
             const relative_top_testcase_pos: Vec2 = .new(0, box_height - testcases_height);
             const text_height: f32 = 2.4;
             const status_bar_height: f32 = 1;
@@ -1642,7 +1643,10 @@ const Workspace = struct {
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| try handle.draw(drawer, camera);
                     switch (lego.specific) {
-                        .fnkbox_testcases => drawer.canvas.clipper.pop(),
+                        .fnkbox_testcases => {
+                            drawer.canvas.clipper.pop();
+                            drawer.canvas.clipper.use(drawer.canvas);
+                        },
                         .fnkbox_box => {
                             const relative_camera = camera.reparentCamera(lego.absolute_point);
                             drawer.canvas.borderRect(relative_camera, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
@@ -1702,12 +1706,12 @@ const Workspace = struct {
                         },
                         .fnkbox_testcases => {
                             drawer.canvas.clipper.push(.{
-                                .camera = camera,
+                                .camera = camera.reparentCamera(lego.absolute_point),
                                 .shape = .{
-                                    // FIXME
-                                    .rect = .unit,
+                                    .rect = Lego.Specific.FnkboxBox.testcases_box,
                                 },
                             }) catch @panic("TOO DEEP");
+                            drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .newcase => |newcase| {
                             // TODO: use .reparentCamera
