@@ -11,7 +11,7 @@ pub const display_fps = false;
 
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
-
+const SAVING_ENABLED = false;
 const CRANKS_ENABLED = true;
 
 comptime {
@@ -5576,13 +5576,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (!first_frame_done) {
         first_frame_done = true;
-        if (platform.getItem("vaulogy_save")) |reader| {
-            // TODO: debug why we can't directly use reader
-            // try self.workspace.load(reader, &self.core_mem);
+        if (SAVING_ENABLED) {
+            if (platform.getItem("vaulogy_save")) |reader| {
+                // TODO: debug why we can't directly use reader
+                // try self.workspace.load(reader, &self.core_mem);
 
-            const data = try reader.readAllAlloc(self.core_mem.scratch.allocator(), std.math.maxInt(usize));
-            var fbs = std.io.fixedBufferStream(data);
-            try self.workspace.load(fbs.reader().any(), &self.core_mem);
+                const data = try reader.readAllAlloc(self.core_mem.scratch.allocator(), std.math.maxInt(usize));
+                var fbs = std.io.fixedBufferStream(data);
+                try self.workspace.load(fbs.reader().any(), &self.core_mem);
+            }
         }
     }
 
@@ -5599,7 +5601,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         } else @panic("nope");
     }
 
-    if (seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
+    if (SAVING_ENABLED and seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
