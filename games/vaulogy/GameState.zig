@@ -186,7 +186,7 @@ pub const Lego = struct {
         button: Button,
         area: Area,
         sexpr: Sexpr,
-        case,
+        case: Case,
         garland: Garland,
         /// cable between cases, and the handle to create new ones
         newcase: NewCase,
@@ -271,6 +271,24 @@ pub const Lego = struct {
             }
         };
 
+        pub const Case = struct {
+            pub fn children(toybox: *Toybox, index: Lego.Index) struct {
+                pattern: Lego.Index,
+                template: Lego.Index,
+                fnkname: Lego.Index,
+                next: Lego.Index,
+            } {
+                assert(toybox.get(index).specific.tag() == .case);
+                const asdf = toybox.getChildrenExact(4, index);
+                return .{
+                    .pattern = asdf[0],
+                    .template = asdf[1],
+                    .fnkname = asdf[2],
+                    .next = asdf[3],
+                };
+            }
+        };
+
         pub const Garland = struct {
             visible: bool = undefined,
             computed_height: f32 = 0,
@@ -291,7 +309,6 @@ pub const Lego = struct {
             input_moving_by_parent_fnkbox: bool = true,
             animation: ?struct {
                 t: f32 = 0,
-                active_case: Lego.Index,
                 matching: bool,
                 // invoked_fnk: ?Lego.Index,
                 // parent_pill: ?usize,
@@ -309,13 +326,24 @@ pub const Lego = struct {
             pub fn children(toybox: *Toybox, index: Lego.Index) struct {
                 input: Lego.Index,
                 garland: Lego.Index,
+                active_case: Lego.Index,
             } {
                 assert(toybox.get(index).specific.tag() == .executor);
-                const asdf = toybox.getChildrenExact(2, index);
-                return .{
-                    .input = asdf[0],
-                    .garland = asdf[1],
-                };
+                if (toybox.get(index).specific.executor.animation) |_| {
+                    const asdf = toybox.getChildrenExact(3, index);
+                    return .{
+                        .input = asdf[0],
+                        .garland = asdf[1],
+                        .active_case = asdf[2],
+                    };
+                } else {
+                    const asdf = toybox.getChildrenExact(2, index);
+                    return .{
+                        .input = asdf[0],
+                        .garland = asdf[1],
+                        .active_case = .nothing,
+                    };
+                }
             }
 
             pub fn shouldStartExecution(executor_index: Lego.Index, toybox: *Toybox) bool {
@@ -679,6 +707,11 @@ pub const Toybox = struct {
         return toybox.get(index).tree.isFloating();
     }
 
+    pub fn destroyFloatingWithUndo(toybox: *Toybox, index: Lego.Index, undo_stack: *Workspace.UndoStack) void {
+        undo_stack.appendAssumeCapacity(.{ .recreate_floating = toybox.get(index) });
+        toybox.destroyFloating(index);
+    }
+
     pub fn destroyFloating(toybox: *Toybox, index: Lego.Index) void {
         assert(toybox.isFloating(index));
 
@@ -768,6 +801,14 @@ pub const Toybox = struct {
         changeChild(toybox, child, .nothing);
     }
 
+    pub fn popWithUndo(toybox: *Toybox, child: Lego.Index, undo_stack: *Workspace.UndoStack) void {
+        undo_stack.append(.{ .insert = .{
+            .what = child,
+            .where = toybox.get(child).tree,
+        } });
+        toybox.pop(child);
+    }
+
     pub fn insert(toybox: *Toybox, child: Lego.Index, where: Lego.Tree) void {
         assert(toybox.isFloating(child));
         assert(!where.isFloating());
@@ -788,6 +829,14 @@ pub const Toybox = struct {
         }
 
         toybox.get(child).tree = where;
+    }
+
+    pub fn changeChildWithUndo(toybox: *Toybox, original_child: Lego.Index, new_child: Lego.Index, undo_stack: *Workspace.UndoStack) void {
+        toybox.changeChild(original_child, new_child);
+        undo_stack.appendAssumeCapacity(.{ .change_child = .{
+            .original = new_child,
+            .new = original_child,
+        } });
     }
 
     /// things that pointed to original, now will point to new
@@ -1599,8 +1648,8 @@ const Workspace = struct {
                                     flyaway_t,
                                 ));
                                 toybox.get(children.garland).specific.garland.offset_t = offset_t;
-                                toybox.get(children.garland).specific.garland.offset_ghost = animation.active_case;
-                                toybox.get(animation.active_case).local_point = case_floating_away;
+                                toybox.get(children.garland).specific.garland.offset_ghost = children.active_case;
+                                toybox.get(children.active_case).local_point = case_floating_away;
                                 toybox.get(children.input).local_point = Executor.relative_input_point;
                                 // TODO
                                 // if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
@@ -1627,17 +1676,19 @@ const Workspace = struct {
                                 );
                                 toybox.get(children.garland).local_point = Executor.relative_garland_point
                                     .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t));
-                                toybox.get(children.garland).specific.garland.offset_ghost = animation.active_case;
+                                toybox.get(children.garland).specific.garland.offset_ghost = children.active_case;
 
                                 // TODO
                                 // if (animation.invoked_fnk) |invoked| {
-                                // } else {
-                                // }
                                 _ = invoking_t;
+                                // } else {
                                 if (true) {
-                                    toybox.get(animation.active_case).local_point = case_point;
+                                    toybox.get(children.active_case).local_point = case_point;
                                     // toybox.get(animation.active_case).next_offset = TODO;
                                 }
+                                toybox.get(children.input).local_point = Executor.relative_input_point.applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
+                                // TODO
+                                // if (animation.garland_fnkname) |*f| f.point = executor.input.point.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 });
                             }
                         } else {
                             if (!executor.input_moving_by_parent_fnkbox) {
@@ -1797,12 +1848,7 @@ const Workspace = struct {
                                 .black,
                             );
                         },
-                        .executor => |executor| {
-                            if (executor.animation) |animation| {
-                                try _draw(toybox, &.{animation.active_case}, camera, drawer);
-                            }
-                        },
-                        .case, .garland, .microscope, .fnkbox, .fnkbox_box, .testcase => {},
+                        .case, .garland, .microscope, .executor, .fnkbox, .fnkbox_box, .testcase => {},
                     }
                 }
             }
@@ -2451,7 +2497,40 @@ const Workspace = struct {
         const executor = &toybox.get(executor_index).specific.executor;
         if (executor.animation) |*animation| {
             animation.t += delta_seconds; // * speedScale(brake_t)  TODO
-            if (animation.t >= 1) @panic("TODO");
+            if (animation.t >= 1) {
+                if (animation.matching) {
+                    // TODO
+                    // try executor.prev_pills.append(mem.gpa, .{
+                    //     .pattern = animation.active_case.pattern,
+                    //     .input = executor.input,
+                    //     .fnkname_call = animation.active_case.fnk_name,
+                    //     .fnkname_response = animation.garland_fnkname,
+                    //     // TODO: should include previous bindings? not really, since they have now been merged
+                    //     .bindings = try mem.gpa.dupe(core.Binding, animation.new_bindings),
+                    // });
+
+                    // TODO
+                    // try animation.active_case.fillVariables(animation.new_bindings, mem);
+
+                    const old_active_case = Executor.children(toybox, executor_index).active_case;
+                    const old_input = Executor.children(toybox, executor_index).input;
+
+                    const new_input = Lego.Specific.Case.children(toybox, old_active_case);
+
+                    toybox.popWithUndo(old_active_case);
+
+                    toybox.destroyFloatingWithUndo(old_active_case);
+
+                    toybox.changeChildWithUndo(
+                        old_input,
+                        new_child,
+                        undo_stack,
+                    );
+                    executor.input = animation.active_case.template;
+                } else {
+                    @panic("TODO");
+                }
+            }
         }
 
         if (Executor.shouldStartExecution(executor_index, toybox)) {
@@ -2469,6 +2548,8 @@ const Workspace = struct {
                 .what = first_case,
             } });
             toybox.pop(first_case);
+            toybox.addChildLast(executor_index, first_case);
+            undo_stack.appendAssumeCapacity(.{ .pop = first_case });
             toybox.get(toybox.get(garland_index).tree.first).specific.newcase.length += toybox.get(first_segment).specific.newcase.length;
 
             // var new_bindings = ...
@@ -2477,7 +2558,6 @@ const Workspace = struct {
             // const garland_fnkname: Lego.Index = .nothing; // TODO
             // executor.garland.fnkname = null; // TODO
             executor.animation = .{
-                .active_case = first_case,
                 .matching = matching,
             };
         }
