@@ -1913,6 +1913,8 @@ const Workspace = struct {
             }
         }
 
+        const delta_seconds = platform.delta_seconds;
+
         const absolute_camera = Rect
             .fromCenterAndSize(.zero, .both(2))
             .withAspectRatio(platform.aspect_ratio, .grow, .center);
@@ -1937,14 +1939,14 @@ const Workspace = struct {
         // Should technically be inside updateSprings,
         // but I suspect this is faster (and simpler).
         for (toybox.all_legos.items) |*lego| {
-            math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, platform.delta_seconds);
+            math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
             comptime assert(!@hasField(Lego, "active_t"));
-            math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, platform.delta_seconds);
-            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, platform.delta_seconds);
+            math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
 
             switch (lego.specific) {
                 .sexpr => |*sexpr| {
-                    math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, platform.delta_seconds);
+                    math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
                 },
                 .area,
                 .case,
@@ -1989,7 +1991,7 @@ const Workspace = struct {
             inline for (KeyboardButton.directional_keys) |kv| {
                 for (kv.keys) |key| {
                     if (platform.keyboard.cur.isDown(key)) {
-                        p.pos.addInPlace(kv.dir.scale(platform.delta_seconds * -2));
+                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
                     }
                 }
             }
@@ -2005,7 +2007,7 @@ const Workspace = struct {
                 &workspace.toolbar_left_unfolded_t,
                 if (hot_and_dropzone.over_background == workspace.toolbar_left) 1 else 0,
                 .slow,
-                platform.delta_seconds,
+                delta_seconds,
             );
             const new_t = workspace.toolbar_left_unfolded_t;
             if (old_t <= 0.01 and new_t > 0.01) {
@@ -2036,7 +2038,7 @@ const Workspace = struct {
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
-        workspace.updateSprings(mouse.cur.position, hot_and_dropzone, platform.delta_seconds);
+        workspace.updateSprings(mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         if (true) { // set lenses data
             const microscopes = try toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
@@ -2337,8 +2339,8 @@ const Workspace = struct {
                                     } else {
                                         const scroll = &toybox.get(toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll;
                                         const target_scroll = scroll.* + offset_error;
-                                        math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, platform.delta_seconds);
-                                        math.towards(scroll, target_scroll, 0.1 * platform.delta_seconds);
+                                        math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
+                                        math.towards(scroll, target_scroll, 0.1 * delta_seconds);
                                     }
                                 },
                                 .starting => {
@@ -2348,7 +2350,7 @@ const Workspace = struct {
                                         Lego.Specific.Executor.relative_input_point,
                                         execution.state_t,
                                     );
-                                    execution.state_t += platform.delta_seconds / 0.8;
+                                    execution.state_t += delta_seconds / 0.8;
                                     if (execution.state_t >= 1) {
                                         execution.state = .executing;
                                         execution.state_t = 0;
@@ -2356,7 +2358,7 @@ const Workspace = struct {
                                     }
                                 },
                                 .executing => {
-                                    try advanceExecutorAnimation(toybox, executor_index, &workspace.undo_stack, platform.delta_seconds);
+                                    try advanceExecutorAnimation(toybox, executor_index, &workspace.undo_stack, delta_seconds);
                                     if (toybox.get(executor_index).specific.executor.animation == null) {
                                         execution.state = .ending;
                                         execution.state_t = 0;
@@ -2382,7 +2384,7 @@ const Workspace = struct {
                                         execution.state_t,
                                     );
                                     // TODO: also lerp the testcases scroll
-                                    execution.state_t += platform.delta_seconds / 0.8;
+                                    execution.state_t += delta_seconds / 0.8;
                                     if (execution.state_t >= 1) {
                                         // fnkbox.testcases.items[testcase_index].actual = execution.final_result;
                                         toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = false;
