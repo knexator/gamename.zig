@@ -2049,31 +2049,25 @@ const Workspace = struct {
                     toybox.get(hot_index).storeVisualData(undo_stack);
                     grabbed_element_index = hot_index;
                     plucked = false;
-                } else if (false and hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .newcase) {
+                } else if (hot_parent != .nothing and toybox.get(hot_parent).specific.tag() == .newcase) {
                     // FIXME
                     // Case A.4: plucking a case from a garland
                     assert(original_hot_data.specific.tag() == .case);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .set_data_except_tree = original_hot_data,
-                    });
+                    var asdf = toybox.get(hot_parent).specific.newcase;
+                    asdf.case = .nothing;
+                    toybox.get(hot_parent).overwriteSpecificData(.{ .newcase = asdf }, undo_stack);
 
-                    toybox.pop(hot_index);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .insert = .{
-                            .what = hot_index,
-                            .where = original_hot_data.tree,
-                        },
-                    });
-
-                    const original_parent_tree = toybox.get(hot_parent).tree;
-                    toybox.get(original_parent_tree.next).specific.newcase.length += toybox.get(hot_parent).specific.newcase.length;
-                    toybox.pop(hot_parent);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .insert = .{
-                            .what = hot_parent,
-                            .where = original_parent_tree,
-                        },
-                    });
+                    const garland = &toybox.get(hot_and_dropzone.grandparent).specific.garland;
+                    garland.pop(hot_parent, undo_stack);
+                    // const original_parent_tree = toybox.get(hot_parent).tree;
+                    // toybox.get(original_parent_tree.next).specific.newcase.length += toybox.get(hot_parent).specific.newcase.length;
+                    // toybox.pop(hot_parent);
+                    // workspace.undo_stack.appendAssumeCapacity(.{
+                    //     .insert = .{
+                    //         .what = hot_parent,
+                    //         .where = original_parent_tree,
+                    //     },
+                    // });
 
                     grabbed_element_index = hot_index;
                 } else if (false and toybox.get(hot_index).specific.tag() == .garland) {
