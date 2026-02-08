@@ -708,7 +708,7 @@ pub const Toybox = struct {
     }
 
     pub fn destroyFloatingWithUndo(toybox: *Toybox, index: Lego.Index, undo_stack: *Workspace.UndoStack) void {
-        undo_stack.appendAssumeCapacity(.{ .recreate_floating = toybox.get(index) });
+        undo_stack.appendAssumeCapacity(.{ .recreate_floating = toybox.get(index).* });
         toybox.destroyFloating(index);
     }
 
@@ -802,7 +802,7 @@ pub const Toybox = struct {
     }
 
     pub fn popWithUndo(toybox: *Toybox, child: Lego.Index, undo_stack: *Workspace.UndoStack) void {
-        undo_stack.append(.{ .insert = .{
+        undo_stack.appendAssumeCapacity(.{ .insert = .{
             .what = child,
             .where = toybox.get(child).tree,
         } });
@@ -2360,6 +2360,7 @@ const Workspace = struct {
                                     if (toybox.get(executor_index).specific.executor.animation == null) {
                                         execution.state = .ending;
                                         execution.state_t = 0;
+                                        toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = true;
                                         // TODO: execution traces?
                                         // trace = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
 
@@ -2384,6 +2385,7 @@ const Workspace = struct {
                                     execution.state_t += platform.delta_seconds / 0.8;
                                     if (execution.state_t >= 1) {
                                         // fnkbox.testcases.items[testcase_index].actual = execution.final_result;
+                                        toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = false;
 
                                         const new_executor_input = try toybox.buildSexpr(.{}, .empty, false);
                                         workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_executor_input });
@@ -2514,22 +2516,26 @@ const Workspace = struct {
 
                     const old_active_case = Executor.children(toybox, executor_index).active_case;
                     const old_input = Executor.children(toybox, executor_index).input;
+                    const old_garland = Executor.children(toybox, executor_index).garland;
 
-                    const new_input = Lego.Specific.Case.children(toybox, old_active_case);
-
-                    toybox.popWithUndo(old_active_case);
-
-                    toybox.destroyFloatingWithUndo(old_active_case);
+                    const new_input = Lego.Specific.Case.children(toybox, old_active_case).template;
+                    toybox.popWithUndo(new_input, undo_stack);
 
                     toybox.changeChildWithUndo(
                         old_input,
-                        new_child,
+                        new_input,
                         undo_stack,
                     );
-                    executor.input = animation.active_case.template;
+
+                    toybox.popWithUndo(old_active_case, undo_stack);
+                    toybox.destroyFloatingWithUndo(old_active_case, undo_stack);
+
+                    // TODO: set the correct garland
+                    toybox.changeChildWithUndo(old_garland, try toybox.buildGarland(.{}, &.{}), undo_stack);
                 } else {
                     @panic("TODO");
                 }
+                executor.animation = null;
             }
         }
 
