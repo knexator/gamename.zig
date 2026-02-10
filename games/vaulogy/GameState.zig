@@ -204,6 +204,8 @@ pub const Lego = struct {
         newcase: NewCase,
         microscope: Microscope,
         lens: Lens,
+        fnkbox: Fnkbox,
+        executor: Executor,
 
         pub const Tag = std.meta.Tag(Specific);
 
@@ -472,6 +474,51 @@ pub const Lego = struct {
 
             pub fn children(_: *const Lens, _: *Toybox, _: *std.ArrayListUnmanaged(Lego.Index), _: Allocator) !void {}
         };
+
+        pub const Executor = struct {
+            input: Lego.Index,
+            garland: Lego.Index,
+
+            const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
+            const relative_garland_point: Point = .{ .pos = .new(4, 0) };
+            const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
+            const first_case_point: Point = relative_garland_point.applyToLocalPoint(.{ .pos = .new(0, 1.5) });
+
+            pub fn children(executor: *const Executor, _: *Toybox, dst: *std.ArrayListUnmanaged(Lego.Index), allocator: Allocator) !void {
+                try dst.append(allocator, executor.input);
+                try dst.append(allocator, executor.garland);
+            }
+        };
+
+        pub const Fnkbox = struct {
+            executor: Lego.Index,
+            fnkname: Lego.Index,
+
+            const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
+            const relative_executor_point: Point = .{ .pos = .new(-3, 1 + box_height) };
+            const relative_box: Rect = .fromMeasureAndSizeV2(
+                .top_center,
+                .new(0, 0.75),
+                .new(16, box_height),
+            );
+            const testcases_box: Rect = relative_box.plusMargin3(.top, box_height - testcases_height);
+            const relative_top_testcase_pos: Vec2 = .new(0, box_height - testcases_height);
+            const text_height: f32 = 2.4;
+            const status_bar_height: f32 = 1;
+            const testcases_header_height: f32 = 0.85;
+            const testcases_height: f32 = 2.5 * visible_testcases;
+            const box_height = text_height + status_bar_height + testcases_header_height + testcases_height;
+            const visible_testcases = 2;
+            const status_bar_goal: Rect = .fromMeasureAndSizeV2(
+                .top_center,
+                Vec2.new(0, 0.75).addY(text_height),
+                .new(16, status_bar_height),
+            );
+
+            pub fn children(fnkbox: *const Fnkbox, _: *Toybox, dst: *std.ArrayListUnmanaged(Lego.Index), allocator: Allocator) !void {
+                try dst.append(allocator, fnkbox.executor);
+            }
+        };
     };
 
     pub const Index = enum(u32) {
@@ -739,11 +786,13 @@ pub const Lego = struct {
             .area,
             .microscope,
             .button,
+            .executor,
             => return null,
             .case => .default,
             .newcase => .new_case,
             .garland => .garland,
             .lens => .lens,
+            .fnkbox => .default,
         };
         const enabled: bool = switch (lego.specific) {
             else => true,
@@ -851,17 +900,19 @@ pub const Toybox = struct {
         }
 
         // TODO: actually free
-        toybox.get(index).* = undefined;
-        toybox.get(index).index = index;
-        toybox.get(index).exists = false;
+        const lego = toybox.get(index);
+        lego.* = undefined;
+        lego.index = index;
+        lego.exists = false;
     }
 
     pub fn get(toybox: *Toybox, index: Lego.Index) *Lego {
+        if (@import("builtin").mode == .Debug) assert(toybox.all_legos.items[@intFromEnum(index)].exists);
         return &toybox.all_legos.items[@intFromEnum(index)];
     }
 
     pub fn safeGet(toybox: *Toybox, index: Lego.Index) ?*Lego {
-        return if (index == .nothing) null else &toybox.all_legos.items[@intFromEnum(index)];
+        return if (index == .nothing) null else toybox.get(index);
     }
 
     /// like clone, but moving
@@ -1105,6 +1156,32 @@ pub const Toybox = struct {
         } }, undo_stack);
         return result.index;
     }
+
+    pub fn buildFnkbox(
+        toybox: *Toybox,
+        local_point: Point,
+        // TODO: take *const Sepxr?
+        fnkname: Lego.Index,
+        text: []const u8,
+        testcases: []const [2]Lego.Index,
+        initial_definition: ?Lego.Index,
+        undo_stack: ?*UndoStack,
+    ) !Lego.Index {
+        _ = text;
+        _ = testcases;
+        const result = try toybox.add(local_point, .{
+            .fnkbox = .{
+                .fnkname = fnkname,
+                .executor = (try toybox.add(Lego.Specific.Fnkbox.relative_executor_point, .{
+                    .executor = .{
+                        .input = try toybox.buildSexpr(Lego.Specific.Executor.relative_input_point, .empty, false, undo_stack),
+                        .garland = initial_definition orelse try toybox.buildGarland(Lego.Specific.Executor.relative_garland_point, &.{}, undo_stack),
+                    },
+                }, undo_stack)).index,
+            },
+        }, undo_stack);
+        return result.index;
+    }
 };
 
 const Workspace = struct {
@@ -1258,6 +1335,38 @@ const Workspace = struct {
                 &.{ case_1, case_2 },
                 null,
             ), null);
+            main_area.addChildLast(toybox, try dst.toybox.buildFnkbox(
+                .{ .pos = .new(-4, -4) },
+                try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, true, null),
+                "do lowercase",
+                &.{
+                    .{
+                        try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, false, null),
+                        try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, null),
+                    },
+                    .{
+                        try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, false, null),
+                        try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, null),
+                    },
+                    .{
+                        try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "C" }, false, null),
+                        try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, null),
+                    },
+                },
+                try dst.toybox.buildGarland(.{}, &.{
+                    try dst.toybox.buildCase(.{}, .{
+                        .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, true, null),
+                        .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, null),
+                        .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false, null),
+                    }, null),
+                    try dst.toybox.buildCase(.{}, .{
+                        .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, true, null),
+                        .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, null),
+                        .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false, null),
+                    }, null),
+                }, null),
+                null,
+            ), null);
 
             lenses_layer.addChildLast(toybox, try dst.toybox.buildMicroscope(
                 .new(2, 2),
@@ -1353,6 +1462,8 @@ const Workspace = struct {
                             return .{ .hot = cur, .over_background = root, .parent = .nothing };
                         }
                     },
+                    .fnkbox,
+                    .executor,
                     .case,
                     .newcase,
                     .microscope,
@@ -1362,8 +1473,8 @@ const Workspace = struct {
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
-                            .sexpr, .area, .microscope, .button => unreachable,
-                            .case, .lens => .{ grabbing == .nothing, .hot },
+                            .sexpr, .area, .microscope, .button, .executor => unreachable,
+                            .case, .lens, .fnkbox => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and toybox.get(grabbing).specific.tag() == .case, .drop },
                             .garland => if (grabbing == .nothing)
                                 .{ true, .hot }
@@ -1502,6 +1613,16 @@ const Workspace = struct {
                         math.lerpTowards(&newcase.handle_t, target_handle_t, .fast, delta_seconds);
                         math.lerpTowards(&newcase.length, target_length + 2.5 * 0.5 * lego.dropzone_t, .slow, delta_seconds);
                     },
+                    .fnkbox => |fnkbox| {
+                        const Fnkbox = Lego.Specific.Fnkbox;
+                        toybox.get(fnkbox.executor).local_point = Fnkbox.relative_executor_point;
+                        toybox.get(fnkbox.fnkname).local_point = Fnkbox.relative_fnkname_point;
+                    },
+                    .executor => |executor| {
+                        const Executor = Lego.Specific.Executor;
+                        toybox.get(executor.garland).local_point = Executor.relative_garland_point;
+                        toybox.get(executor.input).local_point = Executor.relative_input_point;
+                    },
                     .area, .microscope, .lens, .button => {},
                 }
             }
@@ -1607,7 +1728,7 @@ const Workspace = struct {
                                 lego.absolute_point.pos.addY(newcase.length * lego.absolute_point.scale),
                             }, 0.05 * lego.absolute_point.scale, .black);
                         },
-                        .case, .garland, .microscope => {},
+                        .case, .garland, .microscope, .executor, .fnkbox => {},
                     }
                 }
             }
@@ -1719,6 +1840,7 @@ const Workspace = struct {
         // Should technically be inside updateSprings,
         // but I suspect this is faster (and simpler).
         for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
             math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
             comptime assert(!@hasField(Lego, "active_t"));
             math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
@@ -1728,6 +1850,8 @@ const Workspace = struct {
                 .sexpr => |*sexpr| {
                     math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
                 },
+                .fnkbox,
+                .executor,
                 .area,
                 .case,
                 .newcase,
@@ -1748,6 +1872,7 @@ const Workspace = struct {
             //     else => false,
             // };
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 // const in_toolbar = toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
                 if (lego.specific.as(.garland)) |garland| {
                     // garland.visible = !in_toolbar and (grabbing_garland_or_case or lego.tree.first != .nothing);
@@ -1805,6 +1930,7 @@ const Workspace = struct {
         // TODO: buttons
         if (false) { // enable/disable buttons
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         else => @panic("TODO"),
