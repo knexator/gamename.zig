@@ -2121,24 +2121,23 @@ const Workspace = struct {
                         toybox.changeCoordinates(workspace.grabbing, .{}, original_parent_absolute_point);
                         toybox.refreshAbsolutePoints(&.{workspace.grabbing});
                         sexpr.overwrite(workspace.grabbing, toybox, &workspace.undo_stack);
-                    } else if (false and toybox.get(dropzone_index).specific.tag() == .newcase) {
+                    } else if (toybox.get(dropzone_index).specific.tag() == .newcase) {
                         // FIXME
                         // TODO: avoid jumpyness
                         assert(toybox.get(workspace.grabbing).specific.tag() == .case);
-                        const newcase = try toybox.add(.{}, .{ .newcase = .{} });
+                        const newcase = try toybox.add(.{}, .{ .newcase = .{
+                            .case = workspace.grabbing,
+                        } });
                         workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = newcase.index });
-                        const original_tree = toybox.get(dropzone_index).tree;
-                        toybox.insert(newcase.index, .{
-                            .parent = original_tree.parent,
-                            .prev = original_tree.prev,
-                            .next = dropzone_index,
-                            .first = .nothing,
-                            .last = .nothing,
-                        });
-                        workspace.undo_stack.appendAssumeCapacity(.{ .pop = newcase.index });
-                        toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
-                        toybox.addChildLast(newcase.index, workspace.grabbing);
-                        workspace.undo_stack.appendAssumeCapacity(.{ .pop = workspace.grabbing });
+                        toybox.get(toybox.get(dropzone_index).ll_parent).insert(
+                            toybox,
+                            newcase.index,
+                            toybox.get(dropzone_index).ll_prev,
+                            dropzone_index,
+                            undo_stack,
+                        );
+                        // TODO: maybe?
+                        // toybox.changeCoordinates(workspace.grabbing, .{}, toybox.parentAbsolutePoint(dropzone_index));
                     } else unreachable;
 
                     if (false) {
