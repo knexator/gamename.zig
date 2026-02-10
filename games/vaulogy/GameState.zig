@@ -295,18 +295,14 @@ pub const Lego = struct {
             }
 
             pub fn emptyAndClone(sexpr: *Sexpr, toybox: *Toybox, undo_stack: ?*UndoStack) !Lego.Index {
-                const new = try toybox.add(undefined, undefined);
-                new.overwriteMostData(Lego.fromSpecific(.sexpr, sexpr), null);
-                if (undo_stack) |s| {
-                    s.appendAssumeCapacity(.{ .destroy_floating = new.index });
-                }
+                const new = try toybox.moveIntoNew(Lego.fromSpecific(.sexpr, sexpr).index, undo_stack);
 
                 Lego.fromSpecific(.sexpr, sexpr).overwriteSpecificData(.{ .sexpr = .{
                     .kind = .empty,
                     .is_pattern = sexpr.is_pattern,
                     .is_pattern_t = sexpr.is_pattern_t,
                 } }, undo_stack);
-                return new.index;
+                return new;
             }
 
             // fn overwriteKind(sexpr: *Sexpr, kind: Kind, undo_stack: ?*UndoStack) void {
@@ -354,36 +350,26 @@ pub const Lego = struct {
 
             pub fn emptyAndClone(garland: *Garland, toybox: *Toybox, undo_stack: ?*UndoStack) !Lego.Index {
                 const old = Lego.fromSpecific(.garland, garland);
-                const new = try toybox.add(undefined, undefined);
-                // FIXME: this API could be much better
-                new.stealMostData(old, toybox, null);
-
-                if (undo_stack) |s| {
-                    s.appendAssumeCapacity(.{ .destroy_floating = new.index });
-                }
+                const new = try toybox.moveIntoNew(old.index, undo_stack);
 
                 try garland.setCases(&.{}, toybox, undo_stack);
 
-                return new.index;
+                return new;
             }
 
             pub fn setCases(garland: *Garland, child_cases: []const Lego.Index, toybox: *Toybox, undo_stack: ?*UndoStack) !void {
-                if (undo_stack) |_| {
-                    // FIXME
-                }
-
                 const lego = Lego.fromSpecific(.garland, garland);
                 assert(!lego.hasCollection());
                 for (child_cases) |case| {
                     const new_segment = try toybox.add(.{}, .{ .newcase = .{
                         .case = case,
-                    } });
+                    } }, undo_stack);
 
                     lego.addChildLast(toybox, new_segment.index, null);
                 }
                 lego.addChildLast(toybox, (try toybox.add(.{}, .{ .newcase = .{
                     .case = .nothing,
-                } })).index, null);
+                } }, undo_stack)).index, undo_stack);
             }
         };
 
@@ -520,9 +506,12 @@ pub const Lego = struct {
         };
     }
 
-    pub fn overwrite(lego: *Lego, new: Lego.Index, toybox: *Toybox, undo_stack: ?*UndoStack) void {
+    pub fn overwriteByDropping(lego: *Lego, new: Lego.Index, toybox: *Toybox, undo_stack: ?*UndoStack) void {
         assert(lego.overwriteableByDropping());
+        assert(!toybox.get(new).inCollection());
         lego.overwriteMostData(toybox.get(new), undo_stack);
+        toybox.freeCollection(lego.index, undo_stack);
+        toybox.moveCollection(new, lego.index, undo_stack);
         toybox.free(new, undo_stack);
     }
 
@@ -633,56 +622,40 @@ pub const Lego = struct {
         };
     }
 
-    pub fn clone(lego: *const Lego, toybox: *Toybox) !Lego.Index {
-        const S = struct {
-            pub fn cloneChildren(dst: *Lego, src: *const Lego, t: *Toybox) error{OutOfMemory}!void {
-                if (src.ll_first == .nothing) {
-                    assert(src.ll_last == .nothing);
-                    dst.ll_first = .nothing;
-                    dst.ll_last = .nothing;
-                } else {
-                    dst.ll_first = try t.get(src.ll_first).clone(t);
-                    dst.ll_last = dst.ll_first;
-                    t.get(dst.ll_last).ll_parent = dst.index;
-                    var original_last = src.ll_first;
-                    while (t.get(original_last).ll_next != .nothing) {
-                        const new = try t.get(t.get(original_last).ll_next).clone(t);
-                        original_last = t.get(original_last).ll_next;
-                        t.get(dst.ll_last).ll_next = new;
-                        t.get(new).ll_prev = dst.ll_last;
-                        t.get(new).ll_parent = dst.index;
-                        dst.ll_last = new;
-                    }
-                }
-            }
-        };
-
-        const result = try toybox.add(undefined, undefined);
+    pub fn clone(lego: *const Lego, toybox: *Toybox, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try toybox.add(undefined, undefined, undo_stack);
         result.overwriteMostData(lego, null);
+
+        if (true) { // clone children
+            var cur = lego.ll_first;
+            while (cur != .nothing) {
+                result.addChildLast(toybox, try toybox.get(cur).clone(toybox, undo_stack), undo_stack);
+                cur = toybox.get(cur).ll_next;
+            }
+        }
+
         switch (lego.specific) {
             .sexpr => |sexpr| switch (sexpr.kind) {
                 else => {},
                 .pair => |pair| {
                     result.specific.sexpr.kind = .{ .pair = .{
-                        .up = try toybox.get(pair.up).clone(toybox),
-                        .down = try toybox.get(pair.down).clone(toybox),
+                        .up = try toybox.get(pair.up).clone(toybox, undo_stack),
+                        .down = try toybox.get(pair.down).clone(toybox, undo_stack),
                     } };
                 },
             },
             .case => |case| {
                 result.specific.case = .{
-                    .pattern = try toybox.get(case.pattern).clone(toybox),
-                    .template = try toybox.get(case.template).clone(toybox),
-                    .fnkname = try toybox.get(case.fnkname).clone(toybox),
-                    .next = try toybox.get(case.next).clone(toybox),
+                    .pattern = try toybox.get(case.pattern).clone(toybox, undo_stack),
+                    .template = try toybox.get(case.template).clone(toybox, undo_stack),
+                    .fnkname = try toybox.get(case.fnkname).clone(toybox, undo_stack),
+                    .next = try toybox.get(case.next).clone(toybox, undo_stack),
                 };
             },
-            .garland => {
-                try S.cloneChildren(result, lego, toybox);
-            },
+            .garland => {},
             .newcase => |newcase| {
                 if (newcase.case != .nothing) {
-                    result.specific.newcase.case = try clone(toybox.get(newcase.case), toybox);
+                    result.specific.newcase.case = try clone(toybox.get(newcase.case), toybox, undo_stack);
                 }
             },
             else => std.debug.panic("TODO: {s}", .{@tagName(lego.specific)}),
@@ -690,37 +663,7 @@ pub const Lego = struct {
         return result.index;
     }
 
-    /// dst takes ownership of src's children, but not src's place in a collection
-    pub fn stealMostData(dst: *Lego, src: *Lego, toybox: *Toybox, undo_stack: ?*UndoStack) void {
-        if (undo_stack) |s| {
-            // FIXME
-            _ = s;
-            // s.appendAssumeCapacity(.{ .steal_most_data = .{
-            //     .data = dst.*,
-            //     .index = dst.index,
-            // } });
-        }
-        const old_ll_prev = dst.ll_prev;
-        const old_ll_next = dst.ll_next;
-        const old_ll_parent = dst.ll_parent;
-        const old_index = dst.index;
-        dst.* = src.*;
-        dst.index = old_index;
-        dst.ll_prev = old_ll_prev;
-        dst.ll_next = old_ll_next;
-        dst.ll_parent = old_ll_parent;
-
-        src.ll_first = .nothing;
-        src.ll_last = .nothing;
-
-        var cur = dst.ll_first;
-        while (cur != .nothing) {
-            toybox.get(cur).ll_parent = dst.index;
-            cur = toybox.get(cur).ll_next;
-        }
-    }
-
-    /// overwrites everything except index and sibling relations
+    /// overwrites everything except index and parent/sibling/child relations
     pub fn overwriteMostData(dst: *Lego, src: *const Lego, undo_stack: ?*UndoStack) void {
         if (undo_stack) |s| {
             s.appendAssumeCapacity(.{ .overwrite_most_data = .{
@@ -731,12 +674,16 @@ pub const Lego = struct {
         const old_ll_prev = dst.ll_prev;
         const old_ll_next = dst.ll_next;
         const old_ll_parent = dst.ll_parent;
+        const old_ll_first = dst.ll_first;
+        const old_ll_last = dst.ll_last;
         const old_index = dst.index;
         dst.* = src.*;
         dst.index = old_index;
         dst.ll_prev = old_ll_prev;
         dst.ll_next = old_ll_next;
         dst.ll_parent = old_ll_parent;
+        dst.ll_first = old_ll_first;
+        dst.ll_last = old_ll_last;
     }
 
     pub fn overwriteVisualData(dst: *Lego, src: *const Lego, undo_stack: ?*UndoStack) void {
@@ -744,6 +691,8 @@ pub const Lego = struct {
         const old_ll_prev = dst.ll_prev;
         const old_ll_next = dst.ll_next;
         const old_ll_parent = dst.ll_parent;
+        const old_ll_first = dst.ll_first;
+        const old_ll_last = dst.ll_last;
         const old_specific = dst.specific;
         const old_index = dst.index;
         dst.* = src.*;
@@ -752,6 +701,8 @@ pub const Lego = struct {
         dst.ll_prev = old_ll_prev;
         dst.ll_next = old_ll_next;
         dst.ll_parent = old_ll_parent;
+        dst.ll_first = old_ll_first;
+        dst.ll_last = old_ll_last;
     }
 
     pub fn overwriteSpecificData(dst: *Lego, data: Specific, undo_stack: ?*UndoStack) void {
@@ -860,6 +811,8 @@ pub const Toybox = struct {
     all_legos_arena: std.heap.ArenaAllocator,
     arena_for_iterators: std.heap.ArenaAllocator,
 
+    const UndoStack = Workspace.UndoStack;
+
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
         dst.* = .{
             .all_legos_arena = .init(gpa),
@@ -879,7 +832,7 @@ pub const Toybox = struct {
         self.arena_for_iterators.deinit();
     }
 
-    pub fn add(toybox: *Toybox, local_point: Point, specific: Lego.Specific) !*Lego {
+    pub fn add(toybox: *Toybox, local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !*Lego {
         const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
         result.* = .{
             .index = @enumFromInt(toybox.all_legos.items.len - 1),
@@ -887,6 +840,7 @@ pub const Toybox = struct {
             .local_point = local_point,
             .specific = specific,
         };
+        if (undo_stack) |s| s.appendAssumeCapacity(.{ .destroy_floating = result.index });
         return result;
     }
 
@@ -908,6 +862,35 @@ pub const Toybox = struct {
 
     pub fn safeGet(toybox: *Toybox, index: Lego.Index) ?*Lego {
         return if (index == .nothing) null else &toybox.all_legos.items[@intFromEnum(index)];
+    }
+
+    /// like clone, but moving
+    pub fn moveIntoNew(toybox: *Toybox, src: Lego.Index, undo_stack: ?*Workspace.UndoStack) !Lego.Index {
+        const new = try toybox.add(undefined, undefined, undo_stack);
+        const src_lego = toybox.get(src);
+        new.overwriteMostData(src_lego, null);
+
+        toybox.moveCollection(src, new.index, undo_stack);
+
+        return new.index;
+    }
+
+    pub fn moveCollection(toybox: *Toybox, src: Lego.Index, dst: Lego.Index, undo_stack: ?*Workspace.UndoStack) void {
+        assert(!toybox.get(dst).hasCollection());
+
+        while (toybox.get(src).ll_first != .nothing) {
+            const cur = toybox.get(src).ll_first;
+            toybox.get(src).pop(toybox, cur, undo_stack);
+            toybox.get(dst).addChildLast(toybox, cur, undo_stack);
+        }
+    }
+
+    pub fn freeCollection(toybox: *Toybox, dst: Lego.Index, undo_stack: ?*Workspace.UndoStack) void {
+        while (toybox.get(dst).ll_first != .nothing) {
+            const cur = toybox.get(dst).ll_first;
+            toybox.get(dst).pop(toybox, cur, undo_stack);
+            toybox.free(cur, undo_stack);
+        }
     }
 
     pub fn destroyFloating(toybox: *Toybox, index: Lego.Index, undo_stack: ?*Workspace.UndoStack) void {
@@ -1081,12 +1064,12 @@ pub const Toybox = struct {
         toybox.get(index).local_point = new_parent.inverseApplyGetLocal(old_parent.applyToLocalPoint(toybox.get(index).local_point));
     }
 
-    pub fn buildSexpr(toybox: *Toybox, local_point: Point, value: Lego.Specific.Sexpr.Kind, is_pattern: bool) !Lego.Index {
+    pub fn buildSexpr(toybox: *Toybox, local_point: Point, value: Lego.Specific.Sexpr.Kind, is_pattern: bool, undo_stack: ?*UndoStack) !Lego.Index {
         const result = try toybox.add(local_point, .{ .sexpr = .{
             .is_pattern = is_pattern,
             .is_pattern_t = if (is_pattern) 1 else 0,
             .kind = value,
-        } });
+        } }, undo_stack);
         return result.index;
     }
 
@@ -1095,31 +1078,31 @@ pub const Toybox = struct {
         template: Lego.Index,
         fnkname: Lego.Index,
         next: ?Lego.Index = null,
-    }) !Lego.Index {
+    }, undo_stack: ?*UndoStack) !Lego.Index {
         const result = try toybox.add(local_point, .{ .case = .{
             .pattern = data.pattern,
             .template = data.template,
             .fnkname = data.fnkname,
-            .next = data.next orelse try toybox.buildGarland(local_point, &.{}),
-        } });
+            .next = data.next orelse try toybox.buildGarland(local_point, &.{}, undo_stack),
+        } }, undo_stack);
         return result.index;
     }
 
     /// The garland's children are a linear list of newcase, all except the last one with a child case
     /// the newcase position is the very top of the segment
-    pub fn buildGarland(toybox: *Toybox, local_point: Point, child_cases: []const Lego.Index) !Lego.Index {
-        const result = try toybox.add(local_point, .{ .garland = .{} });
-        try result.specific.garland.setCases(child_cases, toybox, null);
+    pub fn buildGarland(toybox: *Toybox, local_point: Point, child_cases: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try toybox.add(local_point, .{ .garland = .{} }, undo_stack);
+        try result.specific.garland.setCases(child_cases, toybox, undo_stack);
         return result.index;
     }
 
-    pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2) !Lego.Index {
-        const lens_source = try toybox.add(.{ .pos = source }, .{ .lens = .source });
-        const lens_target = try toybox.add(.{ .pos = target }, .{ .lens = .target });
+    pub fn buildMicroscope(toybox: *Toybox, source: Vec2, target: Vec2, undo_stack: ?*UndoStack) !Lego.Index {
+        const lens_source = try toybox.add(.{ .pos = source }, .{ .lens = .source }, undo_stack);
+        const lens_target = try toybox.add(.{ .pos = target }, .{ .lens = .target }, undo_stack);
         const result = try toybox.add(.{}, .{ .microscope = .{
             .source = lens_source.index,
             .target = lens_target.index,
-        } });
+        } }, undo_stack);
         return result.index;
     }
 };
@@ -1211,7 +1194,7 @@ const Workspace = struct {
         try dst.toybox.init(gpa);
         const toybox = &dst.toybox;
 
-        const main_area = try dst.toybox.add(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } });
+        const main_area = try dst.toybox.add(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, null);
         dst.main_area = main_area.index;
         dst.toolbar_left = (try dst.toybox.add(.{}, .{
             .area = .{
@@ -1220,8 +1203,8 @@ const Workspace = struct {
                     .local_rect = toolbar_left_rect.plusMargin3(.left, 100),
                 },
             },
-        })).index;
-        const lenses_layer = try dst.toybox.add(main_area.local_point, .{ .area = .{ .bg = .none } });
+        }, null)).index;
+        const lenses_layer = try dst.toybox.add(main_area.local_point, .{ .area = .{ .bg = .none } }, null);
         dst.lenses_layer = lenses_layer.index;
 
         try dst.regenerateToolbarLeft();
@@ -1231,54 +1214,61 @@ const Workspace = struct {
                 .{ .pos = .new(0, 0) },
                 .{ .atom_lit = "true" },
                 false,
+                null,
             ), null);
             main_area.addChildLast(toybox, try dst.toybox.buildSexpr(
                 .{ .pos = .new(0, 1) },
                 .{ .atom_lit = "false" },
                 false,
+                null,
             ), null);
 
             main_area.addChildLast(toybox, try dst.toybox.buildSexpr(
                 .{ .pos = .new(3, 0) },
                 .{ .pair = .{
-                    .up = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, false),
-                    .down = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                    .up = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, false, null),
+                    .down = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, null),
                 } },
                 false,
+                null,
             ), null);
 
             main_area.addChildLast(toybox, try dst.toybox.buildCase(
                 .{ .pos = .new(0, 4) },
                 .{
-                    .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
-                    .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
-                    .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
+                    .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true, null),
+                    .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, null),
+                    .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false, null),
                 },
+                null,
             ), null);
 
             const case_1 = try dst.toybox.buildCase(.{}, .{
-                .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
-                .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
-                .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
-            });
+                .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true, null),
+                .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, null),
+                .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false, null),
+            }, null);
             const case_2 = try dst.toybox.buildCase(.{}, .{
-                .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
-                .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
-                .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false),
-            });
+                .pattern = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true, null),
+                .template = try dst.toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, null),
+                .fnkname = try dst.toybox.buildSexpr(.{}, .empty, false, null),
+            }, null);
             main_area.addChildLast(toybox, try dst.toybox.buildGarland(
                 .{ .pos = .new(7, 4) },
                 &.{ case_1, case_2 },
+                null,
             ), null);
 
             lenses_layer.addChildLast(toybox, try dst.toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
+                null,
             ), null);
 
             lenses_layer.addChildLast(toybox, try dst.toybox.buildMicroscope(
                 .new(4, 3),
                 .new(6, 2),
+                null,
             ), null);
         }
     }
@@ -1623,36 +1613,39 @@ const Workspace = struct {
             }
         }
     }
+    pub fn debugLogState(workspace: *Workspace) void {
+        std.log.debug("-----", .{});
+        for (workspace.toybox.all_legos.items, 0..) |lego, k| {
+            assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+            if (lego.exists) {
+                // std.log.debug("{d} \t{s} \trel: {any} \tabs: {any}", .{
+                //     k,
+                //     @tagName(lego.specific.tag()),
+                //     lego.local_point,
+                //     lego.absolute_point,
+                // });
+                std.log.debug("{d} \t{s} \ttree: parent {any}; prev {any}; next {any}; first {any}; last {any}", .{
+                    k,
+                    @tagName(lego.specific.tag()),
+                    lego.ll_parent,
+                    lego.ll_prev,
+                    lego.ll_next,
+                    lego.ll_first,
+                    lego.ll_last,
+                });
+            }
+        }
+        std.log.debug("-----", .{});
+        for (workspace.undo_stack.items) |cmd| {
+            std.log.debug("{any}", .{cmd});
+        }
+    }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         const toybox = &workspace.toybox;
 
         if (platform.keyboard.wasPressed(.KeyQ)) {
-            std.log.debug("-----", .{});
-            for (toybox.all_legos.items, 0..) |lego, k| {
-                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
-                if (lego.exists) {
-                    // std.log.debug("{d} \t{s} \trel: {any} \tabs: {any}", .{
-                    //     k,
-                    //     @tagName(lego.specific.tag()),
-                    //     lego.local_point,
-                    //     lego.absolute_point,
-                    // });
-                    std.log.debug("{d} \t{s} \ttree: parent {any}; prev {any}; next {any}; first {any}; last {any}", .{
-                        k,
-                        @tagName(lego.specific.tag()),
-                        lego.ll_parent,
-                        lego.ll_prev,
-                        lego.ll_next,
-                        lego.ll_first,
-                        lego.ll_last,
-                    });
-                }
-            }
-            std.log.debug("-----", .{});
-            for (workspace.undo_stack.items) |cmd| {
-                std.log.debug("{any}", .{cmd});
-            }
+            workspace.debugLogState();
         }
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
@@ -1887,10 +1880,7 @@ const Workspace = struct {
                     // Case A.0: duplicating
                     // TODO
                     // if (original_hot_data.canDuplicate()) {
-                    const new_element_index = try toybox.get(hot_index).clone(toybox);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .destroy_floating = new_element_index,
-                    });
+                    const new_element_index = try toybox.get(hot_index).clone(toybox, undo_stack);
                     grabbed_element_index = new_element_index;
                     // }
                 } else if (if (toybox.safeGet(hot_parent)) |p| p.specific.tag() == .area else false) {
@@ -1955,14 +1945,13 @@ const Workspace = struct {
                     if (toybox.get(dropzone_index).overwriteableByDropping()) {
                         toybox.changeCoordinates(workspace.grabbing, .{}, original_parent_absolute_point);
                         toybox.refreshAbsolutePoints(&.{workspace.grabbing});
-                        toybox.get(dropzone_index).overwrite(workspace.grabbing, toybox, &workspace.undo_stack);
+                        toybox.get(dropzone_index).overwriteByDropping(workspace.grabbing, toybox, undo_stack);
                     } else if (toybox.get(dropzone_index).specific.tag() == .newcase) {
                         // TODO: avoid jumpyness
                         assert(toybox.get(workspace.grabbing).specific.tag() == .case);
                         const newcase = try toybox.add(.{}, .{ .newcase = .{
                             .case = workspace.grabbing,
-                        } });
-                        workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = newcase.index });
+                        } }, undo_stack);
                         toybox.get(toybox.get(dropzone_index).ll_parent).insert(
                             toybox,
                             newcase.index,
@@ -2031,13 +2020,13 @@ const Workspace = struct {
             math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
 
             const index = try toybox.buildCase(.{ .pos = .new(2.5, 5) }, .{
-                .pattern = try toybox.buildSexpr(.{}, .{ .atom_var = new_name }, true),
+                .pattern = try toybox.buildSexpr(.{}, .{ .atom_var = new_name }, true, null),
                 .template = try toybox.buildSexpr(.{}, .{ .pair = .{
-                    .up = try toybox.buildSexpr(.{}, .{ .atom_var = new_name }, false),
-                    .down = try toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false),
-                } }, false),
-                .fnkname = try toybox.buildSexpr(.{}, .empty, false),
-            });
+                    .up = try toybox.buildSexpr(.{}, .{ .atom_var = new_name }, false, null),
+                    .down = try toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false, null),
+                } }, false, null),
+                .fnkname = try toybox.buildSexpr(.{}, .empty, false, null),
+            }, null);
 
             workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = index });
             toybox.get(workspace.toolbar_left).addChildLast(toybox, index, undo_stack);
