@@ -493,6 +493,7 @@ pub const Lego = struct {
         pub const Fnkbox = struct {
             executor: Lego.Index,
             fnkname: Lego.Index,
+            text: []const u8,
 
             const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
             const relative_executor_point: Point = .{ .pos = .new(-3, 1 + box_height) };
@@ -1070,7 +1071,7 @@ pub const Toybox = struct {
             }
         }
 
-        pub fn skipChildren(it: *AsdfIterator) void {
+        pub fn skipChildren(it: *DoublePassIterator) void {
             it.pending.items.len -= it.last_child_count;
             it.last_child_count = undefined;
         }
@@ -1166,10 +1167,10 @@ pub const Toybox = struct {
         initial_definition: ?Lego.Index,
         undo_stack: ?*UndoStack,
     ) !Lego.Index {
-        _ = text;
         _ = testcases;
         const result = try toybox.add(local_point, .{
             .fnkbox = .{
+                .text = text,
                 .fnkname = fnkname,
                 .executor = (try toybox.add(Lego.Specific.Fnkbox.relative_executor_point, .{
                     .executor = .{
@@ -1664,6 +1665,7 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = toybox.get(cur);
+                const camera_relative = camera.reparentCamera(lego.absolute_point);
                 // TODO: don't draw if small or far from camera
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| try handle.draw(drawer, camera);
@@ -1727,7 +1729,18 @@ const Workspace = struct {
                                 lego.absolute_point.pos.addY(newcase.length * lego.absolute_point.scale),
                             }, 0.05 * lego.absolute_point.scale, .black);
                         },
-                        .case, .garland, .microscope, .executor, .fnkbox => {},
+                        .fnkbox => |fnkbox| {
+                            try drawer.canvas.drawText(0, camera_relative, fnkbox.text, .centeredAt(.new(0, 0.75 + Lego.Specific.Fnkbox.text_height / 2.0)), 0.8, .black);
+
+                            drawer.canvas.borderRect(
+                                camera_relative,
+                                Lego.Specific.Fnkbox.relative_box,
+                                0.05,
+                                .inner,
+                                .black,
+                            );
+                        },
+                        .case, .garland, .microscope, .executor => {},
                     }
                 }
             }
