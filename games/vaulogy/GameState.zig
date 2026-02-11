@@ -952,7 +952,6 @@ pub const Toybox = struct {
             s.appendAssumeCapacity(.{ .recreate_floating = toybox.get(index).* });
         }
 
-        toybox.get(index).exists = false;
         // TODO: destroy/free children
 
         toybox.free(index, null);
