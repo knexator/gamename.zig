@@ -269,6 +269,33 @@ pub const Lego = struct {
                     .pair => .pair,
                 });
             }
+
+            pub fn matchesWith(value: Lego.Index, pattern: Lego.Index, toybox: *Toybox) bool {
+                const p = toybox.get(pattern).specific.sexpr;
+                const v = toybox.get(value).specific.sexpr;
+                switch (p.kind) {
+                    .empty => return true,
+                    .atom_var => return true,
+                    .atom_lit => {
+                        switch (v.kind) {
+                            .empty => return true,
+                            .pair => return false,
+                            .atom_lit => return std.mem.eql(u8, v.atom_name, p.atom_name),
+                            .atom_var => return true,
+                        }
+                    },
+                    .pair => {
+                        switch (v.kind) {
+                            else => return false,
+                            .pair => {
+                                const pat_up, const pat_down = toybox.getChildrenExact(2, pattern);
+                                const val_up, const val_down = toybox.getChildrenExact(2, value);
+                                return matchesWith(pat_up, val_up, toybox) and matchesWith(pat_down, val_down, toybox);
+                            },
+                        }
+                    },
+                }
+            }
         };
 
         pub const Case = struct {
@@ -613,6 +640,20 @@ pub const Lego = struct {
             .button => false,
             else => true,
         };
+    }
+
+    pub fn fromSpecific(comptime tag: Specific.Tag, pointer: *Specific.Tagged(tag)) *Lego {
+        return @fieldParentPtr("specific", @as(
+            *Specific,
+            @alignCast(@fieldParentPtr(@tagName(tag), pointer)),
+        ));
+    }
+
+    pub fn fromSpecificConst(comptime tag: Specific.Tag, pointer: *const Specific.Tagged(tag)) *const Lego {
+        return @fieldParentPtr("specific", @as(
+            *const Specific,
+            @alignCast(@fieldParentPtr(@tagName(tag), pointer)),
+        ));
     }
 };
 
@@ -2607,6 +2648,8 @@ const Workspace = struct {
         }
 
         if (Executor.shouldStartExecution(executor_index, toybox)) {
+            const value = Lego.Specific.Executor.children(toybox, executor_index).input;
+
             // pop first case for execution
             const garland_index = Executor.children(toybox, executor_index).garland;
             const first_segment = toybox.get(garland_index).tree.first;
@@ -2625,8 +2668,10 @@ const Workspace = struct {
             undo_stack.appendAssumeCapacity(.{ .pop = first_case });
             toybox.get(toybox.get(garland_index).tree.first).specific.newcase.length += toybox.get(first_segment).specific.newcase.length;
 
+            const pattern = Lego.Specific.Case.children(toybox, first_case).pattern;
+
             // var new_bindings = ...
-            const matching = true; // FIXME
+            const matching = Lego.Specific.Sexpr.matchesWith(value, pattern, toybox); // FIXME
             // const invoked_fnk: Lego.Index = .nothing; // TODO
             // const garland_fnkname: Lego.Index = .nothing; // TODO
             // executor.garland.fnkname = null; // TODO
