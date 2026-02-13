@@ -4836,7 +4836,7 @@ const Workspace = struct {
                             .nothing => unreachable,
                             .executor_crank_handle,
                             .executor_brake_handle,
-                            => @panic("TODO"),
+                            => std.log.err("TODO", .{}),
                             .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => {
                                 workspace.focus.grabbing = g.at;
                             },
