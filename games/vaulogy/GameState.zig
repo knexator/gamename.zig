@@ -810,6 +810,16 @@ pub const Toybox = struct {
         toybox.pop(child);
     }
 
+    pub fn popWithUndoAndChangingCoords(toybox: *Toybox, child: Lego.Index, undo_stack: *Workspace.UndoStack) void {
+        undo_stack.appendAssumeCapacity(.{ .insert = .{
+            .what = child,
+            .where = toybox.get(child).tree,
+        } });
+        const old_parent_abs_point = toybox.parentAbsolutePoint(child);
+        toybox.pop(child);
+        toybox.changeCoordinates(child, old_parent_abs_point, .{});
+    }
+
     pub fn insert(toybox: *Toybox, child: Lego.Index, where: Lego.Tree) void {
         assert(toybox.isFloating(child));
         assert(!where.isFloating());
@@ -838,6 +848,17 @@ pub const Toybox = struct {
             .original = new_child,
             .new = original_child,
         } });
+    }
+
+    pub fn changeChildWithUndoAndAlsoCoords(toybox: *Toybox, original_child: Lego.Index, new_child: Lego.Index, undo_stack: *Workspace.UndoStack) void {
+        const old_parent_abs_point = toybox.parentAbsolutePoint(original_child);
+        toybox.changeChild(original_child, new_child);
+        undo_stack.appendAssumeCapacity(.{ .change_child = .{
+            .original = new_child,
+            .new = original_child,
+        } });
+        toybox.changeCoordinates(original_child, old_parent_abs_point, .{});
+        toybox.changeCoordinates(new_child, .{}, old_parent_abs_point);
     }
 
     /// things that pointed to original, now will point to new
@@ -1779,6 +1800,16 @@ const Workspace = struct {
                 const lego = toybox.get(cur);
                 // TODO: don't draw if small or far from camera
                 if (step.children_already_visited) {
+                    if (false and lego.specific.tag() == .sexpr) { // draw numbers
+                        try drawer.canvas.drawText(
+                            0,
+                            camera,
+                            try std.fmt.allocPrint(std.heap.page_allocator, "{d}", .{@intFromEnum(cur)}),
+                            .centeredAt(lego.absolute_point.pos),
+                            1 * lego.absolute_point.scale,
+                            .black,
+                        );
+                    }
                     if (lego.handle()) |handle| try handle.draw(drawer, camera);
                     switch (lego.specific) {
                         .fnkbox_testcases => {
@@ -2555,9 +2586,9 @@ const Workspace = struct {
                     const old_garland = Executor.children(toybox, executor_index).garland;
 
                     const new_input = Lego.Specific.Case.children(toybox, old_active_case).template;
-                    toybox.popWithUndo(new_input, undo_stack);
+                    toybox.popWithUndoAndChangingCoords(new_input, undo_stack);
 
-                    toybox.changeChildWithUndo(
+                    toybox.changeChildWithUndoAndAlsoCoords(
                         old_input,
                         new_input,
                         undo_stack,
