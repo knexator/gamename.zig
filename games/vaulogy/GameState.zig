@@ -306,7 +306,6 @@ pub const Lego = struct {
 
         pub const Executor = struct {
             controlled_by_parent_fnkbox: bool,
-            input_moving_by_parent_fnkbox: bool = true,
             animation: ?struct {
                 t: f32 = 0,
                 matching: bool,
@@ -402,6 +401,8 @@ pub const Lego = struct {
                 old_testcase_actual_value: Lego.Index,
                 /// only valid if source is testcase and state is .starting or .ending
                 original_or_final_input_point: Point,
+                /// only present if source is testcase and state is .starting or .ending
+                floating_input_or_output: Lego.Index = .nothing,
                 /// if source is input, this is ignored
                 state: enum { scrolling_towards_case, starting, executing, ending },
                 state_t: f32,
@@ -1215,6 +1216,7 @@ const Workspace = struct {
     toolbar_left: Lego.Index,
     toolbar_left_unfolded_t: f32 = 0,
     lenses_layer: Lego.Index,
+    floating_inputs_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
 
     grabbing: Lego.Index = .nothing,
@@ -1253,13 +1255,32 @@ const Workspace = struct {
     fn roots(workspace: Workspace, config: struct {
         include_hand: bool,
         include_lenses: bool,
+        include_toolbar: bool,
+        include_floating_inputs: bool,
 
-        pub const all: @This() = .{ .include_hand = true, .include_lenses = true };
-        pub const interactable: @This() = .{ .include_hand = false, .include_lenses = true };
-    }) std.BoundedArray(Lego.Index, 4) {
-        var result: std.BoundedArray(Lego.Index, 4) = .{};
+        pub const all: @This() = .{
+            .include_hand = true,
+            .include_lenses = true,
+            .include_toolbar = true,
+            .include_floating_inputs = true,
+        };
+        pub const interactable: @This() = .{
+            .include_hand = false,
+            .include_lenses = true,
+            .include_toolbar = true,
+            .include_floating_inputs = false,
+        };
+        pub const with_main_camera: @This() = .{
+            .include_hand = false,
+            .include_lenses = true,
+            .include_toolbar = false,
+            .include_floating_inputs = true,
+        };
+    }) std.BoundedArray(Lego.Index, 5) {
+        var result: std.BoundedArray(Lego.Index, 5) = .{};
         result.appendAssumeCapacity(workspace.main_area);
-        result.appendAssumeCapacity(workspace.toolbar_left);
+        if (config.include_floating_inputs) result.appendAssumeCapacity(workspace.floating_inputs_layer);
+        if (config.include_toolbar) result.appendAssumeCapacity(workspace.toolbar_left);
         if (config.include_hand) result.appendAssumeCapacity(workspace.hand_layer);
         if (config.include_lenses) result.appendAssumeCapacity(workspace.lenses_layer);
         return result;
@@ -1282,6 +1303,7 @@ const Workspace = struct {
             },
         })).index;
         dst.lenses_layer = (try dst.toybox.add(undefined, .{ .area = .{ .bg = .none } })).index;
+        dst.floating_inputs_layer = (try dst.toybox.add(undefined, .{ .area = .{ .bg = .none } })).index;
 
         try dst.regenerateToolbarLeft();
 
@@ -1691,9 +1713,7 @@ const Workspace = struct {
                                 // if (animation.garland_fnkname) |*f| f.point = executor.input.point.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 });
                             }
                         } else {
-                            if (!executor.input_moving_by_parent_fnkbox) {
-                                toybox.get(children.input).local_point = Executor.relative_input_point;
-                            }
+                            toybox.get(children.input).local_point = Executor.relative_input_point;
                         }
 
                         // TODO: prev_pills
@@ -1913,7 +1933,7 @@ const Workspace = struct {
             }
         }
 
-        const delta_seconds = platform.delta_seconds;
+        const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.1 else 1.0)));
 
         const absolute_camera = Rect
             .fromCenterAndSize(.zero, .both(2))
@@ -1996,9 +2016,12 @@ const Workspace = struct {
                 }
             }
 
-            toybox.get(workspace.lenses_layer).local_point = toybox.get(workspace.main_area).local_point;
-
-            toybox.refreshAbsolutePoints(&.{ workspace.main_area, workspace.lenses_layer });
+            for (workspace.roots(.with_main_camera).constSlice()) |root| {
+                if (root != workspace.main_area) {
+                    toybox.get(root).local_point = toybox.get(workspace.main_area).local_point;
+                }
+            }
+            toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
         }
 
         if (true) { // open/close left toolbar, and regenerate its contents
@@ -2059,6 +2082,8 @@ const Workspace = struct {
                 var all_roots: std.ArrayListUnmanaged(Lego.Index) = .empty;
                 try all_roots.appendSlice(scratch, workspace.roots(.{
                     .include_hand = true,
+                    .include_toolbar = true,
+                    .include_floating_inputs = true,
                     .include_lenses = false,
                 }).constSlice());
                 try all_roots.appendSlice(scratch, microscopes[0..k]);
@@ -2066,6 +2091,8 @@ const Workspace = struct {
                 var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = .empty;
                 try all_roots_except_hand.appendSlice(scratch, workspace.roots(.{
                     .include_hand = false,
+                    .include_toolbar = true,
+                    .include_floating_inputs = true,
                     .include_lenses = false,
                 }).constSlice());
                 try all_roots_except_hand.appendSlice(scratch, microscopes[0..k]);
@@ -2322,20 +2349,14 @@ const Workspace = struct {
                                     const offset_from_top: f32 = (toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
                                     const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
                                     if (offset_error == 0) {
-                                        const old_input = Lego.Specific.Executor.children(toybox, executor_index).input;
-                                        assert(toybox.get(old_input).specific.sexpr.kind == .empty);
                                         const new_input = try toybox.dupeIntoFloating(Lego.Specific.Testcase.children(toybox, testcase).input, true);
                                         workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_input });
-                                        toybox.changeCoordinates(new_input, toybox.get(testcase).absolute_point, toybox.get(executor_index).absolute_point);
-                                        toybox.changeChild(old_input, new_input);
-                                        workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                                            .new = old_input,
-                                            .original = new_input,
-                                        } });
+                                        toybox.changeCoordinates(new_input, toybox.get(testcase).absolute_point, toybox.get(workspace.floating_inputs_layer).absolute_point);
+                                        toybox.addChildLast(workspace.floating_inputs_layer, new_input);
                                         execution.state = .starting;
                                         execution.state_t = 0;
                                         execution.original_or_final_input_point = toybox.get(new_input).local_point;
-                                        toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = true;
+                                        execution.floating_input_or_output = new_input;
                                     } else {
                                         const scroll = &toybox.get(toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll;
                                         const target_scroll = scroll.* + offset_error;
@@ -2344,17 +2365,21 @@ const Workspace = struct {
                                     }
                                 },
                                 .starting => {
-                                    const input = Lego.Specific.Executor.children(toybox, executor_index).input;
+                                    const input = execution.floating_input_or_output;
                                     toybox.get(input).local_point = .lerp(
                                         execution.original_or_final_input_point,
-                                        Lego.Specific.Executor.relative_input_point,
+                                        toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
+                                            toybox.get(Lego.Specific.Executor.children(toybox, executor_index).input).absolute_point,
+                                        ),
                                         execution.state_t,
                                     );
                                     execution.state_t += delta_seconds / 0.8;
                                     if (execution.state_t >= 1) {
                                         execution.state = .executing;
                                         execution.state_t = 0;
-                                        toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = false;
+                                        toybox.pop(input);
+                                        toybox.changeChild(Lego.Specific.Executor.children(toybox, executor_index).input, input);
+                                        execution.floating_input_or_output = .nothing;
                                     }
                                 },
                                 .executing => {
@@ -2362,14 +2387,26 @@ const Workspace = struct {
                                     if (toybox.get(executor_index).specific.executor.animation == null) {
                                         execution.state = .ending;
                                         execution.state_t = 0;
-                                        toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = true;
+
+                                        const result = Lego.Specific.Executor.children(toybox, executor_index).input;
+
+                                        toybox.changeChild(
+                                            result,
+                                            try toybox.buildSexpr(.{}, .empty, false),
+                                        );
+                                        toybox.changeCoordinates(
+                                            result,
+                                            toybox.get(executor_index).absolute_point,
+                                            toybox.get(workspace.floating_inputs_layer).absolute_point,
+                                        );
+                                        toybox.addChildLast(workspace.floating_inputs_layer, result);
+                                        toybox.refreshAbsolutePoints(&.{result});
                                         // TODO: execution traces?
                                         // trace = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
 
-                                        execution.original_or_final_input_point = toybox.get(executor_index).absolute_point.inverseApplyGetLocal(
-                                            toybox.get(
-                                                Lego.Specific.Testcase.children(toybox, testcase).actual,
-                                            ).absolute_point,
+                                        execution.floating_input_or_output = result;
+                                        execution.original_or_final_input_point = toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
+                                            toybox.get(result).absolute_point,
                                         );
 
                                         // FIXME: when to call this? we want the executor input to still be present
@@ -2377,27 +2414,24 @@ const Workspace = struct {
                                     }
                                 },
                                 .ending => {
-                                    const final_result = Lego.Specific.Executor.children(toybox, executor_index).input;
+                                    const final_result = execution.floating_input_or_output;
                                     toybox.get(final_result).local_point = .lerp(
-                                        Lego.Specific.Executor.relative_input_point,
                                         execution.original_or_final_input_point,
+                                        toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
+                                            toybox.get(
+                                                Lego.Specific.Testcase.children(toybox, testcase).actual,
+                                            ).absolute_point,
+                                        ),
                                         execution.state_t,
                                     );
                                     // TODO: also lerp the testcases scroll
                                     execution.state_t += delta_seconds / 0.8;
                                     if (execution.state_t >= 1) {
                                         // fnkbox.testcases.items[testcase_index].actual = execution.final_result;
-                                        toybox.get(executor_index).specific.executor.input_moving_by_parent_fnkbox = false;
 
-                                        const new_executor_input = try toybox.buildSexpr(.{}, .empty, false);
-                                        workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = new_executor_input });
                                         const new_actual = final_result;
                                         toybox.changeCoordinates(new_actual, toybox.get(executor_index).absolute_point, toybox.get(testcase).absolute_point);
-                                        toybox.changeChild(new_actual, new_executor_input);
-                                        workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                                            .new = new_executor_input,
-                                            .original = new_actual,
-                                        } });
+                                        toybox.pop(new_actual);
 
                                         const old_actual = Lego.Specific.Testcase.children(toybox, testcase).actual;
                                         assert(toybox.get(old_actual).specific.sexpr.kind == .empty);
