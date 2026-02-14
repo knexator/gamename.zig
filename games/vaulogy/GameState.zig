@@ -281,6 +281,11 @@ pub const Lego = struct {
                 });
             }
 
+            pub fn equalValue(a: Lego.Index, b: Lego.Index) bool {
+                // FIXME: improve
+                return matchesWith(a, b);
+            }
+
             pub fn matchesWith(value: Lego.Index, pattern: Lego.Index) bool {
                 const p = Toybox.get(pattern).specific.sexpr;
                 const v = Toybox.get(value).specific.sexpr;
@@ -358,7 +363,7 @@ pub const Lego = struct {
                 t: f32 = 0,
                 active_case: Lego.Index,
                 matching: bool,
-                // invoked_fnk: ?Lego.Index,
+                invoked_fnk: Lego.Index,
                 // parent_pill: ?usize,
                 // new_bindings: []const core.Binding,
                 // original_point: Point,
@@ -448,6 +453,14 @@ pub const Lego = struct {
 
             const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
             const relative_executor_point: Point = .{ .pos = .new(-3, 1 + FnkboxBox.box_height) };
+
+            pub fn fnkname(fnkbox: *const Fnkbox) Lego.Index {
+                return children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).fnkname;
+            }
+
+            pub fn executor(fnkbox: *const Fnkbox) ApiFor.Executor {
+                return .{ .index = children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).executor };
+            }
 
             pub fn children(index: Lego.Index) struct {
                 box: Lego.Index,
@@ -612,13 +625,21 @@ pub const Lego = struct {
         }
 
         pub fn case(index: Index) struct {
+            self: Lego.Index,
             pattern: Lego.Index,
             template: Lego.Index,
             fnkname: Lego.Index,
             next: Lego.Index,
+
+            pub fn hasIdentityFnkname(this: @This()) bool {
+                const sexpr = Toybox.get(this.fnkname).specific.sexpr;
+                return sexpr.kind == .empty or
+                    (sexpr.kind == .atom_lit and std.mem.eql(u8, sexpr.atom_name, "identity"));
+            }
         } {
             const children = Specific.Case.children(index);
             return .{
+                .self = index,
                 .pattern = children.pattern,
                 .template = children.template,
                 .fnkname = children.fnkname,
@@ -696,6 +717,20 @@ pub const Lego = struct {
             @alignCast(@fieldParentPtr(@tagName(tag), pointer)),
         ));
     }
+};
+
+pub const ApiFor = struct {
+    pub const Executor = struct {
+        index: Lego.Index,
+
+        pub fn garland(this: @This()) Garland {
+            return .{ .index = Lego.Specific.Executor.children(this.index).garland };
+        }
+    };
+
+    pub const Garland = struct {
+        index: Lego.Index,
+    };
 };
 
 pub const Handle = struct {
@@ -1795,10 +1830,30 @@ const Workspace = struct {
                                 Toybox.get(children.garland).specific.garland.offset_ghost = animation.active_case;
 
                                 // TODO
-                                // if (animation.invoked_fnk) |invoked| {
-                                _ = invoking_t;
-                                // } else {
-                                if (true) {
+                                if (animation.invoked_fnk != .nothing) {
+                                    const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
+                                    const function_point = lego.absolute_point.applyToLocalPoint(Lego.Specific.Executor.relative_garland_point)
+                                        .applyToLocalPoint(.{ .pos = .new(2 * offset + 6 - match_t - enqueueing_t * 5, 6 * offset) });
+
+                                    Toybox.setAbsolutePoint(animation.invoked_fnk, function_point);
+
+                                    // TODO
+                                    // animation.active_case.kinematicUpdate(
+                                    //     case_point,
+                                    //     extraForEnqueuingNext(enqueueing_t),
+                                    //     .{ .pos = .new(-invoking_t * 4, 0) },
+                                    //     delta_seconds,
+                                    // );
+                                    // Toybox.get(animation.active_case).specific.case.next_point_extra = extraForEnqueuingNext(enqueueing_t);
+                                    Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
+
+                                    // TODO
+                                    // const enqueueing = animation.active_case.next.cases.items.len > 0;
+                                    // for (executor.enqueued_stack.items, 0..) |*x, k| {
+                                    //     x.garland.kinematicUpdate(executor.garlandPoint()
+                                    //         .applyToLocalPoint(extraForDequeuingNext(1 + tof32(executor.enqueued_stack.items.len - k - 1) + if (enqueueing) enqueueing_t else 0)), null, delta_seconds);
+                                    // }
+                                } else {
                                     Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
                                     Toybox.get(animation.active_case).specific.case.next_point_extra = .{
                                         .pos = .new(-enqueueing_t * 2, -(Lego.Specific.Case.next_garland_offset.y + Lego.Specific.Garland.dist_between_cases_first) *
@@ -2487,7 +2542,7 @@ const Workspace = struct {
                                     }
                                 },
                                 .executing => {
-                                    try advanceExecutorAnimation(executor_index, workspace.floating_inputs_layer, &workspace.undo_stack, delta_seconds);
+                                    try advanceExecutorAnimation(executor_index, workspace, &workspace.undo_stack, delta_seconds);
                                     if (Toybox.get(executor_index).specific.executor.animation == null) {
                                         execution.state = .ending;
                                         execution.state_t = 0;
@@ -2633,7 +2688,8 @@ const Workspace = struct {
         // fnkbox.executor.animation = null;
     }
 
-    fn advanceExecutorAnimation(executor_index: Lego.Index, floating_inputs_layer: Lego.Index, undo_stack: *UndoStack, delta_seconds: f32) !void {
+    fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, undo_stack: *UndoStack, delta_seconds: f32) !void {
+        const floating_inputs_layer = workspace.floating_inputs_layer;
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
         if (executor.animation) |*animation| {
@@ -2672,8 +2728,10 @@ const Workspace = struct {
 
                     const new_garland = blk: {
                         // TODO
-                        // if (animation.invoked_fnk) {}
-                        if (next_garland.garland().hasChildCases()) {
+                        if (animation.invoked_fnk != .nothing) {
+                            Toybox.pop(animation.invoked_fnk);
+                            break :blk animation.invoked_fnk;
+                        } else if (next_garland.garland().hasChildCases()) {
                             Toybox.pop(next_garland);
                             // TODO
                             // parent_pill_index = executor.prev_pills.items.len - 1;
@@ -2724,16 +2782,53 @@ const Workspace = struct {
             // FIXME
             // var new_bindings = ...
             const matching = Lego.Specific.Sexpr.matchesWith(value, pattern);
-            // const invoked_fnk: Lego.Index = .nothing; // TODO
+            const invoked_fnk: Lego.Index = if (!matching)
+                .nothing
+            else if (first_case.case().hasIdentityFnkname())
+                .nothing
+            else blk: {
+                const offset = 3.0;
+                const function_point = Lego.Specific.Executor.relative_garland_point
+                    .applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
+                if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point)) |garland| {
+                    Toybox.addChildLast(workspace.floating_inputs_layer, garland);
+                    break :blk garland;
+                } else @panic("TODO: handle this");
+            };
             // const garland_fnkname: Lego.Index = .nothing; // TODO
             // executor.garland.fnkname = null; // TODO
             executor.animation = .{
                 .matching = matching,
                 .active_case = first_case,
+                .invoked_fnk = invoked_fnk,
             };
         }
         // TODO
         // executor.recomputeCrankHandlePos();
+    }
+
+    fn getGarlandForFnk(
+        workspace: *Workspace,
+        fnkname: Lego.Index,
+        new_point: Point,
+    ) !?Lego.Index {
+        _ = workspace;
+        _ = new_point;
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.as(.fnkbox)) |fnkbox| {
+                if (Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname)) {
+                    const garland = try Toybox.dupeIntoFloating(if (fnkbox.execution) |e|
+                        e.original_garland
+                    else
+                        fnkbox.executor().garland().index, true);
+                    // TODO
+                    // garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
+                    // garland.kinematicUpdate(new_point, null, undefined);
+                    return garland;
+                }
+            }
+        } else return null;
     }
 };
 
