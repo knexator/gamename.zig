@@ -310,6 +310,12 @@ pub const Lego = struct {
         };
 
         pub const Case = struct {
+            /// offset for the next garland, used during animations
+            next_point_extra: Point = .{},
+
+            const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
+            const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
+
             pub fn children(index: Lego.Index) struct {
                 pattern: Lego.Index,
                 template: Lego.Index,
@@ -334,6 +340,10 @@ pub const Lego = struct {
             offset_t: f32 = 0,
             /// used when updating animation
             offset_ghost: Lego.Index = .nothing,
+
+            pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
+            pub const dist_between_cases_first: f32 = 1.5;
+            pub const dist_between_cases_rest: f32 = 2.5;
         };
 
         pub const NewCase = struct {
@@ -599,6 +609,32 @@ pub const Lego = struct {
 
         pub fn get(index: Index) *Lego {
             return Toybox.get(index);
+        }
+
+        pub fn case(index: Index) struct {
+            pattern: Lego.Index,
+            template: Lego.Index,
+            fnkname: Lego.Index,
+            next: Lego.Index,
+        } {
+            const children = Specific.Case.children(index);
+            return .{
+                .pattern = children.pattern,
+                .template = children.template,
+                .fnkname = children.fnkname,
+                .next = children.next,
+            };
+        }
+
+        pub fn garland(index: Index) struct {
+            self: Lego.Index,
+
+            pub fn hasChildCases(this: @This()) bool {
+                return Toybox.childCount(this.self) > 1;
+            }
+        } {
+            assert(Toybox.get(index).specific.tag() == .garland);
+            return .{ .self = index };
         }
     };
 
@@ -1194,7 +1230,7 @@ pub const Toybox = struct {
         fnkname: Lego.Index,
         next: ?Lego.Index = null,
     }) !Lego.Index {
-        const result = try Toybox.new(local_point, .case);
+        const result = try Toybox.new(local_point, .{ .case = .{} });
         Toybox.addChildLast(result.index, data.pattern);
         Toybox.addChildLast(result.index, data.template);
         Toybox.addChildLast(result.index, data.fnkname);
@@ -1638,12 +1674,12 @@ const Workspace = struct {
                             Toybox.get(child_down).specific.sexpr.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
                         }
                     },
-                    .case => {
+                    .case => |case| {
                         const offsets: [4]Point = .{
                             .{ .pos = .xneg },
                             .{ .pos = .xpos },
                             .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
-                            .{ .pos = .new(8, 1) },
+                            (Point{ .pos = .new(8, 1) }).applyToLocalPoint(case.next_point_extra),
                         };
                         // const pattern, const template, const fnkname = Toybox.getChildrenExact(3, cur);
                         // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
@@ -1764,7 +1800,10 @@ const Workspace = struct {
                                 // } else {
                                 if (true) {
                                     Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
-                                    // Toybox.get(animation.active_case).next_offset = TODO;
+                                    Toybox.get(animation.active_case).specific.case.next_point_extra = .{
+                                        .pos = .new(-enqueueing_t * 2, -(Lego.Specific.Case.next_garland_offset.y + Lego.Specific.Garland.dist_between_cases_first) *
+                                            math.smoothstep(enqueueing_t, 0, 0.6)),
+                                    };
                                 }
                                 Toybox.get(children.input).local_point = Executor.relative_input_point.applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
                                 // TODO
@@ -2614,6 +2653,7 @@ const Workspace = struct {
                     // TODO
                     // try animation.active_case.fillVariables(animation.new_bindings, mem);
 
+                    const next_garland = animation.active_case.case().next;
                     const old_active_case = animation.active_case;
                     const old_input = Executor.children(executor_index).input;
                     const old_garland = Executor.children(executor_index).garland;
@@ -2630,8 +2670,25 @@ const Workspace = struct {
                     Toybox.popWithUndo(old_active_case, undo_stack);
                     Toybox.destroyFloatingWithUndo(old_active_case, undo_stack);
 
-                    // TODO: set the correct garland
-                    Toybox.changeChildWithUndo(old_garland, try Toybox.buildGarland(.{}, &.{}), undo_stack);
+                    const new_garland = blk: {
+                        // TODO
+                        // if (animation.invoked_fnk) {}
+                        if (next_garland.garland().hasChildCases()) {
+                            Toybox.pop(next_garland);
+                            // TODO
+                            // parent_pill_index = executor.prev_pills.items.len - 1;
+                            break :blk next_garland;
+                        }
+                        // TODO
+                        // else if (executor.enqueued_stack.pop()) |g| {
+                        // executor.garland = g.garland;
+                        // parent_pill_index = g.parent_pill;
+                        // }
+
+                        break :blk try Toybox.buildGarland(.{}, &.{});
+                    };
+
+                    Toybox.changeChildWithUndo(old_garland, new_garland, undo_stack);
                 } else {
                     // TODO
                     // assert(animation.new_bindings.len == 0);
@@ -2664,8 +2721,9 @@ const Workspace = struct {
 
             const pattern = Lego.Specific.Case.children(first_case).pattern;
 
+            // FIXME
             // var new_bindings = ...
-            const matching = Lego.Specific.Sexpr.matchesWith(value, pattern); // FIXME
+            const matching = Lego.Specific.Sexpr.matchesWith(value, pattern);
             // const invoked_fnk: Lego.Index = .nothing; // TODO
             // const garland_fnkname: Lego.Index = .nothing; // TODO
             // executor.garland.fnkname = null; // TODO
