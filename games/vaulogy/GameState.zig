@@ -2633,7 +2633,6 @@ const Workspace = struct {
                     // TODO: set the correct garland
                     Toybox.changeChildWithUndo(old_garland, try Toybox.buildGarland(.{}, &.{}), undo_stack);
                 } else {
-                    @panic("TODO");
                     // TODO
                     // assert(animation.new_bindings.len == 0);
                     // executor.garland.fnkname = animation.garland_fnkname;
