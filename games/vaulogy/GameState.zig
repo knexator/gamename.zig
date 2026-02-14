@@ -347,6 +347,10 @@ pub const Lego = struct {
             offset_t: f32 = 0,
             /// used when updating animation
             offset_ghost: Lego.Index = .nothing,
+            /// valid only for garlands that are enqueued in an executor
+            enqueued_parent_pill_index: usize = undefined,
+            /// valid only for garlands that are enqueued in an executor
+            next_enqueued: Lego.Index = .nothing,
 
             pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
             pub const dist_between_cases_first: f32 = 1.5;
@@ -372,6 +376,7 @@ pub const Lego = struct {
                 // garland_fnkname: ?Lego.Index,
                 // paused: bool = false,
             } = null,
+            first_enqueued: Lego.Index = .nothing,
 
             const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
             const relative_garland_point: Point = .{ .pos = .new(4, 0) };
@@ -1806,7 +1811,7 @@ const Workspace = struct {
                                 Toybox.get(children.input).local_point = Executor.relative_input_point;
                                 // TODO
                                 // if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
-                                // TODO
+                                // FIXME NOW
                                 // for (executor.enqueued_stack.items, 0..) |*x, k| {
                                 //     x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(
                                 //         extraForDequeuingNext(tof32(executor.enqueued_stack.items.len - k - 1) + 1),
@@ -2733,20 +2738,28 @@ const Workspace = struct {
                         // TODO
                         if (animation.invoked_fnk != .nothing) {
                             Toybox.pop(animation.invoked_fnk);
+                            if (next_garland != .nothing) {
+                                // TODO
+                                // Toybox.get(next_garland).specific.garland.enqueued_parent_pill_index = ??;
+                                Toybox.get(next_garland).specific.garland.next_enqueued = executor.first_enqueued;
+                                executor.first_enqueued = next_garland;
+                            }
                             break :blk animation.invoked_fnk;
                         } else if (next_garland.garland().hasChildCases()) {
                             Toybox.pop(next_garland);
                             // TODO
                             // parent_pill_index = executor.prev_pills.items.len - 1;
                             break :blk next_garland;
+                        } else if (executor.first_enqueued != .nothing) {
+                            const asdf = executor.first_enqueued;
+                            executor.first_enqueued = Toybox.get(asdf).specific.garland.next_enqueued;
+                            // TODO
+                            // parent_pill_index = Toybox.get(asdf).specific.garland.enqueued_parent_pill_index;
+                            Toybox.pop(asdf);
+                            break :blk asdf;
+                        } else {
+                            break :blk try Toybox.buildGarland(.{}, &.{});
                         }
-                        // TODO
-                        // else if (executor.enqueued_stack.pop()) |g| {
-                        // executor.garland = g.garland;
-                        // parent_pill_index = g.parent_pill;
-                        // }
-
-                        break :blk try Toybox.buildGarland(.{}, &.{});
                     };
 
                     Toybox.changeChildWithUndo(old_garland, new_garland, undo_stack);
