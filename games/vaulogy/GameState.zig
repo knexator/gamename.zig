@@ -317,6 +317,8 @@ pub const Lego = struct {
         pub const Case = struct {
             /// offset for the next garland, used during animations
             next_point_extra: Point = .{},
+            /// offset for the fnk name, used during animations
+            fnk_name_extra: Point = .{},
 
             const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
             const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
@@ -1713,7 +1715,7 @@ const Workspace = struct {
                         const offsets: [4]Point = .{
                             .{ .pos = .xneg },
                             .{ .pos = .xpos },
-                            .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) },
+                            (Point{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }).applyToLocalPoint(case.fnk_name_extra),
                             (Point{ .pos = .new(8, 1) }).applyToLocalPoint(case.next_point_extra),
                         };
                         // const pattern, const template, const fnkname = Toybox.getChildrenExact(3, cur);
@@ -1845,6 +1847,7 @@ const Workspace = struct {
                                     //     delta_seconds,
                                     // );
                                     // Toybox.get(animation.active_case).specific.case.next_point_extra = extraForEnqueuingNext(enqueueing_t);
+                                    Toybox.get(animation.active_case).specific.case.fnk_name_extra = .{ .pos = .new(-invoking_t * 4, 0) };
                                     Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
 
                                     // TODO
