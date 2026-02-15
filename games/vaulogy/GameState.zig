@@ -2,7 +2,6 @@ pub const GameState = @This();
 pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
-const core = @import("core.zig");
 const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
@@ -272,6 +271,10 @@ pub const Lego = struct {
             is_pattern_t: f32,
             atom_name: []const u8,
 
+            // TODO: rethink
+            executor_with_bindings: Lego.Index = .nothing,
+            emerging_value: Lego.Index = .nothing,
+
             pub const Kind = enum { empty, atom_lit, atom_var, pair };
 
             pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
@@ -281,17 +284,30 @@ pub const Lego = struct {
                 });
             }
 
-            pub fn equalValue(a: Lego.Index, b: Lego.Index) bool {
-                // FIXME: improve
-                return matchesWith(a, b);
+            pub fn equalValue(a_index: Lego.Index, b_index: Lego.Index) bool {
+                const a = &Toybox.get(a_index).specific.sexpr;
+                const b = &Toybox.get(b_index).specific.sexpr;
+                return equalValueV2(a, b);
             }
 
-            pub fn matchesWith(value: Lego.Index, pattern: Lego.Index) bool {
+            pub fn equalValueV2(a: *const Sexpr, b: *const Sexpr) bool {
+                if (a.kind != b.kind) return false;
+                switch (a.kind) {
+                    .empty => return true,
+                    .atom_var, .atom_lit => return std.mem.eql(u8, a.atom_name, b.atom_name),
+                    .pair => return equalValueV2(a.left(), b.left()) and equalValueV2(a.right(), b.right()),
+                }
+            }
+
+            pub fn generateBindings(value: Lego.Index, pattern: Lego.Index, bindings: *Bindings) !bool {
                 const p = Toybox.get(pattern).specific.sexpr;
                 const v = Toybox.get(value).specific.sexpr;
                 switch (p.kind) {
                     .empty => return true,
-                    .atom_var => return true,
+                    .atom_var => {
+                        try bindings.append(.{ .name = p.atom_name, .value = value });
+                        return true;
+                    },
                     .atom_lit => {
                         switch (v.kind) {
                             .empty => return true,
@@ -306,11 +322,50 @@ pub const Lego = struct {
                             .pair => {
                                 const pat_up, const pat_down = Toybox.getChildrenExact(2, pattern);
                                 const val_up, const val_down = Toybox.getChildrenExact(2, value);
-                                return matchesWith(pat_up, val_up) and matchesWith(pat_down, val_down);
+                                return try generateBindings(pat_up, val_up, bindings) and try generateBindings(pat_down, val_down, bindings);
                             },
                         }
                     },
                 }
+            }
+
+            fn left(self: *const Sexpr) *const Sexpr {
+                assert(self.kind == .pair);
+                assert(Toybox.childCount(Lego.fromSpecificConst(.sexpr, self).index) == 2);
+                return &Toybox.get(Lego.fromSpecificConst(.sexpr, self).tree.first).specific.sexpr;
+            }
+
+            fn right(self: *const Sexpr) *const Sexpr {
+                assert(self.kind == .pair);
+                assert(Toybox.childCount(Lego.fromSpecificConst(.sexpr, self).index) == 2);
+                return &Toybox.get(Lego.fromSpecificConst(.sexpr, self).tree.last).specific.sexpr;
+            }
+
+            fn getAllVarNames(self: *const Sexpr, res: *std.ArrayList([]const u8)) !void {
+                const indexOfString = @import("kommon").funktional.indexOfString;
+                switch (self.kind) {
+                    .atom_lit, .empty => return,
+                    .atom_var => if (indexOfString(res.items, self.atom_name) == null) try res.append(self.atom_name),
+                    .pair => {
+                        try self.left().getAllVarNames(res);
+                        try self.right().getAllVarNames(res);
+                    },
+                }
+            }
+
+            pub fn getAllVarNamesHelper(pair: Lego.Index, allocator: std.mem.Allocator) !struct {
+                left: [][]const u8,
+                right: [][]const u8,
+            } {
+                var left_names: std.ArrayList([]const u8) = .init(allocator);
+                var right_names: std.ArrayList([]const u8) = .init(allocator);
+                const s = &Toybox.get(pair).specific.sexpr;
+                try s.left().getAllVarNames(&left_names);
+                try s.right().getAllVarNames(&right_names);
+                return .{
+                    .left = try left_names.toOwnedSlice(),
+                    .right = try right_names.toOwnedSlice(),
+                };
             }
         };
 
@@ -371,7 +426,8 @@ pub const Lego = struct {
                 matching: bool,
                 invoked_fnk: Lego.Index,
                 // parent_pill: ?usize,
-                // new_bindings: []const core.Binding,
+                // TODO: rethink
+                new_bindings: []const Binding,
                 // original_point: Point,
                 // garland_fnkname: ?Lego.Index,
                 // paused: bool = false,
@@ -382,6 +438,22 @@ pub const Lego = struct {
             const relative_garland_point: Point = .{ .pos = .new(4, 0) };
             const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
             const first_case_point: Point = relative_garland_point.applyToLocalPoint(.{ .pos = .new(0, 1.5) });
+
+            // TODO: rethink
+            pub fn bindingsActive(executor_index: Lego.Index) BindingsState {
+                const executor = Toybox.get(executor_index).specific.executor;
+                return if (executor.animation) |anim| .{
+                    .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
+                    .old = &.{},
+                    // TODO
+                    // .old = if (anim.parent_pill) |k| executor.prev_pills.items[k].bindings else &.{},
+                    .new = anim.new_bindings,
+                } else .{
+                    .anim_t = null,
+                    .old = &.{},
+                    .new = &.{},
+                };
+            }
 
             pub fn children(index: Lego.Index) struct {
                 input: Lego.Index,
@@ -1367,6 +1439,9 @@ const Workspace = struct {
     random_instance: std.Random.DefaultPrng,
     arena_for_atom_names: std.heap.ArenaAllocator,
 
+    // TODO: remove
+    gpa_for_bindings: std.mem.Allocator,
+
     pub const UndoStack = std.ArrayList(UndoableCommand);
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
@@ -1433,6 +1508,7 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         dst.random_instance = .init(random_seed);
         dst.arena_for_atom_names = .init(gpa);
+        dst.gpa_for_bindings = gpa;
 
         dst.main_area = (try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } })).index;
         dst.toolbar_left = (try Toybox.new(.{}, .{
@@ -1715,6 +1791,11 @@ const Workspace = struct {
                             Toybox.get(child_down).specific.sexpr.is_pattern = sexpr.is_pattern;
                             Toybox.get(child_down).specific.sexpr.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
                         }
+
+                        if (sexpr.emerging_value != .nothing) {
+                            // TODO: avoid 1 frame delay
+                            Toybox.get(sexpr.emerging_value).absolute_point = lego.absolute_point;
+                        }
                     },
                     .case => |case| {
                         const offsets: [4]Point = .{
@@ -1962,13 +2043,99 @@ const Workspace = struct {
                     }
                 } else {
                     const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
+                    const alpha: f32 = 1;
                     switch (lego.specific) {
                         .sexpr => |sexpr| {
+                            if (sexpr.emerging_value != .nothing) {
+                                try _draw(&.{sexpr.emerging_value}, camera, drawer);
+                            }
+
                             switch (sexpr.kind) {
                                 .empty => {},
-                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
-                                .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, 1),
-                                .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, 1),
+                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
+                                .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
+                                .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
+                            }
+
+                            const maybe_bindings: ?BindingsState = if (sexpr.executor_with_bindings != .nothing)
+                                Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings)
+                            else
+                                null;
+
+                            if (sexpr.kind == .pair) {
+                                const names = try Lego.Specific.Sexpr.getAllVarNamesHelper(lego.index, drawer.canvas.frame_arena.allocator());
+                                try if (sexpr.is_pattern)
+                                    drawer.drawPatternWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, alpha)
+                                else
+                                    drawer.drawTemplateWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, maybe_bindings orelse .{
+                                        .anim_t = null,
+                                        .old = &.{},
+                                        .new = &.{},
+                                    }, alpha);
+                            }
+
+                            if (maybe_bindings) |bindings| {
+                                switch (sexpr.kind) {
+                                    // TODO: cables?
+                                    else => {},
+                                    .atom_var => {
+                                        // TODO: check that compiler skips the loop if anim_t is null
+                                        for (bindings.new) |binding| {
+                                            if (bindings.anim_t) |anim_t| {
+                                                if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                                    if (sexpr.is_pattern) {
+                                                        const t = math.smoothstep(anim_t, 0, 0.1);
+                                                        try drawer.drawEatingPattern(camera, point, binding, t, alpha);
+                                                    } else {
+                                                        // FIXME NOW
+                                                        // try drawer.clipAtomRegion(camera, point);
+                                                        // const t = math.smoothstep(anim_t, 0, 0.4);
+                                                        // try drawer.drawSexpr(camera, .{
+                                                        //     .is_pattern = sexpr.is_pattern_t,
+                                                        //     .value = binding.value,
+                                                        //     .pos = point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
+                                                        // }, alpha);
+                                                        // drawer.endClip();
+
+                                                        // try drawer.drawSexpr(camera, .{
+                                                        //     .is_pattern = sexpr.is_pattern_t,
+                                                        //     .value = sexpr.atom_name,
+                                                        //     .pos = point,
+                                                        // }, alpha * (1 - anim_t));
+
+                                                        // TODO: uncomment
+                                                        // if (anim_t < 0.5) {
+                                                        //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
+                                                        // }
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        } else for (bindings.old) |binding| {
+                                            if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                                if (sexpr.is_pattern) {
+                                                    const t = 1;
+                                                    try drawer.drawEatingPattern(camera, point, binding, t, alpha);
+                                                } else {
+                                                    // FIXME NOW
+                                                    // try drawer.drawSexpr(camera, .{
+                                                    //     .is_pattern = sexpr.is_pattern_t,
+                                                    //     .value = binding.value,
+                                                    //     .pos = point,
+                                                    // }, alpha);
+                                                }
+                                                break;
+                                            }
+                                        } else {
+                                            // FIXME NOW
+                                            // try drawer.drawSexpr(camera, .{
+                                            //     .is_pattern = sexpr.is_pattern_t,
+                                            //     .value = sexpr.atom_name,
+                                            //     .pos = point,
+                                            // }, alpha);
+                                        }
+                                    },
+                                }
                             }
                         },
                         .lens => |lens| {
@@ -2711,10 +2878,20 @@ const Workspace = struct {
                     //     .fnkname_call = animation.active_case.fnk_name,
                     //     .fnkname_response = animation.garland_fnkname,
                     //     // TODO: should include previous bindings? not really, since they have now been merged
-                    //     .bindings = try mem.gpa.dupe(core.Binding, animation.new_bindings),
+                    //     .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
                     // });
 
                     // TODO
+                    if (true) { // fill variables
+                        var cur = animation.active_case;
+                        while (cur != .nothing) : (cur = Toybox.next_preordered(cur, animation.active_case).next) {
+                            if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
+                                if (sexpr.emerging_value != .nothing) {
+                                    Toybox.changeChildWithUndoAndAlsoCoords(cur, sexpr.emerging_value, &workspace.undo_stack);
+                                }
+                            }
+                        }
+                    }
                     // try animation.active_case.fillVariables(animation.new_bindings, mem);
 
                     const next_garland = animation.active_case.case().next;
@@ -2795,9 +2972,9 @@ const Workspace = struct {
 
             const pattern = Lego.Specific.Case.children(first_case).pattern;
 
-            // FIXME
-            // var new_bindings = ...
-            const matching = Lego.Specific.Sexpr.matchesWith(value, pattern);
+            // TODO: memory management
+            var new_bindings: std.ArrayList(Binding) = .init(workspace.gpa_for_bindings);
+            const matching = try Lego.Specific.Sexpr.generateBindings(value, pattern, &new_bindings);
             const invoked_fnk: Lego.Index = if (!matching)
                 .nothing
             else if (first_case.case().hasIdentityFnkname())
@@ -2813,11 +2990,31 @@ const Workspace = struct {
             };
             // const garland_fnkname: Lego.Index = .nothing; // TODO
             // executor.garland.fnkname = null; // TODO
+            const new_bindings_slice = try new_bindings.toOwnedSlice();
             executor.animation = .{
                 .matching = matching,
                 .active_case = first_case,
                 .invoked_fnk = invoked_fnk,
+                .new_bindings = new_bindings_slice,
             };
+
+            if (matching) {
+                var cur = first_case;
+                while (cur != .nothing) : (cur = Toybox.next_preordered(cur, first_case).next) {
+                    if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
+                        sexpr.executor_with_bindings = executor_index;
+                        if (sexpr.kind == .atom_var and !sexpr.is_pattern) {
+                            for (new_bindings_slice) |binding| {
+                                if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                    sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, true);
+                                    Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
+                                    Toybox.refreshAbsolutePoints(&.{sexpr.emerging_value});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         // TODO
         // executor.recomputeCrankHandlePos();
@@ -3011,18 +3208,10 @@ pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;
 // pub const LocalDecisions = @import("../chesstory/GameState.zig").LocalDecisions;
 
-const Atom = core.Atom;
-// const Pair = core.Pair;
-// const Sexpr = core.Sexpr;
-const Fnk = core.Fnk;
-const FnkBody = core.FnkBody;
-const FnkCollection = core.FnkCollection;
-const VeryPermamentGameStuff = core.VeryPermamentGameStuff;
 const parsing = @import("parsing.zig");
 
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
-const BindingsState = @import("physical.zig").BindingsState;
 const Sample = @import("levels_new.zig").Sample;
 
 /// Inserts the element at the specified index, and moves the element there to the end of the list.
@@ -3039,5 +3228,70 @@ pub fn swapInsertAssumeCapacity(T: type, array: *std.ArrayListUnmanaged(T), i: u
         const old_last = array.items[i];
         array.items[i] = element;
         array.items[array.items.len - 1] = old_last;
+    }
+}
+
+// TODO: rethink
+pub const Binding = struct {
+    name: []const u8,
+    value: Lego.Index,
+};
+pub const Bindings = std.ArrayList(Binding);
+
+pub const BindingsState = struct {
+    new: []const Binding,
+    old: []const Binding,
+    anim_t: ?f32,
+    pub const none: BindingsState = .{ .anim_t = null, .new = &.{}, .old = &.{} };
+};
+
+pub fn drawTemplateWildcardLinesNonRecursiveV2(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names_raw: [][]const u8,
+    right_names_raw: [][]const u8,
+    point: Point,
+    bindings: BindingsState,
+    alpha: f32,
+) !void {
+    var left_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(left_names_raw);
+    var right_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(right_names_raw);
+
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNamesV10(&left_names, bindings.new);
+    };
+    try removeBoundNamesV10(&left_names, bindings.old);
+
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNamesV10(&right_names, bindings.new);
+    };
+    try removeBoundNamesV10(&right_names, bindings.old);
+
+    {
+        // TODO: these numbers are not exact, issues when zooming in
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 + 0.25 / 2.0, 0.75, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, 0.25)));
+            }
+        }.anon, point)), left_names.items, alpha);
+
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 - 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, -0.25)));
+            }
+        }.anon, point)), right_names.items, alpha);
+    }
+}
+
+fn removeBoundNamesV10(list: *std.ArrayListUnmanaged([]const u8), bindings: []const Binding) !void {
+    for (bindings) |binding| {
+        const name_to_remove = binding.name;
+        while (funk.indexOfString(list.items, name_to_remove)) |i| {
+            std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
+        }
     }
 }

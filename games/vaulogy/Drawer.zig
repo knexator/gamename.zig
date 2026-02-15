@@ -671,18 +671,19 @@ pub fn drawEatingPattern(
     drawer: *Drawer,
     camera: Rect,
     point: Point,
-    binding: core.Binding,
+    binding: Binding,
     t: f32,
     alpha: f32,
 ) !void {
     assert(in01(t));
     const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name, drawer.canvas.gl);
     try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
-    try drawer.drawSexpr(camera, .{
-        .is_pattern = 0,
-        .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
-        .value = binding.value,
-    }, alpha);
+    // TODO
+    // try drawer.drawSexpr(camera, .{
+    //     .is_pattern = 0,
+    //     .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
+    //     .value = binding.value,
+    // }, alpha);
 }
 
 pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha: f32) !void {
@@ -822,17 +823,32 @@ pub fn drawTemplateWildcardLinesNonRecursive(
 ) !void {
     var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try left.getAllVarNames(&left_names);
-    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
-        try removeBoundNames(&left_names, bindings.new);
-    };
-    try removeBoundNames(&left_names, bindings.old);
-
     var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try right.getAllVarNames(&right_names);
+    drawTemplateWildcardLinesNonRecursiveV2(drawer, camera, left_names.items, right_names.items, point, bindings, alpha);
+}
+
+pub fn drawTemplateWildcardLinesNonRecursiveV2(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names_raw: [][]const u8,
+    right_names_raw: [][]const u8,
+    point: Point,
+    bindings: BindingsState,
+    alpha: f32,
+) !void {
+    var left_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(left_names_raw);
+    var right_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(right_names_raw);
+
     if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
-        try removeBoundNames(&right_names, bindings.new);
+        try removeBoundNamesV10(&left_names, bindings.new);
     };
-    try removeBoundNames(&right_names, bindings.old);
+    try removeBoundNamesV10(&left_names, bindings.old);
+
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNamesV10(&right_names, bindings.new);
+    };
+    try removeBoundNamesV10(&right_names, bindings.old);
 
     {
         // TODO: these numbers are not exact, issues when zooming in
@@ -866,7 +882,17 @@ pub fn drawPatternWildcardLinesNonRecursive(
     try left.getAllVarNames(&left_names);
     var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try right.getAllVarNames(&right_names);
+    drawer.drawPatternWildcardLinesNonRecursiveV2(camera, left_names.items, right_names.items, point, alpha);
+}
 
+pub fn drawPatternWildcardLinesNonRecursiveV2(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names: []const []const u8,
+    right_names: []const []const u8,
+    point: Point,
+    alpha: f32,
+) !void {
     const magic_1 = @sqrt(2.0) * 2.0 / 4.0;
     const magic_2 = @sqrt(2.0) * 3.0 / 4.0;
     try drawer.drawWildcardsCable(camera, &(funk.fromCountAndCtx(32, struct {
@@ -877,7 +903,7 @@ pub fn drawPatternWildcardLinesNonRecursive(
         pub fn anon(k: usize, p: Point) Vec2 {
             return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.25 + 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(magic_2).add(.new(0.5, 0)).addY(-magic_2));
         }
-    }.anon, point)), left_names.items, alpha);
+    }.anon, point)), left_names, alpha);
     try drawer.drawWildcardsCable(camera, &(funk.fromCountAndCtx(32, struct {
         pub fn anon(k: usize, p: Point) Vec2 {
             return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.25, 0.25 / 2.0, math.tof32(k) / 32)).scale(magic_1).add(.new(-0.75, 0.5)).addY(-magic_1));
@@ -886,7 +912,7 @@ pub fn drawPatternWildcardLinesNonRecursive(
         pub fn anon(k: usize, p: Point) Vec2 {
             return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(-0.25 - 0.25 / 2.0, -0.25, math.tof32(k) / 32)).scale(magic_2).add(.new(0.5, 0)).addY(magic_2));
         }
-    }.anon, point)), right_names.items, alpha);
+    }.anon, point)), right_names, alpha);
 }
 
 fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
@@ -923,6 +949,10 @@ const inRange = math.inRange;
 const funk = kommon.funktional;
 const Canvas = kommon.Canvas;
 
+const Binding = @import("GameState.zig").Binding;
+const Bindings = @import("GameState.zig").Bindings;
+const BindingsState = @import("GameState.zig").BindingsState;
+
 const core = @import("core.zig");
 const Atom = core.Atom;
 const Pair = core.Pair;
@@ -935,7 +965,6 @@ const parsing = @import("parsing.zig");
 
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
-const BindingsState = @import("physical.zig").BindingsState;
 
 const BindingParticle = struct {
     point: Point,
@@ -955,6 +984,15 @@ fn appendUniqueNames(list: *std.ArrayList([]const u8), names: []const []const u8
 
 fn removeNames(list: *std.ArrayList([]const u8), names: []const []const u8) !void {
     for (names) |name_to_remove| {
+        while (funk.indexOfString(list.items, name_to_remove)) |i| {
+            std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
+        }
+    }
+}
+
+fn removeBoundNamesV10(list: *std.ArrayListUnmanaged([]const u8), bindings: []const Binding) !void {
+    for (bindings) |binding| {
+        const name_to_remove = binding.name;
         while (funk.indexOfString(list.items, name_to_remove)) |i| {
             std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
         }
