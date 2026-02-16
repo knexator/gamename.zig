@@ -1811,7 +1811,7 @@ pub const Clipper = struct {
 
     pub const Mask = struct {
         camera: Rect,
-        shape: union(enum) { circle: math.Circle, rect: math.Rect },
+        shape: union(enum) { circle: math.Circle, rect: math.Rect, custom: struct { shape: PrecomputedShape, point: Point } },
     };
 
     pub fn push(clipper: *Clipper, mask: Mask) !void {
@@ -1841,6 +1841,9 @@ pub const Clipper = struct {
                     },
                     .rect => |rect| {
                         canvas.fillRect(mask.camera, rect, .white);
+                    },
+                    .custom => |custom| {
+                        canvas.fillShape(mask.camera, custom.point, custom.shape, .white);
                     },
                 }
             }

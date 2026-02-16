@@ -38,6 +38,7 @@ pub const AtomVisuals = struct {
         template: Canvas.PrecomputedShape,
         pattern: Canvas.PrecomputedShape,
 
+        pub var template_mask: Canvas.PrecomputedShape = undefined;
         var template_placeholder: Canvas.PrecomputedShape = undefined;
         var pattern_placeholder: Canvas.PrecomputedShape = undefined;
         var template_variable: Canvas.PrecomputedShape = undefined;
@@ -141,6 +142,12 @@ pub const AtomVisuals = struct {
                     return Vec2.fromTurns(math.lerp(0.25, -0.25, math.tof32(k) / 32)).scale(0.5).add(.new(-1.25, -0.5));
                 }
             }.anon)), gl);
+
+            Geometry.template_mask = try .fromPoints(mem, &([1]Vec2{.new(3, -1)} ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
+                }
+            }.anon) ++ [1]Vec2{.new(3, 1)}), gl);
 
             Geometry.template_placeholder = try .fromPoints(mem, &([1]Vec2{.new(2, -1)} ++ funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
@@ -915,7 +922,7 @@ pub fn drawPatternWildcardLinesNonRecursiveV2(
     }.anon, point)), right_names, alpha);
 }
 
-fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
+pub fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
     var visuals: std.ArrayList(AtomVisuals) = try .initCapacity(drawer.canvas.frame_arena.allocator(), names.len);
     for (names) |name| {
         visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl));

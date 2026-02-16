@@ -1793,8 +1793,22 @@ const Workspace = struct {
                         }
 
                         if (sexpr.emerging_value != .nothing) {
+                            const bindings = Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings);
+                            const offset: Point = if (bindings.anim_t) |anim_t|
+                                if (sexpr.is_pattern)
+                                    .{}
+                                else
+                                    .{ .pos = .new(math.remap(
+                                        math.smoothstep(anim_t, 0, 0.4),
+                                        0,
+                                        1,
+                                        -2.3,
+                                        0,
+                                    ), 0) }
+                            else
+                                .{ .pos = .new(-2.3, 0) };
                             // TODO: avoid 1 frame delay
-                            Toybox.get(sexpr.emerging_value).absolute_point = lego.absolute_point;
+                            Toybox.get(sexpr.emerging_value).absolute_point = lego.absolute_point.applyToLocalPoint(offset);
                         }
                     },
                     .case => |case| {
@@ -2043,11 +2057,23 @@ const Workspace = struct {
                     }
                 } else {
                     const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
+                    const camera_relative = camera.reparentCamera(lego.absolute_point);
                     const alpha: f32 = 1;
                     switch (lego.specific) {
                         .sexpr => |sexpr| {
                             if (sexpr.emerging_value != .nothing) {
-                                try _draw(&.{sexpr.emerging_value}, camera, drawer);
+                                if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{
+                                    .custom = .{ .point = .{}, .shape = Drawer.AtomVisuals.Geometry.template_mask },
+                                } })) {
+                                    drawer.canvas.clipper.use(drawer.canvas);
+                                    defer {
+                                        drawer.canvas.clipper.pop();
+                                        drawer.canvas.clipper.use(drawer.canvas);
+                                    }
+                                    try _draw(&.{sexpr.emerging_value}, camera, drawer);
+                                } else |_| {
+                                    std.log.err("reached max lens depth, TODO: improve", .{});
+                                }
                             }
 
                             switch (sexpr.kind) {
@@ -2142,14 +2168,14 @@ const Workspace = struct {
                             // TODO: lens distortion effect, on source and target
 
                             if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
-                                const lens_circle: math.Circle = .{ .center = lego.absolute_point.pos, .radius = lens.local_radius * lego.absolute_point.scale };
-                                if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{ .circle = lens_circle } })) {
+                                const lens_circle: math.Circle = .{ .center = .zero, .radius = lens.local_radius };
+                                if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{ .circle = lens_circle } })) {
                                     drawer.canvas.clipper.use(drawer.canvas);
                                     defer {
                                         drawer.canvas.clipper.pop();
                                         drawer.canvas.clipper.use(drawer.canvas);
                                     }
-                                    drawer.canvas.fillCircleV2(camera, lens_circle, COLORS.bg);
+                                    drawer.canvas.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
 
                                     try _draw(lens.roots_to_draw, lens.transform.getCamera(camera), drawer);
                                 } else |_| {
