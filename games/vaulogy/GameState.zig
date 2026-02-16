@@ -1434,6 +1434,7 @@ pub const Toybox = struct {
 
 const Workspace = struct {
     main_area: Lego.Index,
+    fnkboxes_layer: Lego.Index,
     toolbar_left: Lego.Index,
     toolbar_left_unfolded_t: f32 = 0,
     lenses_layer: Lego.Index,
@@ -1500,9 +1501,10 @@ const Workspace = struct {
             .include_toolbar = false,
             .include_floating_inputs = true,
         };
-    }) std.BoundedArray(Lego.Index, 5) {
-        var result: std.BoundedArray(Lego.Index, 5) = .{};
+    }) std.BoundedArray(Lego.Index, 6) {
+        var result: std.BoundedArray(Lego.Index, 6) = .{};
         result.appendAssumeCapacity(workspace.main_area);
+        result.appendAssumeCapacity(workspace.fnkboxes_layer);
         if (config.include_floating_inputs) result.appendAssumeCapacity(workspace.floating_inputs_layer);
         if (config.include_toolbar) result.appendAssumeCapacity(workspace.toolbar_left);
         if (config.include_hand) result.appendAssumeCapacity(workspace.hand_layer);
@@ -1526,6 +1528,7 @@ const Workspace = struct {
                 },
             },
         })).index;
+        dst.fnkboxes_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } })).index;
         dst.lenses_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } })).index;
         dst.floating_inputs_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } })).index;
 
@@ -1533,7 +1536,7 @@ const Workspace = struct {
 
         if (true) {
             Toybox.addChildLast(
-                dst.main_area,
+                dst.fnkboxes_layer,
                 try Toybox.buildFnkbox(
                     .{ .pos = .new(-4, -4) },
                     try Toybox.buildSexpr(
@@ -1692,7 +1695,8 @@ const Workspace = struct {
                     },
                     .area => |area| {
                         if (step.children_already_visited and
-                            area.bg.contains(lego.absolute_point, absolute_needle_pos))
+                            area.bg.contains(lego.absolute_point, absolute_needle_pos) and
+                            (grabbing == .nothing or Toybox.get(grabbing).tree.parent == .nothing or cur == roots_in_draw_order[0]))
                         {
                             return .{ .over_background = cur };
                         }
@@ -2243,7 +2247,10 @@ const Workspace = struct {
                                 .black,
                             );
                         },
-                        .case, .garland, .microscope, .executor, .fnkbox, .fnkbox_box, .testcase => {},
+                        .fnkbox_box => {
+                            drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
+                        },
+                        .case, .garland, .microscope, .executor, .fnkbox, .testcase => {},
                     }
                 }
             }
@@ -2508,6 +2515,13 @@ const Workspace = struct {
                     });
                     grabbed_element_index = new_element_index;
                     // }
+                } else if (original_hot_data.specific.tag() == .lens or original_hot_data.specific.tag() == .fnkbox) {
+                    // Case A.3: grabbing rather than plucking
+                    workspace.undo_stack.appendAssumeCapacity(.{
+                        .set_data_except_tree = original_hot_data,
+                    });
+                    grabbed_element_index = hot_index;
+                    plucked = false;
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .area) {
                     // Case A.1: plucking a top-level thing
                     workspace.undo_stack.appendAssumeCapacity(.{
@@ -2540,13 +2554,6 @@ const Workspace = struct {
                     } });
 
                     grabbed_element_index = hot_index;
-                } else if (original_hot_data.specific.tag() == .lens) {
-                    // Case A.3: grabbing rather than plucking
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .set_data_except_tree = original_hot_data,
-                    });
-                    grabbed_element_index = hot_index;
-                    plucked = false;
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .newcase) {
                     // Case A.4: plucking a case from a garland
                     assert(original_hot_data.specific.tag() == .case);
