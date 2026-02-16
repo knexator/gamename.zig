@@ -1751,12 +1751,12 @@ const Workspace = struct {
         unreachable;
     }
 
-    fn updateSprings(workspace: *Workspace, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
-        defer Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
-        for (workspace.roots(.all).constSlice()) |root| {
+    fn updateSprings(workspace: *Workspace, roots_in_draw_order: []const Lego.Index, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+        for (roots_in_draw_order) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = Toybox.next_preordered(cur, root).next) {
                 const lego = Toybox.get(cur);
+                defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
                 if (cur == workspace.grabbing and lego.draggable()) {
                     const target: Point = if (interaction.dropzone == .nothing)
                         // TODO: i don't like the scale hack
@@ -1820,8 +1820,8 @@ const Workspace = struct {
                                     ), 0) }
                             else
                                 .{ .pos = .new(-2.3, 0) };
-                            // TODO: avoid 1 frame delay
-                            Toybox.get(sexpr.emerging_value).absolute_point = lego.absolute_point.applyToLocalPoint(offset);
+                            Toybox.get(sexpr.emerging_value).local_point = lego.absolute_point.applyToLocalPoint(offset);
+                            updateSprings(workspace, &.{sexpr.emerging_value}, absolute_mouse_pos, interaction, delta_seconds);
                         }
                     },
                     .case => |case| {
@@ -2434,7 +2434,7 @@ const Workspace = struct {
         }
 
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
-        workspace.updateSprings(mouse.cur.position, hot_and_dropzone, delta_seconds);
+        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         if (true) { // set lenses data
             const microscopes = try Toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
