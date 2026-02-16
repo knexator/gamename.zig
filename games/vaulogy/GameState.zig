@@ -1195,6 +1195,13 @@ pub const Toybox = struct {
             }
             return result;
         }
+
+        pub fn skipChildren(it: *TreeIterator) void {
+            if (!it.going_up) {
+                it.cur = Toybox.get(it.cur).tree.parent;
+                it.going_up = true;
+            }
+        }
     };
 
     test "iteration order" {
@@ -1698,6 +1705,13 @@ const Workspace = struct {
                             return .{ .hot = cur, .over_background = root };
                         }
                     },
+                    .fnkbox_testcases => {
+                        if (!step.children_already_visited and !Lego.Specific.FnkboxBox.testcases_box.contains(
+                            lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
+                        )) {
+                            it.skipChildren();
+                        }
+                    },
                     .case,
                     .newcase,
                     .microscope,
@@ -1706,7 +1720,6 @@ const Workspace = struct {
                     .fnkbox,
                     .fnkbox_box,
                     .fnkbox_description,
-                    .fnkbox_testcases,
                     .testcase,
                     => {},
                 }
