@@ -2631,7 +2631,7 @@ const Workspace = struct {
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
-                        .see_failing_testcase => false,
+                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                     };
                 }
             }
@@ -2865,36 +2865,14 @@ const Workspace = struct {
                     assert(dropzone_index == .nothing);
                     if (Toybox.get(workspace.grabbing).specific.as(.button)) |button| {
                         switch (button.action) {
-                            else => @panic("FIXME"),
+                            .see_failing_testcase => {
+                                const fnkbox = Toybox.findAncestor(workspace.grabbing, .fnkbox);
+                                try workspace.launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved);
+                            },
                             .launch_testcase => {
                                 // TODO: proper interaction with undo
                                 const testcase_index = Toybox.get(workspace.grabbing).tree.parent;
-                                assert(Toybox.get(testcase_index).specific.tag() == .testcase);
-                                const fnkbox_index = Toybox.findAncestor(testcase_index, .fnkbox);
-                                const fnkbox = &Toybox.get(fnkbox_index).specific.fnkbox;
-                                assert(fnkbox.execution == null);
-                                const executor_index = Lego.Specific.Fnkbox.children(fnkbox_index).executor;
-
-                                const old_actual = Lego.Specific.Testcase.children(testcase_index).actual;
-                                const new_actual = try Toybox.buildSexpr(Toybox.get(old_actual).local_point, .empty, false);
-                                Toybox.changeChild(old_actual, new_actual);
-                                workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
-                                    .original = new_actual,
-                                    .new = old_actual,
-                                } });
-
-                                const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
-                                const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true);
-                                workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = backup_garland_index });
-
-                                fnkbox.execution = .{
-                                    .source = .{ .testcase = testcase_index },
-                                    .old_testcase_actual_value = old_actual,
-                                    .original_garland = backup_garland_index,
-                                    .original_or_final_input_point = undefined,
-                                    .state_t = undefined,
-                                    .state = .scrolling_towards_case,
-                                };
+                                try workspace.launchTestcase(testcase_index);
                             },
                         }
                     }
@@ -3295,6 +3273,35 @@ const Workspace = struct {
                 }
             }
         } else return null;
+    }
+
+    fn launchTestcase(workspace: *Workspace, testcase_index: Lego.Index) !void {
+        assert(Toybox.get(testcase_index).specific.tag() == .testcase);
+        const fnkbox_index = Toybox.findAncestor(testcase_index, .fnkbox);
+        const fnkbox = &Toybox.get(fnkbox_index).specific.fnkbox;
+        assert(fnkbox.execution == null);
+        const executor_index = Lego.Specific.Fnkbox.children(fnkbox_index).executor;
+
+        const old_actual = Lego.Specific.Testcase.children(testcase_index).actual;
+        const new_actual = try Toybox.buildSexpr(Toybox.get(old_actual).local_point, .empty, false);
+        Toybox.changeChild(old_actual, new_actual);
+        workspace.undo_stack.appendAssumeCapacity(.{ .change_child = .{
+            .original = new_actual,
+            .new = old_actual,
+        } });
+
+        const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
+        const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true);
+        workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = backup_garland_index });
+
+        fnkbox.execution = .{
+            .source = .{ .testcase = testcase_index },
+            .old_testcase_actual_value = old_actual,
+            .original_garland = backup_garland_index,
+            .original_or_final_input_point = undefined,
+            .state_t = undefined,
+            .state = .scrolling_towards_case,
+        };
     }
 };
 
