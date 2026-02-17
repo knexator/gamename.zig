@@ -370,6 +370,33 @@ pub const Lego = struct {
                     .right = try right_names.toOwnedSlice(),
                 };
             }
+
+            const core = @import("core.zig");
+            pub fn toOldCoreValue(sexpr: *const Sexpr, mem: std.mem.Allocator) !*core.Sexpr {
+                const result = try mem.create(core.Sexpr);
+                result.* = switch (sexpr.kind) {
+                    .empty => .empty,
+                    .atom_var => .{ .atom_var = .{ .value = sexpr.atom_name } },
+                    .atom_lit => .{ .atom_lit = .{ .value = sexpr.atom_name } },
+                    .pair => .{ .pair = .{
+                        .left = try sexpr.left().toOldCoreValue(mem),
+                        .right = try sexpr.right().toOldCoreValue(mem),
+                    } },
+                };
+                return result;
+            }
+
+            pub fn buildFromOldCoreValue(point: Point, value: *const core.Sexpr) !Lego.Index {
+                return try Toybox.buildSexpr(point, switch (value.*) {
+                    .empty => .empty,
+                    .atom_lit => |s| .{ .atom_lit = s.value },
+                    .atom_var => |s| .{ .atom_var = s.value },
+                    .pair => |pair| .{ .pair = .{
+                        .up = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .up)), pair.left),
+                        .down = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .down)), pair.right),
+                    } },
+                }, false);
+            }
         };
 
         pub const Case = struct {
@@ -413,6 +440,32 @@ pub const Lego = struct {
             pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
             pub const dist_between_cases_first: f32 = 1.5;
             pub const dist_between_cases_rest: f32 = 2.5;
+
+            const core = @import("core.zig");
+            pub fn toOldCoreValue(garland: *const Garland, allocator: std.mem.Allocator) !core.FnkBody {
+                const cable_segments = try Toybox.getChildrenUnknown(allocator, Lego.fromSpecificConst(.garland, garland).index);
+                defer allocator.free(cable_segments);
+
+                var cases: core.MatchCases = try .initCapacity(allocator, cable_segments.len - 1);
+                for (cable_segments[0 .. cable_segments.len - 1]) |i| {
+                    const c = Case.children(i.get().tree.first);
+                    const next: ?core.MatchCases = blk: {
+                        const asdf = try c.next.get().specific.garland.toOldCoreValue(allocator);
+                        if (asdf.cases.items.len == 0) {
+                            break :blk null;
+                        } else {
+                            break :blk asdf.cases;
+                        }
+                    };
+                    cases.appendAssumeCapacity(.{
+                        .pattern = try c.pattern.get().specific.sexpr.toOldCoreValue(allocator),
+                        .fnk_name = try c.fnkname.get().specific.sexpr.toOldCoreValue(allocator),
+                        .template = try c.template.get().specific.sexpr.toOldCoreValue(allocator),
+                        .next = next,
+                    });
+                }
+                return .{ .cases = cases };
+            }
         };
 
         pub const NewCase = struct {
@@ -533,9 +586,17 @@ pub const Lego = struct {
                 state: enum { scrolling_towards_case, starting, executing, ending },
                 state_t: f32,
             } = null,
+            status: Status,
 
             const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
             const relative_executor_point: Point = .{ .pos = .new(-3, 1 + FnkboxBox.box_height) };
+
+            pub const Status = union(enum) {
+                /// the failing testcase
+                unsolved: Lego.Index,
+                // TODO: score
+                solved,
+            };
 
             pub fn fnkname(fnkbox: *const Fnkbox) Lego.Index {
                 return children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).fnkname;
@@ -557,6 +618,73 @@ pub const Lego = struct {
                     .fnkname = asdf[1],
                     .executor = asdf[2],
                 };
+            }
+
+            pub fn updateStatus(fnkbox: *Fnkbox, worspace: *Workspace, scratch: std.mem.Allocator) !void {
+                // TODO: improve somehow
+                const core = @import("core.zig");
+                var all_fnks: core.FnkCollection = .init(scratch);
+                if (true) {
+                    var cur = Toybox.get(worspace.fnkboxes_layer).tree.first;
+                    while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                        // const fnkbox = &Toybox.get(cur).specific.fnkbox;
+                        const fnkname_value = try Toybox.get(children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                        const definition = try Toybox.get(Executor.children(children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
+                        try all_fnks.putNoClobber(fnkname_value, definition);
+                    }
+                }
+                const fnkname_value = try Toybox.get(children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
+                defer temp_mem.deinit();
+                var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
+                defer scoring_run.deinit(false);
+                // Update 'actual' values
+                var cur_testcase = FnkboxBox.children(children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).box).testcases_area.get().tree.first;
+                while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
+                    const t = Testcase.children(cur_testcase);
+                    const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
+                    const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
+                    var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run);
+                    defer exec.deinit();
+
+                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true) catch |err| switch (err) {
+                        // TODO: "NoMatchingCase" is no longer an error
+                        error.FnkNotFound,
+                        error.NoMatchingCase,
+                        error.UsedUndefinedVariable,
+                        error.InvalidMetaFnk,
+                        error.TookTooLong,
+                        => core.Sexpr.builtin.empty,
+                        error.OutOfMemory => return err,
+                        error.BAD_INPUT => @panic("panic"),
+                    };
+                    if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
+                        Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(t.actual.get().local_point, actual_output));
+                    }
+                }
+
+                // Get the actual status
+                cur_testcase = FnkboxBox.children(children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).box).testcases_area.get().tree.first;
+                while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
+                    const actual: Lego.Index = if (fnkbox.execution) |execution|
+                        switch (execution.source) {
+                            .testcase => |source| if (source == cur_testcase)
+                                execution.old_testcase_actual_value
+                            else
+                                Testcase.children(cur_testcase).actual,
+                            .input => Testcase.children(cur_testcase).actual,
+                        }
+                    else
+                        Testcase.children(cur_testcase).actual;
+
+                    const expected = Testcase.children(cur_testcase).expected;
+
+                    if (!Sexpr.equalValue(actual, expected)) {
+                        fnkbox.status = .{ .unsolved = cur_testcase };
+                        return;
+                    }
+                }
+                fnkbox.status = .solved;
             }
         };
 
@@ -1402,7 +1530,7 @@ pub const Toybox = struct {
         testcases: []const [2]Lego.Index,
         initial_definition: ?Lego.Index,
     ) !Lego.Index {
-        const result = try Toybox.new(local_point, .{ .fnkbox = .{} });
+        const result = try Toybox.new(local_point, .{ .fnkbox = .{ .status = undefined } });
         const box = try Toybox.new(local_point, .{ .fnkbox_box = .{} });
         Toybox.addChildLast(box.index, (try Toybox.new(.{}, .{
             .fnkbox_description = .{
@@ -1648,6 +1776,18 @@ const Workspace = struct {
                 .new(4, 3),
                 .new(6, 2),
             ));
+        }
+
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        try dst.canonizeAfterChanges(arena.allocator());
+    }
+
+    pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
+        for (toybox.all_legos.items) |*lego| {
+            if (lego.specific.as(.fnkbox)) |fnkbox| {
+                try fnkbox.updateStatus(workspace, scratch);
+            }
         }
     }
 
@@ -2545,6 +2685,8 @@ const Workspace = struct {
             try workspace.draw(platform, d);
         }
 
+        const old_undo_count = workspace.undo_stack.items.len;
+
         if (true) { // INTERACTION
             try workspace.undo_stack.ensureUnusedCapacity(32);
             if (workspace.grabbing == .nothing and
@@ -2894,9 +3036,9 @@ const Workspace = struct {
                                             .original = new_actual,
                                         } });
                                         fnkbox.execution = null;
-                                        // TODO: call this
+
                                         // TODO: call this somewhere else
-                                        // try fnkbox.updateStatus(known_fnks, mem);
+                                        try fnkbox.updateStatus(workspace, scratch);
                                     }
                                 },
                             },
@@ -2929,6 +3071,11 @@ const Workspace = struct {
                     }
                 }
             }
+        }
+
+        const something_happened = (workspace.undo_stack.items.len != old_undo_count);
+        if (something_happened) {
+            try workspace.canonizeAfterChanges(scratch);
         }
     }
 

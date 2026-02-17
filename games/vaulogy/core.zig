@@ -442,7 +442,6 @@ fn fnkSize(fnk: FnkBody) usize {
     return res;
 }
 
-const HoveredSexpr = @import("GameState.zig").HoveredSexpr;
 pub const VeryPermamentGameStuff = struct {
     pool_for_sexprs: MemoryPool(Sexpr),
     arena_for_cases: std.heap.ArenaAllocator,
@@ -450,7 +449,6 @@ pub const VeryPermamentGameStuff = struct {
     allocator_for_stack: std.mem.Allocator,
     gpa: std.mem.Allocator,
     arena_for_permanent_stuff: std.heap.ArenaAllocator,
-    hover_pool: HoveredSexpr.Pool,
     arena_for_names: std.heap.ArenaAllocator,
     scratch: std.heap.ArenaAllocator,
 
@@ -460,7 +458,6 @@ pub const VeryPermamentGameStuff = struct {
         const pool_for_sexprs = MemoryPool(Sexpr).init(allocator);
         const arena_for_cases = std.heap.ArenaAllocator.init(allocator);
         const arena_for_bindings = std.heap.ArenaAllocator.init(allocator);
-        const hover_pool: HoveredSexpr.Pool = .init(allocator);
         const arena_for_names: std.heap.ArenaAllocator = .init(allocator);
         const scratch: std.heap.ArenaAllocator = .init(allocator);
         const arena_for_permanent_stuff: std.heap.ArenaAllocator = .init(allocator);
@@ -471,7 +468,6 @@ pub const VeryPermamentGameStuff = struct {
             .arena_for_bindings = arena_for_bindings,
             .allocator_for_stack = allocator,
             .gpa = allocator,
-            .hover_pool = hover_pool,
             .arena_for_names = arena_for_names,
             .scratch = scratch,
             .arena_for_permanent_stuff = arena_for_permanent_stuff,
@@ -482,7 +478,6 @@ pub const VeryPermamentGameStuff = struct {
         this.pool_for_sexprs.deinit();
         this.arena_for_cases.deinit();
         this.arena_for_bindings.deinit();
-        this.hover_pool.deinit();
         this.arena_for_names.deinit();
         this.scratch.deinit();
         this.arena_for_permanent_stuff.deinit();
