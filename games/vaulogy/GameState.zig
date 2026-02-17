@@ -436,6 +436,7 @@ pub const Lego = struct {
                 // paused: bool = false,
             } = null,
             first_enqueued: Lego.Index = .nothing,
+            garland_appearing_t: f32 = 1,
 
             const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
             const relative_garland_point: Point = .{ .pos = .new(4, 0) };
@@ -828,8 +829,6 @@ pub const Handle = struct {
     point: Point,
     radius: Size,
     hot_t: f32,
-    // TODO: remove default value
-    alpha: f32 = 1,
     enabled: bool,
 
     pub const Size = extern struct {
@@ -843,11 +842,11 @@ pub const Handle = struct {
         pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
     };
 
-    pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect) !void {
+    pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
         if (handle.enabled) {
             const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
-            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(handle.alpha));
-            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(handle.alpha));
+            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
+            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
         }
     }
 
@@ -2086,6 +2085,7 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
+                const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g| @max(0, g.specific.executor.garland_appearing_t) else 1;
                 // TODO: don't draw if small or far from camera
                 if (step.children_already_visited) {
                     if (false and lego.specific.tag() == .sexpr) { // draw numbers
@@ -2098,7 +2098,7 @@ const Workspace = struct {
                             .black,
                         );
                     }
-                    if (lego.handle()) |handle| try handle.draw(drawer, camera);
+                    if (lego.handle()) |handle| try handle.draw(drawer, camera, alpha);
                     switch (lego.specific) {
                         .fnkbox_testcases => {
                             drawer.canvas.clipper.pop();
@@ -2113,7 +2113,6 @@ const Workspace = struct {
                 } else {
                     const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
                     const camera_relative = camera.reparentCamera(lego.absolute_point);
-                    const alpha: f32 = 1;
                     switch (lego.specific) {
                         .sexpr => |sexpr| {
                             if (sexpr.emerging_value != .nothing) {
@@ -2278,7 +2277,7 @@ const Workspace = struct {
                             drawer.canvas.line(camera, &.{
                                 lego.absolute_point.pos,
                                 lego.absolute_point.pos.addY(newcase.length * lego.absolute_point.scale),
-                            }, 0.05 * lego.absolute_point.scale, .black);
+                            }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
                         },
                         .fnkbox_description => |fnkbox_description| {
                             try drawer.canvas.drawText(
@@ -2391,13 +2390,15 @@ const Workspace = struct {
                 .sexpr => |*sexpr| {
                     math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
                 },
+                .executor => |*executor| {
+                    math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
+                },
                 .area,
                 .case,
                 .newcase,
                 .garland,
                 .microscope,
                 .lens,
-                .executor,
                 .fnkbox,
                 .fnkbox_description,
                 .fnkbox_box,
@@ -2858,6 +2859,7 @@ const Workspace = struct {
                                                 ),
                                                 &workspace.undo_stack,
                                             );
+                                            Toybox.get(executor_index).specific.executor.garland_appearing_t = -1;
                                             // TODO
                                             // fnkbox.executor.prev_pills.clearRetainingCapacity();
                                             // fnkbox.executor.enqueued_stack.clearRetainingCapacity();

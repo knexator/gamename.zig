@@ -88,6 +88,7 @@ pub const LerpSpeed = struct {
     pub const old: LerpSpeed = .{ .duration = 1.0 / 60.0, .precision = 1.0 - 0.6 };
     pub const fast: LerpSpeed = old;
     pub const slow: LerpSpeed = .{ .duration = 0.2, .precision = 0.01 };
+    pub const slug: LerpSpeed = .{ .duration = 1.0, .precision = 0.05 };
 
     pub fn halflife(speed: LerpSpeed) f32 {
         return halflife_from_duration_and_precision(speed.duration, speed.precision);
