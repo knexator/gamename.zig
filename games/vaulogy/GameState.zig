@@ -187,6 +187,7 @@ pub const Lego = struct {
     // active_t: f32 = 0,
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
+    unhoverable: bool = false,
 
     tree: Tree = .empty,
 
@@ -890,6 +891,11 @@ pub const Toybox = struct {
 
     pub fn get(index: Lego.Index) *Lego {
         return &toybox.all_legos.items[@intFromEnum(index)];
+    }
+
+    pub fn safeGet(index: Lego.Index) ?*Lego {
+        if (index == .nothing) return null;
+        return get(index);
     }
 
     pub fn addChildLast(parent: Lego.Index, new_child: Lego.Index) void {
@@ -1675,6 +1681,7 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
+                if (lego.unhoverable) it.skipChildren();
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
                         // TODO: skip children if needle is far
@@ -1787,6 +1794,17 @@ const Workspace = struct {
                     lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
                         .inverseApplyGetLocal(target), 0.6, delta_seconds);
                 }
+
+                lego.unhoverable = switch (lego.specific) {
+                    .sexpr, .case, .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
+                        .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
+                            fnkbox.specific.fnkbox.execution != null
+                        else
+                            executor.animation != null,
+                        else => false,
+                    },
+                    else => false,
+                };
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
