@@ -2795,7 +2795,7 @@ const Workspace = struct {
                                         execution.original_or_final_input_point = Toybox.get(new_input).local_point;
                                         execution.floating_input_or_output = new_input;
                                     } else {
-                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll;
+                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll_true;
                                         const target_scroll = scroll.* + offset_error;
                                         math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
                                         math.towards(scroll, target_scroll, 0.1 * delta_seconds);
