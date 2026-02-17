@@ -213,8 +213,8 @@ pub const Lego = struct {
             text: []const u8,
         },
         fnkbox_testcases: struct {
-            scroll: f32 = 0,
-            scroll_true: f32 = 0,
+            scroll_visual: f32 = 0,
+            scroll_target: f32 = 0,
         },
 
         pub const Tag = std.meta.Tag(Specific);
@@ -805,7 +805,7 @@ pub const Lego = struct {
         switch (lego.specific) {
             else => unreachable,
             .fnkbox_testcases => |*fnkbox_testcases| {
-                fnkbox_testcases.scroll_true += amount;
+                fnkbox_testcases.scroll_target += amount;
             },
         }
     }
@@ -2030,12 +2030,12 @@ const Workspace = struct {
                         var cur_case: Lego.Index = lego.tree.first;
                         while (cur_case != .nothing) {
                             Toybox.get(cur_case).local_point = .{ .pos = Lego.Specific.FnkboxBox.relative_top_testcase_pos
-                                .addY(2 + 2.5 * (tof32(k) - fnkbox_testcases.scroll)) };
+                                .addY(2 + 2.5 * (tof32(k) - fnkbox_testcases.scroll_visual)) };
                             k += 1;
                             cur_case = Toybox.get(cur_case).tree.next;
                         }
-                        math.lerpTowardsRange(&fnkbox_testcases.scroll_true, 0, @max(0, tof32(k) - Lego.Specific.FnkboxBox.visible_testcases), .slow, delta_seconds);
-                        math.lerpTowards(&fnkbox_testcases.scroll, fnkbox_testcases.scroll_true, .slow, delta_seconds);
+                        math.lerpTowardsRange(&fnkbox_testcases.scroll_target, 0, @max(0, tof32(k) - Lego.Specific.FnkboxBox.visible_testcases), .slow, delta_seconds);
+                        math.lerpTowards(&fnkbox_testcases.scroll_visual, fnkbox_testcases.scroll_target, .slow, delta_seconds);
                     },
                     .testcase => {
                         const Testcase = Lego.Specific.Testcase;
@@ -2795,7 +2795,7 @@ const Workspace = struct {
                                         execution.original_or_final_input_point = Toybox.get(new_input).local_point;
                                         execution.floating_input_or_output = new_input;
                                     } else {
-                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll_true;
+                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll_target;
                                         const target_scroll = scroll.* + offset_error;
                                         math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
                                         math.towards(scroll, target_scroll, 0.1 * delta_seconds);
