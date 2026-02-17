@@ -106,6 +106,15 @@ pub fn halflife_from_duration_and_precision(duration: f32, precision: f32) f32 {
     return -duration / std.math.log2(precision);
 }
 
+pub fn lerpTowardsRange(v: *f32, min: f32, max: f32, speed: LerpSpeed, delta_seconds: f32) void {
+    assert(min <= max);
+    if (v.* < min) {
+        lerpTowards(v, min, speed, delta_seconds);
+    } else if (v.* > max) {
+        lerpTowards(v, max, speed, delta_seconds);
+    }
+}
+
 pub fn lerp_towards_range(v: *f32, min: f32, max: f32, ratio: f32, delta_seconds: f32) void {
     assert(min <= max);
     if (v.* < min) {

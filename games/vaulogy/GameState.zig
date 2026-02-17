@@ -213,6 +213,7 @@ pub const Lego = struct {
         },
         fnkbox_testcases: struct {
             scroll: f32 = 0,
+            scroll_true: f32 = 0,
         },
 
         pub const Tag = std.meta.Tag(Specific);
@@ -483,7 +484,7 @@ pub const Lego = struct {
                 .new(0, 0.75),
                 .new(16, box_height),
             );
-            const testcases_box: Rect = relative_box.plusMargin3(.top, box_height - testcases_height);
+            const testcases_box: Rect = relative_box.plusMargin3(.top, -box_height + testcases_height);
             const relative_top_testcase_pos: Vec2 = .new(0, box_height - testcases_height);
             const text_height: f32 = 2.4;
             const status_bar_height: f32 = 1;
@@ -801,7 +802,7 @@ pub const Lego = struct {
         switch (lego.specific) {
             else => unreachable,
             .fnkbox_testcases => |*fnkbox_testcases| {
-                fnkbox_testcases.scroll += amount;
+                fnkbox_testcases.scroll_true += amount;
             },
         }
     }
@@ -2008,7 +2009,7 @@ const Workspace = struct {
 
                         // TODO: prev_pills
                     },
-                    .fnkbox_testcases => |fnkbox_testcases| {
+                    .fnkbox_testcases => |*fnkbox_testcases| {
                         var k: usize = 0;
                         var cur_case: Lego.Index = lego.tree.first;
                         while (cur_case != .nothing) {
@@ -2017,6 +2018,8 @@ const Workspace = struct {
                             k += 1;
                             cur_case = Toybox.get(cur_case).tree.next;
                         }
+                        math.lerpTowardsRange(&fnkbox_testcases.scroll_true, 0, @max(0, tof32(k) - Lego.Specific.FnkboxBox.visible_testcases), .slow, delta_seconds);
+                        math.lerpTowards(&fnkbox_testcases.scroll, fnkbox_testcases.scroll_true, .slow, delta_seconds);
                     },
                     .testcase => {
                         const Testcase = Lego.Specific.Testcase;
@@ -2240,8 +2243,13 @@ const Workspace = struct {
                             drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(button.local_rect), .gray(0.4));
                         },
                         .fnkbox_testcases => {
+                            const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
+                            try drawer.canvas.drawText(0, camera_relative, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
+                            try drawer.canvas.drawText(0, camera_relative, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
+                            try drawer.canvas.drawText(0, camera_relative, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
+                            try drawer.canvas.drawText(0, camera_relative, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
                             drawer.canvas.clipper.push(.{
-                                .camera = camera.reparentCamera(lego.absolute_point),
+                                .camera = camera_relative,
                                 .shape = .{
                                     .rect = Lego.Specific.FnkboxBox.testcases_box,
                                 },
@@ -2408,7 +2416,7 @@ const Workspace = struct {
                     .down => 0.9,
                 });
             } else {
-                Toybox.get(hot_and_dropzone.over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * 20);
+                Toybox.get(hot_and_dropzone.over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
             }
             inline for (KeyboardButton.directional_keys) |kv| {
                 for (kv.keys) |key| {
