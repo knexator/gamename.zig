@@ -2827,8 +2827,23 @@ const Workspace = struct {
                                             Toybox.get(result).absolute_point,
                                         );
 
-                                        // FIXME: when to call this? we want the executor input to still be present
-                                        // try resetExecutor(toybox, executor_index, execution.original_garland, &workspace.undo_stack);
+                                        if (true) { // reset executor
+                                            const children = Lego.Specific.Executor.children(executor_index);
+                                            // const executor = &Toybox.get(executor_index).specific.executor;
+                                            Toybox.changeChildWithUndo(children.garland, execution.original_garland, &workspace.undo_stack);
+                                            Toybox.changeChildWithUndoAndAlsoCoords(
+                                                children.input,
+                                                try Toybox.buildSexpr(
+                                                    Lego.Specific.Executor.relative_input_point,
+                                                    .empty,
+                                                    false,
+                                                ),
+                                                &workspace.undo_stack,
+                                            );
+                                            // TODO
+                                            // fnkbox.executor.prev_pills.clearRetainingCapacity();
+                                            // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
+                                        }
                                     }
                                 },
                                 .ending => {
@@ -2932,19 +2947,6 @@ const Workspace = struct {
             Toybox.addChildLast(workspace.toolbar_left, index);
             workspace.undo_stack.appendAssumeCapacity(.{ .pop = index });
         }
-    }
-
-    fn resetExecutor(executor_index: Lego.Index, original_garland: Lego.Index, undo_stack: *UndoStack) !void {
-        // FIXME
-        _ = toybox;
-        _ = executor_index;
-        _ = original_garland;
-        _ = undo_stack;
-        // fnkbox.executor.garland = original_garland;
-        // fnkbox.executor.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
-        // fnkbox.executor.prev_pills.clearRetainingCapacity();
-        // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
-        // fnkbox.executor.animation = null;
     }
 
     fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, undo_stack: *UndoStack, delta_seconds: f32) !void {
