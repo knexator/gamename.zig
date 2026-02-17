@@ -1655,7 +1655,6 @@ const Workspace = struct {
         hot: Lego.Index = .nothing,
         dropzone: Lego.Index = .nothing,
         over_background: Lego.Index,
-        over_scrollable_element: Lego.Index,
 
         pub fn empty(x: @This()) bool {
             return x.hot == .nothing and x.dropzone == .nothing;
@@ -1676,7 +1675,6 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
-                const over_scrollable_element: Lego.Index = Toybox.findAncestor(cur, .fnkbox_testcases);
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
                         // TODO: skip children if needle is far
@@ -1684,9 +1682,9 @@ const Workspace = struct {
                             Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos))
                         {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
-                                return .{ .hot = cur, .over_background = root, .over_scrollable_element = over_scrollable_element };
+                                return .{ .hot = cur, .over_background = root };
                             } else if (grabbing != .nothing and !sexpr.immutable and Toybox.get(grabbing).specific.tag() == .sexpr) {
-                                return .{ .dropzone = cur, .over_background = root, .over_scrollable_element = over_scrollable_element };
+                                return .{ .dropzone = cur, .over_background = root };
                             }
                         }
                     },
@@ -1705,7 +1703,7 @@ const Workspace = struct {
                             }
 
                             // Avoid interacting with things hidden by the lens
-                            return .{ .over_background = root, .over_scrollable_element = over_scrollable_element };
+                            return .{ .over_background = root };
                         }
                     },
                     .area => |area| {
@@ -1713,7 +1711,7 @@ const Workspace = struct {
                             area.bg.contains(lego.absolute_point, absolute_needle_pos) and
                             (grabbing == .nothing or Toybox.get(grabbing).tree.parent == .nothing or cur == roots_in_draw_order[0]))
                         {
-                            return .{ .over_background = cur, .over_scrollable_element = over_scrollable_element };
+                            return .{ .over_background = cur };
                         }
                     },
                     .button => |button| {
@@ -1721,7 +1719,7 @@ const Workspace = struct {
                             button.enabled and
                             button.local_rect.contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
-                            return .{ .hot = cur, .over_background = root, .over_scrollable_element = over_scrollable_element };
+                            return .{ .hot = cur, .over_background = root };
                         }
                     },
                     .fnkbox_testcases => {
@@ -1729,12 +1727,6 @@ const Workspace = struct {
                             lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
                         )) {
                             it.skipChildren();
-                        }
-
-                        if (step.children_already_visited and Lego.Specific.FnkboxBox.testcases_box.contains(
-                            lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
-                        )) {
-                            return .{ .over_background = root, .over_scrollable_element = cur };
                         }
                     },
                     .case,
@@ -1764,8 +1756,8 @@ const Workspace = struct {
 
                         if (overlappable and handle.overlapped(absolute_needle_pos)) {
                             switch (kind) {
-                                .hot => return .{ .hot = cur, .over_background = root, .over_scrollable_element = over_scrollable_element },
-                                .drop => return .{ .dropzone = cur, .over_background = root, .over_scrollable_element = over_scrollable_element },
+                                .hot => return .{ .hot = cur, .over_background = root },
+                                .drop => return .{ .dropzone = cur, .over_background = root },
                             }
                         }
                     }
@@ -2415,15 +2407,24 @@ const Workspace = struct {
         }
 
         if (true) { // move camera and scroll stuff
+            const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .fnkbox_testcases and Lego.Specific.FnkboxBox.testcases_box.contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
+            } else .nothing;
+
             const p = &Toybox.get(workspace.main_area).local_point;
-            if (hot_and_dropzone.over_scrollable_element == .nothing) {
+            if (over_scrollable_element == .nothing) {
                 p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
                     .none => 1.0,
                     .up => 1.1,
                     .down => 0.9,
                 });
             } else {
-                Toybox.get(hot_and_dropzone.over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
+                Toybox.get(over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
             }
             inline for (KeyboardButton.directional_keys) |kv| {
                 for (kv.keys) |key| {
