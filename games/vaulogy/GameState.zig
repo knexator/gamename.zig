@@ -271,6 +271,7 @@ pub const Lego = struct {
             is_pattern: bool,
             is_pattern_t: f32,
             atom_name: []const u8,
+            immutable: bool,
 
             // TODO: rethink
             executor_with_bindings: Lego.Index = .nothing,
@@ -1340,6 +1341,7 @@ pub const Toybox = struct {
         const result = try Toybox.new(local_point, .{ .sexpr = .{
             .is_pattern = is_pattern,
             .is_pattern_t = if (is_pattern) 1 else 0,
+            .immutable = false,
             .atom_name = switch (value) {
                 .atom_lit, .atom_var => |v| v,
                 else => undefined,
@@ -1683,7 +1685,7 @@ const Workspace = struct {
                         {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root, .over_scrollable_element = over_scrollable_element };
-                            } else if (grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .sexpr) {
+                            } else if (grabbing != .nothing and !sexpr.immutable and Toybox.get(grabbing).specific.tag() == .sexpr) {
                                 return .{ .dropzone = cur, .over_background = root, .over_scrollable_element = over_scrollable_element };
                             }
                         }
@@ -1796,6 +1798,11 @@ const Workspace = struct {
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
+                        sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific.tag()) {
+                            else => false,
+                            .testcase, .fnkbox => true,
+                        };
+
                         if (cur == workspace.grabbing) {
                             sexpr.is_pattern = if (interaction.dropzone == .nothing) sexpr.is_pattern else Toybox.get(interaction.dropzone).specific.sexpr.is_pattern;
                         }
@@ -2535,7 +2542,7 @@ const Workspace = struct {
                 var grabbed_element_index: Lego.Index = undefined;
                 var plucked: bool = true;
 
-                if (mouse.wasPressed(.right)) {
+                if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
                     // Case A.0: duplicating
                     // TODO
                     // if (original_hot_data.canDuplicate()) {

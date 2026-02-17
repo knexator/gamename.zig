@@ -1803,7 +1803,7 @@ pub const Clipper = struct {
     // masks: std.BoundedArray(Mask, 5) = .{},
     const max_depth = if (@import("builtin").cpu.arch.isWasm() and @import("builtin").mode == .Debug)
         // For some reason, a big std.BoundedArray fails on wasm+debug
-        16
+        8
     else
         // The bit depth of the stencil buffer
         255;
