@@ -184,7 +184,8 @@ pub const Lego = struct {
     hot_t: f32 = 0,
     // 1 if there is an element being dropped on this one
     dropzone_t: f32 = 0,
-    // active_t: f32 = 0,
+    // 1 if being grabbed
+    active_t: f32 = 0,
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
     unhoverable: bool = false,
@@ -2396,7 +2397,33 @@ const Workspace = struct {
                             }
                         },
                         .button => |button| {
-                            drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(button.local_rect), .gray(0.4));
+                            switch (button.action) {
+                                .launch_testcase => {
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.4));
+                                    const rect = button.local_rect.move(Vec2.new(-1, -1).scale((1 - lego.hot_t) * 0.05 + (1 - @min(lego.active_t, lego.hot_t)) * 0.1));
+                                    drawer.canvas.fillRect(camera_relative, rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, rect, 0.05, .inner, .black);
+                                    drawer.canvas.line(camera_relative, &.{
+                                        rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
+                                        rect.getCenter().add(.new(0, 0)).addX(0.15),
+                                        rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
+                                    }, 0.05, .black);
+                                },
+                                .see_failing_testcase => {
+                                    if (button.enabled) {
+                                        drawer.canvas.rectGradient(
+                                            camera_relative,
+                                            button.local_rect,
+                                            .gray(0.75 + lego.hot_t * 0.2 - lego.active_t * 0.1),
+                                            .gray(0.95 - lego.hot_t * 0.2 - lego.active_t * 0.1),
+                                        );
+                                        try drawer.canvas.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                    } else {
+                                        drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.7));
+                                        try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
+                                    }
+                                },
+                            }
                         },
                         .fnkbox_testcases => {
                             const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
@@ -2522,7 +2549,7 @@ const Workspace = struct {
         // but I suspect this is faster (and simpler).
         for (toybox.all_legos.items) |*lego| {
             math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
-            comptime assert(!@hasField(Lego, "active_t"));
+            math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing) 1 else 0, 0.6, delta_seconds);
             math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
             math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
 
