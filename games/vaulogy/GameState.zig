@@ -948,6 +948,13 @@ pub const Lego = struct {
             },
         }
     }
+
+    pub fn ignoresGrabOffset(lego: *const Lego) bool {
+        return switch (lego.specific) {
+            .postit => false,
+            else => true,
+        };
+    }
 };
 
 pub const ApiFor = struct {
@@ -1667,9 +1674,9 @@ const Workspace = struct {
 
     pub const Grabbing = struct {
         index: Lego.Index,
-        // offset: Vec2 = .zero,
+        offset: Vec2,
 
-        pub const nothing: Grabbing = .{ .index = .nothing };
+        pub const nothing: Grabbing = .{ .index = .nothing, .offset = .zero };
     };
 
     pub const UndoStack = std.ArrayList(UndoableCommand);
@@ -2031,7 +2038,9 @@ const Workspace = struct {
                         (Point{
                             .pos = absolute_mouse_pos,
                             .scale = Toybox.get(interaction.over_background).absolute_point.scale,
-                        }).applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
+                        })
+                            .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
+                            .applyToLocalPoint(.{ .pos = workspace.grabbing.offset.neg() })
                     else
                         Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
 
@@ -2962,7 +2971,10 @@ const Workspace = struct {
                 } else unreachable;
 
                 assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
-                workspace.grabbing = .{ .index = grabbed_element_index };
+                workspace.grabbing = .{ .index = grabbed_element_index, .offset = if (grabbed_element_index.get().ignoresGrabOffset())
+                    .zero
+                else
+                    grabbed_element_index.get().absolute_point.inverseApplyGetLocalPosition(mouse.cur.position) };
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_grabbing = .nothing,
                 });
