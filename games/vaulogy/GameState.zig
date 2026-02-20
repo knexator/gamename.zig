@@ -208,6 +208,7 @@ pub const Lego = struct {
         testcase: Testcase,
         microscope: Microscope,
         lens: Lens,
+        postit: Postit,
 
         // TODO: try to simplify these
         fnkbox_description: struct {
@@ -216,6 +217,9 @@ pub const Lego = struct {
         fnkbox_testcases: struct {
             scroll_visual: f32 = 0,
             scroll_target: f32 = 0,
+        },
+        postit_text: struct {
+            text: []const u8,
         },
 
         pub const Tag = std.meta.Tag(Specific);
@@ -784,6 +788,10 @@ pub const Lego = struct {
             pub const source: Lens = .{ .local_radius = 0.25 };
             pub const target: Lens = .{ .local_radius = 1 };
         };
+
+        pub const Postit = struct {
+            pub const local_rect: Rect = .fromCenterAndSize(.zero, .both(6));
+        };
     };
 
     pub const Tree = struct {
@@ -882,6 +890,8 @@ pub const Lego = struct {
             .fnkbox_testcases,
             .executor,
             .testcase,
+            .postit,
+            .postit_text,
             => return null,
             .case => .default,
             .newcase => .new_case,
@@ -1369,6 +1379,8 @@ pub const Toybox = struct {
         Toybox.addChildLast(child_2.index, grandchild_2_1.index);
         Toybox.addChildLast(child_2.index, grandchild_2_2.index);
 
+        try std.testing.expectEqual(child_1.index, Toybox.get(grandchild_1_1.index).tree.parent);
+
         if (true) {
             const expected_order: [7]VisitStep = .{
                 .{ .next = root.index },
@@ -1415,6 +1427,62 @@ pub const Toybox = struct {
             var it = Toybox.treeIterator(root.index, true);
             while (it.next()) |step| {
                 try actual_order.append(std.testing.allocator, step);
+            }
+
+            try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
+        }
+
+        if (true) {
+            const expected_order: [10]TreeIterator.Step = .{
+                .{ .children_already_visited = false, .index = root.index },
+                .{ .children_already_visited = false, .index = child_1.index },
+                .{ .children_already_visited = true, .index = child_1.index },
+                .{ .children_already_visited = false, .index = child_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = grandchild_2_1.index },
+                .{ .children_already_visited = false, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = child_2.index },
+                .{ .children_already_visited = true, .index = root.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var it = Toybox.treeIterator(root.index, true);
+            while (it.next()) |step| {
+                try actual_order.append(std.testing.allocator, step);
+                if (step.index == child_1.index and !step.children_already_visited) {
+                    it.skipChildren();
+                }
+            }
+
+            try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
+        }
+
+        if (true) {
+            const expected_order: [10]TreeIterator.Step = .{
+                .{ .children_already_visited = false, .index = root.index },
+                .{ .children_already_visited = false, .index = child_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = grandchild_2_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = child_2.index },
+                .{ .children_already_visited = false, .index = child_1.index },
+                .{ .children_already_visited = true, .index = child_1.index },
+                .{ .children_already_visited = true, .index = root.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var it = Toybox.treeIterator(root.index, false);
+            while (it.next()) |step| {
+                try actual_order.append(std.testing.allocator, step);
+                if (step.index == child_1.index and !step.children_already_visited) {
+                    it.skipChildren();
+                }
             }
 
             try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
@@ -1768,6 +1836,21 @@ const Workspace = struct {
                 &.{ case_1, case_2 },
             ));
 
+            Toybox.addChildLast(dst.main_area, blk: {
+                const postit = try Toybox.new(
+                    .{ .pos = .new(3, 5) },
+                    .{ .postit = .{} },
+                );
+                Toybox.addChildLast(postit.index, (try Toybox.new(
+                    .{ .pos = .new(0, 0) },
+                    .{ .postit_text = .{ .text = "TODO" } },
+                )).index);
+
+                break :blk postit.index;
+            });
+        }
+
+        if (true) {
             Toybox.addChildLast(dst.lenses_layer, try Toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
@@ -1821,7 +1904,9 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
-                if (lego.unhoverable) it.skipChildren();
+                const relative_needle_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
+                if (lego.unhoverable and !step.children_already_visited) it.skipChildren();
+                if (lego.unhoverable) continue;
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
                         // TODO: skip children if needle is far
@@ -1869,6 +1954,17 @@ const Workspace = struct {
                             return .{ .hot = cur, .over_background = root };
                         }
                     },
+                    .postit => {
+                        if (!step.children_already_visited and
+                            grabbing == .nothing and
+                            Lego.Specific.Postit.local_rect.contains(relative_needle_pos))
+                        {
+                            return .{ .hot = cur, .over_background = root };
+                        }
+                        if (!step.children_already_visited) {
+                            it.skipChildren();
+                        }
+                    },
                     .fnkbox_testcases => {
                         if (!step.children_already_visited and !Lego.Specific.FnkboxBox.testcases_box.contains(
                             lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
@@ -1885,12 +1981,13 @@ const Workspace = struct {
                     .fnkbox_box,
                     .fnkbox_description,
                     .testcase,
+                    .postit_text,
                     => {},
                 }
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
-                            .sexpr, .area, .microscope, .fnkbox_description, .fnkbox_testcases, .button, .executor, .fnkbox_box, .testcase => unreachable,
+                            .sexpr, .area, .microscope, .fnkbox_description, .fnkbox_testcases, .button, .executor, .fnkbox_box, .testcase, .postit, .postit_text => unreachable,
                             .case, .lens, .fnkbox => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
                             .garland => if (grabbing == .nothing)
@@ -2187,7 +2284,7 @@ const Workspace = struct {
                         Toybox.get(children.play_button).local_point = .{};
                         Toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
                     },
-                    .area, .microscope, .lens, .button, .fnkbox_description => {},
+                    .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text => {},
                 }
             }
         }
@@ -2396,6 +2493,28 @@ const Workspace = struct {
                                 },
                             }
                         },
+                        .postit => {
+                            const t: f32 = 2.0 + lego.hot_t * 0.7 + lego.active_t * 1.2;
+                            drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                                .new(-1, -1),
+                                .new(1, -1),
+                                .new(1, 1 - t * 0.1),
+                                .new(1 - t * 0.25, 1),
+                                .new(-1, 1),
+                            }), .fromHex("#FFEBA1"));
+                            drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                                .new(1, 1 - t * 0.1),
+                                .new(1 - t * 0.25, 1),
+                                Vec2.new(1, 1).mirrorAroundSegment(
+                                    .new(1, 1 - t * 0.1),
+                                    .new(1 - t * 0.25, 1),
+                                ),
+                            }), .fromHex("#d4bd68"));
+                        },
+                        .postit_text => |postit_text| {
+                            try drawer.canvas.drawText(0, camera_relative, postit_text.text, .centeredAt(.zero), 0.8, .black);
+                        },
+
                         .button => |button| {
                             switch (button.action) {
                                 .launch_testcase => {
@@ -2572,6 +2691,8 @@ const Workspace = struct {
                 .fnkbox_testcases,
                 .button,
                 .testcase,
+                .postit,
+                .postit_text,
                 => {},
             }
         }
@@ -2907,8 +3028,8 @@ const Workspace = struct {
                     // Case B.3: dropping a floating thing on fresh space
                     const target_area = hot_and_dropzone.over_background;
                     Toybox.changeCoordinates(workspace.grabbing, .{}, Toybox.get(target_area).absolute_point);
-                    Toybox.refreshAbsolutePoints(&.{workspace.grabbing});
                     Toybox.addChildLast(target_area, workspace.grabbing);
+                    Toybox.refreshAbsolutePoints(&.{workspace.grabbing});
                     workspace.undo_stack.appendAssumeCapacity(.{
                         .pop = workspace.grabbing,
                     });
