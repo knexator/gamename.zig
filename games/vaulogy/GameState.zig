@@ -955,6 +955,32 @@ pub const Lego = struct {
             else => true,
         };
     }
+
+    pub fn canDuplicate(lego: *const Lego) bool {
+        return switch (lego.specific) {
+            .sexpr,
+            .garland,
+            .executor,
+            .case,
+            .postit,
+            => true,
+            .button,
+            => false,
+            .fnkbox, .lens => blk: {
+                std.log.err("TODO: handle better", .{});
+                break :blk false;
+            },
+            .microscope,
+            .fnkbox_box,
+            .fnkbox_description,
+            .fnkbox_testcases,
+            .newcase,
+            .area,
+            .testcase,
+            .postit_text,
+            => unreachable,
+        };
+    }
 };
 
 pub const ApiFor = struct {
@@ -2870,14 +2896,16 @@ const Workspace = struct {
 
                 if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
                     // Case A.0: duplicating
-                    // TODO
-                    // if (original_hot_data.canDuplicate()) {
-                    const new_element_index = try Toybox.dupeIntoFloating(hot_index, true);
-                    workspace.undo_stack.appendAssumeCapacity(.{
-                        .destroy_floating = new_element_index,
-                    });
-                    grabbed_element_index = new_element_index;
-                    // }
+                    if (hot_index.get().canDuplicate()) {
+                        const new_element_index = try Toybox.dupeIntoFloating(hot_index, true);
+                        workspace.undo_stack.appendAssumeCapacity(.{
+                            .destroy_floating = new_element_index,
+                        });
+                        grabbed_element_index = new_element_index;
+                    } else {
+                        grabbed_element_index = .nothing;
+                        plucked = undefined;
+                    }
                 } else if (original_hot_data.specific.tag() == .lens or original_hot_data.specific.tag() == .fnkbox) {
                     // Case A.3: grabbing rather than plucking
                     workspace.undo_stack.appendAssumeCapacity(.{
@@ -2971,20 +2999,22 @@ const Workspace = struct {
                 } else unreachable;
 
                 assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
-                workspace.grabbing = .{ .index = grabbed_element_index, .offset = if (grabbed_element_index.get().ignoresGrabOffset())
-                    .zero
-                else
-                    grabbed_element_index.get().absolute_point.inverseApplyGetLocalPosition(mouse.cur.position) };
-                workspace.undo_stack.appendAssumeCapacity(.{
-                    .set_grabbing = .nothing,
-                });
-                if (plucked) {
-                    workspace.hand_layer = grabbed_element_index;
+                if (grabbed_element_index != .nothing) {
+                    workspace.grabbing = .{ .index = grabbed_element_index, .offset = if (grabbed_element_index.get().ignoresGrabOffset())
+                        .zero
+                    else
+                        grabbed_element_index.get().absolute_point.inverseApplyGetLocalPosition(mouse.cur.position) };
                     workspace.undo_stack.appendAssumeCapacity(.{
-                        .set_handlayer = .nothing,
+                        .set_grabbing = .nothing,
                     });
-                    Toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
-                    Toybox.refreshAbsolutePoints(&.{grabbed_element_index});
+                    if (plucked) {
+                        workspace.hand_layer = grabbed_element_index;
+                        workspace.undo_stack.appendAssumeCapacity(.{
+                            .set_handlayer = .nothing,
+                        });
+                        Toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
+                        Toybox.refreshAbsolutePoints(&.{grabbed_element_index});
+                    }
                 }
             } else if (workspace.grabbing.index != .nothing and
                 !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
