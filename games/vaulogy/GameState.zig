@@ -3112,12 +3112,7 @@ const Workspace = struct {
                                         execution.state = .ending;
                                         execution.state_t = 0;
 
-                                        const result = Lego.Specific.Executor.children(executor_index).input;
-
-                                        Toybox.changeChild(
-                                            result,
-                                            try Toybox.buildSexpr(.{}, .empty, false),
-                                        );
+                                        const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
                                         Toybox.changeCoordinates(
                                             result,
                                             Toybox.get(executor_index).absolute_point,
@@ -3132,25 +3127,6 @@ const Workspace = struct {
                                         execution.original_or_final_input_point = Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
                                             Toybox.get(result).absolute_point,
                                         );
-
-                                        if (true) { // reset executor
-                                            const children = Lego.Specific.Executor.children(executor_index);
-                                            // const executor = &Toybox.get(executor_index).specific.executor;
-                                            Toybox.changeChildWithUndo(children.garland, execution.original_garland, &workspace.undo_stack);
-                                            Toybox.changeChildWithUndoAndAlsoCoords(
-                                                children.input,
-                                                try Toybox.buildSexpr(
-                                                    Lego.Specific.Executor.relative_input_point,
-                                                    .empty,
-                                                    false,
-                                                ),
-                                                &workspace.undo_stack,
-                                            );
-                                            Toybox.get(executor_index).specific.executor.garland_appearing_t = -1;
-                                            // TODO
-                                            // fnkbox.executor.prev_pills.clearRetainingCapacity();
-                                            // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
-                                        }
                                     }
                                 },
                                 .ending => {
@@ -3187,13 +3163,40 @@ const Workspace = struct {
                                     }
                                 },
                             },
-                            .input => @panic("TODO"),
+                            .input => {
+                                try advanceExecutorAnimation(executor_index, workspace, &workspace.undo_stack, delta_seconds);
+                                if (Toybox.get(executor_index).specific.executor.animation == null) {
+                                    const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
+                                    fnkbox.execution = null;
+                                    Toybox.addChildLast(workspace.main_area, result);
+                                    Toybox.changeCoordinates(result, .{}, workspace.main_area.get().absolute_point);
+                                }
+                            },
                         }
                     } else {
                         const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
                         if (Lego.Specific.Executor.shouldStartExecution(executor_index)) {
-                            // fnkbox.execution = .{ ... };
-                            @panic("TODO");
+                            const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
+                            const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true);
+                            workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = backup_garland_index });
+
+                            fnkbox.execution = .{
+                                .source = .input,
+                                .original_garland = backup_garland_index,
+                                .original_or_final_input_point = undefined,
+                                .state_t = undefined,
+                                .old_testcase_actual_value = undefined,
+                                .state = .executing,
+                            };
+
+                            // TODO
+                            // assert(fnkbox.executor.garland.fnkname == null);
+                            // if (fnkbox.folded) fnkbox.executor.garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
+                            // try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
+                            //     .fnkbox = k,
+                            //     .input = try fnkbox.executor.input.clone(&mem.hover_pool),
+                            // } } });
+                            // try workspace.canonizeAfterChanges(mem);
                         }
                     }
                 }
@@ -3416,6 +3419,35 @@ const Workspace = struct {
         }
         // TODO
         // executor.recomputeCrankHandlePos();
+    }
+
+    fn resetExecutorAndExtractResult(workspace: *Workspace, executor_index: Lego.Index, original_garland: Lego.Index) !Lego.Index {
+        const result = Lego.Specific.Executor.children(executor_index).input;
+
+        Toybox.changeChildWithUndoAndAlsoCoords(
+            result,
+            try Toybox.buildSexpr(.{}, .empty, false),
+            &workspace.undo_stack,
+        );
+
+        const children = Lego.Specific.Executor.children(executor_index);
+        // const executor = &Toybox.get(executor_index).specific.executor;
+        Toybox.changeChildWithUndo(children.garland, original_garland, &workspace.undo_stack);
+        Toybox.changeChildWithUndoAndAlsoCoords(
+            children.input,
+            try Toybox.buildSexpr(
+                Lego.Specific.Executor.relative_input_point,
+                .empty,
+                false,
+            ),
+            &workspace.undo_stack,
+        );
+        Toybox.get(executor_index).specific.executor.garland_appearing_t = -1;
+        // TODO
+        // fnkbox.executor.prev_pills.clearRetainingCapacity();
+        // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
+
+        return result;
     }
 
     fn getGarlandForFnk(
