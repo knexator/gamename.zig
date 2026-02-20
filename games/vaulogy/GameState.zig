@@ -3145,7 +3145,7 @@ const Workspace = struct {
                                         const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
                                         Toybox.changeCoordinates(
                                             result,
-                                            Toybox.get(executor_index).absolute_point,
+                                            .{},
                                             Toybox.get(workspace.floating_inputs_layer).absolute_point,
                                         );
                                         Toybox.addChildLast(workspace.floating_inputs_layer, result);
