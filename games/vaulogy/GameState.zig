@@ -1656,7 +1656,7 @@ const Workspace = struct {
     floating_inputs_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
 
-    grabbing: Lego.Index = .nothing,
+    grabbing: Grabbing = .nothing,
 
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
@@ -1664,6 +1664,13 @@ const Workspace = struct {
 
     // TODO: remove
     gpa_for_bindings: std.mem.Allocator,
+
+    pub const Grabbing = struct {
+        index: Lego.Index,
+        // offset: Vec2 = .zero,
+
+        pub const nothing: Grabbing = .{ .index = .nothing };
+    };
 
     pub const UndoStack = std.ArrayList(UndoableCommand);
 
@@ -1687,7 +1694,7 @@ const Workspace = struct {
         },
         pop: Lego.Index,
 
-        set_grabbing: Lego.Index,
+        set_grabbing: Grabbing,
         set_handlayer: Lego.Index,
     };
 
@@ -1893,7 +1900,7 @@ const Workspace = struct {
         return _findHotAndDropzone(
             workspace.roots(.interactable).constSlice(),
             absolute_needle_pos,
-            workspace.grabbing,
+            workspace.grabbing.index,
         );
     }
 
@@ -2018,7 +2025,7 @@ const Workspace = struct {
             while (cur != .nothing) : (cur = Toybox.next_preordered(cur, root).next) {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
-                if (cur == workspace.grabbing and lego.draggable()) {
+                if (cur == workspace.grabbing.index and lego.draggable()) {
                     const target: Point = if (interaction.dropzone == .nothing)
                         // TODO: i don't like the scale hack
                         (Point{
@@ -2050,7 +2057,7 @@ const Workspace = struct {
                             .testcase, .fnkbox => true,
                         };
 
-                        if (cur == workspace.grabbing) {
+                        if (cur == workspace.grabbing.index) {
                             sexpr.is_pattern = if (interaction.dropzone == .nothing) sexpr.is_pattern else Toybox.get(interaction.dropzone).specific.sexpr.is_pattern;
                         }
 
@@ -2135,7 +2142,7 @@ const Workspace = struct {
                                 const case_of_prev_segment = Toybox.get(lego.tree.prev).tree.first;
                                 const garland_of_case_of_prev_segment = Toybox.get(case_of_prev_segment).tree.last;
                                 if (garland_of_case_of_prev_segment == interaction.dropzone) {
-                                    break :blk2 Toybox.get(workspace.grabbing).specific.garland.computed_height;
+                                    break :blk2 Toybox.get(workspace.grabbing.index).specific.garland.computed_height;
                                 } else {
                                     break :blk2 Toybox.get(garland_of_case_of_prev_segment).specific.garland.computed_height;
                                 }
@@ -2628,8 +2635,8 @@ const Workspace = struct {
                     .pop => |index| {
                         Toybox.pop(index);
                     },
-                    .set_grabbing => |index| {
-                        workspace.grabbing = index;
+                    .set_grabbing => |grabbing| {
+                        workspace.grabbing = grabbing;
                     },
                     .set_handlayer => |index| {
                         workspace.hand_layer = index;
@@ -2655,7 +2662,7 @@ const Workspace = struct {
 
         // cursor
         platform.setCursor(
-            if (workspace.grabbing != .nothing)
+            if (workspace.grabbing.index != .nothing)
                 .grabbing // or maybe .pointer, if it's UI
             else if (hot_and_dropzone.hot != .nothing)
                 .could_grab // or maybe .pointer, if it's UI
@@ -2668,9 +2675,9 @@ const Workspace = struct {
         // but I suspect this is faster (and simpler).
         for (toybox.all_legos.items) |*lego| {
             math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
             math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
 
             switch (lego.specific) {
                 .sexpr => |*sexpr| {
@@ -2699,9 +2706,9 @@ const Workspace = struct {
 
         // TODO: a bit hacky
         if (true) { // set garlands visibility
-            const grabbing_garland_or_case: bool = if (workspace.grabbing == .nothing)
+            const grabbing_garland_or_case: bool = if (workspace.grabbing.index == .nothing)
                 false
-            else switch (Toybox.get(workspace.grabbing).specific) {
+            else switch (Toybox.get(workspace.grabbing.index).specific) {
                 .case, .garland => true,
                 else => false,
             };
@@ -2837,7 +2844,7 @@ const Workspace = struct {
 
         if (true) { // INTERACTION
             try workspace.undo_stack.ensureUnusedCapacity(32);
-            if (workspace.grabbing == .nothing and
+            if (workspace.grabbing.index == .nothing and
                 hot_and_dropzone.hot != .nothing and
                 (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             {
@@ -2954,8 +2961,8 @@ const Workspace = struct {
                     }
                 } else unreachable;
 
-                assert(workspace.grabbing == .nothing and workspace.hand_layer == .nothing);
-                workspace.grabbing = grabbed_element_index;
+                assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
+                workspace.grabbing = .{ .index = grabbed_element_index };
                 workspace.undo_stack.appendAssumeCapacity(.{
                     .set_grabbing = .nothing,
                 });
@@ -2967,16 +2974,16 @@ const Workspace = struct {
                     Toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
                     Toybox.refreshAbsolutePoints(&.{grabbed_element_index});
                 }
-            } else if (workspace.grabbing != .nothing and
+            } else if (workspace.grabbing.index != .nothing and
                 !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
             {
                 const dropzone_index = hot_and_dropzone.dropzone;
 
                 if (dropzone_index != .nothing) {
-                    assert(Toybox.isFloating(workspace.grabbing));
+                    assert(Toybox.isFloating(workspace.grabbing.index));
                     if (Toybox.get(dropzone_index).specific.tag() == .newcase) {
                         // TODO: avoid jumpyness
-                        assert(Toybox.get(workspace.grabbing).specific.tag() == .case);
+                        assert(Toybox.get(workspace.grabbing.index).specific.tag() == .case);
                         const newcase = try Toybox.new(.{}, .{ .newcase = .{} });
                         workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = newcase.index });
                         const original_tree = Toybox.get(dropzone_index).tree;
@@ -2988,16 +2995,16 @@ const Workspace = struct {
                             .last = .nothing,
                         });
                         workspace.undo_stack.appendAssumeCapacity(.{ .pop = newcase.index });
-                        Toybox.changeCoordinates(workspace.grabbing, .{}, Toybox.parentAbsolutePoint(dropzone_index));
-                        Toybox.addChildLast(newcase.index, workspace.grabbing);
-                        workspace.undo_stack.appendAssumeCapacity(.{ .pop = workspace.grabbing });
+                        Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.parentAbsolutePoint(dropzone_index));
+                        Toybox.addChildLast(newcase.index, workspace.grabbing.index);
+                        workspace.undo_stack.appendAssumeCapacity(.{ .pop = workspace.grabbing.index });
                     } else {
-                        Toybox.changeCoordinates(workspace.grabbing, .{}, Toybox.parentAbsolutePoint(dropzone_index));
-                        Toybox.refreshAbsolutePoints(&.{workspace.grabbing});
-                        Toybox.changeChild(dropzone_index, workspace.grabbing);
+                        Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.parentAbsolutePoint(dropzone_index));
+                        Toybox.refreshAbsolutePoints(&.{workspace.grabbing.index});
+                        Toybox.changeChild(dropzone_index, workspace.grabbing.index);
                         workspace.undo_stack.appendAssumeCapacity(.{
                             .change_child = .{
-                                .original = workspace.grabbing,
+                                .original = workspace.grabbing.index,
                                 .new = dropzone_index,
                             },
                         });
@@ -3008,18 +3015,18 @@ const Workspace = struct {
                             .recreate_floating = overwritten_data,
                         });
                     }
-                } else if (!Toybox.isFloating(workspace.grabbing)) {
+                } else if (!Toybox.isFloating(workspace.grabbing.index)) {
                     // Case B.2: releasing a grabbed thing, which might be a button
                     assert(dropzone_index == .nothing);
-                    if (Toybox.get(workspace.grabbing).specific.as(.button)) |button| {
+                    if (Toybox.get(workspace.grabbing.index).specific.as(.button)) |button| {
                         switch (button.action) {
                             .see_failing_testcase => {
-                                const fnkbox = Toybox.findAncestor(workspace.grabbing, .fnkbox);
+                                const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
                                 try workspace.launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved);
                             },
                             .launch_testcase => {
                                 // TODO: proper interaction with undo
-                                const testcase_index = Toybox.get(workspace.grabbing).tree.parent;
+                                const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
                                 try workspace.launchTestcase(testcase_index);
                             },
                         }
@@ -3027,17 +3034,17 @@ const Workspace = struct {
                 } else {
                     // Case B.3: dropping a floating thing on fresh space
                     const target_area = hot_and_dropzone.over_background;
-                    Toybox.changeCoordinates(workspace.grabbing, .{}, Toybox.get(target_area).absolute_point);
-                    Toybox.addChildLast(target_area, workspace.grabbing);
-                    Toybox.refreshAbsolutePoints(&.{workspace.grabbing});
+                    Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.get(target_area).absolute_point);
+                    Toybox.addChildLast(target_area, workspace.grabbing.index);
+                    Toybox.refreshAbsolutePoints(&.{workspace.grabbing.index});
                     workspace.undo_stack.appendAssumeCapacity(.{
-                        .pop = workspace.grabbing,
+                        .pop = workspace.grabbing.index,
                     });
                 }
 
                 workspace.undo_stack.appendAssumeCapacity(.{ .set_grabbing = workspace.grabbing });
                 workspace.undo_stack.appendAssumeCapacity(.{ .set_handlayer = workspace.hand_layer });
-                workspace.grabbing = .nothing;
+                workspace.grabbing.index = .nothing;
                 workspace.hand_layer = .nothing;
             }
         }
