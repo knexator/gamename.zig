@@ -221,6 +221,37 @@ pub const Lego = struct {
         postit_text: struct {
             text: []const u8,
         },
+        executor_controls: struct {
+            pub fn brake(executor_controls: *const @This()) Lego.Index {
+                return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[0];
+            }
+
+            pub fn crank(executor_controls: *const @This()) Lego.Index {
+                return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[1];
+            }
+        },
+        executor_brake: struct {
+            /// in 0..1; 1 is braked, 0.5 is normal speed, 0 is speedup
+            brake_t: f32 = 0.5,
+            handle_pos: Vec2 = undefined,
+
+            pub fn brakeBody(brake: @This(), line_t: f32) Vec2 {
+                return Specific.Executor.Controls.brakeLineRaw(.{}, brake.brake_t, line_t);
+            }
+
+            pub fn brakeHandlePath(_: @This(), brake_t: f32) Vec2 {
+                return Specific.Executor.Controls.brakeLineRaw(.{}, brake_t, 1.0);
+                // return crank_center
+                //     .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
+                //     .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
+                //     .addY(0.25);
+            }
+        },
+        executor_crank: struct {
+            value: f32 = 0,
+            enabled: bool = false,
+            handle_pos: Vec2 = undefined,
+        },
 
         pub const Tag = std.meta.Tag(Specific);
 
@@ -520,13 +551,19 @@ pub const Lego = struct {
             pub fn children(index: Lego.Index) struct {
                 input: Lego.Index,
                 garland: Lego.Index,
+                controls: Lego.Index,
             } {
                 assert(Toybox.get(index).specific.tag() == .executor);
-                const asdf = Toybox.getChildrenExact(2, index);
+                const asdf = Toybox.getChildrenExact(3, index);
                 return .{
                     .input = asdf[0],
                     .garland = asdf[1],
+                    .controls = asdf[2],
                 };
+            }
+
+            pub fn getBrakeT(executor_index: Lego.Index) f32 {
+                return children(executor_index).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t;
             }
 
             pub fn shouldStartExecution(executor_index: Lego.Index) bool {
@@ -537,6 +574,43 @@ pub const Lego = struct {
                     Toybox.childCount(garland) > 1 and
                     Toybox.get(input).specific.sexpr.kind != .empty;
             }
+
+            pub const Controls = struct {
+                pub fn brakeHandlePath(brake_t: f32) Vec2 {
+                    return brakeLineRaw(.{}, brake_t, 1.0);
+                }
+
+                pub fn brakeLineRaw(crank_center: Point, brake_t: f32, line_t: f32) Vec2 {
+                    const radius: f32 = std.math.exp(2 - brake_t) / 2.0;
+                    // const radius: f32 = math.remapFrom01(std.math.exp(1 - brake_t) / std.math.e, 1.3, 5);
+                    // const radius: f32 = math.remapFrom01(math.easings.linear(1 - brake_t), 1.3, 5);
+                    // const radius: f32 = math.remapFrom01(math.easings.easeInQuad(1 - brake_t), 1.3, 5);
+                    return crank_center
+                        .applyToLocalPoint(.{ .turns = -0.25 })
+                        .applyToLocalPoint(.{ .pos = .new(0, 1.2) })
+                        .applyToLocalPoint(.{ .pos = .new(0, -radius) })
+                        .applyToLocalPosition(.fromPolar(radius - (1 - line_t) * 0.2, 0.25 + 0.65 * line_t / radius));
+
+                    // return crank_center
+                    //     .applyToLocalPosition(.fromPolar(
+                    //     math.remapFrom01(line_t, 0.5, 1.5 + 0.5 * (1 - brake_t)),
+                    //     math.remapFrom01(brake_t, 0.125, 0.375),
+                    // ));
+                }
+
+                fn speedScale(brake_t: f32) f32 {
+                    // 1 -> 0
+                    // 0.5 -> 1
+                    // 0 -> mucho
+                    return std.math.exp2((1 - brake_t) * 2) - 1;
+                }
+
+                test "speedScale" {
+                    try std.testing.expectApproxEqAbs(0, speedScale(1), 0.0001);
+                    try std.testing.expectApproxEqAbs(1, speedScale(0.5), 0.0001);
+                    try std.testing.expectApproxEqAbs(3, speedScale(0), 0.0001);
+                }
+            };
         };
 
         pub const FnkboxBox = struct {
@@ -892,7 +966,10 @@ pub const Lego = struct {
             .testcase,
             .postit,
             .postit_text,
+            .executor_controls,
             => return null,
+            .executor_brake => .default,
+            .executor_crank => |crank| if (crank.enabled) .default else return null,
             .case => .default,
             .newcase => .new_case,
             .garland => .garland,
@@ -915,6 +992,8 @@ pub const Lego = struct {
         return switch (lego.specific) {
             .lens => |lens| .fromPolar(lens.local_radius + 0.1, 1.0 / 8.0),
             .newcase => |newcase| .new(0, newcase.length * newcase.handle_t),
+            .executor_brake => |brake| brake.handle_pos,
+            .executor_crank => |crank| crank.handle_pos,
             else => .zero,
         };
     }
@@ -965,11 +1044,41 @@ pub const Lego = struct {
             .postit,
             => true,
             .button,
+            .executor_brake,
+            .executor_crank,
             => false,
             .fnkbox, .lens => blk: {
                 std.log.err("TODO: handle better", .{});
                 break :blk false;
             },
+            .executor_controls,
+            .microscope,
+            .fnkbox_box,
+            .fnkbox_description,
+            .fnkbox_testcases,
+            .newcase,
+            .area,
+            .testcase,
+            .postit_text,
+            => unreachable,
+        };
+    }
+
+    pub fn grabsWithoutPlucking(lego: *const Lego) bool {
+        return switch (lego.specific) {
+            .button,
+            .lens,
+            .fnkbox,
+            .executor_crank,
+            .executor_brake,
+            => true,
+            .sexpr,
+            .garland,
+            .case,
+            .postit,
+            .executor,
+            => false,
+            .executor_controls,
             .microscope,
             .fnkbox_box,
             .fnkbox_description,
@@ -1666,6 +1775,12 @@ pub const Toybox = struct {
         const executor = try Toybox.new(.{}, .{ .executor = .{ .controlled_by_parent_fnkbox = true } });
         Toybox.addChildLast(executor.index, try Toybox.buildSexpr(.{}, .empty, false));
         Toybox.addChildLast(executor.index, initial_definition orelse try Toybox.buildGarland(.{}, &.{}));
+        Toybox.addChildLast(executor.index, blk: {
+            const controls = try Toybox.new(.{}, .executor_controls);
+            Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } })).index);
+            Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } })).index);
+            break :blk controls.index;
+        });
         Toybox.addChildLast(result.index, executor.index);
         return result.index;
     }
@@ -2022,13 +2137,28 @@ const Workspace = struct {
                     .fnkbox_description,
                     .testcase,
                     .postit_text,
+                    .executor_controls,
+                    .executor_brake,
+                    .executor_crank,
                     => {},
                 }
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
-                            .sexpr, .area, .microscope, .fnkbox_description, .fnkbox_testcases, .button, .executor, .fnkbox_box, .testcase, .postit, .postit_text => unreachable,
-                            .case, .lens, .fnkbox => .{ grabbing == .nothing, .hot },
+                            .sexpr,
+                            .area,
+                            .microscope,
+                            .fnkbox_description,
+                            .fnkbox_testcases,
+                            .button,
+                            .executor,
+                            .fnkbox_box,
+                            .testcase,
+                            .postit,
+                            .postit_text,
+                            .executor_controls,
+                            => unreachable,
+                            .case, .lens, .fnkbox, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
                             .garland => if (grabbing == .nothing)
                                 .{ true, .hot }
@@ -2059,19 +2189,54 @@ const Workspace = struct {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
                 if (cur == workspace.grabbing.index and lego.draggable()) {
-                    const target: Point = if (interaction.dropzone == .nothing)
-                        // TODO: i don't like the scale hack
-                        (Point{
-                            .pos = absolute_mouse_pos,
-                            .scale = Toybox.get(interaction.over_background).absolute_point.scale,
-                        })
-                            .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
-                            .applyToLocalPoint(.{ .pos = workspace.grabbing.offset.neg() })
-                    else
-                        Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
+                    switch (lego.specific) {
+                        else => {
+                            const target: Point = if (interaction.dropzone == .nothing)
+                                // TODO: i don't like the scale hack
+                                (Point{
+                                    .pos = absolute_mouse_pos,
+                                    .scale = Toybox.get(interaction.over_background).absolute_point.scale,
+                                })
+                                    .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
+                                    .applyToLocalPoint(.{ .pos = workspace.grabbing.offset.neg() })
+                            else
+                                Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
 
-                    lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
-                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
+                            lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
+                                .inverseApplyGetLocal(target), 0.6, delta_seconds);
+                        },
+                        .executor_brake => |*brake| {
+                            assert(interaction.dropzone == .nothing);
+                            const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                            const S = struct {
+                                p: Vec2,
+                                pub fn score(ctx: @This(), t: f32) f32 {
+                                    return Lego.Specific.Executor.Controls.brakeHandlePath(t).sub(ctx.p).magSq();
+                                }
+                            };
+                            const raw_t = kommon.funktional.findFunctionMin(
+                                S,
+                                .{ .p = local_pos },
+                                0,
+                                1,
+                                10,
+                                0.0001,
+                            );
+                            // math.lerp_towards(&brake.brake_t, raw_t, 0.6, delta_seconds);
+                            math.towards(&brake.brake_t, raw_t, delta_seconds * 5);
+                        },
+                        .executor_crank => |*crank| {
+                            assert(interaction.dropzone == .nothing);
+                            const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                            const raw_t = local_pos.getTurns();
+                            const executor = &Toybox.findAncestor(cur, .executor).get().specific.executor;
+                            const cur_t = executor.animation.?.t;
+                            const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
+                            // math.lerp_towards(&crank.t, @max(0, target_t), 0.6, delta_seconds);
+                            math.towards(&crank.value, target_t, delta_seconds * 5);
+                            executor.animation.?.t = crank.value;
+                        },
+                    }
                 }
 
                 lego.unhoverable = switch (lego.specific) {
@@ -2216,7 +2381,7 @@ const Workspace = struct {
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(cur);
                         Toybox.get(children.garland).local_point = Executor.relative_garland_point;
-                        // TODO: brake/crank
+                        Toybox.get(children.controls).local_point = Executor.relative_crank_center;
 
                         var pill_offset: f32 = 0;
                         if (executor.animation) |animation| {
@@ -2304,6 +2469,16 @@ const Workspace = struct {
                         }
 
                         // TODO: prev_pills
+                    },
+                    .executor_controls => {},
+                    // FIXME NOW: review
+                    .executor_brake => |*brake| {
+                        lego.local_point = .{};
+                        brake.handle_pos = Lego.Specific.Executor.Controls.brakeHandlePath(brake.brake_t);
+                    },
+                    .executor_crank => |*crank| {
+                        lego.local_point = .{};
+                        crank.handle_pos = .fromPolar(0.75, crank.value);
                     },
                     .fnkbox_testcases => |*fnkbox_testcases| {
                         var k: usize = 0;
@@ -2620,7 +2795,22 @@ const Workspace = struct {
                         .fnkbox_box => {
                             drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
                         },
-                        .case, .garland, .microscope, .executor, .fnkbox, .testcase => {},
+                        .executor_brake => |brake| {
+                            drawer.canvas.line(camera_relative, &kommon.funktional.mapOOP(
+                                brake,
+                                .brakeBody,
+                                &kommon.funktional.linspace01(32, true),
+                            ), 0.2, .gray(0.4));
+                            drawer.canvas.line(camera_relative, &kommon.funktional.mapOOP(
+                                brake,
+                                .brakeHandlePath,
+                                &kommon.funktional.linspace01(32, true),
+                            ), Drawer.pixelWidth(camera_relative), FColor.gray(1));
+                        },
+                        .executor_crank => |crank| {
+                            drawer.canvas.fillShape(camera_relative, .{ .turns = crank.value }, Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
+                        },
+                        .executor_controls, .case, .garland, .microscope, .executor, .fnkbox, .testcase => {},
                     }
                 }
             }
@@ -2735,6 +2925,9 @@ const Workspace = struct {
                 .testcase,
                 .postit,
                 .postit_text,
+                .executor_controls,
+                .executor_brake,
+                .executor_crank,
                 => {},
             }
         }
@@ -2816,13 +3009,16 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
         }
 
-        if (true) { // enable/disable buttons
+        if (true) { // enable/disable buttons and other things
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                     };
+                }
+                if (lego.specific.as(.executor_crank)) |crank| {
+                    crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
                 }
             }
         }
@@ -2906,13 +3102,20 @@ const Workspace = struct {
                         grabbed_element_index = .nothing;
                         plucked = undefined;
                     }
-                } else if (original_hot_data.specific.tag() == .lens or original_hot_data.specific.tag() == .fnkbox) {
-                    // Case A.3: grabbing rather than plucking
+                } else if (hot_index.get().grabsWithoutPlucking()) {
+                    // Case A.3: grabbing rather than plucking, including buttons
                     workspace.undo_stack.appendAssumeCapacity(.{
                         .set_data_except_tree = original_hot_data,
                     });
                     grabbed_element_index = hot_index;
                     plucked = false;
+
+                    if (Toybox.get(hot_index).specific.as(.button)) |b| {
+                        if (b.instant()) {
+                            grabbed_element_index = .nothing;
+                            @panic("TODO");
+                        }
+                    }
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .area) {
                     // Case A.1: plucking a top-level thing
                     workspace.undo_stack.appendAssumeCapacity(.{
@@ -2987,15 +3190,6 @@ const Workspace = struct {
                     } });
 
                     grabbed_element_index = hot_index;
-                } else if (Toybox.get(hot_index).specific.tag() == .button) {
-                    // Case A.6: pressing a button
-                    plucked = false;
-                    if (Toybox.get(hot_index).specific.button.instant()) {
-                        grabbed_element_index = .nothing;
-                        @panic("TODO");
-                    } else {
-                        grabbed_element_index = hot_index;
-                    }
                 } else unreachable;
 
                 assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
@@ -3017,7 +3211,8 @@ const Workspace = struct {
                     }
                 }
             } else if (workspace.grabbing.index != .nothing and
-                !(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)))
+                (!(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) or
+                    workspace.grabbingSomethingIllegal()))
             {
                 const dropzone_index = hot_and_dropzone.dropzone;
 
@@ -3299,7 +3494,7 @@ const Workspace = struct {
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
         if (executor.animation) |*animation| {
-            animation.t += delta_seconds; // * speedScale(brake_t)  TODO
+            animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
             if (animation.t >= 1) {
                 if (animation.matching) {
                     // TODO
@@ -3447,8 +3642,9 @@ const Workspace = struct {
                 }
             }
         }
-        // TODO
-        // executor.recomputeCrankHandlePos();
+
+        Executor.children(executor_index).controls.get().specific.executor_controls
+            .crank().get().specific.executor_crank.value = if (executor.animation) |anim| anim.t else 0;
     }
 
     fn resetExecutorAndExtractResult(workspace: *Workspace, executor_index: Lego.Index, original_garland: Lego.Index) !Lego.Index {
@@ -3530,6 +3726,13 @@ const Workspace = struct {
             .original_or_final_input_point = undefined,
             .state_t = undefined,
             .state = .scrolling_towards_case,
+        };
+    }
+
+    fn grabbingSomethingIllegal(workspace: *const Workspace) bool {
+        return switch (workspace.grabbing.index.get().specific) {
+            else => false,
+            .executor_crank => |crank| !crank.enabled,
         };
     }
 };

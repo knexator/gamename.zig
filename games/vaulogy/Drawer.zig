@@ -38,7 +38,6 @@ pub const AtomVisuals = struct {
         template: Canvas.PrecomputedShape,
         pattern: Canvas.PrecomputedShape,
 
-        pub var template_mask: Canvas.PrecomputedShape = undefined;
         var template_placeholder: Canvas.PrecomputedShape = undefined;
         var pattern_placeholder: Canvas.PrecomputedShape = undefined;
         var template_variable: Canvas.PrecomputedShape = undefined;
@@ -48,6 +47,7 @@ pub const AtomVisuals = struct {
 
         // other shapes
         pub var ridged_circle: Canvas.PrecomputedShape = undefined;
+        pub var template_mask: Canvas.PrecomputedShape = undefined;
 
         pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2, gl: kommon.Gl) !Geometry {
             const template: Canvas.PrecomputedShape = blk: {
