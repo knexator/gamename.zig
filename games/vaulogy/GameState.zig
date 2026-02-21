@@ -459,15 +459,15 @@ pub const Lego = struct {
                     .next = asdf[3],
                 };
             }
+
+            pub fn next(case: *const Case) *const Garland {
+                return &children(Lego.fromSpecificConst(.case, case).index).next.get().specific.garland;
+            }
         };
 
         pub const Garland = struct {
             visible: bool = undefined,
             computed_height: f32 = 0,
-            /// used when updating animation
-            offset_t: f32 = 0,
-            /// used when updating animation
-            offset_ghost: Lego.Index = .nothing,
             /// valid only for garlands that are enqueued in an executor
             enqueued_parent_pill_index: usize = undefined,
             /// valid only for garlands that are enqueued in an executor
@@ -476,6 +476,10 @@ pub const Lego = struct {
             pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
             pub const dist_between_cases_first: f32 = 1.5;
             pub const dist_between_cases_rest: f32 = 2.5;
+
+            pub fn firstNewcase(garland: *const Garland) *Specific.NewCase {
+                return &Lego.fromSpecificConst(.garland, garland).tree.first.get().specific.newcase;
+            }
 
             const core = @import("core.zig");
             pub fn toOldCoreValue(garland: *const Garland, allocator: std.mem.Allocator) !core.FnkBody {
@@ -508,6 +512,10 @@ pub const Lego = struct {
             length: f32 = undefined,
             /// if 1, the newcase handle is right at the end of the cable
             handle_t: f32 = undefined,
+            /// used when updating animation
+            offset_t: f32 = 0,
+            /// used when updating animation
+            offset_ghost: Lego.Index = .nothing,
         };
 
         pub const Executor = struct {
@@ -1910,7 +1918,7 @@ const Workspace = struct {
             Toybox.addChildLast(
                 dst.fnkboxes_layer,
                 try Toybox.buildFnkbox(
-                    .{ .pos = .new(-4, -4) },
+                    .{ .pos = .new(-4, -8) },
                     try Toybox.buildSexpr(
                         .{},
                         .{ .atom_lit = "true" },
@@ -2326,20 +2334,26 @@ const Workspace = struct {
                     },
                     .garland => |*garland| {
                         var a = Toybox.get(lego.tree.first);
-                        var offset: Vec2 = .zero;
+                        var offset: f32 = 0;
                         while (true) {
                             assert(a.specific.tag() == .newcase);
-                            a.local_point = .{ .pos = offset };
-                            offset.addInPlace(.new(0, a.specific.newcase.length));
+                            a.local_point = .{ .pos = .new(0, offset) };
+                            offset += a.specific.newcase.length;
 
                             if (a.tree.next == .nothing) break;
                             a = Toybox.get(a.tree.next);
                         }
-                        garland.computed_height = offset.y;
+                        garland.computed_height = offset;
                     },
                     .newcase => |*newcase| {
+                        const asdf: f32 = if (newcase.offset_ghost == .nothing)
+                            0
+                        else
+                            newcase.offset_t * (Lego.Specific.Garland.dist_between_cases_first +
+                                newcase.offset_ghost.get().specific.case.next().computed_height);
+
                         const target_length: f32, const target_handle_t: f32 = blk: {
-                            const prev_height: f32 = if (lego.tree.prev == .nothing)
+                            const prev_height: f32 = asdf + if (lego.tree.prev == .nothing)
                                 0
                             else blk2: {
                                 const case_of_prev_segment = Toybox.get(lego.tree.prev).tree.first;
@@ -2400,8 +2414,8 @@ const Workspace = struct {
                                     .{ .pos = .new(6, -2), .scale = 0, .turns = -0.2 },
                                     flyaway_t,
                                 ));
-                                Toybox.get(children.garland).specific.garland.offset_t = offset_t;
-                                Toybox.get(children.garland).specific.garland.offset_ghost = animation.active_case;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_t = offset_t;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
                                 Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_floating_away));
                                 Toybox.get(children.input).local_point = Executor.relative_input_point;
                                 // TODO
@@ -2429,7 +2443,8 @@ const Workspace = struct {
                                 );
                                 Toybox.get(children.garland).local_point = Executor.relative_garland_point
                                     .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t));
-                                Toybox.get(children.garland).specific.garland.offset_ghost = animation.active_case;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_t = 1;
 
                                 // TODO
                                 if (animation.invoked_fnk != .nothing) {
