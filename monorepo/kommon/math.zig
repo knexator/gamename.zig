@@ -1648,6 +1648,7 @@ pub const Rect = extern struct {
     }
 
     pub fn reparentCamera(original: Rect, new_parent: Point) Rect {
+        // TODO: what if new_parent.turns != 0?
         return .fromCorners(
             new_parent.inverseApplyGetLocalPosition(original.top_left),
             new_parent.inverseApplyGetLocalPosition(original.get(.bottom_right)),

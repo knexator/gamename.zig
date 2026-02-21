@@ -2394,8 +2394,6 @@ const Workspace = struct {
                         else
                             workspace.grabbing.index.get().specific.case.next().computed_height - Garland.dist_between_cases_first * 0.5;
 
-                        if (interaction.dropzone == cur) std.log.debug("height of case hovered: {d}", .{height_of_case_hovered});
-
                         const target_length_before: f32 = extra_before_offset_for_anim + base_len * 0.5 + extra_prev_height + base_len * 0.5 * lego.dropzone_t;
                         const target_length_after: f32 = if (is_last) 0.0 else (extra_after_offset_for_anim + base_len * 0.5 +
                             lego.dropzone_t * (height_of_case_hovered + 0.5 * (if (!is_first)
@@ -2824,15 +2822,16 @@ const Workspace = struct {
                             drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .newcase => |newcase| {
-                            drawer.canvas.line(camera_relative, &.{
-                                .zero,
-                                .new(0, newcase.length()),
-                            }, 0.05, .blackAlpha(alpha));
+                            // TODO: camera_relative fails due to rotation
+                            drawer.canvas.line(camera, &.{
+                                lego.absolute_point.pos,
+                                lego.absolute_point.applyToLocalPosition(.new(0, newcase.length())),
+                            }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
                         },
                         .fnkbox_description => |fnkbox_description| {
                             try drawer.canvas.drawText(
                                 0,
-                                camera.reparentCamera(lego.absolute_point),
+                                camera_relative,
                                 fnkbox_description.text,
                                 .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
                                 0.8,
