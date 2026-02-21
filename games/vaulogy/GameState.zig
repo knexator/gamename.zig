@@ -1809,6 +1809,7 @@ const Workspace = struct {
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
     arena_for_atom_names: std.heap.ArenaAllocator,
+    arena_for_lenses_data: std.heap.ArenaAllocator,
 
     // TODO: remove
     gpa_for_bindings: std.mem.Allocator,
@@ -1887,6 +1888,7 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         dst.random_instance = .init(random_seed);
         dst.arena_for_atom_names = .init(gpa);
+        dst.arena_for_lenses_data = .init(gpa);
         dst.gpa_for_bindings = gpa;
 
         dst.main_area = (try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } })).index;
@@ -2033,6 +2035,7 @@ const Workspace = struct {
     pub fn deinit(workspace: *Workspace) void {
         workspace.undo_stack.deinit();
         workspace.arena_for_atom_names.deinit();
+        workspace.arena_for_lenses_data.deinit();
     }
 
     const HotAndDropzone = struct {
@@ -2837,6 +2840,15 @@ const Workspace = struct {
             }
         }
 
+        const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.1 else 1.0)));
+
+        const absolute_camera = Rect
+            .fromCenterAndSize(.zero, .both(2))
+            .withAspectRatio(platform.aspect_ratio, .grow, .center);
+
+        const mouse = platform.getMouse(absolute_camera);
+
+        const old_undo_count = workspace.undo_stack.items.len;
         if (platform.keyboard.wasPressed(.KeyZ)) {
             while (workspace.undo_stack.pop()) |command| {
                 switch (command) {
@@ -2871,209 +2883,9 @@ const Workspace = struct {
                     },
                 }
             }
-        }
+        } else { // INTERACTION
+            const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
-        const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.1 else 1.0)));
-
-        const absolute_camera = Rect
-            .fromCenterAndSize(.zero, .both(2))
-            .withAspectRatio(platform.aspect_ratio, .grow, .center);
-        const mouse = platform.getMouse(absolute_camera);
-
-        const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
-
-        // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
-        // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
-
-        // cursor
-        platform.setCursor(
-            if (workspace.grabbing.index != .nothing)
-                .grabbing // or maybe .pointer, if it's UI
-            else if (hot_and_dropzone.hot != .nothing)
-                .could_grab // or maybe .pointer, if it's UI
-            else
-                .default,
-        );
-
-        // update _t
-        // Should technically be inside updateSprings,
-        // but I suspect this is faster (and simpler).
-        for (toybox.all_legos.items) |*lego| {
-            math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
-
-            switch (lego.specific) {
-                .sexpr => |*sexpr| {
-                    math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
-                },
-                .executor => |*executor| {
-                    math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
-                },
-                .area,
-                .case,
-                .newcase,
-                .garland,
-                .microscope,
-                .lens,
-                .fnkbox,
-                .fnkbox_description,
-                .fnkbox_box,
-                .fnkbox_testcases,
-                .button,
-                .testcase,
-                .postit,
-                .postit_text,
-                .executor_controls,
-                .executor_brake,
-                .executor_crank,
-                => {},
-            }
-        }
-
-        // TODO: a bit hacky
-        if (true) { // set garlands visibility
-            const grabbing_garland_or_case: bool = if (workspace.grabbing.index == .nothing)
-                false
-            else switch (Toybox.get(workspace.grabbing.index).specific) {
-                .case, .garland => true,
-                else => false,
-            };
-            for (toybox.all_legos.items) |*lego| {
-                const in_toolbar = Toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
-                if (lego.specific.as(.garland)) |garland| {
-                    garland.visible = !in_toolbar and (grabbing_garland_or_case or lego.tree.first != .nothing);
-                }
-            }
-        }
-
-        if (true) { // move camera and scroll stuff
-            const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
-                if (!lego.exists) continue;
-                if (lego.specific.tag() == .fnkbox_testcases and Lego.Specific.FnkboxBox.testcases_box.contains(
-                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
-                )) {
-                    break lego.index;
-                }
-            } else .nothing;
-
-            const p = &Toybox.get(workspace.main_area).local_point;
-            if (over_scrollable_element == .nothing) {
-                p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
-                    .none => 1.0,
-                    .up => 1.1,
-                    .down => 0.9,
-                });
-            } else {
-                Toybox.get(over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
-            }
-            inline for (KeyboardButton.directional_keys) |kv| {
-                for (kv.keys) |key| {
-                    if (platform.keyboard.cur.isDown(key)) {
-                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
-                    }
-                }
-            }
-
-            for (workspace.roots(.with_main_camera).constSlice()) |root| {
-                if (root != workspace.main_area) {
-                    Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point;
-                }
-            }
-            Toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
-        }
-
-        if (true) { // open/close left toolbar, and regenerate its contents
-            const old_t = workspace.toolbar_left_unfolded_t;
-            math.lerpTowards(
-                &workspace.toolbar_left_unfolded_t,
-                if (hot_and_dropzone.over_background == workspace.toolbar_left) 1 else 0,
-                .slow,
-                delta_seconds,
-            );
-            const new_t = workspace.toolbar_left_unfolded_t;
-            if (old_t <= 0.01 and new_t > 0.01) {
-                try workspace.regenerateToolbarLeft();
-            }
-
-            const rect = toolbar_left_rect;
-            const hot_t = workspace.toolbar_left_unfolded_t;
-            const p = &Toybox.get(workspace.toolbar_left).local_point;
-            p.* = .{
-                .scale = absolute_camera.size.y / rect.size.y,
-                .pos = absolute_camera.top_left,
-            };
-            p.* = p.applyToLocalPoint(.{ .pos = .new(-(rect.size.x - 1) * (1 - hot_t), 0) });
-
-            Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
-        }
-
-        if (true) { // enable/disable buttons and other things
-            for (toybox.all_legos.items) |*lego| {
-                if (lego.specific.as(.button)) |button| {
-                    button.enabled = switch (button.action) {
-                        .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
-                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
-                    };
-                }
-                if (lego.specific.as(.executor_crank)) |crank| {
-                    crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
-                }
-            }
-        }
-
-        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
-        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
-
-        if (true) { // set lenses data
-            const microscopes = try Toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
-            for (microscopes, 0..) |microscope, k| {
-                const source, const target = Toybox.getChildrenExact(2, microscope);
-                const source_pos = Toybox.get(source).absolute_point.pos;
-                const target_pos = Toybox.get(target).absolute_point.pos;
-                const source_lens = &Toybox.get(source).specific.lens;
-                const source_radius = source_lens.local_radius * Toybox.get(source).absolute_point.scale;
-                const target_lens = &Toybox.get(target).specific.lens;
-                const target_radius = target_lens.local_radius * Toybox.get(target).absolute_point.scale;
-
-                source_lens.transform = .identity;
-                source_lens.is_target = false;
-                target_lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
-                target_lens.is_target = true;
-
-                var all_roots: std.ArrayListUnmanaged(Lego.Index) = .empty;
-                try all_roots.appendSlice(scratch, workspace.roots(.{
-                    .include_hand = true,
-                    .include_toolbar = true,
-                    .include_floating_inputs = true,
-                    .include_lenses = false,
-                }).constSlice());
-                try all_roots.appendSlice(scratch, microscopes[0..k]);
-
-                var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = .empty;
-                try all_roots_except_hand.appendSlice(scratch, workspace.roots(.{
-                    .include_hand = false,
-                    .include_toolbar = true,
-                    .include_floating_inputs = true,
-                    .include_lenses = false,
-                }).constSlice());
-                try all_roots_except_hand.appendSlice(scratch, microscopes[0..k]);
-
-                source_lens.roots_to_draw = all_roots.items;
-                source_lens.roots_to_interact = &.{};
-                target_lens.roots_to_draw = all_roots.items;
-                target_lens.roots_to_interact = all_roots_except_hand.items;
-            }
-        }
-
-        if (drawer) |d| {
-            try workspace.draw(platform, d);
-        }
-
-        const old_undo_count = workspace.undo_stack.items.len;
-
-        if (true) { // INTERACTION
             try workspace.undo_stack.ensureUnusedCapacity(32);
             if (workspace.grabbing.index == .nothing and
                 hot_and_dropzone.hot != .nothing and
@@ -3286,6 +3098,153 @@ const Workspace = struct {
             }
         }
 
+        // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
+        // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
+
+        // TODO: avoid computing this twice?
+        const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
+
+        // cursor
+        platform.setCursor(
+            if (workspace.grabbing.index != .nothing)
+                .grabbing // or maybe .pointer, if it's UI
+            else if (hot_and_dropzone.hot != .nothing)
+                .could_grab // or maybe .pointer, if it's UI
+            else
+                .default,
+        );
+
+        // update _t
+        // Should technically be inside updateSprings,
+        // but I suspect this is faster (and simpler).
+        for (toybox.all_legos.items) |*lego| {
+            math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
+            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
+
+            switch (lego.specific) {
+                .sexpr => |*sexpr| {
+                    math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
+                },
+                .executor => |*executor| {
+                    math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
+                },
+                .area,
+                .case,
+                .newcase,
+                .garland,
+                .microscope,
+                .lens,
+                .fnkbox,
+                .fnkbox_description,
+                .fnkbox_box,
+                .fnkbox_testcases,
+                .button,
+                .testcase,
+                .postit,
+                .postit_text,
+                .executor_controls,
+                .executor_brake,
+                .executor_crank,
+                => {},
+            }
+        }
+
+        // TODO: a bit hacky
+        if (true) { // set garlands visibility
+            const grabbing_garland_or_case: bool = if (workspace.grabbing.index == .nothing)
+                false
+            else switch (Toybox.get(workspace.grabbing.index).specific) {
+                .case, .garland => true,
+                else => false,
+            };
+            for (toybox.all_legos.items) |*lego| {
+                const in_toolbar = Toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
+                if (lego.specific.as(.garland)) |garland| {
+                    garland.visible = !in_toolbar and (grabbing_garland_or_case or lego.tree.first != .nothing);
+                }
+            }
+        }
+
+        if (true) { // move camera and scroll stuff
+            const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .fnkbox_testcases and Lego.Specific.FnkboxBox.testcases_box.contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
+            } else .nothing;
+
+            const p = &Toybox.get(workspace.main_area).local_point;
+            if (over_scrollable_element == .nothing) {
+                p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
+                    .none => 1.0,
+                    .up => 1.1,
+                    .down => 0.9,
+                });
+            } else {
+                Toybox.get(over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
+            }
+            inline for (KeyboardButton.directional_keys) |kv| {
+                for (kv.keys) |key| {
+                    if (platform.keyboard.cur.isDown(key)) {
+                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
+                    }
+                }
+            }
+
+            for (workspace.roots(.with_main_camera).constSlice()) |root| {
+                if (root != workspace.main_area) {
+                    Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point;
+                }
+            }
+            Toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
+        }
+
+        if (true) { // open/close left toolbar, and regenerate its contents
+            const old_t = workspace.toolbar_left_unfolded_t;
+            math.lerpTowards(
+                &workspace.toolbar_left_unfolded_t,
+                if (hot_and_dropzone.over_background == workspace.toolbar_left) 1 else 0,
+                .slow,
+                delta_seconds,
+            );
+            const new_t = workspace.toolbar_left_unfolded_t;
+            if (old_t <= 0.01 and new_t > 0.01) {
+                try workspace.regenerateToolbarLeft();
+            }
+
+            const rect = toolbar_left_rect;
+            const hot_t = workspace.toolbar_left_unfolded_t;
+            const p = &Toybox.get(workspace.toolbar_left).local_point;
+            p.* = .{
+                .scale = absolute_camera.size.y / rect.size.y,
+                .pos = absolute_camera.top_left,
+            };
+            p.* = p.applyToLocalPoint(.{ .pos = .new(-(rect.size.x - 1) * (1 - hot_t), 0) });
+
+            Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
+        }
+
+        if (true) { // enable/disable buttons and other things
+            for (toybox.all_legos.items) |*lego| {
+                if (lego.specific.as(.button)) |button| {
+                    button.enabled = switch (button.action) {
+                        .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
+                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
+                    };
+                }
+                if (lego.specific.as(.executor_crank)) |crank| {
+                    crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
+                }
+            }
+        }
+
+        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
+        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
+
         if (true) { // start and advance fnkboxes animations
             try workspace.undo_stack.ensureUnusedCapacity(32);
             for (toybox.all_legos.items) |*lego| {
@@ -3449,6 +3408,53 @@ const Workspace = struct {
         const something_happened = (workspace.undo_stack.items.len != old_undo_count);
         if (something_happened) {
             try workspace.canonizeAfterChanges(scratch);
+        }
+
+        if (true) { // set lenses data
+            _ = workspace.arena_for_lenses_data.reset(.retain_capacity);
+            const allocator = workspace.arena_for_lenses_data.allocator();
+            const microscopes = try Toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
+            for (microscopes, 0..) |microscope, k| {
+                const source, const target = Toybox.getChildrenExact(2, microscope);
+                const source_pos = Toybox.get(source).absolute_point.pos;
+                const target_pos = Toybox.get(target).absolute_point.pos;
+                const source_lens = &Toybox.get(source).specific.lens;
+                const source_radius = source_lens.local_radius * Toybox.get(source).absolute_point.scale;
+                const target_lens = &Toybox.get(target).specific.lens;
+                const target_radius = target_lens.local_radius * Toybox.get(target).absolute_point.scale;
+
+                source_lens.transform = .identity;
+                source_lens.is_target = false;
+                target_lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
+                target_lens.is_target = true;
+
+                var all_roots: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                try all_roots.appendSlice(allocator, workspace.roots(.{
+                    .include_hand = true,
+                    .include_toolbar = true,
+                    .include_floating_inputs = true,
+                    .include_lenses = false,
+                }).constSlice());
+                try all_roots.appendSlice(allocator, microscopes[0..k]);
+
+                var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                try all_roots_except_hand.appendSlice(allocator, workspace.roots(.{
+                    .include_hand = false,
+                    .include_toolbar = true,
+                    .include_floating_inputs = true,
+                    .include_lenses = false,
+                }).constSlice());
+                try all_roots_except_hand.appendSlice(allocator, microscopes[0..k]);
+
+                source_lens.roots_to_draw = all_roots.items;
+                source_lens.roots_to_interact = &.{};
+                target_lens.roots_to_draw = all_roots.items;
+                target_lens.roots_to_interact = all_roots_except_hand.items;
+            }
+        }
+
+        if (drawer) |d| {
+            try workspace.draw(platform, d);
         }
     }
 
