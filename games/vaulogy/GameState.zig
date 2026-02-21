@@ -3228,20 +3228,6 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
         }
 
-        if (true) { // enable/disable buttons and other things
-            for (toybox.all_legos.items) |*lego| {
-                if (lego.specific.as(.button)) |button| {
-                    button.enabled = switch (button.action) {
-                        .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
-                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
-                    };
-                }
-                if (lego.specific.as(.executor_crank)) |crank| {
-                    crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
-                }
-            }
-        }
-
         // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
         workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
@@ -3401,6 +3387,20 @@ const Workspace = struct {
                     if (Lego.Specific.Executor.shouldStartExecution(lego.index)) {
                         @panic("TODO");
                     }
+                }
+            }
+        }
+
+        if (true) { // enable/disable buttons and other things
+            for (toybox.all_legos.items) |*lego| {
+                if (lego.specific.as(.button)) |button| {
+                    button.enabled = switch (button.action) {
+                        .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
+                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
+                    };
+                }
+                if (lego.specific.as(.executor_crank)) |crank| {
+                    crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
                 }
             }
         }
