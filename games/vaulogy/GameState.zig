@@ -422,16 +422,16 @@ pub const Lego = struct {
                 return result;
             }
 
-            pub fn buildFromOldCoreValue(point: Point, value: *const core.Sexpr) !Lego.Index {
+            pub fn buildFromOldCoreValue(point: Point, value: *const core.Sexpr, is_pattern: bool) !Lego.Index {
                 return try Toybox.buildSexpr(point, switch (value.*) {
                     .empty => .empty,
                     .atom_lit => |s| .{ .atom_lit = s.value },
                     .atom_var => |s| .{ .atom_var = s.value },
                     .pair => |pair| .{ .pair = .{
-                        .up = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .up)), pair.left),
-                        .down = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .down)), pair.right),
+                        .up = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .up)), pair.left, is_pattern),
+                        .down = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .down)), pair.right, is_pattern),
                     } },
-                }, false);
+                }, is_pattern);
             }
         };
 
@@ -505,6 +505,22 @@ pub const Lego = struct {
                     });
                 }
                 return .{ .cases = cases };
+            }
+
+            pub fn buildFromOldCoreValue(point: Point, definition: core.FnkBodyV2, scratch: std.mem.Allocator) !Lego.Index {
+                var cases: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, definition.cases.len);
+                for (definition.cases) |case| {
+                    cases.appendAssumeCapacity(try Toybox.buildCase(.{}, .{
+                        .pattern = try Sexpr.buildFromOldCoreValue(.{}, case.pattern, true),
+                        .template = try Sexpr.buildFromOldCoreValue(.{}, case.template, false),
+                        .fnkname = try Sexpr.buildFromOldCoreValue(.{}, case.fnk_name, false),
+                        .next = if (case.next) |next|
+                            try buildFromOldCoreValue(.{}, .{ .cases = next }, scratch)
+                        else
+                            null,
+                    }));
+                }
+                return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch));
             }
         };
 
@@ -749,7 +765,7 @@ pub const Lego = struct {
                         error.BAD_INPUT => @panic("panic"),
                     };
                     if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
-                        Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(t.actual.get().local_point, actual_output));
+                        Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(t.actual.get().local_point, actual_output, false));
                     }
                 }
 
@@ -1717,7 +1733,7 @@ pub const Toybox = struct {
         pattern: Lego.Index,
         template: Lego.Index,
         fnkname: Lego.Index,
-        next: ?Lego.Index = null,
+        next: ?Lego.Index,
     }) !Lego.Index {
         const result = try Toybox.new(local_point, .{ .case = .{} });
         Toybox.addChildLast(result.index, data.pattern);
@@ -1947,18 +1963,18 @@ const Workspace = struct {
                             .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, true),
                             .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false),
                             .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                            .next = null,
                         }),
                         try Toybox.buildCase(.{}, .{
                             .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, true),
                             .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
                             .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                            .next = null,
                         }),
                     }),
                 ),
             );
-        }
 
-        if (true) {
             Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
                 .{ .pos = .new(0, 0) },
                 .{ .atom_lit = "true" },
@@ -1986,6 +2002,7 @@ const Workspace = struct {
                     .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
                     .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
                     .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                    .next = null,
                 },
             ));
 
@@ -1993,11 +2010,13 @@ const Workspace = struct {
                 .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
                 .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
                 .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                .next = null,
             });
             const case_2 = try Toybox.buildCase(.{}, .{
                 .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true),
                 .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
                 .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                .next = null,
             });
             Toybox.addChildLast(dst.main_area, try Toybox.buildGarland(
                 .{ .pos = .new(7, 4) },
@@ -2016,9 +2035,7 @@ const Workspace = struct {
 
                 break :blk postit.index;
             });
-        }
 
-        if (true) {
             Toybox.addChildLast(dst.lenses_layer, try Toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
@@ -2028,6 +2045,53 @@ const Workspace = struct {
                 .new(4, 3),
                 .new(6, 2),
             ));
+        }
+
+        if (true) { // add levels
+            const core = @import("core.zig");
+            var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
+            defer pool.deinit();
+            var scratch: std.heap.ArenaAllocator = .init(gpa);
+            defer scratch.deinit();
+            const levels = @import("levels_new.zig").levels[0..2];
+            var x: f32 = 100;
+            const Sexpr = Lego.Specific.Sexpr;
+            for (levels, 0..) |level, k| {
+                defer _ = scratch.reset(.retain_capacity);
+                const samples: []const [2]Lego.Index = blk: {
+                    var samples_it = level.samplesIterator();
+                    var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
+                    while (try samples_it.next(&pool, scratch.allocator())) |item| {
+                        try samples.append(scratch.allocator(), .{
+                            try Sexpr.buildFromOldCoreValue(.{}, item.input, false),
+                            try Sexpr.buildFromOldCoreValue(.{}, item.expected, false),
+                        });
+                        _ = pool.reset(.retain_capacity);
+                    }
+                    break :blk try samples.toOwnedSlice(scratch.allocator());
+                };
+
+                Toybox.addChildLast(
+                    dst.fnkboxes_layer,
+                    try Toybox.buildFnkbox(
+                        .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
+                        try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true),
+                        level.description,
+                        samples,
+                        if (level.initial_definition) |definition|
+                            try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch.allocator())
+                        else
+                            null,
+                    ),
+                );
+
+                // TODO
+                // if (k == 0) {
+                //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
+                //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
+                // }
+                x += if (k < 4) 25 else if (k == 4) 30 else 35;
+            }
         }
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
@@ -3534,6 +3598,7 @@ const Workspace = struct {
                     .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false),
                 } }, false),
                 .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                .next = null,
             });
 
             workspace.undo_stack.appendAssumeCapacity(.{ .destroy_floating = index });
