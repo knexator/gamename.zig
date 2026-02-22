@@ -796,6 +796,9 @@ pub const Lego = struct {
 
         pub const Testcase = struct {
             pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
+            pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
+            pub const relative_input_point: Point = .{ .pos = .new(-4, 0) };
+            pub const relative_bounding_box: Rect = .fromCenterAndSize(.zero, .new(FnkboxBox.relative_box.size.x, 2.5));
             pub fn children(index: Lego.Index) struct {
                 input: Lego.Index,
                 expected: Lego.Index,
@@ -1115,6 +1118,15 @@ pub const Lego = struct {
             .testcase,
             .postit_text,
             => unreachable,
+        };
+    }
+
+    pub fn localBoundingBoxThatContainsSelfAndAllChildren(lego: *const Lego) Rect {
+        return switch (lego.specific.tag()) {
+            else => .infinite,
+            .sexpr => .fromCenterAndSize(.zero, .new(5, 2.5)),
+            .testcase => Specific.Testcase.relative_bounding_box,
+            .fnkbox => Specific.FnkboxBox.relative_box,
         };
     }
 };
@@ -2053,7 +2065,7 @@ const Workspace = struct {
             defer pool.deinit();
             var scratch: std.heap.ArenaAllocator = .init(gpa);
             defer scratch.deinit();
-            const levels = @import("levels_new.zig").levels[0..2];
+            const levels = @import("levels_new.zig").levels[0..10];
             var x: f32 = 100;
             const Sexpr = Lego.Specific.Sexpr;
             for (levels, 0..) |level, k| {
@@ -2606,7 +2618,7 @@ const Workspace = struct {
                         const Testcase = Lego.Specific.Testcase;
                         const children = Testcase.children(cur);
                         Toybox.get(children.input).local_point = .{ .pos = .new(-4, 0) };
-                        Toybox.get(children.expected).local_point = .{ .pos = .new(0, 0) };
+                        Toybox.get(children.expected).local_point = Testcase.relative_expected_point;
                         Toybox.get(children.actual).local_point = Testcase.relative_actual_point;
                         Toybox.get(children.play_button).local_point = .{};
                         Toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
@@ -2651,6 +2663,18 @@ const Workspace = struct {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
                 const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g| @max(0, g.specific.executor.garland_appearing_t) else 1;
+
+                const camera_relative = camera.reparentCamera(lego.absolute_point);
+                // TODO: improve
+                const max_resolution = 2000;
+                if (camera_relative.intersect(lego.localBoundingBoxThatContainsSelfAndAllChildren()) == null or
+                    camera_relative.size.div(lego.localBoundingBoxThatContainsSelfAndAllChildren().size).normLInf() > max_resolution)
+                {
+                    it.skipChildren();
+                    _ = it.next();
+                    continue;
+                }
+
                 // TODO: don't draw if small or far from camera
                 if (step.children_already_visited) {
                     if (false and lego.specific.tag() == .sexpr) { // draw numbers
@@ -2670,14 +2694,12 @@ const Workspace = struct {
                             drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .fnkbox_box => {
-                            const relative_camera = camera.reparentCamera(lego.absolute_point);
-                            drawer.canvas.borderRect(relative_camera, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
+                            drawer.canvas.borderRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
                         },
                         else => {},
                     }
                 } else {
                     const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
-                    const camera_relative = camera.reparentCamera(lego.absolute_point);
                     switch (lego.specific) {
                         .sexpr => |sexpr| {
                             if (sexpr.emerging_value != .nothing) {

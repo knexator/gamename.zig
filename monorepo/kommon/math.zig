@@ -581,6 +581,13 @@ pub const Vec2 = extern struct {
         return dot(v, v);
     }
 
+    pub fn normLInf(v: Self) Scalar {
+        return @max(
+            @abs(v.x),
+            @abs(v.y),
+        );
+    }
+
     pub fn distTo(a: Self, b: Self) Scalar {
         return a.sub(b).mag();
     }
@@ -1071,6 +1078,7 @@ pub const Rect = extern struct {
     size: Vec2,
 
     pub const unit: Rect = .{ .top_left = .zero, .size = .one };
+    pub const infinite: Rect = .{ .top_left = .both(-std.math.inf(f32)), .size = .both(std.math.inf(f32)) };
 
     pub fn lerp(a: Rect, b: Rect, t: f32) Rect {
         return .{
