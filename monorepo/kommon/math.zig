@@ -1073,6 +1073,13 @@ pub const IBounds = struct {
     }
 };
 
+pub const Bounds = struct {
+    top: f32,
+    bottom: f32,
+    left: f32,
+    right: f32,
+};
+
 pub const Rect = extern struct {
     top_left: Vec2,
     size: Vec2,
@@ -1198,8 +1205,23 @@ pub const Rect = extern struct {
         return self.top_left.add(self.size.scale(0.5));
     }
 
-    pub fn fromCorners(top_left: Vec2, bottom_right: Vec2) Rect {
+    pub fn fromTopLeftAndBottomRight(top_left: Vec2, bottom_right: Vec2) Rect {
+        assert(top_left.x <= bottom_right.x);
+        assert(top_left.y <= bottom_right.y);
         return .{ .top_left = top_left, .size = bottom_right.sub(top_left) };
+    }
+
+    pub fn fromCorners(c1: Vec2, c2: Vec2) Rect {
+        return .fromTopLeftAndBottomRight(
+            .new(
+                @min(c1.x, c2.x),
+                @min(c1.y, c2.y),
+            ),
+            .new(
+                @max(c1.x, c2.x),
+                @max(c1.y, c2.y),
+            ),
+        );
     }
 
     pub fn fromRanges(x_range: [2]f32, y_range: [2]f32) Rect {
