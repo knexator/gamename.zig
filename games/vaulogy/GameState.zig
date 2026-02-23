@@ -1126,7 +1126,11 @@ pub const Lego = struct {
             else => .infinite,
             .sexpr => .fromCenterAndSize(.zero, .new(5, 2.5)),
             .testcase => Specific.Testcase.relative_bounding_box,
-            .fnkbox => Specific.FnkboxBox.relative_box,
+            .fnkbox_testcases => Specific.FnkboxBox.testcases_box,
+            .fnkbox => Specific.FnkboxBox.relative_box
+                // for the garland
+                .plusMargin3(.bottom, std.math.inf(f32))
+                .plusMargin3(.right, std.math.inf(f32)),
         };
     }
 };
@@ -2942,7 +2946,18 @@ const Workspace = struct {
                         .executor_crank => |crank| {
                             drawer.canvas.fillShape(camera_relative, .{ .turns = crank.value }, Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
                         },
-                        .executor_controls, .case, .garland, .microscope, .executor, .fnkbox, .testcase => {},
+                        .testcase => {
+                            // Don't draw testcases that will get clipped outside the testbox
+                            assert(lego.tree.parent.get().specific.tag() == .fnkbox_testcases);
+                            if (lego.local_point.applyToLocalRect(Lego.Specific.Testcase.relative_bounding_box)
+                                .intersect(Lego.Specific.FnkboxBox.testcases_box) == null)
+                            {
+                                it.skipChildren();
+                                _ = it.next();
+                                continue;
+                            }
+                        },
+                        .executor_controls, .case, .garland, .microscope, .executor, .fnkbox => {},
                     }
                 }
             }

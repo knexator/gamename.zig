@@ -1325,13 +1325,20 @@ pub const Rect = extern struct {
 
     pub fn plusMargin3(self: Rect, which: enum { left, right, top, bottom }, amount: f32) Rect {
         return switch (which) {
-            else => @panic("TODO"),
+            .right => .{
+                .top_left = self.top_left,
+                .size = self.size.addX(amount),
+            },
             .left => .{
                 .top_left = self.top_left.addX(-amount),
                 .size = self.size.addX(amount),
             },
             .top => .{
                 .top_left = self.top_left.addY(-amount),
+                .size = self.size.addY(amount),
+            },
+            .bottom => .{
+                .top_left = self.top_left,
                 .size = self.size.addY(amount),
             },
         };
