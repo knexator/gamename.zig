@@ -1015,8 +1015,8 @@ pub const Lego = struct {
             .postit_text,
             .executor_controls,
             => return null,
-            .executor_brake => .default,
-            .executor_crank => |crank| if (crank.enabled) .default else return null,
+            .executor_brake => .default_extrahitbox,
+            .executor_crank => |crank| if (crank.enabled) .default_extrahitbox else return null,
             .case => .default,
             .newcase => .new_case,
             .garland => .garland,
@@ -1179,6 +1179,7 @@ pub const Handle = struct {
         hitbox: f32,
 
         pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
+        pub const default_extrahitbox: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 };
         pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.5 };
         pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 };
         pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
