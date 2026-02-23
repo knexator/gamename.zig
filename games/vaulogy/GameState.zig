@@ -2621,7 +2621,7 @@ const Workspace = struct {
                     .testcase => {
                         const Testcase = Lego.Specific.Testcase;
                         const children = Testcase.children(cur);
-                        Toybox.get(children.input).local_point = .{ .pos = .new(-4, 0) };
+                        Toybox.get(children.input).local_point = Testcase.relative_input_point;
                         Toybox.get(children.expected).local_point = Testcase.relative_expected_point;
                         Toybox.get(children.actual).local_point = Testcase.relative_actual_point;
                         Toybox.get(children.play_button).local_point = .{};
