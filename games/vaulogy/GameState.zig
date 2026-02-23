@@ -1139,8 +1139,9 @@ pub const Lego = struct {
     }
 
     pub fn localBoundingBoxThatContainsSelfAndAllChildren(lego: *const Lego) Rect {
-        return switch (lego.specific.tag()) {
+        return switch (lego.specific) {
             else => .infinite,
+            .garland => |garland| if (garland.visible) .infinite else .{ .top_left = .zero, .size = .zero },
             .sexpr => .fromCenterAndSize(.zero, .new(5, 2.5)),
             .testcase => Specific.Testcase.relative_bounding_box,
             .fnkbox_testcases => Specific.FnkboxBox.testcases_box,
@@ -3401,9 +3402,11 @@ const Workspace = struct {
                 else => false,
             };
             for (toybox.all_legos.items) |*lego| {
-                const in_toolbar = Toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
+                const part_of_toolbar_case = lego.tree.parent != .nothing and
+                    lego.tree.parent.get().specific.tag() == .case and
+                    Toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
                 if (lego.specific.as(.garland)) |garland| {
-                    garland.visible = !in_toolbar and (grabbing_garland_or_case or lego.tree.first != .nothing);
+                    garland.visible = !part_of_toolbar_case and (grabbing_garland_or_case or lego.tree.first != lego.tree.last);
                 }
             }
         }
