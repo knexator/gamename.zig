@@ -1201,8 +1201,13 @@ pub const Toybox = struct {
         self.all_legos_arena.deinit();
     }
 
+    pub fn OoM() noreturn {
+        std.debug.panic("OoM", .{});
+    }
+
     pub fn new(local_point: Point, specific: Lego.Specific) !*Lego {
-        const result = try toybox.all_legos.addOne(toybox.all_legos_arena.allocator());
+        if (toybox.all_legos.items.len >= std.math.maxInt(i31)) OoM();
+        const result = toybox.all_legos.addOne(toybox.all_legos_arena.allocator()) catch OoM();
         result.* = .{
             .index = @enumFromInt(toybox.all_legos.items.len - 1),
             .exists = true,
