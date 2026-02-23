@@ -1985,7 +1985,7 @@ const Workspace = struct {
 
         try dst.regenerateToolbarLeft();
 
-        if (true) {
+        if (false) {
             Toybox.addChildLast(
                 dst.fnkboxes_layer,
                 try Toybox.buildFnkbox(
@@ -2099,7 +2099,7 @@ const Workspace = struct {
             ));
         }
 
-        if (false) { // add levels
+        if (true) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
@@ -2144,6 +2144,36 @@ const Workspace = struct {
                 // }
                 x += if (k < 4) 25 else if (k == 4) 30 else 35;
             }
+        }
+
+        if (true) { // tutorial postits
+            var postit_pos: Vec2 = .new(40, -3);
+            dst.main_area.get().local_point = Point.inverseApplyGetLocal(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, .{});
+
+            const postit: struct {
+                main_area: Lego.Index,
+
+                pub fn addFromText(this: @This(), pos: Vec2, lines: []const []const u8) void {
+                    Toybox.addChildLast(this.main_area, blk: {
+                        const postit = try Toybox.new(
+                            .{ .pos = pos },
+                            .{ .postit = .{} },
+                        );
+
+                        for (lines, 0..) |line, k| {
+                            Toybox.addChildLast(postit.index, (try Toybox.new(
+                                .{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) },
+                                .{ .postit_text = .{ .text = line } },
+                            )).index);
+                        }
+
+                        break :blk postit.index;
+                    });
+                }
+            } = .{ .main_area = dst.main_area };
+
+            postit.addFromText(postit_pos, &.{ "Welcome", "to the lab!" });
+            postit_pos.addInPlace(.new(12, 4));
         }
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
