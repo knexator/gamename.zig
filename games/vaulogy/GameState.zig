@@ -199,6 +199,7 @@ pub const Lego = struct {
 
     pub const Specific = union(enum) {
         button: Button,
+        scrollbar: Scrollbar,
         area: Area,
         sexpr: Sexpr,
         case: Case,
@@ -285,6 +286,10 @@ pub const Lego = struct {
                     .launch_testcase, .see_failing_testcase => false,
                 };
             }
+        };
+
+        pub const Scrollbar = struct {
+            local_rect: Rect = undefined,
         };
 
         pub const Area = struct {
@@ -666,14 +671,16 @@ pub const Lego = struct {
             pub fn children(index: Lego.Index) struct {
                 description: Lego.Index,
                 status_bar: Lego.Index,
+                testcases_scrollbar: Lego.Index,
                 testcases_area: Lego.Index,
             } {
                 assert(Toybox.get(index).specific.tag() == .fnkbox_box);
-                const asdf = Toybox.getChildrenExact(3, index);
+                const asdf = Toybox.getChildrenExact(4, index);
                 return .{
                     .description = asdf[0],
                     .status_bar = asdf[1],
-                    .testcases_area = asdf[2],
+                    .testcases_scrollbar = asdf[2],
+                    .testcases_area = asdf[3],
                 };
             }
         };
@@ -994,6 +1001,7 @@ pub const Lego = struct {
             .area,
             .microscope,
             .button,
+            .scrollbar,
             .fnkbox_box,
             .fnkbox_description,
             .fnkbox_testcases,
@@ -1078,6 +1086,7 @@ pub const Lego = struct {
             .case,
             .postit,
             => true,
+            .scrollbar,
             .button,
             .executor_brake,
             .executor_crank,
@@ -1106,6 +1115,7 @@ pub const Lego = struct {
             .fnkbox,
             .executor_crank,
             .executor_brake,
+            .scrollbar,
             => true,
             .sexpr,
             .garland,
@@ -1783,7 +1793,7 @@ pub const Toybox = struct {
     }
 
     /// Children are:
-    /// - box with (description area, status bar, testcases area)
+    /// - box with (description area, status bar, testcases scroll bar, testcases area)
     /// - fnkname
     /// - executor
     pub fn buildFnkbox(
@@ -1807,6 +1817,11 @@ pub const Toybox = struct {
                 .action = .see_failing_testcase,
             },
         })).index);
+        Toybox.addChildLast(box.index, blk: {
+            const scrollbar = try Toybox.new(.{}, .{ .scrollbar = .{} });
+            std.log.err("TODO: scrollbar top/bottom", .{});
+            break :blk scrollbar.index;
+        });
         const fnkbox_testcases = try Toybox.new(.{}, .{
             .fnkbox_testcases = .{},
         });
@@ -2073,7 +2088,7 @@ const Workspace = struct {
             ));
         }
 
-        if (true) { // add levels
+        if (false) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
@@ -2216,6 +2231,13 @@ const Workspace = struct {
                             return .{ .hot = cur, .over_background = root };
                         }
                     },
+                    .scrollbar => |scrollbar| {
+                        if (step.children_already_visited and
+                            scrollbar.local_rect.contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
+                        {
+                            return .{ .hot = cur, .over_background = root };
+                        }
+                    },
                     .postit => {
                         if (!step.children_already_visited and
                             grabbing == .nothing and
@@ -2258,6 +2280,7 @@ const Workspace = struct {
                             .fnkbox_description,
                             .fnkbox_testcases,
                             .button,
+                            .scrollbar,
                             .executor,
                             .fnkbox_box,
                             .testcase,
@@ -2311,6 +2334,23 @@ const Workspace = struct {
 
                             lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
                                 .inverseApplyGetLocal(target), 0.6, delta_seconds);
+                        },
+                        .scrollbar => {
+                            const FnkboxBox = Lego.Specific.FnkboxBox;
+                            const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                            // TODO: simplify
+                            const handle_size: f32 = 1;
+                            const n_testcases = Toybox.childCount(lego.tree.next);
+                            const rect = Lego.Specific.FnkboxBox.testcases_box.withSize(.new(
+                                undefined,
+                                (1.0 / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size),
+                            ), .top_left)
+                                .move(.new(0.1, 0.6));
+                            lego.tree.next.get().specific.fnkbox_testcases.scroll_target = math.clamp(
+                                rect.localFromWorldPosition(local_pos).y,
+                                0,
+                                tof32(n_testcases -| FnkboxBox.visible_testcases),
+                            );
                         },
                         .executor_brake => |*brake| {
                             assert(interaction.dropzone == .nothing);
@@ -2640,6 +2680,15 @@ const Workspace = struct {
                         Toybox.get(children.play_button).local_point = .{};
                         Toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
                     },
+                    .scrollbar => |*scrollbar| {
+                        const FnkboxBox = Lego.Specific.FnkboxBox;
+                        // TODO: simplify
+                        const handle_size: f32 = 1;
+                        const n_testcases = Toybox.childCount(lego.tree.next);
+                        const cur_scroll = lego.tree.next.get().specific.fnkbox_testcases.scroll_visual;
+                        scrollbar.local_rect = FnkboxBox.testcases_box.withSize(.new(0.5, handle_size), .top_left).move(.new(0.1, 0.6))
+                            .move(.new(0, (cur_scroll / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size)));
+                    },
                     .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text => {},
                 }
             }
@@ -2909,6 +2958,10 @@ const Workspace = struct {
                                     }
                                 },
                             }
+                        },
+                        .scrollbar => |scrollbar| {
+                            drawer.canvas.fillRect(camera_relative, scrollbar.local_rect, COLORS.bg);
+                            drawer.canvas.borderRect(camera_relative, scrollbar.local_rect, math.lerp(0.05, 0.1, lego.hot_t), .inner, .black);
                         },
                         .fnkbox_testcases => {
                             const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
@@ -3302,6 +3355,7 @@ const Workspace = struct {
                 .fnkbox_box,
                 .fnkbox_testcases,
                 .button,
+                .scrollbar,
                 .testcase,
                 .postit,
                 .postit_text,
