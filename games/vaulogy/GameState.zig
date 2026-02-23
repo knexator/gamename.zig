@@ -1772,13 +1772,13 @@ pub const Toybox = struct {
     pub fn buildCase(local_point: Point, data: struct {
         pattern: Lego.Index,
         template: Lego.Index,
-        fnkname: Lego.Index,
+        fnkname: ?Lego.Index,
         next: ?Lego.Index,
     }) !Lego.Index {
         const result = try Toybox.new(local_point, .{ .case = .{} });
         Toybox.addChildLast(result.index, data.pattern);
         Toybox.addChildLast(result.index, data.template);
-        Toybox.addChildLast(result.index, data.fnkname);
+        Toybox.addChildLast(result.index, data.fnkname orelse try Toybox.buildSexpr(.{}, .empty, false));
         Toybox.addChildLast(result.index, data.next orelse try Toybox.buildGarland(local_point, &.{}));
         return result.index;
     }
@@ -2153,6 +2153,23 @@ const Workspace = struct {
             const postit: struct {
                 main_area: Lego.Index,
 
+                const DrawingPart = struct {
+                    point: Point,
+                    part: union(enum) {
+                        paragraph: []const []const u8,
+                        arrow,
+                        launch_testcase_button,
+                        piece_center,
+                    },
+                };
+
+                pub fn addFromParts(this: @This(), pos: Vec2, parts: []const DrawingPart) void {
+                    _ = this;
+                    _ = pos;
+                    _ = parts;
+                    std.log.err("TODO", .{});
+                }
+
                 pub fn addFromText(this: @This(), pos: Vec2, lines: []const []const u8) void {
                     Toybox.addChildLast(this.main_area, blk: {
                         const postit = try Toybox.new(
@@ -2174,6 +2191,144 @@ const Workspace = struct {
 
             postit.addFromText(postit_pos, &.{ "Welcome", "to the lab!" });
             postit_pos.addInPlace(.new(12, 4));
+            postit.addFromText(postit_pos, &.{ "Move around", "with WASD", "or Arrow Keys" });
+            postit_pos.addInPlace(.new(-15, 5));
+            postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Atoms ->" });
+            postit_pos.addInPlace(.new(4.5, 1.25));
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "a" },
+                false,
+            ));
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                .{ .atom_lit = "b" },
+                true,
+            ));
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(-2, 4)) },
+                .{ .atom_lit = "C" },
+                false,
+            ));
+            postit_pos.addInPlace(.new(5.5, 5.5));
+            postit.addFromText(postit_pos, &.{ "Right click to", "duplicate them" });
+            postit.addFromText(postit_pos.add(.new(6.5, 0.7)), &.{"Z to undo"});
+
+            postit_pos.addInPlace(.new(19, -14));
+            postit.addFromText(postit_pos, &.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" });
+            if (false) {
+                postit_pos.addInPlace(.new(7, 0));
+                postit.addFromText(postit_pos, &.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" });
+                Toybox.addChildLast(dst.main_area, Toybox.buildCase(.{ .pos = postit_pos.addY(5) }, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
+                    .fnkname = null,
+                    .next = null,
+                }));
+            }
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos, &.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" });
+            Toybox.addChildLast(dst.main_area, try Toybox.buildGarland(.{ .pos = postit_pos.addY(5) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
+                    .fnkname = null,
+                    .next = null,
+                }),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false),
+                    .fnkname = null,
+                    .next = null,
+                }),
+            }));
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new machine to", "solve each one." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromParts(postit_pos.addY(-2), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That box     ", "is the first", "assignment,", "already solved", "as an example." } } },
+                .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+            });
+            postit.addFromParts(postit_pos.add(.new(0.5, 4.5)), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "see it in action!" } } },
+                .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
+            });
+            // postit.addFromText(postit_pos.add(.new(0.5, 4.5)), &.{ "Click the '>'", "buttons to", "see it in action!" });
+            postit.addFromText(postit_pos.add(.new(3.5, 11.5)), &.{ "Use the crank", "and brake", "to control", "execution speed" });
+            postit_pos.addInPlace(.new(25, -2));
+            postit.addFromText(postit_pos, &.{"Your turn!"});
+            postit.addFromText(postit_pos.add(.new(0.5, 6.5)), &.{ "Click the", "'Unsolved!'", "button to see", "an example", "where the", "machine fails" });
+            postit.addFromText(postit_pos.add(.new(0.5, 6.5 * 2)), &.{ "and modify", "the machine", "to fix it" });
+            postit_pos.addInPlace(.new(25, 0));
+            postit_pos.addInPlace(.new(7, -6.1));
+            postit.addFromText(postit_pos, &.{ "You can create", "new pieces", "by duplicating", "existing ones" });
+            postit.addFromParts(postit_pos.addX(7), &.{
+                .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "(right click", "on the piece's", "circular center)" } } },
+                .{ .point = (Point{ .pos = .new(2, 3) }).rotateAround(.both(3), 0.35).moveAbs(.new(0, 1.5)), .part = .arrow },
+                .{ .point = .{ .pos = .new(3, 4.5) }, .part = .piece_center },
+            });
+            postit.addFromText(postit_pos.addX(7.5).addY(30), &.{ "You only need", "5 pieces!" });
+            postit.addFromParts(postit_pos.addX(1).addY(24), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That    ", "is a Wildcard,", "which matches", "with everything" } } },
+                .{ .point = .{ .pos = .new(4.5, 1.5) }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(25, 1));
+            postit.addFromText(postit_pos, &.{ "Use Wildcards", "to match", "any value", "and use it later" });
+            postit.addFromText(postit_pos.addX(7), &.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" });
+            postit.addFromText(postit_pos.addX(14), &.{ "Remember,", "right click", "to duplicate." });
+            postit.addFromText(postit_pos.addX(7).addY(Lego.Specific.FnkboxBox.box_height + 12), &.{ "Solve all the", "examples with", "a single piece!" });
+            postit_pos.addInPlace(.new(25, -1));
+            postit.addFromText(postit_pos, &.{ "Machines can", "invoke other", "machines" });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromParts(postit_pos.addY(0.6), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Each machine", "has its own", "\"name\"" } } },
+                .{ .point = .{ .pos = .new(0.9, 5.25), .turns = 0.25 }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That's the       ", "name of the first", "machine, the one", "that transforms", "'a' into 'A'" } } },
+                .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+            });
+            Toybox.addChildLast(dst.main_area, try Lego.Specific.Sexpr.buildFromOldCoreValue(
+                .{ .pos = postit_pos.add(.new(4, -2.5)), .scale = 0.5, .turns = 0.25 },
+                @import("levels_new.zig").levels[0].fnk_name,
+                false,
+            ));
+            postit.addFromParts(postit_pos.add(.new(1.5, 16.75)), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Placed there,", "it will invoke", "the machine", "with that name" } } },
+                .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(30 - 14, 0));
+            postit.addFromText(postit_pos, &.{ "Pieces can", "match with", "the result", "of other pieces" });
+            postit.addFromText(postit_pos.addX(7), &.{ "Try running", "the first two", "examples." });
+            postit.addFromText(postit_pos.addX(14).add(.new(4, 13)), &.{ "These 'nested'", "machines are", "the same as", "regular machines" });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos, &.{ "You can combine", "both tricks:", "invoke a machine", "and then match", "on its result" });
+            postit.addFromText(postit_pos.addX(7), &.{ "Study this", "solved", "assignment", "in detail." });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos, &.{ "You now know", "everything!" });
+            postit.addFromText(postit_pos.addX(7), &.{"Good luck."});
+
+            postit_pos.addInPlace(.new(35, 0));
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+
+            postit_pos.addInPlace(.new(35 * 6, 0));
+            postit_pos.addInPlace(.new(-7, -7));
+            postit.addFromText(postit_pos.addX(7), &.{ "The first example", "is an empty list." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "The second one", "is a list with only", "one element, 'a'." });
+            postit_pos.addInPlace(.new(-7, 7));
+            postit.addFromText(postit_pos.addX(7), &.{ "The third example", "is the list ['a', 'b']" });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "The next one", "is ['a', 'b', 'c']" });
+
+            postit_pos.addInPlace(.new(35 * 2, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
         }
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
