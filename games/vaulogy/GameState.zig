@@ -278,12 +278,16 @@ pub const Lego = struct {
 
         pub const Button = struct {
             local_rect: Rect,
-            action: enum { launch_testcase, see_failing_testcase },
+            action: enum { launch_testcase, see_failing_testcase, scroll_testcases_up, scroll_testcases_down },
             enabled: bool = true,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
-                    .launch_testcase, .see_failing_testcase => false,
+                    .launch_testcase,
+                    .see_failing_testcase,
+                    .scroll_testcases_up,
+                    .scroll_testcases_down,
+                    => false,
                 };
             }
         };
@@ -1042,10 +1046,8 @@ pub const Lego = struct {
     }
 
     fn draggable(lego: *const Lego) bool {
-        return switch (lego.specific) {
-            .button => false,
-            else => true,
-        };
+        _ = lego;
+        return true;
     }
 
     pub fn fromSpecific(comptime tag: Specific.Tag, pointer: *Specific.Tagged(tag)) *Lego {
@@ -1819,7 +1821,14 @@ pub const Toybox = struct {
         })).index);
         Toybox.addChildLast(box.index, blk: {
             const scrollbar = try Toybox.new(.{}, .{ .scrollbar = .{} });
-            std.log.err("TODO: scrollbar top/bottom", .{});
+            Toybox.addChildLast(scrollbar.index, (try Toybox.new(.{}, .{ .button = .{
+                .local_rect = .unit,
+                .action = .scroll_testcases_up,
+            } })).index);
+            Toybox.addChildLast(scrollbar.index, (try Toybox.new(.{}, .{ .button = .{
+                .local_rect = .unit,
+                .action = .scroll_testcases_down,
+            } })).index);
             break :blk scrollbar.index;
         });
         const fnkbox_testcases = try Toybox.new(.{}, .{
@@ -2335,6 +2344,15 @@ const Workspace = struct {
                             lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
                                 .inverseApplyGetLocal(target), 0.6, delta_seconds);
                         },
+                        .button => |button| switch (button.action) {
+                            else => {},
+                            .scroll_testcases_up => {
+                                lego.tree.parent.get().tree.next.get().specific.fnkbox_testcases.scroll_target -= delta_seconds / 0.2;
+                            },
+                            .scroll_testcases_down => {
+                                lego.tree.parent.get().tree.next.get().specific.fnkbox_testcases.scroll_target += delta_seconds / 0.2;
+                            },
+                        },
                         .scrollbar => {
                             const FnkboxBox = Lego.Specific.FnkboxBox;
                             const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
@@ -2688,6 +2706,9 @@ const Workspace = struct {
                         const cur_scroll = lego.tree.next.get().specific.fnkbox_testcases.scroll_visual;
                         scrollbar.local_rect = FnkboxBox.testcases_box.withSize(.new(0.5, handle_size), .top_left).move(.new(0.1, 0.6))
                             .move(.new(0, (cur_scroll / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size)));
+
+                        lego.tree.first.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1);
+                        lego.tree.last.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1);
                     },
                     .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text => {},
                 }
@@ -2956,6 +2977,10 @@ const Workspace = struct {
                                         drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.7));
                                         try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
                                     }
+                                },
+                                .scroll_testcases_up, .scroll_testcases_down => {
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, lego.hot_t), .inner, .black);
                                 },
                             }
                         },
@@ -3292,6 +3317,7 @@ const Workspace = struct {
                                 const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
                                 try workspace.launchTestcase(testcase_index);
                             },
+                            .scroll_testcases_up, .scroll_testcases_down => {},
                         }
                     }
                 } else {
@@ -3612,6 +3638,7 @@ const Workspace = struct {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
+                        .scroll_testcases_up, .scroll_testcases_down => true,
                     };
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
