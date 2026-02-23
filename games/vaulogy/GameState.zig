@@ -2,6 +2,9 @@ pub const GameState = @This();
 pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
+// Causes of bugs:
+// - functions that take a pointer and allocate memory might invalidate that pointer
+
 const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
@@ -729,6 +732,7 @@ pub const Lego = struct {
             pub fn updateStatus(fnkbox: *Fnkbox, worspace: *Workspace, scratch: std.mem.Allocator) !void {
                 // TODO: improve somehow
                 const core = @import("core.zig");
+                const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
                 var all_fnks: core.FnkCollection = .init(scratch);
                 if (true) {
                     var cur = Toybox.get(worspace.fnkboxes_layer).tree.first;
@@ -739,13 +743,13 @@ pub const Lego = struct {
                         try all_fnks.putNoClobber(fnkname_value, definition);
                     }
                 }
-                const fnkname_value = try Toybox.get(children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
                 defer temp_mem.deinit();
                 var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
                 defer scoring_run.deinit(false);
                 // Update 'actual' values
-                var cur_testcase = FnkboxBox.children(children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).box).testcases_area.get().tree.first;
+                var cur_testcase = FnkboxBox.children(children(fnkbox_index).box).testcases_area.get().tree.first;
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     const t = Testcase.children(cur_testcase);
                     const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
@@ -770,7 +774,8 @@ pub const Lego = struct {
                 }
 
                 // Get the actual status
-                cur_testcase = FnkboxBox.children(children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).box).testcases_area.get().tree.first;
+                const box_index = children(fnkbox_index).box;
+                cur_testcase = FnkboxBox.children(box_index).testcases_area.get().tree.first;
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     const actual: Lego.Index = if (fnkbox.execution) |execution|
                         switch (execution.source) {
@@ -2074,7 +2079,7 @@ const Workspace = struct {
             defer pool.deinit();
             var scratch: std.heap.ArenaAllocator = .init(gpa);
             defer scratch.deinit();
-            const levels = @import("levels_new.zig").levels[0..10];
+            const levels = @import("levels_new.zig").levels;
             var x: f32 = 100;
             const Sexpr = Lego.Specific.Sexpr;
             for (levels, 0..) |level, k| {
@@ -2125,6 +2130,9 @@ const Workspace = struct {
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 try fnkbox.updateStatus(workspace, scratch);
             }
+            // if (lego.specific.tag() == .fnkbox) {
+            //     try lego.specific.fnkbox.updateStatus(workspace, scratch);
+            // }
         }
     }
 
