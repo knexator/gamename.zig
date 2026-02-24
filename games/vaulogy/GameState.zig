@@ -225,6 +225,11 @@ pub const Lego = struct {
         postit_text: struct {
             text: []const u8,
         },
+        postit_drawing: enum {
+            arrow,
+            launch_testcase_button,
+            piece_center,
+        },
         executor_controls: struct {
             pub fn brake(executor_controls: *const @This()) Lego.Index {
                 return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[0];
@@ -1013,6 +1018,7 @@ pub const Lego = struct {
             .testcase,
             .postit,
             .postit_text,
+            .postit_drawing,
             .executor_controls,
             => return null,
             .executor_brake => .default_extrahitbox,
@@ -1106,6 +1112,7 @@ pub const Lego = struct {
             .area,
             .testcase,
             .postit_text,
+            .postit_drawing,
             => unreachable,
         };
     }
@@ -1134,6 +1141,7 @@ pub const Lego = struct {
             .area,
             .testcase,
             .postit_text,
+            .postit_drawing,
             => unreachable,
         };
     }
@@ -2164,10 +2172,40 @@ const Workspace = struct {
                 };
 
                 pub fn addFromParts(this: @This(), pos: Vec2, parts: []const DrawingPart) void {
-                    _ = this;
-                    _ = pos;
-                    _ = parts;
-                    std.log.err("TODO", .{});
+                    Toybox.addChildLast(this.main_area, blk: {
+                        const postit = try Toybox.new(
+                            .{ .pos = pos },
+                            .{ .postit = .{} },
+                        );
+
+                        for (parts) |part| {
+                            const top_left: Point = .{ .pos = Lego.Specific.Postit.local_rect.top_left };
+                            const center = top_left.applyToLocalPoint(part.point);
+                            switch (part.part) {
+                                inline else => |_, tag| {
+                                    Toybox.addChildLast(postit.index, (try Toybox.new(
+                                        center,
+                                        .{ .postit_drawing = switch (tag) {
+                                            .paragraph => comptime unreachable,
+                                            .arrow => .arrow,
+                                            .piece_center => .piece_center,
+                                            .launch_testcase_button => .launch_testcase_button,
+                                        } },
+                                    )).index);
+                                },
+                                .paragraph => |lines| {
+                                    for (lines, 0..) |line, k| {
+                                        Toybox.addChildLast(postit.index, (try Toybox.new(
+                                            center.applyToLocalPoint(.{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) }),
+                                            .{ .postit_text = .{ .text = line } },
+                                        )).index);
+                                    }
+                                },
+                            }
+                        }
+
+                        break :blk postit.index;
+                    });
                 }
 
                 pub fn addFromText(this: @This(), pos: Vec2, lines: []const []const u8) void {
@@ -2462,6 +2500,7 @@ const Workspace = struct {
                     .fnkbox_description,
                     .testcase,
                     .postit_text,
+                    .postit_drawing,
                     .executor_controls,
                     .executor_brake,
                     .executor_crank,
@@ -2482,6 +2521,7 @@ const Workspace = struct {
                             .testcase,
                             .postit,
                             .postit_text,
+                            .postit_drawing,
                             .executor_controls,
                             => unreachable,
                             .case, .lens, .fnkbox, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
@@ -2897,7 +2937,7 @@ const Workspace = struct {
                         lego.tree.first.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1);
                         lego.tree.last.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1);
                     },
-                    .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text => {},
+                    .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -3137,7 +3177,49 @@ const Workspace = struct {
                         .postit_text => |postit_text| {
                             try drawer.canvas.drawText(0, camera_relative, postit_text.text, .centeredAt(.zero), 0.8, .black);
                         },
-
+                        .postit_drawing => |kind| {
+                            switch (kind) {
+                                .arrow => {
+                                    const center: Point = lego.absolute_point;
+                                    drawer.canvas.line(camera, &.{
+                                        center.applyToLocalPosition(.new(-0.5, 0)),
+                                        center.applyToLocalPosition(.new(0.5, 0)),
+                                        center.applyToLocalPosition(.new(0.0, 0.25)),
+                                        center.applyToLocalPosition(.new(0.5, 0)),
+                                        center.applyToLocalPosition(.new(0.0, -0.25)),
+                                    }, 0.1 * center.scale, .black);
+                                },
+                                .launch_testcase_button => {
+                                    const center: Point = lego.absolute_point;
+                                    const rect: Rect = .fromPoint(center, .center, .one);
+                                    drawer.canvas.borderRect(camera, rect, 0.05 * center.scale, .inner, .black);
+                                    const arrow_center = center.applyToLocalPoint(.{ .pos = .new(0.15, 0) });
+                                    drawer.canvas.line(camera, &.{
+                                        arrow_center.applyToLocalPosition(.new(-0.25, -0.25)),
+                                        arrow_center.applyToLocalPosition(.new(0, 0)),
+                                        arrow_center.applyToLocalPosition(.new(-0.25, 0.25)),
+                                    }, 0.05 * center.scale, .black);
+                                },
+                                .piece_center => {
+                                    const center: Point = lego.absolute_point;
+                                    drawer.canvas.line(camera, &.{
+                                        center.applyToLocalPosition(.new(-0.5, 0)),
+                                        center.applyToLocalPosition(.new(-0.2, 0)),
+                                    }, 0.05 * center.scale, .black);
+                                    drawer.canvas.line(camera, &.{
+                                        center.applyToLocalPosition(.new(0.2, 0)),
+                                        center.applyToLocalPosition(.new(0.5, 0)),
+                                    }, 0.05 * center.scale, .black);
+                                    drawer.canvas.strokeCircle(128, camera, center.pos, center.scale * 0.2, 0.05 * center.scale, .black);
+                                    const arc: [32]Vec2 = comptime funk.map(
+                                        Vec2.fromTurns,
+                                        &funk.linspace(-0.15, 0.15, 32, true),
+                                    );
+                                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(-1.5, 0) }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(1.5, 0), .turns = 0.5 }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                                },
+                            }
+                        },
                         .button => |button| {
                             switch (button.action) {
                                 .launch_testcase => {
@@ -3572,6 +3654,7 @@ const Workspace = struct {
                 .testcase,
                 .postit,
                 .postit_text,
+                .postit_drawing,
                 .executor_controls,
                 .executor_brake,
                 .executor_crank,
