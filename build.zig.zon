@@ -25,8 +25,8 @@
             .hash = "assetpack-0.1.0-5DA2dxhAAACUESRirVFQSYMT6XfF8zT9cfKQQfCUvBAe",
         },
         .zig_tracy = .{
-            .url = "git+https://github.com/cipharius/zig-tracy#fb0c7693726fc41a1d9e3ab2a897dc663d884584",
-            .hash = "zig_tracy-0.0.5-aOIqsQdyAADb7w5ji1KMsWBV6ek3SftSsY2yfTvUHycr",
+            .url = "git+https://github.com/cipharius/zig-tracy.git#22f290947ca272a4aea2a7e5b00ec29fb0c1a8d6",
+            .hash = "zig_tracy-0.0.5-aOIqsYFsAAB11_thqyvA3Gq_7vCruca5bAuTWgySlBEz",
         },
     },
     .paths = .{

@@ -1734,6 +1734,9 @@ pub const Toybox = struct {
     }
 
     pub fn refreshAbsolutePoints(roots: []const Lego.Index) void {
+        const zone = tracy.initZone(@src(), .{ .name = "refresh absolute points" });
+        defer zone.deinit();
+
         for (roots) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = next_preordered(cur, root).next) {
@@ -2375,6 +2378,9 @@ const Workspace = struct {
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
+        const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
+        defer zone.deinit();
+
         for (toybox.all_legos.items) |*lego| {
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 try fnkbox.updateStatus(workspace, scratch);
@@ -2401,6 +2407,9 @@ const Workspace = struct {
         }
     };
     fn findHotAndDropzone(workspace: *Workspace, absolute_needle_pos: Vec2) HotAndDropzone {
+        const zone = tracy.initZone(@src(), .{ .name = "find hot" });
+        defer zone.deinit();
+
         return _findHotAndDropzone(
             workspace.roots(.interactable).constSlice(),
             absolute_needle_pos,
@@ -2549,6 +2558,9 @@ const Workspace = struct {
     }
 
     fn updateSprings(workspace: *Workspace, roots_in_draw_order: []const Lego.Index, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+        const asdf = tracy.initZone(@src(), .{ .name = "updateSprings" });
+        defer asdf.deinit();
+
         for (roots_in_draw_order) |root| {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = Toybox.next_preordered(cur, root).next) {
@@ -2644,6 +2656,9 @@ const Workspace = struct {
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
+                        defer zone.deinit();
+
                         sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific.tag()) {
                             else => false,
                             .testcase, .fnkbox => true,
@@ -2682,6 +2697,7 @@ const Workspace = struct {
                         }
 
                         if (sexpr.emerging_value != .nothing) {
+                            if (true) @panic("asdfasdf");
                             const bindings = Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings);
                             const offset: Point = if (bindings.anim_t) |anim_t|
                                 if (sexpr.is_pattern)
@@ -2701,6 +2717,9 @@ const Workspace = struct {
                         }
                     },
                     .case => |case| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - case" });
+                        defer zone.deinit();
+
                         const offsets: [4]Point = .{
                             .{ .pos = .xneg },
                             .{ .pos = .xpos },
@@ -2714,6 +2733,9 @@ const Workspace = struct {
                         }
                     },
                     .garland => |*garland| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
+                        defer zone.deinit();
+
                         var a = Toybox.get(lego.tree.first);
                         var offset: f32 = 0;
                         while (true) {
@@ -2727,6 +2749,9 @@ const Workspace = struct {
                         garland.computed_height = offset;
                     },
                     .newcase => |*newcase| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - newcase" });
+                        defer zone.deinit();
+
                         const Garland = Lego.Specific.Garland;
 
                         const is_first = lego.tree.prev == .nothing;
@@ -2785,6 +2810,9 @@ const Workspace = struct {
                         if (Toybox.safeGet(maybe_child_case)) |case| case.local_point = .{ .pos = .new(0, newcase.length()) };
                     },
                     .fnkbox => {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox" });
+                        defer zone.deinit();
+
                         const Fnkbox = Lego.Specific.Fnkbox;
                         const children = Fnkbox.children(cur);
                         Toybox.get(children.fnkname).local_point = Fnkbox.relative_fnkname_point;
@@ -2792,6 +2820,9 @@ const Workspace = struct {
                         Toybox.get(children.box).local_point = .{};
                     },
                     .fnkbox_box => {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkboxbox" });
+                        defer zone.deinit();
+
                         // FIXME
                         const FnkboxBox = Lego.Specific.FnkboxBox;
                         const children = FnkboxBox.children(cur);
@@ -2801,6 +2832,9 @@ const Workspace = struct {
                         Toybox.get(children.testcases_area).local_point = .{};
                     },
                     .executor => |executor| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor" });
+                        defer zone.deinit();
+
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(cur);
                         Toybox.get(children.garland).local_point = Executor.relative_garland_point;
@@ -2895,8 +2929,10 @@ const Workspace = struct {
                         // TODO: prev_pills
                     },
                     .executor_controls => {},
-                    // FIXME NOW: review
                     .executor_brake => |*brake| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor_brake" });
+                        defer zone.deinit();
+
                         lego.local_point = .{};
                         brake.handle_pos = Lego.Specific.Executor.Controls.brakeHandlePath(brake.brake_t);
                     },
@@ -2905,6 +2941,9 @@ const Workspace = struct {
                         crank.handle_pos = .fromPolar(0.75, crank.value);
                     },
                     .fnkbox_testcases => |*fnkbox_testcases| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
+                        defer zone.deinit();
+
                         var k: usize = 0;
                         var cur_case: Lego.Index = lego.tree.first;
                         while (cur_case != .nothing) {
@@ -2917,6 +2956,9 @@ const Workspace = struct {
                         math.lerpTowards(&fnkbox_testcases.scroll_visual, fnkbox_testcases.scroll_target, .slow, delta_seconds);
                     },
                     .testcase => {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - testcase" });
+                        defer zone.deinit();
+
                         const Testcase = Lego.Specific.Testcase;
                         const children = Testcase.children(cur);
                         Toybox.get(children.input).local_point = Testcase.relative_input_point;
@@ -2926,6 +2968,9 @@ const Workspace = struct {
                         Toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
                     },
                     .scrollbar => |*scrollbar| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - testcase" });
+                        defer zone.deinit();
+
                         const FnkboxBox = Lego.Specific.FnkboxBox;
                         // TODO: simplify
                         const handle_size: f32 = 1;
@@ -2944,8 +2989,8 @@ const Workspace = struct {
     }
 
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
-        const asdf = tracy.initZone(@src(), .{ .name = "draw" });
-        defer asdf.deinit();
+        const zone = tracy.initZone(@src(), .{ .name = "draw" });
+        defer zone.deinit();
 
         const camera = Rect
             .fromCenterAndSize(.zero, .both(2))
@@ -3388,6 +3433,9 @@ const Workspace = struct {
                 }
             }
         } else { // INTERACTION
+            const zone = tracy.initZone(@src(), .{ .name = "interaction" });
+            defer zone.deinit();
+
             const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
             try workspace.undo_stack.ensureUnusedCapacity(32);
@@ -3623,47 +3671,54 @@ const Workspace = struct {
                 .default,
         );
 
-        // update _t
-        // Should technically be inside updateSprings,
-        // but I suspect this is faster (and simpler).
-        for (toybox.all_legos.items) |*lego| {
-            math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
-            math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
+        if (true) { // update _t
+            const zone = tracy.initZone(@src(), .{ .name = "update _t" });
+            defer zone.deinit();
 
-            switch (lego.specific) {
-                .sexpr => |*sexpr| {
-                    math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
-                },
-                .executor => |*executor| {
-                    math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
-                },
-                .area,
-                .case,
-                .newcase,
-                .garland,
-                .microscope,
-                .lens,
-                .fnkbox,
-                .fnkbox_description,
-                .fnkbox_box,
-                .fnkbox_testcases,
-                .button,
-                .scrollbar,
-                .testcase,
-                .postit,
-                .postit_text,
-                .postit_drawing,
-                .executor_controls,
-                .executor_brake,
-                .executor_crank,
-                => {},
+            // Should technically be inside updateSprings,
+            // but I suspect this is faster (and simpler).
+            for (toybox.all_legos.items) |*lego| {
+                math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
+                math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
+                math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
+                math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
+
+                switch (lego.specific) {
+                    .sexpr => |*sexpr| {
+                        math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
+                    },
+                    .executor => |*executor| {
+                        math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
+                    },
+                    .area,
+                    .case,
+                    .newcase,
+                    .garland,
+                    .microscope,
+                    .lens,
+                    .fnkbox,
+                    .fnkbox_description,
+                    .fnkbox_box,
+                    .fnkbox_testcases,
+                    .button,
+                    .scrollbar,
+                    .testcase,
+                    .postit,
+                    .postit_text,
+                    .postit_drawing,
+                    .executor_controls,
+                    .executor_brake,
+                    .executor_crank,
+                    => {},
+                }
             }
         }
 
         // TODO: a bit hacky
         if (true) { // set garlands visibility
+            const zone = tracy.initZone(@src(), .{ .name = "set garlands visibility" });
+            defer zone.deinit();
+
             const grabbing_garland_or_case: bool = if (workspace.grabbing.index == .nothing)
                 false
             else switch (Toybox.get(workspace.grabbing.index).specific) {
@@ -3681,6 +3736,9 @@ const Workspace = struct {
         }
 
         if (true) { // move camera and scroll stuff
+            const zone = tracy.initZone(@src(), .{ .name = "move camera" });
+            defer zone.deinit();
+
             const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.tag() == .fnkbox_testcases and Lego.Specific.FnkboxBox.testcases_box.contains(
@@ -3717,6 +3775,9 @@ const Workspace = struct {
         }
 
         if (true) { // open/close left toolbar, and regenerate its contents
+            const zone = tracy.initZone(@src(), .{ .name = "toolbar" });
+            defer zone.deinit();
+
             const old_t = workspace.toolbar_left_unfolded_t;
             math.lerpTowards(
                 &workspace.toolbar_left_unfolded_t,
@@ -3745,6 +3806,9 @@ const Workspace = struct {
         workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         if (true) { // start and advance fnkboxes animations
+            const zone = tracy.initZone(@src(), .{ .name = "fnkboxes animations" });
+            defer zone.deinit();
+
             try workspace.undo_stack.ensureUnusedCapacity(32);
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
@@ -3887,6 +3951,9 @@ const Workspace = struct {
         }
 
         if (true) { // start and advance executors animations
+            const zone = tracy.initZone(@src(), .{ .name = "executors animations" });
+            defer zone.deinit();
+
             try workspace.undo_stack.ensureUnusedCapacity(32);
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.executor)) |executor| {
@@ -3905,6 +3972,9 @@ const Workspace = struct {
         }
 
         if (true) { // enable/disable buttons and other things
+            const zone = tracy.initZone(@src(), .{ .name = "enable/disable buttons" });
+            defer zone.deinit();
+
             for (toybox.all_legos.items) |*lego| {
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
@@ -3925,6 +3995,9 @@ const Workspace = struct {
         }
 
         if (true) { // set lenses data
+            const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
+            defer zone.deinit();
+
             _ = workspace.arena_for_lenses_data.reset(.retain_capacity);
             const allocator = workspace.arena_for_lenses_data.allocator();
             const microscopes = try Toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
