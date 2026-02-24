@@ -575,6 +575,13 @@ pub const Lego = struct {
         pub const Pill = struct {
             next_pill: Lego.Index,
 
+            remaining_lifetime: f32 = std.math.inf(f32),
+            velocity: Vec2 = .zero,
+
+            pub fn alpha(pill: *const Pill) f32 {
+                return math.smoothstep(pill.remaining_lifetime, 0, 0.4);
+            }
+
             pub fn build(
                 pattern_point: Point,
                 old_first: Lego.Index,
@@ -3082,7 +3089,12 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
-                const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g| @max(0, g.specific.executor.garland_appearing_t) else 1;
+                const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g|
+                    @max(0, g.specific.executor.garland_appearing_t)
+                else if (Toybox.safeGet(Toybox.findAncestor(cur, .pill))) |p|
+                    p.specific.pill.alpha()
+                else
+                    1;
 
                 // TODO: improve
                 const max_resolution = 2000;
@@ -3745,6 +3757,7 @@ const Workspace = struct {
             // Should technically be inside updateSprings,
             // but I suspect this is faster (and simpler).
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
                 math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
                 math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
@@ -3756,6 +3769,14 @@ const Workspace = struct {
                     },
                     .executor => |*executor| {
                         math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
+                    },
+                    .pill => |*pill| {
+                        pill.remaining_lifetime -= delta_seconds;
+                        lego.local_point = lego.local_point.applyToLocalPoint(.{ .pos = pill.velocity.scale(delta_seconds) });
+                        if (pill.remaining_lifetime <= 0) {
+                            Toybox.pop(lego.index);
+                            Toybox.destroyFloating(lego.index);
+                        }
                     },
                     .area,
                     .case,
@@ -3771,7 +3792,6 @@ const Workspace = struct {
                     .scrollbar,
                     .testcase,
                     .postit,
-                    .pill,
                     .postit_text,
                     .postit_drawing,
                     .executor_controls,
@@ -4297,6 +4317,15 @@ const Workspace = struct {
                         }
                     }
                 }
+            }
+        }
+
+        if (executor.animation == null) {
+            var cur = executor.first_pill;
+            executor.first_pill = .nothing;
+            while (cur != .nothing) : (cur = cur.get().specific.pill.next_pill) {
+                cur.get().specific.pill.remaining_lifetime = 1;
+                cur.get().specific.pill.velocity = .new(-4, 0);
             }
         }
 
