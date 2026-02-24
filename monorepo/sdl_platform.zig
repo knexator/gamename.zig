@@ -188,7 +188,7 @@ pub fn main() !void {
         stuff.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
-        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (false and hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
     ));
     defer c.SDL_DestroyWindow(sdl_window);
 

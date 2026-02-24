@@ -1078,6 +1078,108 @@ pub const Bounds = struct {
     bottom: f32,
     left: f32,
     right: f32,
+
+    pub const infinite: Bounds = .{
+        .top = -std.math.inf(f32),
+        .left = -std.math.inf(f32),
+        .bottom = std.math.inf(f32),
+        .right = std.math.inf(f32),
+    };
+
+    pub const zero: Bounds = .{
+        .top = 0,
+        .left = 0,
+        .bottom = 0,
+        .right = 0,
+    };
+
+    pub fn valid(bounds: Bounds) bool {
+        return bounds.left <= bounds.right and bounds.top <= bounds.bottom and
+            !std.math.isNan(bounds.left) and
+            !std.math.isNan(bounds.right) and
+            !std.math.isNan(bounds.top) and
+            !std.math.isNan(bounds.bottom);
+    }
+
+    pub fn fromRect(rect: Rect) Bounds {
+        const result: Bounds = .{
+            .left = rect.top_left.x,
+            .top = rect.top_left.y,
+            .right = rect.top_left.x + rect.size.x,
+            .bottom = rect.top_left.y + rect.size.y,
+        };
+        assert(result.valid());
+        return result;
+    }
+
+    pub fn plusMargin3(self: Bounds, which: enum { left, right, top, bottom }, amount: f32) Bounds {
+        var result = self;
+        switch (which) {
+            inline else => |t| @field(result, @tagName(t)) += amount,
+        }
+        assert(result.valid());
+        return result;
+    }
+
+    fn guardNan(v: f32, comptime sign: enum { pos, neg }) f32 {
+        if (std.math.isNan(v)) {
+            return switch (sign) {
+                .pos => std.math.inf(f32),
+                .neg => -std.math.inf(f32),
+            };
+        } else return v;
+    }
+
+    pub fn boundingPoints(points: []const Vec2) Bounds {
+        assert(points.len > 0);
+        var top = guardNan(points[0].y, .neg);
+        var bottom = guardNan(points[0].y, .pos);
+        var left = guardNan(points[0].x, .neg);
+        var right = guardNan(points[0].x, .pos);
+        for (points[1..]) |p| {
+            top = @min(top, guardNan(p.y, .neg));
+            bottom = @max(bottom, guardNan(p.y, .pos));
+            left = @min(left, guardNan(p.x, .neg));
+            right = @max(right, guardNan(p.x, .pos));
+        }
+        const result: Bounds = .{
+            .top = top,
+            .bottom = bottom,
+            .left = left,
+            .right = right,
+        };
+        assert(result.valid());
+        return result;
+    }
+
+    pub fn size(bounds: Bounds) Vec2 {
+        assert(bounds.valid());
+        return .new(bounds.right - bounds.left, bounds.bottom - bounds.top);
+    }
+
+    pub fn topLeft(bounds: Bounds) Vec2 {
+        return .new(bounds.left, bounds.top);
+    }
+
+    pub fn bottomRight(bounds: Bounds) Vec2 {
+        return .new(bounds.right, bounds.bottom);
+    }
+
+    pub fn intersect(a: Bounds, b: Bounds) ?Bounds {
+        const left = @max(a.left, b.left);
+        const right = @min(a.right, b.right);
+        const top = @max(a.top, b.top);
+        const bottom = @min(a.bottom, b.bottom);
+
+        if (left >= right or top >= bottom) {
+            return null;
+        } else return .{
+            .top = top,
+            .bottom = bottom,
+            .left = left,
+            .right = right,
+        };
+    }
 };
 
 pub const Rect = extern struct {
@@ -1085,7 +1187,10 @@ pub const Rect = extern struct {
     size: Vec2,
 
     pub const unit: Rect = .{ .top_left = .zero, .size = .one };
-    pub const infinite: Rect = .{ .top_left = .both(-std.math.inf(f32)), .size = .both(std.math.inf(f32)) };
+
+    pub fn asBounds(rect: Rect) Bounds {
+        return .fromRect(rect);
+    }
 
     pub fn lerp(a: Rect, b: Rect, t: f32) Rect {
         return .{
@@ -2011,10 +2116,21 @@ pub const Point = extern struct {
     }
 
     pub fn applyToLocalRect(parent: Point, local: Rect) Rect {
+        // if (parent.turns != 0) std.log.err("ojo: rotando rect!");
+        assert(parent.turns == 0);
         return .fromCorners(
             parent.applyToLocalPosition(local.top_left),
             parent.applyToLocalPosition(local.get(.bottom_right)),
         );
+    }
+
+    pub fn applyToLocalBounds(parent: Point, local: Bounds) Bounds {
+        return .boundingPoints(&.{
+            parent.applyToLocalPosition(.new(local.left, local.top)),
+            parent.applyToLocalPosition(.new(local.right, local.top)),
+            parent.applyToLocalPosition(.new(local.left, local.bottom)),
+            parent.applyToLocalPosition(.new(local.right, local.bottom)),
+        });
     }
 
     pub fn expectApproxEqRel(expected: Point, actual: Point, tolerance: anytype) !void {

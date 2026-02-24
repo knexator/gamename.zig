@@ -1146,14 +1146,14 @@ pub const Lego = struct {
         };
     }
 
-    pub fn localBoundingBoxThatContainsSelfAndAllChildren(lego: *const Lego) Rect {
+    pub fn localBoundingBoxThatContainsSelfAndAllChildren(lego: *const Lego) Bounds {
         return switch (lego.specific) {
             else => .infinite,
-            .garland => |garland| if (garland.visible) .infinite else .{ .top_left = .zero, .size = .zero },
-            .sexpr => .fromCenterAndSize(.zero, .new(5, 2.5)),
-            .testcase => Specific.Testcase.relative_bounding_box,
-            .fnkbox_testcases => Specific.FnkboxBox.testcases_box,
-            .fnkbox => Specific.FnkboxBox.relative_box
+            .garland => |garland| if (garland.visible) .infinite else .zero,
+            .sexpr => .fromRect(.fromCenterAndSize(.zero, .new(5, 2.5))),
+            .testcase => .fromRect(Specific.Testcase.relative_bounding_box),
+            .fnkbox_testcases => .fromRect(Specific.FnkboxBox.testcases_box),
+            .fnkbox => Bounds.fromRect(Specific.FnkboxBox.relative_box)
                 // for the garland
                 .plusMargin3(.bottom, std.math.inf(f32))
                 .plusMargin3(.right, std.math.inf(f32)),
@@ -3023,18 +3023,19 @@ const Workspace = struct {
                 const lego = Toybox.get(cur);
                 const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g| @max(0, g.specific.executor.garland_appearing_t) else 1;
 
-                const camera_relative = camera.reparentCamera(lego.absolute_point);
                 // TODO: improve
                 const max_resolution = 2000;
-                if (camera_relative.intersect(lego.localBoundingBoxThatContainsSelfAndAllChildren()) == null or
-                    camera_relative.size.div(lego.localBoundingBoxThatContainsSelfAndAllChildren().size).normLInf() > max_resolution)
+                const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
+                const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
+                if (camera.asBounds().intersect(absolute_bounds) == null or
+                    camera.size.div(absolute_bounds.size()).normLInf() > max_resolution)
                 {
                     it.skipChildren();
                     _ = it.next();
                     continue;
                 }
 
-                // TODO: don't draw if small or far from camera
+                const camera_relative = camera.reparentCamera(lego.absolute_point);
                 if (step.children_already_visited) {
                     if (false and lego.specific.tag() == .sexpr) { // draw numbers
                         try drawer.canvas.drawText(
@@ -4472,6 +4473,7 @@ const tof32 = math.tof32;
 const Color = math.UColor;
 const FColor = math.FColor;
 const Rect = math.Rect;
+const Bounds = math.Bounds;
 const Point = math.Point;
 const Vec2 = math.Vec2;
 const UVec2 = math.UVec2;
