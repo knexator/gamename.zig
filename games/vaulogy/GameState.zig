@@ -207,6 +207,7 @@ pub const Lego = struct {
         /// cable between cases, and the handle to create new ones
         newcase: NewCase,
         executor: Executor,
+        pill: Pill,
         fnkbox: Fnkbox,
         fnkbox_box: FnkboxBox,
         testcase: Testcase,
@@ -461,12 +462,29 @@ pub const Lego = struct {
             const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
             const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
 
-            pub fn children(index: Lego.Index) struct {
+            const Children = struct {
                 pattern: Lego.Index,
                 template: Lego.Index,
                 fnkname: Lego.Index,
                 next: Lego.Index,
-            } {
+            };
+
+            pub fn destroyForParts(index: Lego.Index, undo_stack: *Workspace.UndoStack) Children {
+                const result = children(index);
+                Toybox.popWithUndoAndChangingCoords(result.pattern, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(result.template, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(result.fnkname, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(result.next, undo_stack);
+
+                if (index.get().tree.parent != .nothing) {
+                    Toybox.popWithUndo(index, undo_stack);
+                }
+                Toybox.destroyFloatingWithUndo(index, undo_stack);
+
+                return result;
+            }
+
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .case);
                 const asdf = Toybox.getChildrenExact(4, index);
                 return .{
@@ -554,6 +572,35 @@ pub const Lego = struct {
             }
         };
 
+        pub const Pill = struct {
+            next_pill: Lego.Index,
+
+            pub fn build(
+                pattern_point: Point,
+                old_first: Lego.Index,
+                data: struct {
+                    pattern: Lego.Index,
+                    input: Lego.Index,
+                    fnkname_call: Lego.Index,
+                    // TODO
+                    // fnkname_response: Lego.Index,
+                    // TODO
+                    // bindings: []const Binding,
+                },
+            ) !Lego.Index {
+                const result = try Toybox.new(pattern_point, .{
+                    .pill = .{ .next_pill = old_first },
+                });
+
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.pattern);
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.input);
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_call);
+                // Toybox.addChildLastWithoutChangingCoords(result.index, data.fnkname_response);
+
+                return result.index;
+            }
+        };
+
         pub const Executor = struct {
             controlled_by_parent_fnkbox: bool,
             animation: ?struct {
@@ -569,6 +616,7 @@ pub const Lego = struct {
                 // paused: bool = false,
             } = null,
             first_enqueued: Lego.Index = .nothing,
+            first_pill: Lego.Index = .nothing,
             garland_appearing_t: f32 = 1,
 
             const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
@@ -1016,6 +1064,7 @@ pub const Lego = struct {
             .fnkbox_testcases,
             .executor,
             .testcase,
+            .pill,
             .postit,
             .postit_text,
             .postit_drawing,
@@ -1111,6 +1160,7 @@ pub const Lego = struct {
             .newcase,
             .area,
             .testcase,
+            .pill,
             .postit_text,
             .postit_drawing,
             => unreachable,
@@ -1140,6 +1190,7 @@ pub const Lego = struct {
             .newcase,
             .area,
             .testcase,
+            .pill,
             .postit_text,
             .postit_drawing,
             => unreachable,
@@ -1239,6 +1290,7 @@ pub const Toybox = struct {
             .index = @enumFromInt(toybox.all_legos.items.len - 1),
             .exists = true,
             .local_point = local_point,
+            .absolute_point = local_point,
             .specific = specific,
         };
         return result;
@@ -1251,6 +1303,11 @@ pub const Toybox = struct {
     pub fn safeGet(index: Lego.Index) ?*Lego {
         if (index == .nothing) return null;
         return get(index);
+    }
+
+    pub fn addChildLastWithoutChangingAbsPoint(parent: Lego.Index, new_child: Lego.Index) void {
+        addChildLast(parent, new_child);
+        changeCoordinates(new_child, .{}, parent.get().absolute_point);
     }
 
     pub fn addChildLast(parent: Lego.Index, new_child: Lego.Index) void {
@@ -1748,10 +1805,12 @@ pub const Toybox = struct {
 
     pub fn changeCoordinates(index: Lego.Index, old_parent: Point, new_parent: Point) void {
         Toybox.get(index).local_point = new_parent.inverseApplyGetLocal(old_parent.applyToLocalPoint(Toybox.get(index).local_point));
+        Toybox.refreshAbsolutePoints(&.{index});
     }
 
     pub fn setAbsolutePoint(index: Lego.Index, abs_point: Point) void {
         Toybox.get(index).local_point = Toybox.parentAbsolutePoint(index).inverseApplyGetLocal(abs_point);
+        Toybox.refreshAbsolutePoints(&.{index});
     }
 
     pub fn buildSexpr(local_point: Point, value: union(Lego.Specific.Sexpr.Kind) {
@@ -1996,7 +2055,7 @@ const Workspace = struct {
 
         try dst.regenerateToolbarLeft();
 
-        if (false) {
+        if (true) {
             Toybox.addChildLast(
                 dst.fnkboxes_layer,
                 try Toybox.buildFnkbox(
@@ -2110,7 +2169,7 @@ const Workspace = struct {
             ));
         }
 
-        if (true) { // add levels
+        if (false) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
@@ -2508,6 +2567,7 @@ const Workspace = struct {
                     .fnkbox_box,
                     .fnkbox_description,
                     .testcase,
+                    .pill,
                     .postit_text,
                     .postit_drawing,
                     .executor_controls,
@@ -2528,6 +2588,7 @@ const Workspace = struct {
                             .executor,
                             .fnkbox_box,
                             .testcase,
+                            .pill,
                             .postit,
                             .postit_text,
                             .postit_drawing,
@@ -2982,7 +3043,7 @@ const Workspace = struct {
                         lego.tree.first.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1);
                         lego.tree.last.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1);
                     },
-                    .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -3034,6 +3095,11 @@ const Workspace = struct {
                     _ = it.next();
                     continue;
                 }
+
+                // if (lego.specific.tag() == .pill) {
+                //     // std.log.debug("abs pos: {any}", .{lego.absolute_point});
+                //     std.log.debug("abs pos of first child: {any}", .{lego.tree.first.get().absolute_point});
+                // }
 
                 const camera_relative = camera.reparentCamera(lego.absolute_point);
                 if (step.children_already_visited) {
@@ -3363,7 +3429,7 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .executor_controls, .case, .garland, .microscope, .executor, .fnkbox => {},
+                        .executor_controls, .case, .garland, .microscope, .executor, .fnkbox, .pill => {},
                     }
                 }
             }
@@ -3705,6 +3771,7 @@ const Workspace = struct {
                     .scrollbar,
                     .testcase,
                     .postit,
+                    .pill,
                     .postit_text,
                     .postit_drawing,
                     .executor_controls,
@@ -3894,7 +3961,7 @@ const Workspace = struct {
                                         // fnkbox.testcases.items[testcase_index].actual = execution.final_result;
 
                                         const new_actual = final_result;
-                                        Toybox.changeCoordinates(new_actual, Toybox.get(executor_index).absolute_point, Toybox.get(testcase).absolute_point);
+                                        Toybox.changeCoordinates(new_actual, Toybox.parentAbsolutePoint(final_result), Toybox.get(testcase).absolute_point);
                                         Toybox.pop(new_actual);
 
                                         const old_actual = Lego.Specific.Testcase.children(testcase).actual;
@@ -3905,6 +3972,7 @@ const Workspace = struct {
                                             .original = new_actual,
                                         } });
                                         fnkbox.execution = null;
+                                        Toybox.refreshAbsolutePoints(&.{new_actual});
 
                                         // TODO: call this somewhere else
                                         try fnkbox.updateStatus(workspace, scratch);
@@ -4092,17 +4160,6 @@ const Workspace = struct {
             animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
             if (animation.t >= 1) {
                 if (animation.matching) {
-                    // TODO
-                    // try executor.prev_pills.append(mem.gpa, .{
-                    //     .pattern = animation.active_case.pattern,
-                    //     .input = executor.input,
-                    //     .fnkname_call = animation.active_case.fnk_name,
-                    //     .fnkname_response = animation.garland_fnkname,
-                    //     // TODO: should include previous bindings? not really, since they have now been merged
-                    //     .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
-                    // });
-
-                    // TODO
                     if (true) { // fill variables
                         var cur = animation.active_case;
                         while (cur != .nothing) : (cur = Toybox.next_preordered(cur, animation.active_case).next) {
@@ -4113,24 +4170,29 @@ const Workspace = struct {
                             }
                         }
                     }
-                    // try animation.active_case.fillVariables(animation.new_bindings, mem);
 
-                    const next_garland = animation.active_case.case().next;
-                    const old_active_case = animation.active_case;
+                    const old_case_parts = Lego.Specific.Case.destroyForParts(animation.active_case, undo_stack);
                     const old_input = Executor.children(executor_index).input;
                     const old_garland = Executor.children(executor_index).garland;
-
-                    const new_input = Lego.Specific.Case.children(old_active_case).template;
-                    Toybox.popWithUndoAndChangingCoords(new_input, undo_stack);
+                    const next_garland = old_case_parts.next;
 
                     Toybox.changeChildWithUndoAndAlsoCoords(
                         old_input,
-                        new_input,
+                        old_case_parts.template,
                         undo_stack,
                     );
 
-                    Toybox.popWithUndo(old_active_case, undo_stack);
-                    Toybox.destroyFloatingWithUndo(old_active_case, undo_stack);
+                    executor.first_pill = try Lego.Specific.Pill.build(old_case_parts.pattern.get().absolute_point, executor.first_pill, .{
+                        .pattern = old_case_parts.pattern,
+                        .input = old_input,
+                        .fnkname_call = old_case_parts.fnkname,
+                        // TODO
+                        // .fnkname_response = animation.garland_fnkname,
+                        // TODO
+                        // TODO: should include previous bindings? not really, since they have now been merged
+                        // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
+                    });
+                    Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill);
 
                     const new_garland = blk: {
                         // TODO
