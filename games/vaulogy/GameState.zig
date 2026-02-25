@@ -3055,7 +3055,20 @@ const Workspace = struct {
                             Toybox.get(children.input).local_point = Executor.relative_input_point;
                         }
 
-                        // TODO: prev_pills
+                        if (true) { // update pills
+                            var pill = executor.first_pill;
+                            var k: usize = 0;
+                            while (pill != .nothing) : ({
+                                pill = pill.get().specific.pill.next_pill;
+                                k += 1;
+                            }) {
+                                Toybox.setAbsolutePoint(pill, lego.absolute_point.applyToLocalPoint(
+                                    Executor.relative_input_point.applyToLocalPoint(
+                                        .{ .pos = .new(-5 * (tof32(k) + pill_offset) - 2, 0) },
+                                    ),
+                                ));
+                            }
+                        }
                     },
                     .executor_controls => {},
                     .executor_brake => |*brake| {
