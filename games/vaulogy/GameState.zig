@@ -557,6 +557,26 @@ pub const Lego = struct {
                 }
                 return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch));
             }
+
+            /// 0 -> default point
+            /// 0...1 rotating
+            /// 1 -> enqueued
+            fn extraForDequeuingNext(enqueueing_t: f32) Point {
+                return .{
+                    .pos = .new(enqueueing_t * 6, -3 * math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
+                    .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 0.7, .easeInOutCubic)),
+                };
+            }
+
+            /// same as extraForDequeuingNext but applied from a case (so it has to climb more, for example)
+            fn extraForEnqueuingNext(enqueueing_t: f32) Point {
+                assert(math.in01(enqueueing_t));
+                return .{
+                    .pos = .new(enqueueing_t * 4, (-3 - Case.next_garland_offset.y - Garland.dist_between_cases_first) *
+                        math.smoothstepEased(enqueueing_t, 0, 0.35, .easeInOutCubic)),
+                    .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0.0, 0.3, .easeInOutCubic)),
+                };
+            }
         };
 
         pub const NewCase = struct {
@@ -2090,14 +2110,34 @@ const Workspace = struct {
                     try Toybox.buildGarland(.{}, &.{
                         try Toybox.buildCase(.{}, .{
                             .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, true),
-                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false),
-                            .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
-                            .next = null,
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, false),
+                            .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                            .next = try Toybox.buildGarland(.{}, &.{
+                                try Toybox.buildCase(.{}, .{
+                                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true),
+                                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false),
+                                    .fnkname = null,
+                                    .next = null,
+                                }),
+                            }),
                         }),
                         try Toybox.buildCase(.{}, .{
                             .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, true),
-                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
-                            .fnkname = try Toybox.buildSexpr(.{}, .empty, false),
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "C" }, false),
+                            .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false),
+                            .next = try Toybox.buildGarland(.{}, &.{
+                                try Toybox.buildCase(.{}, .{
+                                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true),
+                                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
+                                    .fnkname = null,
+                                    .next = null,
+                                }),
+                            }),
+                        }),
+                        try Toybox.buildCase(.{}, .{
+                            .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "C" }, true),
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false),
+                            .fnkname = null,
                             .next = null,
                         }),
                     }),
@@ -2928,12 +2968,18 @@ const Workspace = struct {
                                 Toybox.get(children.input).local_point = Executor.relative_input_point;
                                 // TODO
                                 // if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
-                                // FIXME NOW
-                                // for (executor.enqueued_stack.items, 0..) |*x, k| {
-                                //     x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(
-                                //         extraForDequeuingNext(tof32(executor.enqueued_stack.items.len - k - 1) + 1),
-                                //     ), null, delta_seconds);
-                                // }
+                                if (true) { // update enqueued garlands
+                                    var enqueued = executor.first_enqueued;
+                                    var k: usize = 0;
+                                    while (enqueued != .nothing) : ({
+                                        enqueued = enqueued.get().specific.garland.next_enqueued;
+                                        k += 1;
+                                    }) {
+                                        Toybox.setAbsolutePoint(enqueued, lego.absolute_point.applyToLocalPoint(Executor.relative_garland_point.applyToLocalPoint(
+                                            Lego.Specific.Garland.extraForDequeuingNext(tof32(k + 1)),
+                                        )));
+                                    }
+                                }
                             } else { // match succeeded
                                 const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
                                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
@@ -2962,29 +3008,44 @@ const Workspace = struct {
 
                                     Toybox.setAbsolutePoint(animation.invoked_fnk, function_point);
 
-                                    // TODO
-                                    // animation.active_case.kinematicUpdate(
-                                    //     case_point,
-                                    //     extraForEnqueuingNext(enqueueing_t),
-                                    //     .{ .pos = .new(-invoking_t * 4, 0) },
-                                    //     delta_seconds,
-                                    // );
-                                    // Toybox.get(animation.active_case).specific.case.next_point_extra = extraForEnqueuingNext(enqueueing_t);
+                                    Toybox.get(animation.active_case).specific.case.next_point_extra = Lego.Specific.Garland.extraForEnqueuingNext(enqueueing_t);
                                     Toybox.get(animation.active_case).specific.case.fnk_name_extra = .{ .pos = .new(-invoking_t * 4, 0) };
                                     Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
 
-                                    // TODO
-                                    // const enqueueing = animation.active_case.next.cases.items.len > 0;
-                                    // for (executor.enqueued_stack.items, 0..) |*x, k| {
-                                    //     x.garland.kinematicUpdate(executor.garlandPoint()
-                                    //         .applyToLocalPoint(extraForDequeuingNext(1 + tof32(executor.enqueued_stack.items.len - k - 1) + if (enqueueing) enqueueing_t else 0)), null, delta_seconds);
-                                    // }
+                                    const enqueueing = animation.active_case.case().next.garland().hasChildCases();
+                                    if (true) { // update enqueued garlands
+                                        var enqueued = executor.first_enqueued;
+                                        var k: usize = 0;
+                                        while (enqueued != .nothing) : ({
+                                            enqueued = enqueued.get().specific.garland.next_enqueued;
+                                            k += 1;
+                                        }) {
+                                            Toybox.setAbsolutePoint(enqueued, lego.absolute_point.applyToLocalPoint(Executor.relative_garland_point.applyToLocalPoint(
+                                                Lego.Specific.Garland.extraForDequeuingNext(tof32(k + 1) + if (enqueueing) enqueueing_t else 0),
+                                            )));
+                                        }
+                                    }
                                 } else {
                                     Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
                                     Toybox.get(animation.active_case).specific.case.next_point_extra = .{
                                         .pos = .new(-enqueueing_t * 2, -(Lego.Specific.Case.next_garland_offset.y + Lego.Specific.Garland.dist_between_cases_first) *
                                             math.smoothstep(enqueueing_t, 0, 0.6)),
                                     };
+                                    Toybox.get(animation.active_case).specific.case.fnk_name_extra = .{ .pos = .new(-invoking_t * 4, 0) };
+
+                                    const dequeueing = !animation.active_case.case().next.garland().hasChildCases();
+                                    if (true) { // update enqueued garlands
+                                        var enqueued = executor.first_enqueued;
+                                        var k: usize = 0;
+                                        while (enqueued != .nothing) : ({
+                                            enqueued = enqueued.get().specific.garland.next_enqueued;
+                                            k += 1;
+                                        }) {
+                                            Toybox.setAbsolutePoint(enqueued, lego.absolute_point.applyToLocalPoint(Executor.relative_garland_point.applyToLocalPoint(
+                                                Lego.Specific.Garland.extraForDequeuingNext(tof32(k + 1) - if (dequeueing) enqueueing_t else 0),
+                                            )));
+                                        }
+                                    }
                                 }
                                 Toybox.get(children.input).local_point = Executor.relative_input_point.applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
                                 // TODO
@@ -4223,6 +4284,7 @@ const Workspace = struct {
                                 // Toybox.get(next_garland).specific.garland.enqueued_parent_pill_index = ??;
                                 Toybox.get(next_garland).specific.garland.next_enqueued = executor.first_enqueued;
                                 executor.first_enqueued = next_garland;
+                                Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, next_garland);
                             }
                             break :blk animation.invoked_fnk;
                         } else if (next_garland.garland().hasChildCases()) {
