@@ -4049,11 +4049,18 @@ const Workspace = struct {
                                         ),
                                         execution.state_t,
                                     );
-                                    // TODO: also lerp the testcases scroll
+
+                                    if (true) { // focus on the testcase
+                                        const offset_from_top: f32 = (Toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
+                                        const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
+                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scroll_target;
+                                        const target_scroll = scroll.* + offset_error;
+                                        math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
+                                        math.towards(scroll, target_scroll, 0.1 * delta_seconds);
+                                    }
+
                                     execution.state_t += delta_seconds / 0.8;
                                     if (execution.state_t >= 1) {
-                                        // fnkbox.testcases.items[testcase_index].actual = execution.final_result;
-
                                         const new_actual = final_result;
                                         Toybox.changeCoordinates(new_actual, Toybox.parentAbsolutePoint(final_result), Toybox.get(testcase).absolute_point);
                                         Toybox.pop(new_actual);
