@@ -11,6 +11,9 @@ pub const tracy = @import("tracy");
 
 pub const display_fps = true;
 
+// TODO: set to true
+const ENABLE_REUSE = false;
+
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
@@ -178,6 +181,7 @@ pub const Lego = struct {
     // TODO: remove in release modes
     exists: bool = false,
     index: Index,
+    free_next: Index = .nothing,
     /// respect to parent
     local_point: Point,
     /// computed each frame
@@ -1369,6 +1373,7 @@ pub const Toybox = struct {
     // TODO: use a fancy arena thing
     all_legos: std.ArrayListUnmanaged(Lego),
     all_legos_arena: std.heap.ArenaAllocator,
+    free_head: Lego.Index = .nothing,
 
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
         dst.* = .{
@@ -1392,20 +1397,36 @@ pub const Toybox = struct {
     }
 
     pub fn new(local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !*Lego {
-        if (toybox.all_legos.items.len >= std.math.maxInt(i31)) OoM();
-        const result = toybox.all_legos.addOne(toybox.all_legos_arena.allocator()) catch OoM();
+        const result: *Lego, const index: Lego.Index = if (ENABLE_REUSE and toybox.free_head != .nothing) blk: {
+            const result_index = toybox.free_head;
+            const result = Toybox.getUnsafe(result_index);
+            toybox.free_head = result.free_next;
+            break :blk .{ result, result_index };
+        } else blk: {
+            if (toybox.all_legos.items.len >= std.math.maxInt(i31)) OoM();
+            const result = toybox.all_legos.addOne(toybox.all_legos_arena.allocator()) catch OoM();
+            break :blk .{ result, @enumFromInt(toybox.all_legos.items.len - 1) };
+        };
+
         result.* = .{
-            .index = @enumFromInt(toybox.all_legos.items.len - 1),
+            .index = index,
             .exists = true,
             .local_point = local_point,
             .absolute_point = local_point,
             .specific = specific,
         };
-        if (undo_stack) |stack| stack.append(.{ .destroy_floating = result.index });
+        if (undo_stack) |stack| stack.append(.{ .destroy_floating = index });
         return result;
     }
 
     pub fn get(index: Lego.Index) *Lego {
+        const result = getUnsafe(index);
+        assert(result.exists);
+        return result;
+    }
+
+    pub fn getUnsafe(index: Lego.Index) *Lego {
+        assert(index != .nothing);
         return &toybox.all_legos.items[@intFromEnum(index)];
     }
 
@@ -1452,29 +1473,30 @@ pub const Toybox = struct {
     pub fn destroyFloating(index: Lego.Index, undo_stack: ?*UndoStack) void {
         assert(Toybox.isFloating(index));
 
+        // TODO(long): avoid recursion
+        while (index.get().tree.first != .nothing) {
+            const child = index.get().tree.first;
+            Toybox.pop(child, undo_stack);
+            Toybox.destroyFloating(child, undo_stack);
+        }
+
         if (undo_stack) |stack| {
             stack.append(.{ .recreate_floating = Toybox.get(index).* });
         }
 
-        var cur: Lego.Index = index;
-        while (cur != .nothing) {
-            const next = Toybox.next_preordered(cur, index).next;
-            // TODO: set undefined to catch bugs, can't do it now since it would mess the iteration
-            // Toybox.get(cur).* = undefined;
-            // Toybox.get(cur).index = index;
-            Toybox.get(cur).exists = false;
-            cur = next;
-        }
-
-        // Toybox.get(lego).free_next = toybox.free_head;
-        // TODO: free the memory
-        // @panic("TODO");
+        const lego = Toybox.get(index);
+        lego.* = undefined;
+        lego.index = index;
+        lego.exists = false;
+        lego.free_next = toybox.free_head;
+        toybox.free_head = index;
     }
 
     pub fn recreateFloating(data: Lego) void {
         assert(data.tree.isFloating());
-        assert(!Toybox.get(data.index).exists);
-        Toybox.get(data.index).* = data;
+        const lego = Toybox.getUnsafe(data.index);
+        assert(!lego.exists);
+        lego.* = data;
     }
 
     pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
@@ -2565,6 +2587,7 @@ const Workspace = struct {
         defer zone.deinit();
 
         for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 try fnkbox.updateStatus(workspace, scratch);
             }
@@ -3617,6 +3640,10 @@ const Workspace = struct {
                     });
                 }
             }
+            std.log.debug("-----", .{});
+            for (workspace.undo_stack.commands.items, 0..) |cmd, k| {
+                std.log.debug("{d} \t{any}", .{ k, cmd });
+            }
         }
 
         const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.1 else 1.0)));
@@ -3638,7 +3665,6 @@ const Workspace = struct {
                         Toybox.destroyFloating(index, null);
                     },
                     .recreate_floating => |data| {
-                        // TODO: recreate children too!
                         Toybox.recreateFloating(data);
                     },
                     .insert => |insert| {
@@ -3897,6 +3923,7 @@ const Workspace = struct {
                 else => false,
             };
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 const part_of_toolbar_case = lego.tree.parent != .nothing and
                     lego.tree.parent.get().specific.tag() == .case and
                     Toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
@@ -3981,6 +4008,7 @@ const Workspace = struct {
             defer zone.deinit();
 
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
                         const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
@@ -4128,6 +4156,7 @@ const Workspace = struct {
             defer zone.deinit();
 
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor| {
                     if (executor.controlled_by_parent_fnkbox) continue;
 
@@ -4148,6 +4177,7 @@ const Workspace = struct {
             defer zone.deinit();
 
             for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
@@ -4239,6 +4269,7 @@ const Workspace = struct {
             while (cur != .nothing) {
                 const original_tree = Toybox.get(cur).tree;
                 Toybox.pop(cur, undo_stack);
+                Toybox.destroyFloating(cur, undo_stack);
                 cur = original_tree.next;
             }
         }
