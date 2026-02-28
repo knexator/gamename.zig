@@ -287,16 +287,22 @@ pub const Lego = struct {
 
         pub const Button = struct {
             local_rect: Rect,
-            // TODO NOW
-            action: enum { launch_testcase, see_failing_testcase, scroll_testcases_up, scroll_testcases_down },
+            action: enum {
+                launch_testcase,
+                see_failing_testcase,
+                /// assumes that the scrollbar is the direct parent
+                scroll_up,
+                /// assumes that the scrollbar is the direct parent
+                scroll_down,
+            },
             enabled: bool = true,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
                     .launch_testcase,
                     .see_failing_testcase,
-                    .scroll_testcases_up,
-                    .scroll_testcases_down,
+                    .scroll_up,
+                    .scroll_down,
                     => false,
                 };
             }
@@ -2151,11 +2157,11 @@ pub const Toybox = struct {
             try createWithChildren(.{}, .{ .scrollbar = .buildForTestcases(testcases.len, 0) }, &.{
                 (try new(.{}, .{ .button = .{
                     .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1),
-                    .action = .scroll_testcases_up,
+                    .action = .scroll_up,
                 } }, undo_stack)).index,
                 (try new(.{}, .{ .button = .{
                     .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1),
-                    .action = .scroll_testcases_down,
+                    .action = .scroll_down,
                 } }, undo_stack)).index,
             }, undo_stack);
 
@@ -2943,10 +2949,10 @@ const Workspace = struct {
                 },
                 .button => |button| switch (button.action) {
                     else => {},
-                    .scroll_testcases_up => {
+                    .scroll_up => {
                         lego.tree.parent.get().specific.scrollbar.scroll_target -= delta_seconds / 0.2;
                     },
-                    .scroll_testcases_down => {
+                    .scroll_down => {
                         lego.tree.parent.get().specific.scrollbar.scroll_target += delta_seconds / 0.2;
                     },
                 },
@@ -3605,7 +3611,7 @@ const Workspace = struct {
                                         try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
                                     }
                                 },
-                                .scroll_testcases_up, .scroll_testcases_down => {
+                                .scroll_up, .scroll_down => {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, lego.hot_t), .inner, .black);
                                 },
@@ -3887,7 +3893,7 @@ const Workspace = struct {
                                 const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
                                 try launchTestcase(testcase_index, undo_stack);
                             },
-                            .scroll_testcases_up, .scroll_testcases_down => {},
+                            .scroll_up, .scroll_down => {},
                         }
                     }
                 } else {
@@ -4272,7 +4278,7 @@ const Workspace = struct {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
-                        .scroll_testcases_up, .scroll_testcases_down => true,
+                        .scroll_up, .scroll_down => true,
                     };
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
