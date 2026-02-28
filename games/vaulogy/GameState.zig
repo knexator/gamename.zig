@@ -317,7 +317,7 @@ pub const Lego = struct {
             scroll_target: f32,
 
             const min_handle_length: f32 = 0.25;
-            const max_handle_length: f32 = 0.25;
+            const max_handle_length: f32 = 1;
 
             pub fn buildForTestcases(n_testcases: usize, scroll: f32) Scrollbar {
                 const total_rect = Lego.Specific.FnkboxBox.testcases_box
@@ -333,14 +333,21 @@ pub const Lego = struct {
             }
 
             pub fn handleRectVisual(scrollbar: *const Scrollbar) Rect {
-                assert(scrollbar.visible_length <= scrollbar.total_length);
-                const handle_size: Vec2 = scrollbar.total_rect.size.mul(.new(1, math.clamp(scrollbar.visible_length / scrollbar.total_length, min_handle_length, max_handle_length)));
+                // assert(scrollbar.visible_length <= scrollbar.total_length);
+                const handle_size: Vec2 = scrollbar.total_rect.size.mul(.new(
+                    1,
+                    math.clamp(
+                        math.clamp01(scrollbar.visible_length / scrollbar.total_length),
+                        min_handle_length,
+                        max_handle_length,
+                    ),
+                ));
                 return scrollbar.total_rect
                     .withSize(handle_size, .top_left)
                     .move(.new(
                     0,
                     // (scrollbar.scroll_visual / tof32(@max(1, scrollbar.total_length - scrollbar.visible_length))) *
-                    (scrollbar.scroll_visual / (scrollbar.total_length - scrollbar.visible_length)) *
+                    math.clamp01(scrollbar.scroll_visual / (scrollbar.total_length - scrollbar.visible_length)) *
                         (scrollbar.total_rect.size.y - handle_size.y),
                 ));
             }
@@ -351,11 +358,8 @@ pub const Lego = struct {
                     scrollbar.total_rect.size.x,
                     scrollbar.total_rect.size.y - scrollbar.handleRectVisual().size.y,
                 ), .top_left);
-                scrollbar.scroll_target = math.clamp(
-                    rect.localFromWorldPosition(local_pos).y,
-                    0,
-                    scrollbar.total_length - scrollbar.visible_length,
-                );
+                scrollbar.scroll_target = math.clamp01(rect.localFromWorldPosition(local_pos).y) *
+                    @max(0, scrollbar.total_length - scrollbar.visible_length);
             }
         };
 
@@ -1344,10 +1348,11 @@ pub const Lego = struct {
         }
     }
 
-    pub fn ignoresGrabOffset(lego: *const Lego) bool {
+    pub fn getGrabbedOffset(lego: *const Lego, absolute_needle: Vec2) Vec2 {
         return switch (lego.specific) {
-            .postit => false,
-            else => true,
+            .postit => lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle),
+            .scrollbar => |scrollbar| lego.absolute_point.applyToLocalPoint(.{ .pos = scrollbar.handleRectVisual().top_left }).inverseApplyGetLocalPosition(absolute_needle),
+            else => .zero,
         };
     }
 
@@ -2516,7 +2521,7 @@ const Workspace = struct {
             ), undo_stack);
         }
 
-        if (false) { // add levels
+        if (true) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
@@ -2817,6 +2822,7 @@ const Workspace = struct {
                     .button => |button| {
                         if (step.children_already_visited and
                             button.enabled and
+                            grabbing == .nothing and
                             button.local_rect.contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
                             return .{ .hot = cur, .over_background = root };
@@ -2824,6 +2830,7 @@ const Workspace = struct {
                     },
                     .scrollbar => |scrollbar| {
                         if (step.children_already_visited and
+                            grabbing == .nothing and
                             scrollbar.handleRectVisual().contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
                             return .{ .hot = cur, .over_background = root };
@@ -2957,8 +2964,9 @@ const Workspace = struct {
                     },
                 },
                 .scrollbar => |*scrollbar| {
-                    const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
-                    scrollbar.onMouseMoved(local_pos);
+                    const local_pos = lego.absolute_point
+                        .inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    scrollbar.onMouseMoved(local_pos.sub(grabbing.offset));
                 },
                 .executor_brake => |*brake| {
                     assert(interaction.dropzone == .nothing);
@@ -3287,7 +3295,7 @@ const Workspace = struct {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - scrollbar" });
                         defer zone.deinit();
 
-                        math.lerpTowardsRange(&scrollbar.scroll_target, 0, scrollbar.total_length - scrollbar.visible_length, .slow, delta_seconds);
+                        math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
                     .testcase, .fnkbox, .case, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
@@ -3613,13 +3621,13 @@ const Workspace = struct {
                                 },
                                 .scroll_up, .scroll_down => {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
-                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, lego.hot_t), .inner, .black);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
                             }
                         },
                         .scrollbar => |scrollbar| {
                             drawer.canvas.fillRect(camera_relative, scrollbar.handleRectVisual(), COLORS.bg);
-                            drawer.canvas.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, lego.hot_t), .inner, .black);
+                            drawer.canvas.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                         },
                         .fnkbox_testcases => {
                             const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
@@ -3837,10 +3845,10 @@ const Workspace = struct {
 
                 assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
                 if (grabbed_element_index != .nothing) {
-                    workspace.setGrabbing(.{ .index = grabbed_element_index, .offset = if (grabbed_element_index.get().ignoresGrabOffset())
-                        .zero
-                    else
-                        grabbed_element_index.get().absolute_point.inverseApplyGetLocalPosition(mouse.cur.position) }, undo_stack);
+                    workspace.setGrabbing(
+                        .{ .index = grabbed_element_index, .offset = grabbed_element_index.get().getGrabbedOffset(mouse.cur.position) },
+                        undo_stack,
+                    );
                     if (plucked) {
                         workspace.setHandLayer(grabbed_element_index, undo_stack);
                         Toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
