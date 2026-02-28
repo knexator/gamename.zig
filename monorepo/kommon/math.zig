@@ -95,6 +95,17 @@ pub const LerpSpeed = struct {
     }
 };
 
+/// returns `true` when v is less than precision units away from goal
+pub fn lerpTowardsWithFinish(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32, precision: f32) bool {
+    if (@abs(v.* - goal) < precision) {
+        v.* = goal;
+        return true;
+    } else {
+        v.* = lerpTowardsPure(v.*, goal, speed, delta_seconds);
+        return false;
+    }
+}
+
 pub fn lerpTowards(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) void {
     v.* = lerpTowardsPure(v.*, goal, speed, delta_seconds);
 }

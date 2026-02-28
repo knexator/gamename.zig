@@ -303,7 +303,13 @@ pub const Lego = struct {
         };
 
         pub const Scrollbar = struct {
-            local_rect: Rect = undefined,
+            local_rect: Rect,
+
+            pub fn build(n_testcases: usize, scroll: f32) Scrollbar {
+                const handle_size: f32 = 1;
+                return .{ .local_rect = FnkboxBox.testcases_box.withSize(.new(0.5, handle_size), .top_left).move(.new(0.1, 0.6))
+                    .move(.new(0, (scroll / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size))) };
+            }
         };
 
         pub const Area = struct {
@@ -387,6 +393,40 @@ pub const Lego = struct {
                             },
                         }
                     },
+                }
+            }
+
+            /// Should be called only when changing any of the _t values
+            pub fn updateLocalPositions(index: Lego.Index) void {
+                const lego = Toybox.get(index);
+                const sexpr = &lego.specific.sexpr;
+
+                const base_point: Point = if (!sexpr.is_pattern)
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
+                else
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
+
+                const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
+                    .{ .turns = -0.01, .pos = .new(0.25, 0) },
+                    .{ .turns = 0.01, .pos = .new(-0.25, 0) },
+                    sexpr.is_pattern_t,
+                ), lego.hot_t + lego.dropping_t * 2));
+
+                lego.visual_offset = hovered_point;
+
+                if (sexpr.kind == .pair) {
+                    const child_up, const child_down = Toybox.getChildrenExact(2, index);
+                    Toybox.get(child_up).local_point = (Point{})
+                        .applyToLocalPoint(lego.visual_offset)
+                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
+                    Toybox.get(child_down).local_point = (Point{})
+                        .applyToLocalPoint(lego.visual_offset)
+                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                }
+
+                if (sexpr.emerging_value != .nothing) {
+                    std.log.err("TODO", .{});
+                    // updateLocalPositions(sexpr.emerging_value);
                 }
             }
 
@@ -502,6 +542,20 @@ pub const Lego = struct {
             pub fn next(case: *const Case) *const Garland {
                 return &children(Lego.fromSpecificConst(.case, case).index).next.get().specific.garland;
             }
+
+            /// only call when next_point_extra or fnk_name_extra changes
+            pub fn updateLocalPositions(index: Lego.Index) void {
+                const case = index.get().specific.case;
+                const offsets: [4]Point = .{
+                    .{ .pos = .xneg },
+                    .{ .pos = .xpos },
+                    (Point{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }).applyToLocalPoint(case.fnk_name_extra),
+                    (Point{ .pos = .new(8, 1) }).applyToLocalPoint(case.next_point_extra),
+                };
+                for (Toybox.getChildrenExact(4, index), offsets) |i, offset| {
+                    Toybox.get(i).local_point = offset;
+                }
+            }
         };
 
         pub const Garland = struct {
@@ -546,20 +600,20 @@ pub const Lego = struct {
                 return .{ .cases = cases };
             }
 
-            pub fn buildFromOldCoreValue(point: Point, definition: core.FnkBodyV2, scratch: std.mem.Allocator) !Lego.Index {
+            pub fn buildFromOldCoreValue(point: Point, definition: core.FnkBodyV2, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
                 var cases: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, definition.cases.len);
                 for (definition.cases) |case| {
                     cases.appendAssumeCapacity(try Toybox.buildCase(.{}, .{
-                        .pattern = try Sexpr.buildFromOldCoreValue(.{}, case.pattern, true),
-                        .template = try Sexpr.buildFromOldCoreValue(.{}, case.template, false),
-                        .fnkname = try Sexpr.buildFromOldCoreValue(.{}, case.fnk_name, false),
+                        .pattern = try Sexpr.buildFromOldCoreValue(.{}, case.pattern, true, undo_stack),
+                        .template = try Sexpr.buildFromOldCoreValue(.{}, case.template, false, undo_stack),
+                        .fnkname = try Sexpr.buildFromOldCoreValue(.{}, case.fnk_name, false, undo_stack),
                         .next = if (case.next) |next|
-                            try buildFromOldCoreValue(.{}, .{ .cases = next }, scratch)
+                            try buildFromOldCoreValue(.{}, .{ .cases = next }, scratch, undo_stack)
                         else
                             null,
-                    }));
+                    }, undo_stack));
                 }
-                return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch));
+                return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch), undo_stack);
             }
 
             /// 0 -> default point
@@ -1396,6 +1450,14 @@ pub const Toybox = struct {
         std.debug.panic("OoM", .{});
     }
 
+    pub fn createWithChildren(local_point: Point, specific: Lego.Specific, children: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+        const lego = try new(local_point, specific, undo_stack);
+        for (children) |child| {
+            addChildLast(lego.index, child, undo_stack);
+        }
+        return lego.index;
+    }
+
     pub fn new(local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !*Lego {
         const result: *Lego, const index: Lego.Index = if (ENABLE_REUSE and toybox.free_head != .nothing) blk: {
             const result_index = toybox.free_head;
@@ -1438,6 +1500,21 @@ pub const Toybox = struct {
     pub fn addChildLastWithoutChangingAbsPoint(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
         addChildLast(parent, new_child, undo_stack);
         changeCoordinates(new_child, .{}, parent.get().absolute_point);
+    }
+
+    pub fn addChildLastWithLocalPoint(local_point: Point, parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        new_child.get().local_point = local_point;
+        addChildLast(parent, new_child, undo_stack);
+    }
+
+    // TODO: remove the old version
+    pub fn addChildLastV2(local_point: ?Point, parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        if (local_point) |l| {
+            addChildLast(parent, new_child, undo_stack);
+            new_child.get().local_point = l;
+        } else {
+            addChildLastWithoutChangingAbsPoint(parent, new_child, undo_stack);
+        }
     }
 
     pub fn addChildLast(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
@@ -1975,8 +2052,8 @@ pub const Toybox = struct {
         switch (value) {
             else => {},
             .pair => |pair| {
-                Toybox.addChildLast(result.index, pair.up, undo_stack);
-                Toybox.addChildLast(result.index, pair.down, undo_stack);
+                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .up), result.index, pair.up, undo_stack);
+                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .down), result.index, pair.down, undo_stack);
             },
         }
         return result.index;
@@ -1989,10 +2066,10 @@ pub const Toybox = struct {
         next: ?Lego.Index,
     }, undo_stack: ?*UndoStack) !Lego.Index {
         const result = try Toybox.new(local_point, .{ .case = .{} }, undo_stack);
-        Toybox.addChildLast(result.index, data.pattern, undo_stack);
-        Toybox.addChildLast(result.index, data.template, undo_stack);
-        Toybox.addChildLast(result.index, data.fnkname orelse try Toybox.buildSexpr(.{}, .empty, false, undo_stack), undo_stack);
-        Toybox.addChildLast(result.index, data.next orelse try Toybox.buildGarland(local_point, &.{}, undo_stack), undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .xneg }, result.index, data.pattern, undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .xpos }, result.index, data.template, undo_stack);
+        Toybox.addChildLastV2(.{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }, result.index, data.fnkname orelse try Toybox.buildSexpr(.{}, .empty, false, undo_stack), undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .new(8, 1) }, result.index, data.next orelse try Toybox.buildGarland(local_point, &.{}, undo_stack), undo_stack);
         return result.index;
     }
 
@@ -2022,60 +2099,70 @@ pub const Toybox = struct {
         initial_definition: ?Lego.Index,
         undo_stack: ?*UndoStack,
     ) !Lego.Index {
-        const result = try Toybox.new(local_point, .{ .fnkbox = .{ .status = undefined } }, undo_stack);
-        const box = try Toybox.new(local_point, .{ .fnkbox_box = .{} }, undo_stack);
-        Toybox.addChildLast(box.index, (try Toybox.new(.{}, .{
-            .fnkbox_description = .{
-                .text = text,
-            },
-        }, undo_stack)).index, undo_stack);
-        Toybox.addChildLast(box.index, (try Toybox.new(.{}, .{
-            .button = .{
-                .local_rect = .fromMeasureAndSizeV2(.top_center, .zero, .new(16, 1)),
-                .action = .see_failing_testcase,
-            },
-        }, undo_stack)).index, undo_stack);
-        Toybox.addChildLast(box.index, blk: {
-            const scrollbar = try Toybox.new(.{}, .{ .scrollbar = .{} }, undo_stack);
-            Toybox.addChildLast(scrollbar.index, (try Toybox.new(.{}, .{ .button = .{
-                .local_rect = .unit,
-                .action = .scroll_testcases_up,
-            } }, undo_stack)).index, undo_stack);
-            Toybox.addChildLast(scrollbar.index, (try Toybox.new(.{}, .{ .button = .{
-                .local_rect = .unit,
-                .action = .scroll_testcases_down,
-            } }, undo_stack)).index, undo_stack);
-            break :blk scrollbar.index;
-        }, undo_stack);
-        const fnkbox_testcases = try Toybox.new(.{}, .{
-            .fnkbox_testcases = .{},
-        }, undo_stack);
-        for (testcases) |values| {
-            const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
-            Toybox.addChildLast(testcase.index, values[0], undo_stack);
-            Toybox.addChildLast(testcase.index, values[1], undo_stack);
-            Toybox.addChildLast(testcase.index, try Toybox.buildSexpr(.{}, .empty, false, undo_stack), undo_stack);
-            Toybox.addChildLast(testcase.index, (try Toybox.new(.{}, .{ .button = .{
-                .local_rect = .unit,
-                .action = .launch_testcase,
-            } }, undo_stack)).index, undo_stack);
+        const Fnkbox = Lego.Specific.Fnkbox;
+        const FnkboxBox = Lego.Specific.FnkboxBox;
+        const Executor = Lego.Specific.Executor;
 
-            Toybox.addChildLast(fnkbox_testcases.index, testcase.index, undo_stack);
-        }
-        Toybox.addChildLast(box.index, fnkbox_testcases.index, undo_stack);
-        Toybox.addChildLast(result.index, box.index, undo_stack);
-        Toybox.addChildLast(result.index, fnkname, undo_stack);
-        const executor = try Toybox.new(.{}, .{ .executor = .{ .controlled_by_parent_fnkbox = true } }, undo_stack);
-        Toybox.addChildLast(executor.index, try Toybox.buildSexpr(.{}, .empty, false, undo_stack), undo_stack);
-        Toybox.addChildLast(executor.index, initial_definition orelse try Toybox.buildGarland(.{}, &.{}, undo_stack), undo_stack);
-        Toybox.addChildLast(executor.index, blk: {
-            const controls = try Toybox.new(.{}, .executor_controls, undo_stack);
-            Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } }, undo_stack)).index, undo_stack);
-            Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, undo_stack)).index, undo_stack);
-            break :blk controls.index;
+        const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
+            (try new(.{}, .{ .fnkbox_description = .{
+                .text = text,
+            } }, undo_stack)).index,
+            (try new(.{}, .{ .button = .{
+                .local_rect = FnkboxBox.status_bar_goal,
+                .action = .see_failing_testcase,
+            } }, undo_stack)).index,
+            try createWithChildren(.{}, .{ .scrollbar = .build(testcases.len, 0) }, &.{
+                (try new(.{}, .{ .button = .{
+                    .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1),
+                    .action = .scroll_testcases_up,
+                } }, undo_stack)).index,
+                (try new(.{}, .{ .button = .{
+                    .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1),
+                    .action = .scroll_testcases_down,
+                } }, undo_stack)).index,
+            }, undo_stack),
+            blk: {
+                const fnkbox_testcases = try Toybox.new(.{}, .{
+                    .fnkbox_testcases = .{},
+                }, undo_stack);
+                for (testcases) |values| {
+                    const Testcase = Lego.Specific.Testcase;
+                    const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_input_point, testcase.index, values[0], undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_expected_point, testcase.index, values[1], undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_actual_point, testcase.index, try Toybox.buildSexpr(.{}, .empty, false, undo_stack), undo_stack);
+                    Toybox.addChildLast(testcase.index, (try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
+                        .action = .launch_testcase,
+                    } }, undo_stack)).index, undo_stack);
+                    Toybox.addChildLast(fnkbox_testcases.index, testcase.index, undo_stack);
+                }
+                break :blk fnkbox_testcases.index;
+            },
         }, undo_stack);
-        Toybox.addChildLast(result.index, executor.index, undo_stack);
-        return result.index;
+
+        fnkname.get().local_point = Fnkbox.relative_fnkname_point;
+
+        if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
+
+        const executor = try Toybox.createWithChildren(Fnkbox.relative_executor_point, .{
+            .executor = .{ .controlled_by_parent_fnkbox = true },
+        }, &.{
+            try Toybox.buildSexpr(Executor.relative_input_point, .empty, false, undo_stack),
+            initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, undo_stack),
+            blk: {
+                const controls = try Toybox.new(Executor.relative_crank_center, .executor_controls, undo_stack);
+                Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } }, undo_stack)).index, undo_stack);
+                Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, undo_stack)).index, undo_stack);
+                break :blk controls.index;
+            },
+        }, undo_stack);
+
+        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined } }, &.{
+            box,
+            fnkname,
+            executor,
+        }, undo_stack);
     }
 
     pub fn buildMicroscope(source: Vec2, target: Vec2, undo_stack: ?*UndoStack) !Lego.Index {
@@ -2376,7 +2463,7 @@ const Workspace = struct {
             ), undo_stack);
         }
 
-        if (false) { // add levels
+        if (true) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
@@ -2392,8 +2479,8 @@ const Workspace = struct {
                     var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
                     while (try samples_it.next(&pool, scratch.allocator())) |item| {
                         try samples.append(scratch.allocator(), .{
-                            try Sexpr.buildFromOldCoreValue(.{}, item.input, false),
-                            try Sexpr.buildFromOldCoreValue(.{}, item.expected, false),
+                            try Sexpr.buildFromOldCoreValue(.{}, item.input, false, undo_stack),
+                            try Sexpr.buildFromOldCoreValue(.{}, item.expected, false, undo_stack),
                         });
                         _ = pool.reset(.retain_capacity);
                     }
@@ -2404,14 +2491,16 @@ const Workspace = struct {
                     dst.fnkboxes_layer,
                     try Toybox.buildFnkbox(
                         .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
-                        try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true),
+                        try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true, undo_stack),
                         level.description,
                         samples,
                         if (level.initial_definition) |definition|
-                            try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch.allocator())
+                            try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch.allocator(), undo_stack)
                         else
                             null,
+                        undo_stack,
                     ),
+                    undo_stack,
                 );
 
                 // TODO
@@ -2765,6 +2854,107 @@ const Workspace = struct {
         unreachable;
     }
 
+    fn dragGrabbing(grabbing: Grabbing, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+        if (grabbing.index == .nothing) return;
+        const cur = grabbing.index;
+        const lego = Toybox.get(cur);
+        if (lego.draggable()) {
+            switch (lego.specific) {
+                else => {
+                    const target: Point = if (interaction.dropzone == .nothing)
+                        // TODO: i don't like the scale hack
+                        (Point{
+                            .pos = absolute_mouse_pos,
+                            .scale = Toybox.get(interaction.over_background).absolute_point.scale,
+                        })
+                            .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
+                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() })
+                    else
+                        Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
+
+                    lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
+                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
+
+                    switch (lego.specific) {
+                        else => {},
+                        .sexpr => |sexpr| {
+                            if (interaction.dropzone != .nothing) {
+                                const dropzone_is_pattern = interaction.dropzone.get().specific.sexpr.is_pattern;
+                                if (dropzone_is_pattern != sexpr.is_pattern) {
+                                    var cur_sexpr = cur;
+                                    while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, cur).next) {
+                                        Toybox.get(cur_sexpr).specific.sexpr.is_pattern = dropzone_is_pattern;
+                                        var cur_child = Toybox.get(cur_sexpr).specific.sexpr.emerging_value;
+                                        while (cur_child != .nothing) : (cur_child = Toybox.next_preordered(cur_child, cur_sexpr).next) {
+                                            Toybox.get(cur_child).specific.sexpr.is_pattern = dropzone_is_pattern;
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                },
+                .button => |button| switch (button.action) {
+                    else => {},
+                    .scroll_testcases_up => {
+                        lego.tree.parent.get().tree.next.get().specific.fnkbox_testcases.scroll_target -= delta_seconds / 0.2;
+                    },
+                    .scroll_testcases_down => {
+                        lego.tree.parent.get().tree.next.get().specific.fnkbox_testcases.scroll_target += delta_seconds / 0.2;
+                    },
+                },
+                .scrollbar => {
+                    const FnkboxBox = Lego.Specific.FnkboxBox;
+                    const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    // TODO: simplify
+                    const handle_size: f32 = 1;
+                    const n_testcases = Toybox.childCount(lego.tree.next);
+                    const rect = Lego.Specific.FnkboxBox.testcases_box.withSize(.new(
+                        undefined,
+                        (1.0 / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size),
+                    ), .top_left)
+                        .move(.new(0.1, 0.6));
+                    lego.tree.next.get().specific.fnkbox_testcases.scroll_target = math.clamp(
+                        rect.localFromWorldPosition(local_pos).y,
+                        0,
+                        tof32(n_testcases -| FnkboxBox.visible_testcases),
+                    );
+                },
+                .executor_brake => |*brake| {
+                    assert(interaction.dropzone == .nothing);
+                    const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    const S = struct {
+                        p: Vec2,
+                        pub fn score(ctx: @This(), t: f32) f32 {
+                            return Lego.Specific.Executor.Controls.brakeHandlePath(t).sub(ctx.p).magSq();
+                        }
+                    };
+                    const raw_t = kommon.funktional.findFunctionMin(
+                        S,
+                        .{ .p = local_pos },
+                        0,
+                        1,
+                        10,
+                        0.0001,
+                    );
+                    // math.lerp_towards(&brake.brake_t, raw_t, 0.6, delta_seconds);
+                    math.towards(&brake.brake_t, raw_t, delta_seconds * 5);
+                },
+                .executor_crank => |*crank| {
+                    assert(interaction.dropzone == .nothing);
+                    const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    const raw_t = local_pos.getTurns();
+                    const executor = &Toybox.findAncestor(cur, .executor).get().specific.executor;
+                    const cur_t = executor.animation.?.t;
+                    const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
+                    // math.lerp_towards(&crank.t, @max(0, target_t), 0.6, delta_seconds);
+                    math.towards(&crank.value, target_t, delta_seconds * 5);
+                    executor.animation.?.t = crank.value;
+                },
+            }
+        }
+    }
+
     fn updateSprings(workspace: *Workspace, roots_in_draw_order: []const Lego.Index, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
         const asdf = tracy.initZone(@src(), .{ .name = "updateSprings" });
         defer asdf.deinit();
@@ -2774,83 +2964,8 @@ const Workspace = struct {
             while (cur != .nothing) : (cur = Toybox.next_preordered(cur, root).next) {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
-                if (cur == workspace.grabbing.index and lego.draggable()) {
-                    switch (lego.specific) {
-                        else => {
-                            const target: Point = if (interaction.dropzone == .nothing)
-                                // TODO: i don't like the scale hack
-                                (Point{
-                                    .pos = absolute_mouse_pos,
-                                    .scale = Toybox.get(interaction.over_background).absolute_point.scale,
-                                })
-                                    .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
-                                    .applyToLocalPoint(.{ .pos = workspace.grabbing.offset.neg() })
-                            else
-                                Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
 
-                            lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
-                                .inverseApplyGetLocal(target), 0.6, delta_seconds);
-                        },
-                        .button => |button| switch (button.action) {
-                            else => {},
-                            .scroll_testcases_up => {
-                                lego.tree.parent.get().tree.next.get().specific.fnkbox_testcases.scroll_target -= delta_seconds / 0.2;
-                            },
-                            .scroll_testcases_down => {
-                                lego.tree.parent.get().tree.next.get().specific.fnkbox_testcases.scroll_target += delta_seconds / 0.2;
-                            },
-                        },
-                        .scrollbar => {
-                            const FnkboxBox = Lego.Specific.FnkboxBox;
-                            const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
-                            // TODO: simplify
-                            const handle_size: f32 = 1;
-                            const n_testcases = Toybox.childCount(lego.tree.next);
-                            const rect = Lego.Specific.FnkboxBox.testcases_box.withSize(.new(
-                                undefined,
-                                (1.0 / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size),
-                            ), .top_left)
-                                .move(.new(0.1, 0.6));
-                            lego.tree.next.get().specific.fnkbox_testcases.scroll_target = math.clamp(
-                                rect.localFromWorldPosition(local_pos).y,
-                                0,
-                                tof32(n_testcases -| FnkboxBox.visible_testcases),
-                            );
-                        },
-                        .executor_brake => |*brake| {
-                            assert(interaction.dropzone == .nothing);
-                            const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
-                            const S = struct {
-                                p: Vec2,
-                                pub fn score(ctx: @This(), t: f32) f32 {
-                                    return Lego.Specific.Executor.Controls.brakeHandlePath(t).sub(ctx.p).magSq();
-                                }
-                            };
-                            const raw_t = kommon.funktional.findFunctionMin(
-                                S,
-                                .{ .p = local_pos },
-                                0,
-                                1,
-                                10,
-                                0.0001,
-                            );
-                            // math.lerp_towards(&brake.brake_t, raw_t, 0.6, delta_seconds);
-                            math.towards(&brake.brake_t, raw_t, delta_seconds * 5);
-                        },
-                        .executor_crank => |*crank| {
-                            assert(interaction.dropzone == .nothing);
-                            const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
-                            const raw_t = local_pos.getTurns();
-                            const executor = &Toybox.findAncestor(cur, .executor).get().specific.executor;
-                            const cur_t = executor.animation.?.t;
-                            const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
-                            // math.lerp_towards(&crank.t, @max(0, target_t), 0.6, delta_seconds);
-                            math.towards(&crank.value, target_t, delta_seconds * 5);
-                            executor.animation.?.t = crank.value;
-                        },
-                    }
-                }
-
+                // TODO: remove this from here
                 lego.unhoverable = switch (lego.specific) {
                     .sexpr, .case, .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
                         .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
@@ -2864,6 +2979,9 @@ const Workspace = struct {
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
+
+                        // TODO: skip children in most cases
+
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
                         defer zone.deinit();
 
@@ -2872,40 +2990,7 @@ const Workspace = struct {
                             .testcase, .fnkbox => true,
                         };
 
-                        if (cur == workspace.grabbing.index) {
-                            sexpr.is_pattern = if (interaction.dropzone == .nothing) sexpr.is_pattern else Toybox.get(interaction.dropzone).specific.sexpr.is_pattern;
-                        }
-
-                        const base_point: Point = if (!sexpr.is_pattern)
-                            .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
-                        else
-                            .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
-
-                        const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
-                            .{ .turns = -0.01, .pos = .new(0.25, 0) },
-                            .{ .turns = 0.01, .pos = .new(-0.25, 0) },
-                            sexpr.is_pattern_t,
-                        ), lego.hot_t + lego.dropping_t * 2));
-
-                        lego.visual_offset = hovered_point;
-
-                        if (sexpr.kind == .pair) {
-                            const child_up, const child_down = Toybox.getChildrenExact(2, cur);
-                            Toybox.get(child_up).local_point = (Point{})
-                                .applyToLocalPoint(lego.visual_offset)
-                                .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
-                            Toybox.get(child_down).local_point = (Point{})
-                                .applyToLocalPoint(lego.visual_offset)
-                                .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
-
-                            Toybox.get(child_up).specific.sexpr.is_pattern = sexpr.is_pattern;
-                            Toybox.get(child_up).specific.sexpr.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
-                            Toybox.get(child_down).specific.sexpr.is_pattern = sexpr.is_pattern;
-                            Toybox.get(child_down).specific.sexpr.is_pattern_t = if (sexpr.is_pattern) 1 else 0;
-                        }
-
                         if (sexpr.emerging_value != .nothing) {
-                            if (true) @panic("asdfasdf");
                             const bindings = Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings);
                             const offset: Point = if (bindings.anim_t) |anim_t|
                                 if (sexpr.is_pattern)
@@ -2922,22 +3007,6 @@ const Workspace = struct {
                                 .{ .pos = .new(-2.3, 0) };
                             Toybox.get(sexpr.emerging_value).local_point = lego.absolute_point.applyToLocalPoint(offset);
                             updateSprings(workspace, &.{sexpr.emerging_value}, absolute_mouse_pos, interaction, delta_seconds);
-                        }
-                    },
-                    .case => |case| {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - case" });
-                        defer zone.deinit();
-
-                        const offsets: [4]Point = .{
-                            .{ .pos = .xneg },
-                            .{ .pos = .xpos },
-                            (Point{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }).applyToLocalPoint(case.fnk_name_extra),
-                            (Point{ .pos = .new(8, 1) }).applyToLocalPoint(case.next_point_extra),
-                        };
-                        // const pattern, const template, const fnkname = Toybox.getChildrenExact(3, cur);
-                        // for (.{ pattern, template, fnkname }, offsets) |i, offset| {
-                        for (Toybox.getChildrenExact(4, cur), offsets) |i, offset| {
-                            Toybox.get(i).local_point = offset;
                         }
                     },
                     .garland => |*garland| {
@@ -3017,36 +3086,13 @@ const Workspace = struct {
 
                         if (Toybox.safeGet(maybe_child_case)) |case| case.local_point = .{ .pos = .new(0, newcase.length()) };
                     },
-                    .fnkbox => {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox" });
-                        defer zone.deinit();
-
-                        const Fnkbox = Lego.Specific.Fnkbox;
-                        const children = Fnkbox.children(cur);
-                        Toybox.get(children.fnkname).local_point = Fnkbox.relative_fnkname_point;
-                        Toybox.get(children.executor).local_point = Fnkbox.relative_executor_point;
-                        Toybox.get(children.box).local_point = .{};
-                    },
-                    .fnkbox_box => {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkboxbox" });
-                        defer zone.deinit();
-
-                        // FIXME
-                        const FnkboxBox = Lego.Specific.FnkboxBox;
-                        const children = FnkboxBox.children(cur);
-                        Toybox.get(children.status_bar).local_point = .{};
-                        Toybox.get(children.status_bar).specific.button.local_rect = FnkboxBox.status_bar_goal;
-                        Toybox.get(children.description).local_point = .{};
-                        Toybox.get(children.testcases_area).local_point = .{};
-                    },
+                    .fnkbox_box => {},
                     .executor => |executor| {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor" });
                         defer zone.deinit();
 
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(cur);
-                        Toybox.get(children.garland).local_point = Executor.relative_garland_point;
-                        Toybox.get(children.controls).local_point = Executor.relative_crank_center;
 
                         var pill_offset: f32 = 0;
                         if (executor.animation) |animation| {
@@ -3197,34 +3243,16 @@ const Workspace = struct {
                         math.lerpTowardsRange(&fnkbox_testcases.scroll_target, 0, @max(0, tof32(k) - Lego.Specific.FnkboxBox.visible_testcases), .slow, delta_seconds);
                         math.lerpTowards(&fnkbox_testcases.scroll_visual, fnkbox_testcases.scroll_target, .slow, delta_seconds);
                     },
-                    .testcase => {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - testcase" });
-                        defer zone.deinit();
-
-                        const Testcase = Lego.Specific.Testcase;
-                        const children = Testcase.children(cur);
-                        Toybox.get(children.input).local_point = Testcase.relative_input_point;
-                        Toybox.get(children.expected).local_point = Testcase.relative_expected_point;
-                        Toybox.get(children.actual).local_point = Testcase.relative_actual_point;
-                        Toybox.get(children.play_button).local_point = .{};
-                        Toybox.get(children.play_button).specific.button.local_rect = .fromCenterAndSize(.new(-6, 0), .one);
-                    },
+                    .testcase => {},
                     .scrollbar => |*scrollbar| {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - testcase" });
                         defer zone.deinit();
 
-                        const FnkboxBox = Lego.Specific.FnkboxBox;
-                        // TODO: simplify
-                        const handle_size: f32 = 1;
                         const n_testcases = Toybox.childCount(lego.tree.next);
                         const cur_scroll = lego.tree.next.get().specific.fnkbox_testcases.scroll_visual;
-                        scrollbar.local_rect = FnkboxBox.testcases_box.withSize(.new(0.5, handle_size), .top_left).move(.new(0.1, 0.6))
-                            .move(.new(0, (cur_scroll / tof32(@max(1, n_testcases -| FnkboxBox.visible_testcases))) * (FnkboxBox.testcases_height - 1.2 - handle_size)));
-
-                        lego.tree.first.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1);
-                        lego.tree.last.get().specific.button.local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1);
+                        scrollbar.local_rect = Lego.Specific.Scrollbar.build(n_testcases, cur_scroll).local_rect;
                     },
-                    .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .fnkbox, .case, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -3859,34 +3887,33 @@ const Workspace = struct {
                 .default,
         );
 
-        if (true) { // update _t
+        // TODO NOW: improve/remove, by having this be the permanent list, and not iterating over all elements
+        var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
+
+        if (true) { // update _t and other simple things that could be done in parallel
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
             defer zone.deinit();
 
-            // Should technically be inside updateSprings,
-            // but I suspect this is faster (and simpler).
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
-                math.lerp_towards(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, 0.6, delta_seconds);
-                math.lerp_towards(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, 0.6, delta_seconds);
-                math.lerp_towards(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, 0.6, delta_seconds);
-                math.lerp_towards(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, 0.6, delta_seconds);
+
+                var done = true;
+
+                const eps: f32 = 0.0001;
+                done = math.lerpTowardsWithFinish(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, .fast, delta_seconds, eps) and done;
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
-                        math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
+                        done = math.lerpTowardsWithFinish(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, .fast, delta_seconds, eps) and done;
                     },
                     .executor => |*executor| {
                         math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
+                        done = done and (@abs(executor.garland_appearing_t - 1) < eps);
                     },
-                    .pill => |*pill| {
-                        pill.remaining_lifetime -= delta_seconds;
-                        lego.local_point = lego.local_point.applyToLocalPoint(.{ .pos = pill.velocity.scale(delta_seconds) });
-                        if (pill.remaining_lifetime <= 0) {
-                            Toybox.pop(lego.index, undo_stack);
-                            Toybox.destroyFloating(lego.index, undo_stack);
-                        }
-                    },
+                    .pill,
                     .area,
                     .case,
                     .newcase,
@@ -3907,6 +3934,35 @@ const Workspace = struct {
                     .executor_brake,
                     .executor_crank,
                     => {},
+                }
+
+                if (!done) {
+                    try things_actually_hot_etc.append(lego.index);
+                }
+            }
+        }
+
+        // TODO NOW: improve/remove
+        for (things_actually_hot_etc.items) |index| {
+            switch (index.get().specific) {
+                else => {},
+                .sexpr => Lego.Specific.Sexpr.updateLocalPositions(index),
+            }
+        }
+
+        if (true) { // pills decay
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                switch (lego.specific) {
+                    .pill => |*pill| {
+                        pill.remaining_lifetime -= delta_seconds;
+                        lego.local_point = lego.local_point.applyToLocalPoint(.{ .pos = pill.velocity.scale(delta_seconds) });
+                        if (pill.remaining_lifetime <= 0) {
+                            Toybox.pop(lego.index, undo_stack);
+                            Toybox.destroyFloating(lego.index, undo_stack);
+                        }
+                    },
+                    else => {},
                 }
             }
         }
@@ -4000,7 +4056,9 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
         }
 
-        // includes dragging and snapping to dropzone, since that's just the spring between the mouse cursor/dropzone and the grabbed thing
+        dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
+
+        // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
         workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         if (true) { // start and advance fnkboxes animations
@@ -4241,6 +4299,8 @@ const Workspace = struct {
                 target_lens.roots_to_interact = all_roots_except_hand.items;
             }
         }
+
+        if (true) Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
 
         if (drawer) |d| {
             try workspace.draw(platform, d);
