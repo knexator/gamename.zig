@@ -1280,6 +1280,10 @@ pub const Lego = struct {
             return Toybox.get(index);
         }
 
+        pub fn getSafe(index: Index) ?*Lego {
+            return Toybox.safeGet(index);
+        }
+
         pub fn case(index: Index) struct {
             self: Lego.Index,
             pattern: Lego.Index,
@@ -3182,6 +3186,12 @@ const Workspace = struct {
                             fnkbox.specific.fnkbox.execution != null
                         else
                             executor.animation != null,
+                        .case => Toybox.isAncestor(workspace.toolbar_left, cur) and switch (lego.specific) {
+                            .garland => true,
+                            // TODO: very hacky
+                            .sexpr => |sexpr| sexpr.kind == .empty and sexpr.is_fnkname,
+                            else => unreachable,
+                        },
                         else => false,
                     },
                     else => false,
@@ -3488,7 +3498,10 @@ const Workspace = struct {
         drawer.canvas.clipper.reset();
         drawer.canvas.clipper.use(drawer.canvas);
 
-        try _draw(workspace.roots(.all).constSlice(), camera, drawer);
+        try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
+            lego.specific.tag() == .sexpr
+        else
+            false, camera, drawer);
 
         if (display_fps) try drawer.canvas.drawText(
             0,
@@ -3504,7 +3517,7 @@ const Workspace = struct {
         );
     }
 
-    fn _draw(roots_in_draw_order: []const Lego.Index, camera: Rect, drawer: *Drawer) !void {
+    fn _draw(roots_in_draw_order: []const Lego.Index, holding_a_sexpr: bool, camera: Rect, drawer: *Drawer) !void {
         for (roots_in_draw_order) |root| {
             var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
@@ -3570,16 +3583,18 @@ const Workspace = struct {
                                         drawer.canvas.clipper.pop();
                                         drawer.canvas.clipper.use(drawer.canvas);
                                     }
-                                    try _draw(&.{sexpr.emerging_value}, camera, drawer);
+                                    try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
                                 } else |_| {
                                     std.log.err("reached max lens depth, TODO: improve", .{});
                                 }
                             }
 
                             switch (sexpr.kind) {
-                                // TODO NOW
-                                .empty => try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha),
-                                // if (holding == .sexpr or !case.fnk_name.isEmpty()) try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
+                                .empty => if (lego.tree.parent.get().specific.tag() != .sexpr and
+                                    (holding_a_sexpr or !sexpr.is_fnkname))
+                                {
+                                    try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha);
+                                },
                                 .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
                                 .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
                                 .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
@@ -3679,7 +3694,7 @@ const Workspace = struct {
                                     }
                                     drawer.canvas.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
 
-                                    try _draw(lens.roots_to_draw, lens.transform.getCamera(camera), drawer);
+                                    try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer);
                                 } else |_| {
                                     std.log.err("reached max lens depth, TODO: improve", .{});
                                 }
