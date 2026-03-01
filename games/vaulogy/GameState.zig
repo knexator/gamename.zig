@@ -226,6 +226,10 @@ pub const Lego = struct {
         fnkbox_testcases: struct {
             scrollbar: Lego.Index,
         },
+        fnkslist: struct {
+            scrollbar: Lego.Index,
+        },
+        fnkslist_element: FnkslistElement,
         postit_text: struct {
             text: []const u8,
         },
@@ -285,6 +289,21 @@ pub const Lego = struct {
             };
         }
 
+        pub const FnkslistElement = struct {
+            text: []const u8,
+
+            pub const height: f32 = 2.0;
+
+            const core = @import("core.zig");
+            pub fn build(count: usize, fnkname: *const core.Sexpr, text: []const u8, undo_stack: ?*UndoStack) !Lego.Index {
+                return try Toybox.createWithChildren(.{ .pos = .new(0, tof32(count) * height) }, .{
+                    .fnkslist_element = .{ .text = text },
+                }, &.{
+                    try Sexpr.buildFromOldCoreValue(.{ .pos = .new(1.5, 0.65), .scale = 0.5, .turns = 0.25 }, fnkname, false, undo_stack),
+                }, undo_stack);
+            }
+        };
+
         pub const Button = struct {
             local_rect: Rect,
             action: enum {
@@ -310,7 +329,6 @@ pub const Lego = struct {
 
         pub const Scrollbar = struct {
             total_rect: Rect,
-            // handle_rect: Rect,
             total_length: f32,
             visible_length: f32,
             scroll_visual: f32,
@@ -318,6 +336,31 @@ pub const Lego = struct {
 
             const min_handle_length: f32 = 0.25;
             const max_handle_length: f32 = 1;
+
+            pub fn build(bounding_rect: Rect, total_length: f32, visible_length: f32, undo_stack: ?*UndoStack) Lego.Index {
+                const arrows_height = bounding_rect.size.x;
+                return try Toybox.createWithChildren(.{}, .{
+                    .scrollbar = .{
+                        .total_rect = bounding_rect.withSize(.new(
+                            bounding_rect.size.x,
+                            bounding_rect.size.y - 2 * arrows_height,
+                        ), .center),
+                        .total_length = total_length,
+                        .visible_length = visible_length,
+                        .scroll_visual = 0,
+                        .scroll_target = 0,
+                    },
+                }, &.{
+                    (try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = bounding_rect.withSize(.both(arrows_height), .top_left),
+                        .action = .scroll_up,
+                    } }, undo_stack)).index,
+                    (try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = bounding_rect.withSize(.both(arrows_height), .bottom_left),
+                        .action = .scroll_down,
+                    } }, undo_stack)).index,
+                }, undo_stack);
+            }
 
             pub fn buildForTestcases(n_testcases: usize, scroll: f32) Scrollbar {
                 const total_rect = Lego.Specific.FnkboxBox.testcases_box
@@ -1279,6 +1322,8 @@ pub const Lego = struct {
             .fnkbox_box,
             .fnkbox_description,
             .fnkbox_testcases,
+            .fnkslist,
+            .fnkslist_element,
             .executor,
             .testcase,
             .pill,
@@ -1342,6 +1387,9 @@ pub const Lego = struct {
             .scrollbar => |*scrollbar| {
                 scrollbar.scroll_target += amount;
             },
+            .fnkslist => |fnkslist| {
+                fnkslist.scrollbar.get().specific.scrollbar.scroll_target += amount;
+            },
             .fnkbox_testcases => |fnkbox_testcases| {
                 fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target += amount;
             },
@@ -1378,6 +1426,8 @@ pub const Lego = struct {
             .fnkbox_box,
             .fnkbox_description,
             .fnkbox_testcases,
+            .fnkslist,
+            .fnkslist_element,
             .newcase,
             .area,
             .testcase,
@@ -1408,6 +1458,8 @@ pub const Lego = struct {
             .fnkbox_box,
             .fnkbox_description,
             .fnkbox_testcases,
+            .fnkslist,
+            .fnkslist_element,
             .newcase,
             .area,
             .testcase,
@@ -2048,6 +2100,15 @@ pub const Toybox = struct {
         }
     }
 
+    pub fn isAncestor(parent: Lego.Index, child: Lego.Index) bool {
+        var cur = child;
+        while (cur != .nothing) {
+            if (cur == parent) return true;
+            cur = cur.get().tree.parent;
+        }
+        return false;
+    }
+
     pub fn findAncestor(index: Lego.Index, kind: Lego.Specific.Tag) Lego.Index {
         assert(index != .nothing);
         var cur = index;
@@ -2271,6 +2332,8 @@ const Workspace = struct {
     fnkboxes_layer: Lego.Index,
     toolbar_left: Lego.Index,
     toolbar_left_unfolded_t: f32 = 0,
+    toolbar_fnks: Lego.Index,
+    toolbar_fnks_unfolded_t: f32 = 0,
     lenses_layer: Lego.Index,
     floating_inputs_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
@@ -2293,6 +2356,7 @@ const Workspace = struct {
     };
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
+    pub const toolbar_fnks_rect: Rect = .{ .top_left = .zero, .size = .new(12, 15) };
 
     const UndoableCommand = union(enum) {
         fence,
@@ -2320,33 +2384,34 @@ const Workspace = struct {
     fn roots(workspace: Workspace, config: struct {
         include_hand: bool,
         include_lenses: bool,
-        include_toolbar: bool,
+        include_toolbars: bool,
         include_floating_inputs: bool,
 
         pub const all: @This() = .{
             .include_hand = true,
             .include_lenses = true,
-            .include_toolbar = true,
+            .include_toolbars = true,
             .include_floating_inputs = true,
         };
         pub const interactable: @This() = .{
             .include_hand = false,
             .include_lenses = true,
-            .include_toolbar = true,
+            .include_toolbars = true,
             .include_floating_inputs = false,
         };
         pub const with_main_camera: @This() = .{
             .include_hand = false,
             .include_lenses = true,
-            .include_toolbar = false,
+            .include_toolbars = false,
             .include_floating_inputs = true,
         };
-    }) std.BoundedArray(Lego.Index, 6) {
-        var result: std.BoundedArray(Lego.Index, 6) = .{};
+    }) std.BoundedArray(Lego.Index, 8) {
+        var result: std.BoundedArray(Lego.Index, 8) = .{};
         result.appendAssumeCapacity(workspace.main_area);
         result.appendAssumeCapacity(workspace.fnkboxes_layer);
         if (config.include_floating_inputs) result.appendAssumeCapacity(workspace.floating_inputs_layer);
-        if (config.include_toolbar) result.appendAssumeCapacity(workspace.toolbar_left);
+        if (config.include_toolbars) result.appendAssumeCapacity(workspace.toolbar_left);
+        if (config.include_toolbars) result.appendAssumeCapacity(workspace.toolbar_fnks);
         if (config.include_hand) result.appendAssumeCapacity(workspace.hand_layer);
         if (config.include_lenses) result.appendAssumeCapacity(workspace.lenses_layer);
         return result;
@@ -2371,6 +2436,34 @@ const Workspace = struct {
                 },
             },
         }, undo_stack)).index;
+        dst.toolbar_fnks, const fnkslist: Lego.Index = blk: {
+            const area = (try Toybox.new(.{}, .{
+                .area = .{
+                    .bg = .{
+                        // ensure that "mouse off-screen on the right" also overlaps the toolbar
+                        .local_rect = toolbar_fnks_rect.plusMargin3(.right, 100),
+                    },
+                },
+            }, undo_stack)).index;
+
+            const scrollbar = Lego.Specific.Scrollbar.build(
+                toolbar_fnks_rect
+                    .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
+                0,
+                toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
+                undo_stack,
+            );
+
+            const fnkslist = try Toybox.new(.{}, .{
+                .fnkslist = .{ .scrollbar = scrollbar },
+            }, undo_stack);
+
+            Toybox.addChildLast(area, fnkslist.index, undo_stack);
+
+            Toybox.addChildLast(area, scrollbar, undo_stack);
+
+            break :blk .{ area, fnkslist.index };
+        };
         dst.fnkboxes_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
         dst.lenses_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
         dst.floating_inputs_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
@@ -2567,6 +2660,15 @@ const Workspace = struct {
                 //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
                 // }
                 x += if (k < 4) 25 else if (k == 4) 30 else 35;
+
+                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                    k,
+                    level.fnk_name,
+                    // level.fnk_name.atom_lit.value,
+                    level.description,
+                    undo_stack,
+                ), undo_stack);
             }
         }
 
@@ -2814,7 +2916,7 @@ const Workspace = struct {
                     .area => |area| {
                         if (step.children_already_visited and
                             area.bg.contains(lego.absolute_point, absolute_needle_pos) and
-                            (grabbing == .nothing or Toybox.get(grabbing).tree.parent == .nothing or cur == roots_in_draw_order[0]))
+                            (grabbing == .nothing or Toybox.get(grabbing).tree.parent == .nothing or Toybox.isAncestor(cur, grabbing)))
                         {
                             return .{ .over_background = cur };
                         }
@@ -2862,6 +2964,8 @@ const Workspace = struct {
                     .fnkbox,
                     .fnkbox_box,
                     .fnkbox_description,
+                    .fnkslist,
+                    .fnkslist_element,
                     .testcase,
                     .pill,
                     .postit_text,
@@ -2879,6 +2983,8 @@ const Workspace = struct {
                             .microscope,
                             .fnkbox_description,
                             .fnkbox_testcases,
+                            .fnkslist,
+                            .fnkslist_element,
                             .button,
                             .scrollbar,
                             .executor,
@@ -2911,7 +3017,12 @@ const Workspace = struct {
             }
         }
 
-        unreachable;
+        if (grabbing != .nothing) {
+            assert(grabbing.get().tree.parent != .nothing);
+            return .{ .over_background = Toybox.oldestAncestor(grabbing) };
+        } else {
+            unreachable;
+        }
     }
 
     fn dragGrabbing(grabbing: Grabbing, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
@@ -3035,7 +3146,7 @@ const Workspace = struct {
 
                         sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific.tag()) {
                             else => false,
-                            .testcase, .fnkbox => true,
+                            .testcase, .fnkbox, .fnkslist_element => true,
                         };
 
                         if (sexpr.emerging_value != .nothing) {
@@ -3291,6 +3402,17 @@ const Workspace = struct {
                             cur_case = Toybox.get(cur_case).tree.next;
                         }
                     },
+                    .fnkslist => |fnkslist| {
+                        const scroll_visual = fnkslist.scrollbar.get().specific.scrollbar.scroll_visual;
+
+                        var k: usize = 0;
+                        var cur_element: Lego.Index = lego.tree.first;
+                        while (cur_element != .nothing) {
+                            Toybox.get(cur_element).local_point = .{ .pos = .new(0, Lego.Specific.FnkslistElement.height * (tof32(k) - scroll_visual)) };
+                            k += 1;
+                            cur_element = Toybox.get(cur_element).tree.next;
+                        }
+                    },
                     .scrollbar => |*scrollbar| {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - scrollbar" });
                         defer zone.deinit();
@@ -3298,7 +3420,7 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .testcase, .fnkbox, .case, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .fnkslist_element, .testcase, .fnkbox, .case, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -3660,6 +3782,16 @@ const Workspace = struct {
                                 .black,
                             );
                         },
+                        .fnkslist_element => |fnkslist_element| {
+                            try drawer.canvas.drawText(
+                                0,
+                                camera_relative,
+                                fnkslist_element.text,
+                                .leftCenterAt(.new(2.1, Lego.Specific.FnkslistElement.height / 2.0)),
+                                0.5,
+                                .black,
+                            );
+                        },
                         .fnkbox_box => {
                             drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
                         },
@@ -3689,7 +3821,7 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .executor_controls, .case, .garland, .microscope, .executor, .fnkbox, .pill => {},
+                        .fnkslist, .executor_controls, .case, .garland, .microscope, .executor, .fnkbox, .pill => {},
                     }
                 }
             }
@@ -3970,6 +4102,8 @@ const Workspace = struct {
                     .fnkbox_description,
                     .fnkbox_box,
                     .fnkbox_testcases,
+                    .fnkslist,
+                    .fnkslist_element,
                     .button,
                     .scrollbar,
                     .testcase,
@@ -4046,6 +4180,11 @@ const Workspace = struct {
                 )) {
                     break lego.index;
                 }
+                if (lego.specific.tag() == .fnkslist and toolbar_fnks_rect.contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
             } else .nothing;
 
             const p = &Toybox.get(workspace.main_area).local_point;
@@ -4100,6 +4239,26 @@ const Workspace = struct {
             p.* = p.applyToLocalPoint(.{ .pos = .new(-(rect.size.x - 1) * (1 - hot_t), 0) });
 
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
+        }
+
+        if (true) { // open/close fnks toolbar
+            math.lerpTowards(
+                &workspace.toolbar_fnks_unfolded_t,
+                if (hot_and_dropzone.over_background == workspace.toolbar_fnks) 1 else 0,
+                .slow,
+                delta_seconds,
+            );
+
+            const rect = toolbar_fnks_rect;
+            const hot_t = workspace.toolbar_fnks_unfolded_t;
+            const p = &Toybox.get(workspace.toolbar_fnks).local_point;
+            p.* = .{
+                .scale = absolute_camera.size.y / rect.size.y,
+                .pos = absolute_camera.get(.top_right),
+            };
+            p.* = p.applyToLocalPoint(.{ .pos = .new(-1 - (rect.size.x - 1) * hot_t, 0) });
+
+            Toybox.refreshAbsolutePoints(&.{workspace.toolbar_fnks});
         }
 
         dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
@@ -4324,7 +4483,7 @@ const Workspace = struct {
                 var all_roots: std.ArrayListUnmanaged(Lego.Index) = .empty;
                 try all_roots.appendSlice(allocator, workspace.roots(.{
                     .include_hand = true,
-                    .include_toolbar = true,
+                    .include_toolbars = true,
                     .include_floating_inputs = true,
                     .include_lenses = false,
                 }).constSlice());
@@ -4333,7 +4492,7 @@ const Workspace = struct {
                 var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = .empty;
                 try all_roots_except_hand.appendSlice(allocator, workspace.roots(.{
                     .include_hand = false,
-                    .include_toolbar = true,
+                    .include_toolbars = true,
                     .include_floating_inputs = true,
                     .include_lenses = false,
                 }).constSlice());

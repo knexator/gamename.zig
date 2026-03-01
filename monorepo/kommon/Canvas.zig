@@ -1422,6 +1422,14 @@ pub const TextRenderer = struct {
                 .pos = p,
             };
         }
+
+        pub fn leftCenterAt(p: Vec2) TextPosition {
+            return .{
+                .hor = .left,
+                .ver = .median,
+                .pos = p,
+            };
+        }
     };
 
     const RectSides = struct {
