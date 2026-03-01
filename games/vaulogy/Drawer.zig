@@ -3,6 +3,8 @@
 pub const Drawer = @This();
 pub const Gl = kommon.Gl;
 
+const DRAW_ATOMS_PLAINLY = true;
+
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 
@@ -718,28 +720,38 @@ pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha
 }
 
 fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    drawer.canvas.gl.useRenderableWithExistingData(
-        visuals.geometry.template.fill_atom_renderable.?,
-        visuals.geometry.template.triangles.len,
-        &.{
-            .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
-            .{ .name = "u_point", .value = .{ .Point = point } },
-            .{ .name = "u_camera", .value = .{ .Rect = camera } },
-            .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
-            .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
-        },
-        null,
-    );
+    if (DRAW_ATOMS_PLAINLY) {
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.template,
+            .black,
+            visuals.color,
+            alpha,
+        );
+    } else {
+        drawer.canvas.gl.useRenderableWithExistingData(
+            visuals.geometry.template.fill_atom_renderable.?,
+            visuals.geometry.template.triangles.len,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
+                .{ .name = "u_point", .value = .{ .Point = point } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
+            },
+            null,
+        );
 
-    try drawer.drawShapeV3(
-        camera,
-        point,
-        visuals.geometry.template,
-        .black,
-        null,
-        // visuals.color,
-        alpha,
-    );
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.template,
+            .black,
+            null,
+            alpha,
+        );
+    }
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(0.25, 0));
@@ -763,28 +775,38 @@ pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point, 
 }
 
 fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    drawer.canvas.gl.useRenderableWithExistingData(
-        visuals.geometry.pattern.fill_atom_renderable.?,
-        visuals.geometry.pattern.triangles.len,
-        &.{
-            .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
-            .{ .name = "u_point", .value = .{ .Point = point } },
-            .{ .name = "u_camera", .value = .{ .Rect = camera } },
-            .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
-            .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
-        },
-        null,
-    );
+    if (DRAW_ATOMS_PLAINLY) {
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.pattern,
+            .black,
+            visuals.color,
+            alpha,
+        );
+    } else {
+        drawer.canvas.gl.useRenderableWithExistingData(
+            visuals.geometry.pattern.fill_atom_renderable.?,
+            visuals.geometry.pattern.triangles.len,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
+                .{ .name = "u_point", .value = .{ .Point = point } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
+            },
+            null,
+        );
 
-    try drawer.drawShapeV3(
-        camera,
-        point,
-        visuals.geometry.pattern,
-        .black,
-        null,
-        // visuals.color,
-        alpha,
-    );
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.pattern,
+            .black,
+            null,
+            alpha,
+        );
+    }
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(-0.25, 0));
