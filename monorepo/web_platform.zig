@@ -125,8 +125,10 @@ const js = struct {
         extern fn drawArrays(mode: DrawMode, first: GLint, count: GLsizei) void;
         extern fn drawElements(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr) void;
         extern fn drawElementsInstanced(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr, instanceCount: GLsizei) void;
-        extern fn uniform4f(location: UniformLocation, v0: f32, v1: f32, v2: f32, v3: f32) void;
         extern fn uniform1f(location: UniformLocation, v0: f32) void;
+        extern fn uniform2f(location: UniformLocation, v0: f32, v1: f32) void;
+        extern fn uniform3f(location: UniformLocation, v0: f32, v1: f32, v2: f32) void;
+        extern fn uniform4f(location: UniformLocation, v0: f32, v1: f32, v2: f32, v3: f32) void;
         // uniform1i
         // TODO: uniform[1234][uif][v]
         extern fn createTexture() Texture;
@@ -837,6 +839,7 @@ const web_gl = struct {
                 .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                 .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                 .f32 => |v| js.webgl2.uniform1f(u, v),
+                .Vec2 => |v| js.webgl2.uniform2f(u, v.x, v.y),
             }
         }
 
@@ -999,6 +1002,7 @@ const web_gl = struct {
                 .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                 .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                 .f32 => |v| js.webgl2.uniform1f(u, v),
+                .Vec2 => |v| js.webgl2.uniform2f(u, v.x, v.y),
             }
         }
 

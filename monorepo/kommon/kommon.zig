@@ -21,6 +21,7 @@ pub const Mem = @import("Mem.zig");
 pub const LazyState = @import("lazystate.zig").LazyState;
 pub const Usual = @import("Usual.zig");
 pub const TopK = @import("topk.zig").TopK;
+pub const shaders = @import("shaders.zig");
 pub const Key = enum(u64) {
     _,
 

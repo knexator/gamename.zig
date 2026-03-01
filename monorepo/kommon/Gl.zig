@@ -237,6 +237,7 @@ pub const UniformInfo = struct {
         // TODO: comptime magic
         value: union(Kind) {
             f32: f32,
+            Vec2: Vec2,
             FColor: FColor,
             Rect: Rect,
             Point: Point,
@@ -255,6 +256,7 @@ pub const UniformInfo = struct {
 
     pub const Kind = enum {
         f32,
+        Vec2,
         FColor,
         Rect,
         Point,
@@ -265,6 +267,7 @@ pub const UniformInfo = struct {
                 FColor => .FColor,
                 Point => .Point,
                 f32 => .f32,
+                Vec2 => .Vec2,
                 else => @compileError(std.fmt.comptimePrint("Unhandled type: {s}", .{@typeName(t)})),
             };
         }

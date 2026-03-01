@@ -528,6 +528,7 @@ pub fn main() !void {
                     .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                     .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                     .f32 => |v| gl.Uniform1f(u, v),
+                    .Vec2 => |v| gl.Uniform2f(u, v.x, v.y),
                 }
             }
 
@@ -705,6 +706,7 @@ pub fn main() !void {
                     .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                     .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                     .f32 => |v| gl.Uniform1f(u, v),
+                    .Vec2 => |v| gl.Uniform2f(u, v.x, v.y),
                 }
             }
 

@@ -17,18 +17,21 @@ pub fn init(usual: *kommon.Usual) !Drawer {
 pub const AtomVisuals = struct {
     profile: []const Vec2,
     color: FColor,
+    noise_z: f32,
     display: ?[]const u8 = null,
     geometry: Geometry,
 
     fn build(mem: std.mem.Allocator, params: struct {
         profile: []const Vec2,
         color: FColor,
+        noise_z: f32,
         display: ?[]const u8 = null,
     }, gl: kommon.Gl) !AtomVisuals {
         const geo: Geometry = try .fromProfile(mem, params.profile, gl);
         return .{
             .profile = params.profile,
             .color = params.color,
+            .noise_z = params.noise_z,
             .display = params.display,
             .geometry = geo,
         };
@@ -176,6 +179,7 @@ const AtomVisualCache = struct {
     const HardcodedAtomVisuals = struct {
         profile: ?[]const Vec2,
         color: ?FColor,
+        noise_z: ?f32 = null,
         display: ?[]const u8 = null,
     };
     const hardcoded_visuals = .{
@@ -420,6 +424,7 @@ const AtomVisualCache = struct {
             const input = @field(hardcoded_visuals, field.name);
             const atom_visuals: AtomVisuals = try .build(arena, .{
                 .color = input.color orelse newAtomColor(atom_name),
+                .noise_z = input.noise_z orelse newAtomNoiseZ(atom_name),
                 .profile = input.profile orelse try res.newAtomProfile(atom_name),
                 .display = input.display,
             }, gl);
@@ -448,8 +453,14 @@ const AtomVisualCache = struct {
         return profile;
     }
 
+    fn newAtomNoiseZ(name: []const u8) f32 {
+        const seed = hash(&.{ "noise_z", name });
+        var rnd_state = std.Random.DefaultPrng.init(seed);
+        return rnd_state.random().float(f32);
+    }
+
     fn newAtomColor(name: []const u8) FColor {
-        const seed = std.array_hash_map.hashString(name);
+        const seed = hash(&.{ "color", name });
         var rnd_state = std.Random.DefaultPrng.init(seed);
         var rnd = Random{ .rnd = rnd_state.random() };
         return rnd.fcolor();
@@ -460,6 +471,7 @@ const AtomVisualCache = struct {
         if (!v.found_existing) {
             v.value_ptr.* = try .build(cache.arena, .{
                 .color = newAtomColor(name),
+                .noise_z = newAtomNoiseZ(name),
                 .profile = try cache.newAtomProfile(name),
             }, gl);
         }
@@ -706,7 +718,28 @@ pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha
 }
 
 fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    try drawer.drawShapeV3(camera, point, visuals.geometry.template, .black, visuals.color, alpha);
+    drawer.canvas.gl.useRenderableWithExistingData(
+        visuals.geometry.template.fill_atom_renderable.?,
+        visuals.geometry.template.triangles.len,
+        &.{
+            .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
+            .{ .name = "u_point", .value = .{ .Point = point } },
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+            .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
+        },
+        null,
+    );
+
+    try drawer.drawShapeV3(
+        camera,
+        point,
+        visuals.geometry.template,
+        .black,
+        null,
+        // visuals.color,
+        alpha,
+    );
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(0.25, 0));
@@ -730,7 +763,28 @@ pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point, 
 }
 
 fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    try drawer.drawShapeV3(camera, point, visuals.geometry.pattern, .black, visuals.color, alpha);
+    drawer.canvas.gl.useRenderableWithExistingData(
+        visuals.geometry.pattern.fill_atom_renderable.?,
+        visuals.geometry.pattern.triangles.len,
+        &.{
+            .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
+            .{ .name = "u_point", .value = .{ .Point = point } },
+            .{ .name = "u_camera", .value = .{ .Rect = camera } },
+            .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+            .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
+        },
+        null,
+    );
+
+    try drawer.drawShapeV3(
+        camera,
+        point,
+        visuals.geometry.pattern,
+        .black,
+        null,
+        // visuals.color,
+        alpha,
+    );
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(-0.25, 0));
@@ -1034,4 +1088,10 @@ fn allTrue(arr: []const bool) bool {
     for (arr) |v| {
         if (!v) return false;
     } else return true;
+}
+
+fn hash(strings: []const []const u8) u64 {
+    var hasher: std.hash.Wyhash = .init(0);
+    for (strings) |s| hasher.update(s);
+    return hasher.final();
 }

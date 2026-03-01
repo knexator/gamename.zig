@@ -53,6 +53,7 @@ DEFAULT_SHAPES: struct {
                 .local_points = &.{ .zero, .e1, .e2, .one },
                 .triangles = &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } },
                 .fill_shape_renderable = null,
+                .fill_atom_renderable = null,
             },
         };
     }
@@ -962,6 +963,7 @@ pub fn fillRect(
             },
             .triangles = self.DEFAULT_SHAPES.square.triangles,
             .fill_shape_renderable = null,
+            .fill_atom_renderable = null,
         },
         color,
     );
@@ -1271,6 +1273,7 @@ pub fn rectGradient(
             },
             .triangles = self.DEFAULT_SHAPES.square.triangles,
             .fill_shape_renderable = null,
+            .fill_atom_renderable = null,
         },
         &.{ top, top, bottom, bottom },
     );
