@@ -1604,7 +1604,9 @@ pub const Toybox = struct {
 
     pub fn safeGet(index: Lego.Index) ?*Lego {
         if (index == .nothing) return null;
-        return get(index);
+        const result = getUnsafe(index);
+        if (!result.exists) return null;
+        return result;
     }
 
     pub fn addChildLastWithoutChangingAbsPoint(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
@@ -3058,7 +3060,9 @@ const Workspace = struct {
         if (lego.draggable()) {
             switch (lego.specific) {
                 .sexpr => |sexpr| {
-                    const target: Point = if (interaction.dropzone == .nothing)
+                    const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
+                        dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
+                    else
                         // TODO: i don't like the scale hack
                         (Point{
                             .pos = absolute_mouse_pos,
@@ -3066,15 +3070,13 @@ const Workspace = struct {
                             .turns = if (sexpr.is_fnkname) 0.25 else 0,
                         })
                             .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
-                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() })
-                    else
-                        Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
+                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() });
 
                     lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
                         .inverseApplyGetLocal(target), 0.6, delta_seconds);
 
-                    if (interaction.dropzone != .nothing) {
-                        const dropzone_is_pattern = interaction.dropzone.get().specific.sexpr.is_pattern;
+                    if (Toybox.safeGet(interaction.dropzone)) |dropzone| {
+                        const dropzone_is_pattern = dropzone.specific.sexpr.is_pattern;
                         if (dropzone_is_pattern != sexpr.is_pattern) {
                             var cur_sexpr = cur;
                             while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, cur).next) {
@@ -3086,7 +3088,7 @@ const Workspace = struct {
                             }
                         }
 
-                        const dropzone_is_fnkname = interaction.dropzone.get().specific.sexpr.is_fnkname;
+                        const dropzone_is_fnkname = dropzone.specific.sexpr.is_fnkname;
                         if (dropzone_is_fnkname != sexpr.is_fnkname) {
                             var cur_sexpr = cur;
                             while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, cur).next) {
@@ -3100,16 +3102,16 @@ const Workspace = struct {
                     }
                 },
                 else => {
-                    const target: Point = if (interaction.dropzone == .nothing)
+                    const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
+                        dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
+                    else
                         // TODO: i don't like the scale hack
                         (Point{
                             .pos = absolute_mouse_pos,
                             .scale = Toybox.get(interaction.over_background).absolute_point.scale,
                         })
                             .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
-                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() })
-                    else
-                        Toybox.get(interaction.dropzone).absolute_point.applyToLocalPoint(.{ .pos = Toybox.get(interaction.dropzone).handleLocalOffset() });
+                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() });
 
                     lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
                         .inverseApplyGetLocal(target), 0.6, delta_seconds);
@@ -3575,7 +3577,9 @@ const Workspace = struct {
                             }
 
                             switch (sexpr.kind) {
-                                .empty => {},
+                                // TODO NOW
+                                .empty => try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha),
+                                // if (holding == .sexpr or !case.fnk_name.isEmpty()) try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
                                 .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
                                 .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
                                 .atom_var => try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
