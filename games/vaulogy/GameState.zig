@@ -2893,8 +2893,21 @@ const Workspace = struct {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
                 const relative_needle_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
-                if (lego.unhoverable and !step.children_already_visited) it.skipChildren();
-                if (lego.unhoverable) continue;
+                if (lego.unhoverable and !step.children_already_visited) {
+                    it.skipChildren();
+                    _ = it.next();
+                    continue;
+                }
+                assert(!lego.unhoverable);
+
+                const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
+                const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
+                if (!absolute_bounds.contains(absolute_needle_pos)) {
+                    it.skipChildren();
+                    _ = it.next();
+                    continue;
+                }
+
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
                         // TODO: skip children if needle is far

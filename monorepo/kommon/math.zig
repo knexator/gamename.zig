@@ -1112,6 +1112,11 @@ pub const Bounds = struct {
             !std.math.isNan(bounds.bottom);
     }
 
+    pub fn contains(bounds: Bounds, pos: Vec2) bool {
+        return inRange(pos.x, bounds.left, bounds.right) and
+            inRange(pos.y, bounds.top, bounds.bottom);
+    }
+
     pub fn fromRect(rect: Rect) Bounds {
         const result: Bounds = .{
             .left = rect.top_left.x,
