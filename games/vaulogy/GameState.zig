@@ -3607,66 +3607,23 @@ const Workspace = struct {
                             }
 
                             if (maybe_bindings) |bindings| {
-                                switch (sexpr.kind) {
-                                    // TODO: cables?
-                                    else => {},
-                                    .atom_var => {
-                                        // TODO: check that compiler skips the loop if anim_t is null
-                                        for (bindings.new) |binding| {
-                                            if (bindings.anim_t) |anim_t| {
-                                                if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
-                                                    if (sexpr.is_pattern) {
-                                                        const t = math.smoothstep(anim_t, 0, 0.1);
-                                                        try drawer.drawEatingPattern(camera, point, binding, t, alpha);
-                                                    } else {
-                                                        // FIXME NOW
-                                                        // try drawer.clipAtomRegion(camera, point);
-                                                        // const t = math.smoothstep(anim_t, 0, 0.4);
-                                                        // try drawer.drawSexpr(camera, .{
-                                                        //     .is_pattern = sexpr.is_pattern_t,
-                                                        //     .value = binding.value,
-                                                        //     .pos = point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
-                                                        // }, alpha);
-                                                        // drawer.endClip();
-
-                                                        // try drawer.drawSexpr(camera, .{
-                                                        //     .is_pattern = sexpr.is_pattern_t,
-                                                        //     .value = sexpr.atom_name,
-                                                        //     .pos = point,
-                                                        // }, alpha * (1 - anim_t));
-
-                                                        // TODO: uncomment
-                                                        // if (anim_t < 0.5) {
-                                                        //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
-                                                        // }
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        } else for (bindings.old) |binding| {
+                                // draw eating patterns, TODO: could be done similar to emerging value instead
+                                if (sexpr.kind == .atom_var and sexpr.is_pattern) {
+                                    for (bindings.new) |binding| {
+                                        if (bindings.anim_t) |anim_t| {
                                             if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
-                                                if (sexpr.is_pattern) {
-                                                    const t = 1;
-                                                    try drawer.drawEatingPattern(camera, point, binding, t, alpha);
-                                                } else {
-                                                    // FIXME NOW
-                                                    // try drawer.drawSexpr(camera, .{
-                                                    //     .is_pattern = sexpr.is_pattern_t,
-                                                    //     .value = binding.value,
-                                                    //     .pos = point,
-                                                    // }, alpha);
-                                                }
+                                                const t = math.smoothstep(anim_t, 0, 0.1);
+                                                try drawer.drawEatingPattern(camera, point, binding, t, alpha);
                                                 break;
                                             }
-                                        } else {
-                                            // FIXME NOW
-                                            // try drawer.drawSexpr(camera, .{
-                                            //     .is_pattern = sexpr.is_pattern_t,
-                                            //     .value = sexpr.atom_name,
-                                            //     .pos = point,
-                                            // }, alpha);
                                         }
-                                    },
+                                    } else for (bindings.old) |binding| {
+                                        if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                            const t = 1;
+                                            try drawer.drawEatingPattern(camera, point, binding, t, alpha);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         },
