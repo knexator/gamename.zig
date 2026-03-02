@@ -681,6 +681,24 @@ pub const Lego = struct {
                 return original_fnkname;
             }
 
+            pub fn popCase(case: Lego.Index, undo_stack: ?*UndoStack) void {
+                // TODO(game): avoid case popping
+                assert(case.hasTag(.case));
+                const parent = case.get().tree.parent;
+                assert(parent.hasTag(.newcase));
+
+                Toybox.pop(case, undo_stack);
+                const original_parent_tree = Toybox.get(parent).tree;
+                const l_a = Toybox.get(original_parent_tree.next).specific.newcase.length();
+                const l_b = Toybox.get(parent).specific.newcase.length();
+                Toybox.get(original_parent_tree.next).specific.newcase.length_before = l_b;
+                Toybox.get(original_parent_tree.next).specific.newcase.length_after = l_a;
+                Toybox.get(original_parent_tree.next).dropzone_t = parent.get().dropzone_t;
+                Toybox.get(original_parent_tree.next).local_point = parent.get().local_point;
+                Toybox.pop(parent, undo_stack);
+                Toybox.destroyFloating(parent, undo_stack);
+            }
+
             pub fn children(index: Lego.Index) struct {
                 fnkname: Lego.Index,
                 cases: Lego.Index,
@@ -1803,7 +1821,7 @@ pub const Toybox = struct {
         Toybox.pop(child, undo_stack);
     }
 
-    pub fn popWithUndoAndChangingCoords(child: Lego.Index, undo_stack: *UndoStack) void {
+    pub fn popWithUndoAndChangingCoords(child: Lego.Index, undo_stack: ?*UndoStack) void {
         const old_parent_abs_point = Toybox.parentAbsolutePoint(child);
         Toybox.pop(child, undo_stack);
         Toybox.changeCoordinates(child, old_parent_abs_point, .{});
@@ -3352,8 +3370,21 @@ const Workspace = struct {
                             else
                                 Garland.dist_between_cases_rest + (Garland.dist_between_cases_rest - Garland.dist_between_cases_first))));
 
+                        // const must_be_this_length = math.lerpTowardsPure(
+                        //     newcase.length_before + newcase.length_after,
+                        //     target_length_after + target_length_before,
+                        //     .slow,
+                        //     delta_seconds,
+                        // );
+
                         math.lerpTowards(&newcase.length_before, target_length_before, .slow, delta_seconds);
                         math.lerpTowards(&newcase.length_after, target_length_after, .slow, delta_seconds);
+
+                        // const error_length = newcase.length_before + newcase.length_after - must_be_this_length;
+                        // if (@abs(error_length) > 0.001) std.log.debug("error {d}", .{error_length});
+                        // newcase.length_before -= error_length / 6.0;
+                        // newcase.length_after -= error_length * 5.0 / 6.0;
+                        // assert(@abs(newcase.length_after + newcase.length_before - must_be_this_length) < 0.0001);
 
                         if (Toybox.safeGet(maybe_child_case)) |case| case.local_point = .{ .pos = .new(0, newcase.length()) };
                     },
@@ -3941,7 +3972,7 @@ const Workspace = struct {
             }
         }
 
-        const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.1 else 1.0)));
+        const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.01 else 1.0)));
 
         const absolute_camera = Rect
             .fromCenterAndSize(.zero, .both(2))
@@ -4045,13 +4076,7 @@ const Workspace = struct {
                     // Case A.4: plucking a case from a garland
                     assert(original_hot_data.specific.tag() == .case);
                     undo_stack.storeAllData(hot_index);
-                    Toybox.pop(hot_index, undo_stack);
-
-                    const original_parent_tree = Toybox.get(hot_parent).tree;
-                    // TODO(game): this isn't working, due to moving the springs?
-                    Toybox.get(original_parent_tree.next).specific.newcase.length_before += Toybox.get(hot_parent).specific.newcase.length();
-                    Toybox.pop(hot_parent, undo_stack);
-
+                    Lego.Specific.Garland.popCase(hot_index, undo_stack);
                     grabbed_element_index = hot_index;
                 } else if (Toybox.get(hot_index).specific.tag() == .garland) {
                     // Case A.5: plucking a garland, and replacing it with an empty one
@@ -4753,12 +4778,9 @@ const Workspace = struct {
             const garland_index = Executor.children(executor_index).garland;
             const first_segment = Lego.Specific.Garland.children(garland_index).cases.get().tree.first;
             assert(first_segment.hasTag(.newcase));
-            Toybox.pop(first_segment, undo_stack);
             const first_case = Toybox.get(first_segment).tree.first;
-            assert(first_case.hasTag(.case));
-            Toybox.pop(first_case, undo_stack);
-            Toybox.addChildLast(floating_inputs_layer, first_case, undo_stack);
-            Toybox.get(first_segment).specific.newcase.length_before += Toybox.get(first_segment).specific.newcase.length();
+            Lego.Specific.Garland.popCase(first_case, undo_stack);
+            Toybox.addChildLast(workspace.floating_inputs_layer, first_case, undo_stack);
 
             const pattern = Lego.Specific.Case.children(first_case).pattern;
 
