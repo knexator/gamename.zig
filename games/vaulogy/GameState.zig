@@ -220,6 +220,7 @@ pub const Lego = struct {
         postit: Postit,
 
         // TODO(design): try to simplify these
+        garland_newcases: void,
         fnkbox_description: struct {
             text: []const u8,
         },
@@ -665,14 +666,48 @@ pub const Lego = struct {
             pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
             pub const dist_between_cases_first: f32 = 1.5;
             pub const dist_between_cases_rest: f32 = 2.5;
+            pub const relative_fnkname_point: Point = .{ .pos = .{ .x = -2, .y = 0 }, .turns = 0.25, .scale = 0.5 };
+
+            pub fn stealFnkname(garland: Lego.Index, replacement: ?Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+                const original_fnkname = Lego.Specific.Garland.children(garland).fnkname;
+                if (replacement) |r| {
+                    r.get().local_point = Lego.Specific.Garland.relative_fnkname_point;
+                    r.get().specific.sexpr.is_pattern = true;
+                    Toybox.changeChild(original_fnkname, r, undo_stack);
+                } else {
+                    const new_fnkname = try Toybox.buildSexpr(undefined, .empty, true, true, undo_stack);
+                    Toybox.changeChild(original_fnkname, new_fnkname, undo_stack);
+                }
+                return original_fnkname;
+            }
+
+            pub fn children(index: Lego.Index) struct {
+                fnkname: Lego.Index,
+                cases: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .garland);
+                const asdf = Toybox.getChildrenExact(2, index);
+                return .{
+                    .fnkname = asdf[0],
+                    .cases = asdf[1],
+                };
+            }
+
+            pub fn hasChildCases(garland: *const Garland) bool {
+                return Toybox.childCount(garland.casesHolder()) > 1;
+            }
+
+            pub fn casesHolder(garland: *const Garland) Lego.Index {
+                return children(Lego.fromSpecificConst(.garland, garland).index).cases;
+            }
 
             pub fn firstNewcase(garland: *const Garland) *Specific.NewCase {
-                return &Lego.fromSpecificConst(.garland, garland).tree.first.get().specific.newcase;
+                return &garland.casesHolder().get().tree.first.get().specific.newcase;
             }
 
             const core = @import("core.zig");
             pub fn toOldCoreValue(garland: *const Garland, allocator: std.mem.Allocator) !core.FnkBody {
-                const cable_segments = try Toybox.getChildrenUnknown(allocator, Lego.fromSpecificConst(.garland, garland).index);
+                const cable_segments = try Toybox.getChildrenUnknown(allocator, garland.casesHolder());
                 defer allocator.free(cable_segments);
 
                 var cases: core.MatchCases = try .initCapacity(allocator, cable_segments.len - 1);
@@ -763,8 +798,7 @@ pub const Lego = struct {
                     pattern: Lego.Index,
                     input: Lego.Index,
                     fnkname_call: Lego.Index,
-                    // TODO(game)
-                    // fnkname_response: Lego.Index,
+                    fnkname_response: Lego.Index,
                     // TODO(game)
                     // bindings: []const Binding,
                 },
@@ -777,7 +811,7 @@ pub const Lego = struct {
                 Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.pattern, undo_stack);
                 Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.input, undo_stack);
                 Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_call, undo_stack);
-                // Toybox.addChildLastWithoutChangingCoords(result.index, data.fnkname_response, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_response, undo_stack);
 
                 return result.index;
             }
@@ -794,7 +828,7 @@ pub const Lego = struct {
                 // TODO(design): rethink
                 new_bindings: []const Binding,
                 // original_point: Point,
-                // garland_fnkname: ?Lego.Index,
+                garland_fnkname: Lego.Index,
                 // paused: bool = false,
             } = null,
             first_enqueued: Lego.Index = .nothing,
@@ -845,7 +879,7 @@ pub const Lego = struct {
                 const garland = children(executor_index).garland;
                 const input = children(executor_index).input;
                 return executor.animation == null and
-                    Toybox.childCount(garland) > 1 and
+                    garland.garland().hasChildCases() and
                     Toybox.get(input).specific.sexpr.kind != .empty;
             }
 
@@ -1275,6 +1309,10 @@ pub const Lego = struct {
             return @bitCast(@intFromEnum(index));
         }
 
+        pub fn hasTag(index: Index, tag: Specific.Tag) bool {
+            return Toybox.get(index).specific.tag() == tag;
+        }
+
         pub fn get(index: Index) *Lego {
             return Toybox.get(index);
         }
@@ -1309,8 +1347,12 @@ pub const Lego = struct {
         pub fn garland(index: Index) struct {
             self: Lego.Index,
 
+            pub fn cases(this: @This()) Index {
+                return this.self.get().tree.last;
+            }
+
             pub fn hasChildCases(this: @This()) bool {
-                return Toybox.childCount(this.self) > 1;
+                return Toybox.childCount(this.cases()) > 1;
             }
         } {
             assert(Toybox.get(index).specific.tag() == .garland);
@@ -1337,6 +1379,7 @@ pub const Lego = struct {
             .postit_text,
             .postit_drawing,
             .executor_controls,
+            .garland_newcases,
             => return null,
             .executor_brake => .default_extrahitbox,
             .executor_crank => |crank| if (crank.enabled) .default_extrahitbox else return null,
@@ -1427,6 +1470,7 @@ pub const Lego = struct {
                 std.log.err("TODO(game): handle better", .{});
                 break :blk false;
             },
+            .garland_newcases,
             .executor_controls,
             .microscope,
             .fnkbox_box,
@@ -1459,6 +1503,7 @@ pub const Lego = struct {
             .postit,
             .executor,
             => false,
+            .garland_newcases,
             .executor_controls,
             .microscope,
             .fnkbox_box,
@@ -1479,7 +1524,6 @@ pub const Lego = struct {
     pub fn localBoundingBoxThatContainsSelfAndAllChildren(lego: *const Lego) Bounds {
         return switch (lego.specific) {
             else => .infinite,
-            .garland => |garland| if (garland.visible) .infinite else .zero,
             .sexpr => .fromRect(.fromCenterAndSize(.zero, .new(5, 2.5))),
             .testcase => .fromRect(Specific.Testcase.relative_bounding_box),
             .fnkbox_testcases => .fromRect(Specific.FnkboxBox.testcases_box),
@@ -2202,12 +2246,23 @@ pub const Toybox = struct {
     /// the newcase position is the very top of the segment
     pub fn buildGarland(local_point: Point, child_cases: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         const result = try Toybox.new(local_point, .{ .garland = .{} }, undo_stack);
+        Toybox.addChildLast(result.index, try buildSexpr(
+            Lego.Specific.Garland.relative_fnkname_point,
+            .empty,
+            true,
+            true,
+            undo_stack,
+        ), undo_stack);
+
+        const cases_holder = try Toybox.new(.{}, .garland_newcases, undo_stack);
         for (child_cases) |case| {
             const new_segment = try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack);
             Toybox.addChildLast(new_segment.index, case, undo_stack);
-            Toybox.addChildLast(result.index, new_segment.index, undo_stack);
+            Toybox.addChildLast(cases_holder.index, new_segment.index, undo_stack);
         }
-        Toybox.addChildLast(result.index, (try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack)).index, undo_stack);
+        Toybox.addChildLast(cases_holder.index, (try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack)).index, undo_stack);
+
+        Toybox.addChildLast(result.index, cases_holder.index, undo_stack);
         return result.index;
     }
 
@@ -2613,7 +2668,9 @@ const Workspace = struct {
 
                 break :blk postit.index;
             }, undo_stack);
+        }
 
+        if (false) {
             Toybox.addChildLast(dst.lenses_layer, try Toybox.buildMicroscope(
                 .new(2, 2),
                 .new(4, 3),
@@ -2985,6 +3042,7 @@ const Workspace = struct {
                     .newcase,
                     .microscope,
                     .garland,
+                    .garland_newcases,
                     .executor,
                     .fnkbox,
                     .fnkbox_box,
@@ -3020,6 +3078,7 @@ const Workspace = struct {
                             .postit_text,
                             .postit_drawing,
                             .executor_controls,
+                            .garland_newcases,
                             => unreachable,
                             .case, .lens, .fnkbox, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
@@ -3195,7 +3254,7 @@ const Workspace = struct {
 
                         sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific.tag()) {
                             else => false,
-                            .testcase, .fnkbox, .fnkslist_element => true,
+                            .garland, .fnkbox, .testcase, .fnkslist_element => true,
                         };
 
                         if (sexpr.emerging_value != .nothing) {
@@ -3221,7 +3280,7 @@ const Workspace = struct {
                         // TODO(optim): this is needed since undoing a half-done anim doesn't properly restore all the local positions of the case parts
                         Lego.Specific.Case.updateLocalPositions(cur);
                     },
-                    .garland => |*garland| {
+                    .garland_newcases => {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
                         defer zone.deinit();
 
@@ -3235,7 +3294,7 @@ const Workspace = struct {
                             if (a.tree.next == .nothing) break;
                             a = Toybox.get(a.tree.next);
                         }
-                        garland.computed_height = offset;
+                        lego.tree.parent.get().specific.garland.computed_height = offset;
                     },
                     .newcase => |*newcase| {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - newcase" });
@@ -3325,8 +3384,10 @@ const Workspace = struct {
                                 Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
                                 Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_floating_away));
                                 Toybox.get(children.input).local_point = Executor.relative_input_point;
-                                // TODO(game)
-                                // if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
+                                Toybox.setAbsolutePoint(animation.garland_fnkname, lego.absolute_point
+                                    .applyToLocalPoint(Toybox.get(children.input).local_point)
+                                    .applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }));
+
                                 if (true) { // update enqueued garlands
                                     var enqueued = executor.first_enqueued;
                                     var k: usize = 0;
@@ -3406,8 +3467,9 @@ const Workspace = struct {
                                     }
                                 }
                                 Toybox.get(children.input).local_point = Executor.relative_input_point.applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
-                                // TODO(game)
-                                // if (animation.garland_fnkname) |*f| f.point = executor.input.point.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 });
+                                Toybox.setAbsolutePoint(animation.garland_fnkname, lego.absolute_point
+                                    .applyToLocalPoint(Toybox.get(children.input).local_point)
+                                    .applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }));
                             }
                         } else {
                             Toybox.get(children.input).local_point = Executor.relative_input_point;
@@ -3474,7 +3536,7 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -3584,7 +3646,9 @@ const Workspace = struct {
 
                             switch (sexpr.kind) {
                                 .empty => if (lego.tree.parent.get().specific.tag() != .sexpr and
-                                    (holding_a_sexpr or !sexpr.is_fnkname))
+                                    (holding_a_sexpr or !sexpr.is_fnkname) and
+                                    // Don't draw empty garland fnknames
+                                    !(sexpr.is_fnkname and sexpr.is_pattern))
                                 {
                                     try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha);
                                 },
@@ -3839,7 +3903,14 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .fnkslist, .executor_controls, .case, .garland, .microscope, .executor, .fnkbox, .pill => {},
+                        .garland => |garland| {
+                            if (!garland.visible) {
+                                it.skipChildren();
+                                _ = it.next();
+                                continue;
+                            }
+                        },
+                        .fnkslist, .executor_controls, .case, .garland_newcases, .microscope, .executor, .fnkbox, .pill => {},
                     }
                 }
             }
@@ -3977,6 +4048,7 @@ const Workspace = struct {
                     Toybox.pop(hot_index, undo_stack);
 
                     const original_parent_tree = Toybox.get(hot_parent).tree;
+                    // TODO(game): this isn't working, due to moving the springs?
                     Toybox.get(original_parent_tree.next).specific.newcase.length_before += Toybox.get(hot_parent).specific.newcase.length();
                     Toybox.pop(hot_parent, undo_stack);
 
@@ -4082,6 +4154,9 @@ const Workspace = struct {
                 .default,
         );
 
+        // Do this here, for .grabbingSomethingIllegal to work correctly
+        dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
+
         // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
         var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
 
@@ -4114,6 +4189,7 @@ const Workspace = struct {
                     .case,
                     .newcase,
                     .garland,
+                    .garland_newcases,
                     .microscope,
                     .lens,
                     .fnkbox,
@@ -4179,7 +4255,7 @@ const Workspace = struct {
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.garland)) |garland| {
-                    garland.visible = grabbing_garland_or_case or lego.tree.first != lego.tree.last;
+                    garland.visible = grabbing_garland_or_case or garland.hasChildCases();
                 }
             }
         }
@@ -4508,8 +4584,6 @@ const Workspace = struct {
             }
         }
 
-        dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
-
         // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
         workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
@@ -4587,6 +4661,7 @@ const Workspace = struct {
         if (executor.animation) |*animation| {
             animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
             if (animation.t >= 1) {
+                Toybox.popWithUndoAndChangingCoords(animation.garland_fnkname, undo_stack);
                 if (animation.matching) {
                     if (true) { // fill variables
                         var cur = animation.active_case;
@@ -4609,19 +4684,6 @@ const Workspace = struct {
                         old_case_parts.template,
                         undo_stack,
                     );
-
-                    undo_stack.storeAllData(executor_index);
-                    executor.first_pill = try Lego.Specific.Pill.build(old_case_parts.pattern.get().absolute_point, executor.first_pill, .{
-                        .pattern = old_case_parts.pattern,
-                        .input = old_input,
-                        .fnkname_call = old_case_parts.fnkname,
-                        // TODO(game)
-                        // .fnkname_response = animation.garland_fnkname,
-                        // TODO(game)
-                        // They don't include previous bindings, since they have now been merged
-                        // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
-                    }, undo_stack);
-                    Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill, undo_stack);
 
                     const new_garland = blk: {
                         if (animation.invoked_fnk != .nothing) {
@@ -4655,10 +4717,29 @@ const Workspace = struct {
                     };
 
                     Toybox.changeChildWithUndo(old_garland, new_garland, undo_stack);
+
+                    const fnkname = Lego.Specific.Garland.children(old_garland).fnkname;
+                    Toybox.popWithUndoAndChangingCoords(fnkname, undo_stack);
+                    Toybox.destroyFloating(old_garland, undo_stack);
+
+                    undo_stack.storeAllData(executor_index);
+                    executor.first_pill = try Lego.Specific.Pill.build(old_case_parts.pattern.get().absolute_point, executor.first_pill, .{
+                        .pattern = old_case_parts.pattern,
+                        .input = old_input,
+                        .fnkname_call = old_case_parts.fnkname,
+                        .fnkname_response = animation.garland_fnkname,
+                        // TODO(game)
+                        // They don't include previous bindings, since they have now been merged
+                        // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
+                    }, undo_stack);
+                    Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill, undo_stack);
                 } else {
-                    // TODO(game)
-                    // assert(animation.new_bindings.len == 0);
-                    // executor.garland.fnkname = animation.garland_fnkname;
+                    assert(animation.new_bindings.len == 0);
+                    Toybox.destroyFloating(try Lego.Specific.Garland.stealFnkname(
+                        Lego.Specific.Executor.children(executor_index).garland,
+                        animation.garland_fnkname,
+                        undo_stack,
+                    ), undo_stack);
                 }
                 undo_stack.storeAllData(executor_index);
                 executor.animation = null;
@@ -4670,12 +4751,14 @@ const Workspace = struct {
 
             // pop first case for execution
             const garland_index = Executor.children(executor_index).garland;
-            const first_segment = Toybox.get(garland_index).tree.first;
+            const first_segment = Lego.Specific.Garland.children(garland_index).cases.get().tree.first;
+            assert(first_segment.hasTag(.newcase));
             Toybox.pop(first_segment, undo_stack);
             const first_case = Toybox.get(first_segment).tree.first;
+            assert(first_case.hasTag(.case));
             Toybox.pop(first_case, undo_stack);
             Toybox.addChildLast(floating_inputs_layer, first_case, undo_stack);
-            Toybox.get(Toybox.get(garland_index).tree.first).specific.newcase.length_before += Toybox.get(first_segment).specific.newcase.length();
+            Toybox.get(first_segment).specific.newcase.length_before += Toybox.get(first_segment).specific.newcase.length();
 
             const pattern = Lego.Specific.Case.children(first_case).pattern;
 
@@ -4695,8 +4778,8 @@ const Workspace = struct {
                     break :blk garland;
                 } else @panic("TODO(game): handle this");
             };
-            // const garland_fnkname: Lego.Index = .nothing; // TODO(game)
-            // executor.garland.fnkname = null; // TODO(game)
+            const garland_fnkname = try Lego.Specific.Garland.stealFnkname(garland_index, null, undo_stack);
+            Toybox.addChildLast(floating_inputs_layer, garland_fnkname, undo_stack);
             const new_bindings_slice = try new_bindings.toOwnedSlice();
             undo_stack.storeAllData(executor_index);
             executor.animation = .{
@@ -4704,6 +4787,7 @@ const Workspace = struct {
                 .active_case = first_case,
                 .invoked_fnk = invoked_fnk,
                 .new_bindings = new_bindings_slice,
+                .garland_fnkname = garland_fnkname,
             };
 
             if (matching) {
@@ -4780,6 +4864,7 @@ const Workspace = struct {
         new_point: Point,
     ) !?Lego.Index {
         _ = new_point;
+        const undo_stack = &workspace.undo_stack;
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (lego.specific.as(.fnkbox)) |fnkbox| {
@@ -4787,10 +4872,14 @@ const Workspace = struct {
                     const garland = try Toybox.dupeIntoFloating(if (fnkbox.execution) |e|
                         e.original_garland
                     else
-                        fnkbox.executor().garland().index, true, &workspace.undo_stack);
-                    // TODO(game)
-                    // garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
-                    // garland.kinematicUpdate(new_point, null, undefined);
+                        fnkbox.executor().garland().index, true, undo_stack);
+                    const original_fnkname = try Lego.Specific.Garland.stealFnkname(
+                        garland,
+                        try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
+                        undo_stack,
+                    );
+                    assert(original_fnkname.get().specific.sexpr.kind == .empty);
+                    Toybox.destroyFloating(original_fnkname, undo_stack);
                     return garland;
                 }
             }
