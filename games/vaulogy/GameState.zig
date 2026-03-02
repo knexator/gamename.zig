@@ -2846,8 +2846,6 @@ const Workspace = struct {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         try dst.canonizeAfterChanges(arena.allocator());
-
-        try dst.regenerateToolbarLeft();
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
@@ -3183,12 +3181,6 @@ const Workspace = struct {
                             fnkbox.specific.fnkbox.execution != null
                         else
                             executor.animation != null,
-                        .case => Toybox.isAncestor(workspace.toolbar_left, cur) and switch (lego.specific) {
-                            .garland => true,
-                            // TODO: very hacky
-                            .sexpr => |sexpr| sexpr.kind == .empty and sexpr.is_fnkname,
-                            else => unreachable,
-                        },
                         else => false,
                     },
                     else => false,
@@ -4226,11 +4218,8 @@ const Workspace = struct {
             };
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
-                const part_of_toolbar_case = lego.tree.parent != .nothing and
-                    lego.tree.parent.get().specific.tag() == .case and
-                    Toybox.oldestAncestor(lego.index) == workspace.toolbar_left;
                 if (lego.specific.as(.garland)) |garland| {
-                    garland.visible = !part_of_toolbar_case and (grabbing_garland_or_case or lego.tree.first != lego.tree.last);
+                    garland.visible = grabbing_garland_or_case or lego.tree.first != lego.tree.last;
                 }
             }
         }
@@ -4291,8 +4280,31 @@ const Workspace = struct {
                 delta_seconds,
             );
             const new_t = workspace.toolbar_left_unfolded_t;
-            if (old_t <= 0.01 and new_t > 0.01) {
-                try workspace.regenerateToolbarLeft();
+            if (new_t <= 0.01) { // delete all current children
+                var cur = Toybox.get(workspace.toolbar_left).tree.first;
+                while (cur != .nothing) {
+                    const original_tree = Toybox.get(cur).tree;
+                    Toybox.pop(cur, undo_stack);
+                    Toybox.destroyFloating(cur, undo_stack);
+                    cur = original_tree.next;
+                }
+            } else if (old_t <= 0.01) { // regenerate children
+                if (true) { // add a fresh case
+                    const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+
+                    const index = try Toybox.buildCase(.{ .pos = .new(2.5, 5) }, .{
+                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name }, true, false, undo_stack),
+                        .template = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                            .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name }, false, false, undo_stack),
+                            .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false, false, undo_stack),
+                        } }, false, false, undo_stack),
+                        .fnkname = null,
+                        .next = null,
+                    }, undo_stack);
+
+                    Toybox.addChildLast(workspace.toolbar_left, index, undo_stack);
+                }
             }
 
             const rect = toolbar_left_rect;
@@ -4590,37 +4602,6 @@ const Workspace = struct {
             s.append(.{ .set_handlayer = workspace.hand_layer });
         }
         workspace.hand_layer = index;
-    }
-
-    fn regenerateToolbarLeft(workspace: *Workspace) !void {
-        const undo_stack = &workspace.undo_stack;
-
-        if (true) { // delete all current children
-            var cur = Toybox.get(workspace.toolbar_left).tree.first;
-            while (cur != .nothing) {
-                const original_tree = Toybox.get(cur).tree;
-                Toybox.pop(cur, undo_stack);
-                Toybox.destroyFloating(cur, undo_stack);
-                cur = original_tree.next;
-            }
-        }
-
-        if (true) { // add a fresh case
-            const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
-            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
-
-            const index = try Toybox.buildCase(.{ .pos = .new(2.5, 5) }, .{
-                .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name }, true, false, undo_stack),
-                .template = try Toybox.buildSexpr(.{}, .{ .pair = .{
-                    .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name }, false, false, undo_stack),
-                    .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false, false, undo_stack),
-                } }, false, false, undo_stack),
-                .fnkname = null,
-                .next = null,
-            }, undo_stack);
-
-            Toybox.addChildLast(workspace.toolbar_left, index, undo_stack);
-        }
     }
 
     fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, undo_stack: *UndoStack, delta_seconds: f32) !void {
