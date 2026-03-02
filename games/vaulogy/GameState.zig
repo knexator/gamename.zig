@@ -4297,25 +4297,6 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_fnks});
         }
 
-        if (true) { // reset per-frame variables
-            const zone = tracy.initZone(@src(), .{ .name = "reset per-frame variables" });
-            defer zone.deinit();
-
-            for (toybox.all_legos.items) |*lego| {
-                if (!lego.exists) continue;
-                if (lego.specific.as(.case)) |case| {
-                    // TODO(optim): there must be better ways to do this
-                    case.next_point_extra = .{};
-                    case.fnk_name_extra = .{};
-                }
-            }
-        }
-
-        dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
-
-        // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
-        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
-
         if (true) { // start and advance fnkboxes animations
             const zone = tracy.initZone(@src(), .{ .name = "fnkboxes animations" });
             defer zone.deinit();
@@ -4506,6 +4487,29 @@ const Workspace = struct {
         if (something_happened) {
             try workspace.canonizeAfterChanges(scratch);
         }
+
+        // There should be no further changes
+        undo_stack.startFrame();
+        defer assert(!undo_stack.anyChangesThisFrame());
+
+        if (true) { // reset per-frame variables
+            const zone = tracy.initZone(@src(), .{ .name = "reset per-frame variables" });
+            defer zone.deinit();
+
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.case)) |case| {
+                    // TODO(optim): there must be better ways to do this
+                    case.next_point_extra = .{};
+                    case.fnk_name_extra = .{};
+                }
+            }
+        }
+
+        dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
+
+        // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
+        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         if (true) { // set lenses data
             const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
