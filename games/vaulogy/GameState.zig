@@ -3216,6 +3216,10 @@ const Workspace = struct {
                             updateSprings(workspace, &.{sexpr.emerging_value}, absolute_mouse_pos, interaction, delta_seconds);
                         }
                     },
+                    .case => {
+                        // TODO(optim): this is needed since undoing a half-done anim doesn't properly restore all the local positions of the case parts
+                        Lego.Specific.Case.updateLocalPositions(cur);
+                    },
                     .garland => |*garland| {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
                         defer zone.deinit();
@@ -3405,6 +3409,7 @@ const Workspace = struct {
                             }
                         } else {
                             Toybox.get(children.input).local_point = Executor.relative_input_point;
+                            Toybox.get(children.garland).local_point = Executor.relative_garland_point;
                         }
 
                         if (true) { // update pills
@@ -3467,7 +3472,7 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .fnkslist_element, .testcase, .fnkbox, .case, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -4292,6 +4297,20 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_fnks});
         }
 
+        if (true) { // reset per-frame variables
+            const zone = tracy.initZone(@src(), .{ .name = "reset per-frame variables" });
+            defer zone.deinit();
+
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.case)) |case| {
+                    // TODO(optim): there must be better ways to do this
+                    case.next_point_extra = .{};
+                    case.fnk_name_extra = .{};
+                }
+            }
+        }
+
         dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
@@ -4358,8 +4377,6 @@ const Workspace = struct {
                                         );
                                         Toybox.addChildLast(workspace.floating_inputs_layer, result, undo_stack);
                                         Toybox.refreshAbsolutePoints(&.{result});
-                                        // TODO(game): execution traces?
-                                        // trace = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
 
                                         execution.floating_input_or_output = result;
                                         execution.original_or_final_input_point = Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
