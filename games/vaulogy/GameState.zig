@@ -11,7 +11,7 @@ pub const tracy = @import("tracy");
 
 pub const display_fps = true;
 
-// TODO: set to true
+// TODO(optim): set to true
 const ENABLE_REUSE = false;
 
 const EXECUTOR_MOVES_LEFT = true;
@@ -149,7 +149,7 @@ test "No leaks on Workspace and Drawer" {
     _ = drawer;
 }
 
-// TODO: type
+// TODO(platform): type
 pub const stuff = .{
     .metadata = .{
         .name = "vaulogy",
@@ -159,7 +159,7 @@ pub const stuff = .{
     .sounds = .{},
     .loops = .{},
     .preloaded_images = .{
-        // TODO: don't require this here
+        // TODO(platform): don't require this here
         .arial_atlas = "fonts/Arial.png",
     },
 };
@@ -178,7 +178,7 @@ var toybox: *Toybox = undefined;
 
 /// Might be an Area, a Sexpr, a Case, etc
 pub const Lego = struct {
-    // TODO: remove in release modes
+    // TODO(optim-late): remove in release modes
     exists: bool = false,
     index: Index,
     free_next: Index = .nothing,
@@ -219,7 +219,7 @@ pub const Lego = struct {
         lens: Lens,
         postit: Postit,
 
-        // TODO: try to simplify these
+        // TODO(design): try to simplify these
         fnkbox_description: struct {
             text: []const u8,
         },
@@ -434,7 +434,7 @@ pub const Lego = struct {
             atom_name: []const u8,
             immutable: bool,
 
-            // TODO: rethink
+            // TODO(design): rethink
             executor_with_bindings: Lego.Index = .nothing,
             emerging_value: Lego.Index = .nothing,
 
@@ -521,8 +521,8 @@ pub const Lego = struct {
                 }
 
                 if (sexpr.emerging_value != .nothing) {
-                    std.log.err("TODO", .{});
-                    // updateLocalPositions(sexpr.emerging_value);
+                    std.log.err("Shouldn't happen!", .{});
+                    updateLocalPositions(sexpr.emerging_value);
                 }
             }
 
@@ -763,9 +763,9 @@ pub const Lego = struct {
                     pattern: Lego.Index,
                     input: Lego.Index,
                     fnkname_call: Lego.Index,
-                    // TODO
+                    // TODO(game)
                     // fnkname_response: Lego.Index,
-                    // TODO
+                    // TODO(game)
                     // bindings: []const Binding,
                 },
                 undo_stack: ?*UndoStack,
@@ -791,7 +791,7 @@ pub const Lego = struct {
                 matching: bool,
                 invoked_fnk: Lego.Index,
                 // parent_pill: ?usize,
-                // TODO: rethink
+                // TODO(design): rethink
                 new_bindings: []const Binding,
                 // original_point: Point,
                 // garland_fnkname: ?Lego.Index,
@@ -806,13 +806,13 @@ pub const Lego = struct {
             const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
             const first_case_point: Point = relative_garland_point.applyToLocalPoint(.{ .pos = .new(0, 1.5) });
 
-            // TODO: rethink
+            // TODO(design): rethink
             pub fn bindingsActive(executor_index: Lego.Index) BindingsState {
                 const executor = Toybox.get(executor_index).specific.executor;
                 return if (executor.animation) |anim| .{
                     .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
                     .old = &.{},
-                    // TODO
+                    // TODO(game)
                     // .old = if (anim.parent_pill) |k| executor.prev_pills.items[k].bindings else &.{},
                     .new = anim.new_bindings,
                 } else .{
@@ -949,7 +949,7 @@ pub const Lego = struct {
             pub const Status = union(enum) {
                 /// the failing testcase
                 unsolved: Lego.Index,
-                // TODO: score
+                // TODO(game): score
                 solved,
             };
 
@@ -976,7 +976,7 @@ pub const Lego = struct {
             }
 
             pub fn updateStatus(fnkbox: *Fnkbox, worspace: *Workspace, scratch: std.mem.Allocator) !void {
-                // TODO: improve somehow
+                // TODO(optim): improve somehow
                 const core = @import("core.zig");
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
                 var all_fnks: core.FnkCollection = .init(scratch);
@@ -1004,15 +1004,14 @@ pub const Lego = struct {
                     defer exec.deinit();
 
                     const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true) catch |err| switch (err) {
-                        // TODO: "NoMatchingCase" is no longer an error
                         error.FnkNotFound,
-                        error.NoMatchingCase,
                         error.UsedUndefinedVariable,
                         error.InvalidMetaFnk,
                         error.TookTooLong,
                         => core.Sexpr.builtin.empty,
                         error.OutOfMemory => return err,
                         error.BAD_INPUT => @panic("panic"),
+                        error.NoMatchingCase => unreachable,
                     };
                     if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
                         Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(
@@ -1425,7 +1424,7 @@ pub const Lego = struct {
             .executor_crank,
             => false,
             .fnkbox, .lens => blk: {
-                std.log.err("TODO: handle better", .{});
+                std.log.err("TODO(game): handle better", .{});
                 break :blk false;
             },
             .executor_controls,
@@ -1538,7 +1537,7 @@ pub const Handle = struct {
 };
 
 pub const Toybox = struct {
-    // TODO: use a fancy arena thing
+    // TODO(optim-late): use a fancy arena thing
     all_legos: std.ArrayListUnmanaged(Lego),
     all_legos_arena: std.heap.ArenaAllocator,
     free_head: Lego.Index = .nothing,
@@ -1548,7 +1547,7 @@ pub const Toybox = struct {
             .all_legos_arena = .init(gpa),
             .all_legos = .empty,
         };
-        // TODO: tweak this number
+        // TODO(optim-late): tweak this number
         try dst.all_legos.ensureUnusedCapacity(
             dst.all_legos_arena.allocator(),
             1024,
@@ -1623,7 +1622,7 @@ pub const Toybox = struct {
         addChildLast(parent, new_child, undo_stack);
     }
 
-    // TODO: remove the old version
+    // TODO(design): remove the old version
     pub fn addChildLastV2(local_point: ?Point, parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
         if (local_point) |l| {
             addChildLast(parent, new_child, undo_stack);
@@ -1634,7 +1633,6 @@ pub const Toybox = struct {
     }
 
     pub fn addChildLast(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
-        // TODO: call insert?
         assert(parent != .nothing);
         if (new_child == .nothing) return;
         if (undo_stack) |stack| {
@@ -1666,7 +1664,7 @@ pub const Toybox = struct {
     pub fn destroyFloating(index: Lego.Index, undo_stack: ?*UndoStack) void {
         assert(Toybox.isFloating(index));
 
-        // TODO(long): avoid recursion
+        // TODO(optim): avoid recursion
         while (index.get().tree.first != .nothing) {
             const child = index.get().tree.first;
             Toybox.pop(child, undo_stack);
@@ -1795,7 +1793,7 @@ pub const Toybox = struct {
         Toybox.changeChild(original_child, new_child, undo_stack);
     }
 
-    // TODO: remove
+    // TODO(design): remove
     pub fn changeChildWithUndoAndAlsoCoords(original_child: Lego.Index, new_child: Lego.Index, undo_stack: *UndoStack) void {
         const old_parent_abs_point = Toybox.parentAbsolutePoint(original_child);
         Toybox.changeChild(original_child, new_child, undo_stack);
@@ -2219,7 +2217,7 @@ pub const Toybox = struct {
     /// - executor
     pub fn buildFnkbox(
         local_point: Point,
-        // TODO: take *const Sepxr
+        // TODO(design): take *const Sepxr
         fnkname: Lego.Index,
         text: []const u8,
         testcases: []const [2]Lego.Index,
@@ -2356,7 +2354,7 @@ const Workspace = struct {
     arena_for_atom_names: std.heap.ArenaAllocator,
     arena_for_lenses_data: std.heap.ArenaAllocator,
 
-    // TODO: remove
+    // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
 
     pub const Grabbing = struct {
@@ -2609,7 +2607,7 @@ const Workspace = struct {
                 );
                 Toybox.addChildLast(postit.index, (try Toybox.new(
                     .{ .pos = .new(0, 0) },
-                    .{ .postit_text = .{ .text = "TODO" } },
+                    .{ .postit_text = .{ .text = "hi" } },
                     undo_stack,
                 )).index, undo_stack);
 
@@ -2669,7 +2667,7 @@ const Workspace = struct {
                     undo_stack,
                 );
 
-                // TODO
+                // TODO(game)
                 // if (k == 0) {
                 //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
                 //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
@@ -2901,6 +2899,7 @@ const Workspace = struct {
                 }
                 assert(!lego.unhoverable);
 
+                // TODO(optim): check that this works
                 const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
                 const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
                 if (!absolute_bounds.contains(absolute_needle_pos)) {
@@ -2911,7 +2910,6 @@ const Workspace = struct {
 
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
-                        // TODO: skip children if needle is far
                         if (!step.children_already_visited and
                             Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos))
                         {
@@ -3062,7 +3060,7 @@ const Workspace = struct {
                     const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
                         dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
                     else
-                        // TODO: i don't like the scale hack
+                        // i don't like the scale hack
                         (Point{
                             .pos = absolute_mouse_pos,
                             .scale = Toybox.get(interaction.over_background).absolute_point.scale * @as(f32, if (sexpr.is_fnkname) 0.5 else 1),
@@ -3104,7 +3102,7 @@ const Workspace = struct {
                     const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
                         dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
                     else
-                        // TODO: i don't like the scale hack
+                        // i don't like the scale hack
                         (Point{
                             .pos = absolute_mouse_pos,
                             .scale = Toybox.get(interaction.over_background).absolute_point.scale,
@@ -3174,7 +3172,7 @@ const Workspace = struct {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
 
-                // TODO: remove this from here
+                // TODO(design): remove this from here
                 lego.unhoverable = switch (lego.specific) {
                     .sexpr, .case, .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
                         .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
@@ -3189,7 +3187,7 @@ const Workspace = struct {
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
 
-                        // TODO: skip children in most cases
+                        // TODO(optim): skip children in most cases
 
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
                         defer zone.deinit();
@@ -3321,7 +3319,7 @@ const Workspace = struct {
                                 Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
                                 Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_floating_away));
                                 Toybox.get(children.input).local_point = Executor.relative_input_point;
-                                // TODO
+                                // TODO(game)
                                 // if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
                                 if (true) { // update enqueued garlands
                                     var enqueued = executor.first_enqueued;
@@ -3355,7 +3353,6 @@ const Workspace = struct {
                                 Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
                                 Toybox.get(children.garland).specific.garland.firstNewcase().offset_t = 1;
 
-                                // TODO
                                 if (animation.invoked_fnk != .nothing) {
                                     const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
                                     const function_point = lego.absolute_point.applyToLocalPoint(Lego.Specific.Executor.relative_garland_point)
@@ -3403,7 +3400,7 @@ const Workspace = struct {
                                     }
                                 }
                                 Toybox.get(children.input).local_point = Executor.relative_input_point.applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
-                                // TODO
+                                // TODO(game)
                                 // if (animation.garland_fnkname) |*f| f.point = executor.input.point.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 });
                             }
                         } else {
@@ -3519,7 +3516,7 @@ const Workspace = struct {
                 else
                     1;
 
-                // TODO: improve
+                // TODO(polish): improve
                 const max_resolution = 2000;
                 const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
                 const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
@@ -3574,7 +3571,7 @@ const Workspace = struct {
                                     }
                                     try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
                                 } else |_| {
-                                    std.log.err("reached max lens depth, TODO: improve", .{});
+                                    std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                 }
                             }
 
@@ -3607,7 +3604,7 @@ const Workspace = struct {
                             }
 
                             if (maybe_bindings) |bindings| {
-                                // draw eating patterns, TODO: could be done similar to emerging value instead
+                                // draw eating patterns, TODO(optim): could be done similar to emerging value instead
                                 if (sexpr.kind == .atom_var and sexpr.is_pattern) {
                                     for (bindings.new) |binding| {
                                         if (bindings.anim_t) |anim_t| {
@@ -3628,7 +3625,7 @@ const Workspace = struct {
                             }
                         },
                         .lens => |lens| {
-                            // TODO: lens distortion effect, on source and target
+                            // TODO(game): lens distortion effect, on source and target
 
                             if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
                                 const lens_circle: math.Circle = .{ .center = .zero, .radius = lens.local_radius };
@@ -3642,7 +3639,7 @@ const Workspace = struct {
 
                                     try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer);
                                 } else |_| {
-                                    std.log.err("reached max lens depth, TODO: improve", .{});
+                                    std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                 }
                             }
 
@@ -3657,7 +3654,7 @@ const Workspace = struct {
                         },
                         .area => |area| {
                             switch (area.bg) {
-                                // TODO: .all background
+                                // TODO(game): .all background
                                 .all, .none => {},
                                 .local_rect => |rect| {
                                     drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
@@ -3780,7 +3777,7 @@ const Workspace = struct {
                             drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .newcase => |newcase| {
-                            // TODO: camera_relative fails due to rotation
+                            // TODO(design): camera_relative fails due to rotation
                             drawer.canvas.line(camera, &.{
                                 lego.absolute_point.pos,
                                 lego.absolute_point.applyToLocalPosition(.new(0, newcase.length())),
@@ -3891,7 +3888,6 @@ const Workspace = struct {
                         Toybox.insert(insert.what, insert.where, null);
                     },
                     .set_data_except_tree => |data| {
-                        // TODO: set the children data too!
                         const original_tree = Toybox.get(data.index).tree;
                         Toybox.get(data.index).* = data;
                         Toybox.get(data.index).tree = original_tree;
@@ -3949,7 +3945,7 @@ const Workspace = struct {
                     if (Toybox.get(hot_index).specific.as(.button)) |b| {
                         if (b.instant()) {
                             grabbed_element_index = .nothing;
-                            @panic("TODO");
+                            @panic("unhandled instant button");
                         }
                     }
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .area) {
@@ -4066,7 +4062,7 @@ const Workspace = struct {
         // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
         // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
 
-        // TODO: avoid computing this twice?
+        // TODO(optim): avoid computing this twice?
         const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
         // cursor
@@ -4079,7 +4075,7 @@ const Workspace = struct {
                 .default,
         );
 
-        // TODO: improve/remove, by having this be the permanent list, and not iterating over all elements
+        // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
         var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
 
         if (true) { // update _t and other simple things that could be done in parallel
@@ -4137,7 +4133,7 @@ const Workspace = struct {
             }
         }
 
-        // TODO: improve/remove
+        // TODO(design): improve/remove
         for (things_actually_hot_etc.items) |index| {
             switch (index.get().specific) {
                 else => {},
@@ -4162,7 +4158,7 @@ const Workspace = struct {
             }
         }
 
-        // TODO: a bit hacky
+        // TODO(design): a bit hacky
         if (true) { // set garlands visibility
             const zone = tracy.initZone(@src(), .{ .name = "set garlands visibility" });
             defer zone.deinit();
@@ -4362,7 +4358,7 @@ const Workspace = struct {
                                         );
                                         Toybox.addChildLast(workspace.floating_inputs_layer, result, undo_stack);
                                         Toybox.refreshAbsolutePoints(&.{result});
-                                        // TODO: execution traces?
+                                        // TODO(game): execution traces?
                                         // trace = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
 
                                         execution.floating_input_or_output = result;
@@ -4404,7 +4400,7 @@ const Workspace = struct {
                                         fnkbox.execution = null;
                                         Toybox.refreshAbsolutePoints(&.{new_actual});
 
-                                        // TODO: call this somewhere else
+                                        // TODO(optim): call this somewhere else
                                         try fnkbox.updateStatus(workspace, scratch);
                                     }
                                 },
@@ -4435,7 +4431,7 @@ const Workspace = struct {
                                 .state = .executing,
                             };
 
-                            // TODO
+                            // TODO(game)
                             // assert(fnkbox.executor.garland.fnkname == null);
                             // if (fnkbox.folded) fnkbox.executor.garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
                             // try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
@@ -4460,11 +4456,11 @@ const Workspace = struct {
 
                     if (executor.animation) |*animation| {
                         _ = animation;
-                        @panic("TODO");
+                        @panic("TODO(game)");
                     }
 
                     if (Lego.Specific.Executor.shouldStartExecution(lego.index)) {
-                        @panic("TODO");
+                        @panic("TODO(game)");
                     }
                 }
             }
@@ -4596,20 +4592,19 @@ const Workspace = struct {
                         .pattern = old_case_parts.pattern,
                         .input = old_input,
                         .fnkname_call = old_case_parts.fnkname,
-                        // TODO
+                        // TODO(game)
                         // .fnkname_response = animation.garland_fnkname,
-                        // TODO
-                        // TODO: should include previous bindings? not really, since they have now been merged
+                        // TODO(game)
+                        // They don't include previous bindings, since they have now been merged
                         // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
                     }, undo_stack);
                     Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill, undo_stack);
 
                     const new_garland = blk: {
-                        // TODO
                         if (animation.invoked_fnk != .nothing) {
                             Toybox.pop(animation.invoked_fnk, undo_stack);
                             if (next_garland != .nothing) {
-                                // TODO
+                                // TODO(game)
                                 // Toybox.get(next_garland).specific.garland.enqueued_parent_pill_index = ??;
                                 undo_stack.storeAllData(next_garland);
                                 Toybox.get(next_garland).specific.garland.next_enqueued = executor.first_enqueued;
@@ -4620,14 +4615,14 @@ const Workspace = struct {
                             break :blk animation.invoked_fnk;
                         } else if (next_garland.garland().hasChildCases()) {
                             Toybox.pop(next_garland, undo_stack);
-                            // TODO
+                            // TODO(game)
                             // parent_pill_index = executor.prev_pills.items.len - 1;
                             break :blk next_garland;
                         } else if (executor.first_enqueued != .nothing) {
                             const asdf = executor.first_enqueued;
                             undo_stack.storeAllData(executor_index);
                             executor.first_enqueued = Toybox.get(asdf).specific.garland.next_enqueued;
-                            // TODO
+                            // TODO(game)
                             // parent_pill_index = Toybox.get(asdf).specific.garland.enqueued_parent_pill_index;
                             Toybox.pop(asdf, undo_stack);
                             break :blk asdf;
@@ -4638,7 +4633,7 @@ const Workspace = struct {
 
                     Toybox.changeChildWithUndo(old_garland, new_garland, undo_stack);
                 } else {
-                    // TODO
+                    // TODO(game)
                     // assert(animation.new_bindings.len == 0);
                     // executor.garland.fnkname = animation.garland_fnkname;
                 }
@@ -4661,7 +4656,7 @@ const Workspace = struct {
 
             const pattern = Lego.Specific.Case.children(first_case).pattern;
 
-            // TODO: memory management
+            // TODO(optim): memory management
             var new_bindings: std.ArrayList(Binding) = .init(workspace.gpa_for_bindings);
             const matching = try Lego.Specific.Sexpr.generateBindings(value, pattern, &new_bindings);
             const invoked_fnk: Lego.Index = if (!matching)
@@ -4675,10 +4670,10 @@ const Workspace = struct {
                 if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point)) |garland| {
                     Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
                     break :blk garland;
-                } else @panic("TODO: handle this");
+                } else @panic("TODO(game): handle this");
             };
-            // const garland_fnkname: Lego.Index = .nothing; // TODO
-            // executor.garland.fnkname = null; // TODO
+            // const garland_fnkname: Lego.Index = .nothing; // TODO(game)
+            // executor.garland.fnkname = null; // TODO(game)
             const new_bindings_slice = try new_bindings.toOwnedSlice();
             undo_stack.storeAllData(executor_index);
             executor.animation = .{
@@ -4749,7 +4744,7 @@ const Workspace = struct {
         );
         undo_stack.storeAllData(executor_index);
         Toybox.get(executor_index).specific.executor.garland_appearing_t = -1;
-        // TODO
+        // TODO(game)
         // fnkbox.executor.prev_pills.clearRetainingCapacity();
         // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
 
@@ -4770,7 +4765,7 @@ const Workspace = struct {
                         e.original_garland
                     else
                         fnkbox.executor().garland().index, true, &workspace.undo_stack);
-                    // TODO
+                    // TODO(game)
                     // garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
                     // garland.kinematicUpdate(new_point, null, undefined);
                     return garland;
@@ -4839,7 +4834,7 @@ pub fn init(
     try dst.workspace.init(gpa, random_seed);
 }
 
-// TODO: take gl parameter
+// TODO(platform): take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.usual.deinit(undefined);
     self.workspace.deinit();
@@ -4999,7 +4994,7 @@ pub fn swapInsertAssumeCapacity(T: type, array: *std.ArrayListUnmanaged(T), i: u
     }
 }
 
-// TODO: rethink
+// TODO(design): rethink
 pub const Binding = struct {
     name: []const u8,
     value: Lego.Index,
@@ -5036,7 +5031,7 @@ pub fn drawTemplateWildcardLinesNonRecursiveV2(
     try removeBoundNamesV10(&right_names, bindings.old);
 
     {
-        // TODO: these numbers are not exact, issues when zooming in
+        // TODO(game): these numbers are not exact, issues when zooming in
         try drawer.drawWildcardsCable(camera, &([1]Vec2{
             point.applyToLocalPosition(.new(-0.5, 0)),
         } ++ funk.fromCountAndCtx(32, struct {
