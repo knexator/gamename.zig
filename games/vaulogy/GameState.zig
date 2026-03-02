@@ -2856,12 +2856,9 @@ const Workspace = struct {
 
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
-            if (lego.specific.as(.fnkbox)) |fnkbox| {
-                try fnkbox.updateStatus(workspace, scratch);
+            if (lego.specific.tag() == .fnkbox) {
+                try lego.specific.fnkbox.updateStatus(workspace, scratch);
             }
-            // if (lego.specific.tag() == .fnkbox) {
-            //     try lego.specific.fnkbox.updateStatus(workspace, scratch);
-            // }
         }
     }
 
