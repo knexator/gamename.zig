@@ -3159,6 +3159,7 @@ const Workspace = struct {
                     executor.animation.?.t = crank.value;
                 },
             }
+            Toybox.refreshAbsolutePoints(&.{grabbing.index});
         }
     }
 
@@ -3319,6 +3320,7 @@ const Workspace = struct {
                                     .{ .pos = .new(6, -2), .scale = 0, .turns = -0.2 },
                                     flyaway_t,
                                 ));
+                                Toybox.get(children.garland).local_point = Executor.relative_garland_point;
                                 Toybox.get(children.garland).specific.garland.firstNewcase().offset_t = offset_t;
                                 Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
                                 Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_floating_away));
