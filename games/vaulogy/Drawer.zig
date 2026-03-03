@@ -688,6 +688,25 @@ fn drawShapeV3(
     }
 }
 
+pub fn drawEatingPatternV2(
+    drawer: *Drawer,
+    camera: Rect,
+    point: Point,
+    var_name: []const u8,
+    t: f32,
+    alpha: f32,
+) !void {
+    assert(in01(t));
+    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(var_name, drawer.canvas.gl);
+    try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
+    // TODO
+    // try drawer.drawSexpr(camera, .{
+    //     .is_pattern = 0,
+    //     .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
+    //     .value = binding.value,
+    // }, alpha);
+}
+
 pub fn drawEatingPattern(
     drawer: *Drawer,
     camera: Rect,
@@ -770,6 +789,40 @@ pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point, 
         AtomVisuals.Geometry.pattern_pair_holder,
         .black,
         .gray(3.0 / 8.0),
+        alpha,
+    );
+}
+
+pub fn drawPatterPairHolderSolidColor(drawer: *Drawer, camera: Rect, point: Point, color_name: []const u8, alpha: f32) !void {
+    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{color_name});
+        return;
+    };
+    try drawer.drawShapeV3(
+        camera,
+        point,
+        AtomVisuals.Geometry.pattern_pair_holder,
+        null,
+        color_visuals.color,
+        alpha,
+    );
+}
+
+pub fn drawPatternAtomSolidColor(drawer: *Drawer, camera: Rect, point: Point, atom_name: []const u8, color_name: []const u8, alpha: f32) !void {
+    const atom_visuals = drawer.atom_visuals_cache.getAtomVisuals(atom_name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{atom_name});
+        return;
+    };
+    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{color_name});
+        return;
+    };
+    try drawer.drawShapeV3(
+        camera,
+        point,
+        atom_visuals.geometry.pattern,
+        null,
+        color_visuals.color,
         alpha,
     );
 }
