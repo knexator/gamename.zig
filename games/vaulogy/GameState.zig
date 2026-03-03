@@ -509,7 +509,7 @@ pub const Lego = struct {
                             .pair => {
                                 const pat_up, const pat_down = Toybox.getChildrenExact(2, pattern);
                                 const val_up, const val_down = Toybox.getChildrenExact(2, value);
-                                return try generateBindings(pat_up, val_up, bindings) and try generateBindings(pat_down, val_down, bindings);
+                                return try generateBindings(val_up, pat_up, bindings) and try generateBindings(val_down, pat_down, bindings);
                             },
                         }
                     },
