@@ -2979,6 +2979,7 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
+                assert(lego.exists);
                 const relative_needle_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
                 if (lego.unhoverable and !step.children_already_visited) {
                     it.skipChildren();
