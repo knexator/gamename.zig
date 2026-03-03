@@ -4616,12 +4616,15 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "reset per-frame variables" });
             defer zone.deinit();
 
+            // TODO(optim): there must be better ways to do this
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.case)) |case| {
-                    // TODO(optim): there must be better ways to do this
                     case.next_point_extra = .{};
                     case.fnk_name_extra = .{};
+                }
+                if (lego.specific.as(.newcase)) |newcase| {
+                    newcase.offset_ghost = .nothing;
                 }
             }
         }
