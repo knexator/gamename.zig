@@ -682,21 +682,24 @@ pub const Lego = struct {
             }
 
             pub fn popCase(case: Lego.Index, undo_stack: ?*UndoStack) void {
-                // TODO(game): avoid case popping
+                Toybox.refreshAbsolutePoints(&.{case});
+
                 assert(case.hasTag(.case));
                 const parent = case.get().tree.parent;
                 assert(parent.hasTag(.newcase));
 
-                Toybox.pop(case, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(case, undo_stack);
                 const original_parent_tree = Toybox.get(parent).tree;
                 const l_a = Toybox.get(original_parent_tree.next).specific.newcase.length();
                 const l_b = Toybox.get(parent).specific.newcase.length();
                 Toybox.get(original_parent_tree.next).specific.newcase.length_before = l_b;
                 Toybox.get(original_parent_tree.next).specific.newcase.length_after = l_a;
-                Toybox.get(original_parent_tree.next).dropzone_t = parent.get().dropzone_t;
+                Toybox.get(original_parent_tree.next).dropzone_t = case.get().hot_t;
                 Toybox.get(original_parent_tree.next).local_point = parent.get().local_point;
                 Toybox.pop(parent, undo_stack);
                 Toybox.destroyFloating(parent, undo_stack);
+
+                Toybox.refreshAbsolutePoints(&.{ case, original_parent_tree.next });
             }
 
             pub fn children(index: Lego.Index) struct {
@@ -1580,7 +1583,7 @@ pub const Handle = struct {
 
         pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
         pub const default_extrahitbox: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 };
-        pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.5 };
+        pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 };
         pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 };
         pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
     };
@@ -1750,6 +1753,12 @@ pub const Toybox = struct {
         const lego = Toybox.getUnsafe(data.index);
         assert(!lego.exists);
         lego.* = data;
+    }
+
+    pub fn dupeIntoFloatingWithoutChangingPos(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try Toybox.dupeIntoFloating(original, dupe_children, undo_stack);
+        Toybox.get(result).local_point = Toybox.get(original).absolute_point;
+        return result;
     }
 
     pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
@@ -4031,7 +4040,6 @@ const Workspace = struct {
                 const hot_index = hot_and_dropzone.hot;
                 const original_hot_data = Toybox.get(hot_index).*;
                 const hot_parent = original_hot_data.tree.parent;
-                const original_parent_absolute_point = Toybox.parentAbsolutePoint(hot_index);
 
                 var grabbed_element_index: Lego.Index = undefined;
                 var plucked: bool = true;
@@ -4039,7 +4047,7 @@ const Workspace = struct {
                 if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
                     // Case A.0: duplicating
                     if (hot_index.get().canDuplicate()) {
-                        const new_element_index = try Toybox.dupeIntoFloating(hot_index, true, undo_stack);
+                        const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, true, undo_stack);
                         grabbed_element_index = new_element_index;
                     } else {
                         grabbed_element_index = .nothing;
@@ -4060,16 +4068,22 @@ const Workspace = struct {
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .area) {
                     // Case A.1: plucking a top-level thing
                     undo_stack.storeAllData(hot_index);
-                    Toybox.pop(hot_index, undo_stack);
+                    Toybox.popWithUndoAndChangingCoords(hot_index, undo_stack);
                     grabbed_element_index = hot_index;
                 } else if (original_hot_data.specific.tag() == .sexpr) {
                     // Case A.2: plucking a nested sexpr
                     undo_stack.storeAllData(hot_index);
 
-                    const new_empty_sexpr = try Toybox.dupeIntoFloating(hot_index, false, undo_stack);
-                    Toybox.get(new_empty_sexpr).specific.sexpr.kind = .empty;
+                    const new_empty_sexpr = try Toybox.buildSexpr(
+                        original_hot_data.local_point,
+                        .empty,
+                        original_hot_data.specific.sexpr.is_pattern,
+                        original_hot_data.specific.sexpr.is_fnkname,
+                        undo_stack,
+                    );
 
                     Toybox.changeChild(hot_index, new_empty_sexpr, undo_stack);
+                    Toybox.changeCoordinates(hot_index, hot_parent.get().absolute_point, .{});
 
                     grabbed_element_index = hot_index;
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .newcase) {
@@ -4097,7 +4111,6 @@ const Workspace = struct {
                     );
                     if (plucked) {
                         workspace.setHandLayer(grabbed_element_index, undo_stack);
-                        Toybox.changeCoordinates(grabbed_element_index, original_parent_absolute_point, .{});
                         Toybox.refreshAbsolutePoints(&.{grabbed_element_index});
                     }
                 }
