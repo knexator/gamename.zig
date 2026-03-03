@@ -2559,7 +2559,7 @@ const Workspace = struct {
         dst.lenses_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
         dst.floating_inputs_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
 
-        if (true) {
+        if (false) {
             Toybox.addChildLast(
                 dst.fnkboxes_layer,
                 try Toybox.buildFnkbox(
@@ -2735,8 +2735,7 @@ const Workspace = struct {
                     break :blk try samples.toOwnedSlice(scratch.allocator());
                 };
 
-                Toybox.addChildLast(
-                    dst.fnkboxes_layer,
+                const fnkbox =
                     try Toybox.buildFnkbox(
                         .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
                         try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true, true, undo_stack),
@@ -2747,16 +2746,19 @@ const Workspace = struct {
                         else
                             null,
                         undo_stack,
-                    ),
+                    );
+                Toybox.addChildLast(
+                    dst.fnkboxes_layer,
+                    fnkbox,
                     undo_stack,
                 );
 
-                // TODO(game)
-                // if (k == 0) {
-                //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
-                //     dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
-                // }
-                x += if (k < 4) 25 else if (k == 4) 30 else 35;
+                if (k == 0) {
+                    Lego.Specific.Executor.children(Lego.Specific.Fnkbox.children(fnkbox).executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+                    Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_target = 2;
+                    Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_visual = 2;
+                }
+                x += if (k < 4) 25 else if (k < 6) 30 else 35;
 
                 fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
                 Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
@@ -2888,6 +2890,8 @@ const Workspace = struct {
                 true,
                 undo_stack,
             ), undo_stack);
+            // postit.addFromText(postit_pos.add(.new(3, 8)), &.{ "The toolbar on the right", "has the name for", "every machine" });
+            postit.addFromText(postit_pos.add(.new(6.5, 2.5)), &.{ "You can also", "find it", "on the toolbar", "on the right" });
             postit.addFromParts(postit_pos.add(.new(1.5, 16.75)), &.{
                 .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Placed there,", "it will invoke", "the machine", "with that name" } } },
                 .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
