@@ -4435,6 +4435,7 @@ const Workspace = struct {
                                         const new_input = try Toybox.dupeIntoFloating(Lego.Specific.Testcase.children(testcase).input, true, undo_stack);
                                         Toybox.changeCoordinates(new_input, Toybox.get(testcase).absolute_point, Toybox.get(workspace.floating_inputs_layer).absolute_point);
                                         Toybox.addChildLast(workspace.floating_inputs_layer, new_input, undo_stack);
+                                        undo_stack.storeAllData(lego.index);
                                         execution.state = .starting;
                                         execution.state_t = 0;
                                         execution.original_or_final_input_point = Toybox.get(new_input).local_point;
@@ -4467,6 +4468,7 @@ const Workspace = struct {
                                 .executing => {
                                     try advanceExecutorAnimation(executor_index, workspace, undo_stack, delta_seconds);
                                     if (Toybox.get(executor_index).specific.executor.animation == null) {
+                                        undo_stack.storeAllData(lego.index);
                                         execution.state = .ending;
                                         execution.state_t = 0;
 
@@ -4479,6 +4481,7 @@ const Workspace = struct {
                                         Toybox.addChildLast(workspace.floating_inputs_layer, result, undo_stack);
                                         Toybox.refreshAbsolutePoints(&.{result});
 
+                                        undo_stack.storeAllData(lego.index);
                                         execution.floating_input_or_output = result;
                                         execution.original_or_final_input_point = Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
                                             Toybox.get(result).absolute_point,
@@ -4515,6 +4518,7 @@ const Workspace = struct {
                                         const old_actual = Lego.Specific.Testcase.children(testcase).actual;
                                         assert(Toybox.get(old_actual).specific.sexpr.kind == .empty);
                                         Toybox.changeChild(old_actual, new_actual, undo_stack);
+                                        undo_stack.storeAllData(lego.index);
                                         fnkbox.execution = null;
                                         Toybox.refreshAbsolutePoints(&.{new_actual});
 
@@ -4527,6 +4531,7 @@ const Workspace = struct {
                                 try advanceExecutorAnimation(executor_index, workspace, &workspace.undo_stack, delta_seconds);
                                 if (Toybox.get(executor_index).specific.executor.animation == null) {
                                     const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
+                                    undo_stack.storeAllData(lego.index);
                                     fnkbox.execution = null;
                                     Toybox.addChildLast(workspace.main_area, result, undo_stack);
                                     Toybox.changeCoordinates(result, .{}, workspace.main_area.get().absolute_point);
@@ -4704,6 +4709,7 @@ const Workspace = struct {
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
         if (executor.animation) |*animation| {
+            undo_stack.storeAllData(executor_index);
             animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
             if (animation.t >= 1) {
                 Toybox.popWithUndoAndChangingCoords(animation.garland_fnkname, undo_stack);
