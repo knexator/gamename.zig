@@ -4143,6 +4143,7 @@ const Workspace = struct {
 
                     Toybox.changeChild(hot_index, new_empty_sexpr, undo_stack);
                     Toybox.changeCoordinates(hot_index, hot_parent.get().absolute_point, .{});
+                    Toybox.refreshAbsolutePoints(&.{new_empty_sexpr});
 
                     grabbed_element_index = hot_index;
                 } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .newcase) {
