@@ -3659,6 +3659,7 @@ const Workspace = struct {
         );
     }
 
+    // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
     fn _draw(roots_in_draw_order: []const Lego.Index, holding_a_sexpr: bool, camera: Rect, drawer: *Drawer) !void {
         for (roots_in_draw_order) |root| {
             var it = Toybox.treeIterator(root, true);
@@ -3715,6 +3716,21 @@ const Workspace = struct {
                 } else {
                     const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
                     switch (lego.specific) {
+                        .case => {
+                            // TODO(game): draw variables in the cable
+                            drawer.canvas.line(camera, &.{
+                                lego.absolute_point.applyToLocalPosition(.xneg),
+                                lego.absolute_point.applyToLocalPosition(.xpos),
+                            }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            const next_garland = Lego.Specific.Case.children(cur).next;
+                            if (next_garland.get().specific.garland.visible) {
+                                // TODO(game): draw variables in the cable
+                                drawer.canvas.line(camera, &.{
+                                    lego.absolute_point.applyToLocalPosition(.new(1.5, 1)),
+                                    next_garland.get().absolute_point.pos,
+                                }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            }
+                        },
                         .sexpr => |sexpr| {
                             if (sexpr.emerging_value != .nothing) {
                                 if (sexpr.is_pattern) {
@@ -3724,8 +3740,8 @@ const Workspace = struct {
                                     // try drawer.drawEatingPatternV2(camera, point, sexpr.atom_name, t, alpha);
                                     // try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
                                 } else {
-                                    if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{
-                                        .custom = .{ .point = .{}, .shape = Drawer.AtomVisuals.Geometry.template_mask },
+                                    if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{
+                                        .custom = .{ .point = lego.absolute_point, .shape = Drawer.AtomVisuals.Geometry.template_mask },
                                     } })) {
                                         drawer.canvas.clipper.use(drawer.canvas);
                                         defer {
@@ -3993,7 +4009,7 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .fnkslist, .executor_controls, .case, .garland_newcases, .microscope, .executor, .fnkbox, .pill => {},
+                        .fnkslist, .executor_controls, .garland_newcases, .microscope, .executor, .fnkbox, .pill => {},
                     }
                 }
             }
@@ -4681,6 +4697,8 @@ const Workspace = struct {
         // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
         workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
+        if (true) Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
+
         if (true) { // set lenses data
             const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
             defer zone.deinit();
@@ -4726,8 +4744,6 @@ const Workspace = struct {
                 target_lens.roots_to_interact = all_roots_except_hand.items;
             }
         }
-
-        if (true) Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
 
         if (drawer) |d| {
             try workspace.draw(platform, d);
