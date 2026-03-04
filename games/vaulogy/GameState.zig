@@ -3326,8 +3326,9 @@ const Workspace = struct {
                         const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
                         defer zone.deinit();
 
-                        sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific.tag()) {
+                        sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
                             else => false,
+                            .sexpr => |parent_sexpr| parent_sexpr.immutable,
                             .garland, .fnkbox, .testcase, .fnkslist_element => true,
                         };
 
@@ -4335,7 +4336,10 @@ const Workspace = struct {
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.garland)) |garland| {
-                    garland.visible = grabbing_garland_or_case or garland.hasChildCases();
+                    garland.visible =
+                        grabbing_garland_or_case or
+                        garland.hasChildCases() or
+                        (if (lego.tree.parent.getSafe()) |p| p.specific.tag() == .executor else false);
                 }
             }
         }
