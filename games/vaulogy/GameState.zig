@@ -4008,10 +4008,13 @@ const Workspace = struct {
                                 continue;
                             }
 
-                            // TODO(game): better symbols
-                            const symbol_pos = lego.absolute_point.applyToLocalPoint(.{ .pos = .new(6.75, 0.0), .scale = 0.5 });
+                            const symbol_pos = lego.absolute_point.applyToLocalPoint(.{ .pos = .new(7, 0.0), .scale = 0.4 });
                             if (testcase.solved) {
-                                // TODO(game)
+                                // drawer.canvas.line(camera, &.{
+                                //     symbol_pos.applyToLocalPosition(.new(-1, 0)),
+                                //     symbol_pos.applyToLocalPosition(.new(0, 1)),
+                                //     symbol_pos.applyToLocalPosition(.new(1.5, -1.25)),
+                                // }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
                             } else {
                                 drawer.canvas.line(camera, &.{
                                     symbol_pos.applyToLocalPosition(.new(1, -1)),
