@@ -1128,9 +1128,10 @@ pub const Lego = struct {
                     }
                 }
 
-                // Get the actual status
+                // Get the actual status and update testcases solved
                 const box_index = children(fnkbox_index).box;
                 cur_testcase = FnkboxBox.children(box_index).testcases_area.get().tree.first;
+                var wrote_first_wrong = false;
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     const actual: Lego.Index = if (fnkbox.execution) |execution|
                         switch (execution.source) {
@@ -1145,9 +1146,12 @@ pub const Lego = struct {
 
                     const expected = Testcase.children(cur_testcase).expected;
 
-                    if (!Sexpr.equalValue(actual, expected)) {
+                    const correct = Sexpr.equalValue(actual, expected);
+                    cur_testcase.get().specific.testcase.solved = correct;
+
+                    if (!correct and !wrote_first_wrong) {
                         fnkbox.status = .{ .unsolved = cur_testcase };
-                        return;
+                        wrote_first_wrong = true;
                     }
                 }
                 fnkbox.status = .solved;
@@ -1155,6 +1159,8 @@ pub const Lego = struct {
         };
 
         pub const Testcase = struct {
+            solved: bool = false,
+
             pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
             pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
             pub const relative_input_point: Point = .{ .pos = .new(-4, 0) };
@@ -3991,7 +3997,7 @@ const Workspace = struct {
                         .executor_crank => |crank| {
                             drawer.canvas.fillShape(camera_relative, .{ .turns = crank.value }, Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
                         },
-                        .testcase => {
+                        .testcase => |testcase| {
                             // Don't draw testcases that will get clipped outside the testbox
                             assert(lego.tree.parent.get().specific.tag() == .fnkbox_testcases);
                             if (lego.local_point.applyToLocalRect(Lego.Specific.Testcase.relative_bounding_box)
@@ -4000,6 +4006,21 @@ const Workspace = struct {
                                 it.skipChildren();
                                 _ = it.next();
                                 continue;
+                            }
+
+                            // TODO(game): better symbols
+                            const symbol_pos = lego.absolute_point.applyToLocalPoint(.{ .pos = .new(6.75, 0.0), .scale = 0.5 });
+                            if (testcase.solved) {
+                                // TODO(game)
+                            } else {
+                                drawer.canvas.line(camera, &.{
+                                    symbol_pos.applyToLocalPosition(.new(1, -1)),
+                                    symbol_pos.applyToLocalPosition(.new(-1, 1)),
+                                }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
+                                drawer.canvas.line(camera, &.{
+                                    symbol_pos.applyToLocalPosition(.new(-1, -1)),
+                                    symbol_pos.applyToLocalPosition(.new(1, 1)),
+                                }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
                             }
                         },
                         .garland => |garland| {
