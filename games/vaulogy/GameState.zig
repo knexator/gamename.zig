@@ -4157,8 +4157,10 @@ const Workspace = struct {
                     undo_stack.storeAllData(hot_index);
 
                     const new_garland = try Toybox.buildGarland(original_hot_data.local_point, &.{}, undo_stack);
-
+                    new_garland.get().specific.garland.computed_height = hot_index.get().specific.garland.computed_height;
                     Toybox.changeChild(hot_index, new_garland, undo_stack);
+                    Toybox.changeCoordinates(hot_index, hot_parent.get().absolute_point, .{});
+                    Toybox.refreshAbsolutePoints(&.{new_garland});
 
                     grabbed_element_index = hot_index;
                 } else unreachable;
