@@ -1547,22 +1547,23 @@ pub const Lego = struct {
         };
     }
 
-    pub fn canDuplicate(lego: *const Lego) bool {
+    pub fn canDuplicate(lego: *const Lego) enum { yes, no, fnkbox } {
         return switch (lego.specific) {
             .sexpr,
             .garland,
             .executor,
             .case,
             .postit,
-            => true,
+            => .yes,
             .scrollbar,
             .button,
             .executor_brake,
             .executor_crank,
-            => false,
-            .fnkbox, .lens => blk: {
+            => .no,
+            .fnkbox => .fnkbox,
+            .lens => blk: {
                 std.log.err("TODO(game): handle better", .{});
-                break :blk false;
+                break :blk .no;
             },
             .garland_newcases,
             .executor_controls,
@@ -4147,12 +4148,60 @@ const Workspace = struct {
 
                 if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
                     // Case A.0: duplicating
-                    if (hot_index.get().canDuplicate()) {
-                        const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, true, undo_stack);
-                        grabbed_element_index = new_element_index;
-                    } else {
-                        grabbed_element_index = .nothing;
-                        plucked = undefined;
+                    switch (hot_index.get().canDuplicate()) {
+                        .yes => {
+                            const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, true, undo_stack);
+                            grabbed_element_index = new_element_index;
+                        },
+                        .no => {
+                            grabbed_element_index = .nothing;
+                            plucked = undefined;
+                        },
+                        .fnkbox => {
+                            // TODO(game): handle fnkbox creation better
+                            const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 8);
+                            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+                            const fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = new_name }, true, true, undo_stack);
+
+                            blk: while (true) { // ensure the name is unique
+                                for (toybox.all_legos.items) |*lego| {
+                                    if (!lego.exists) continue;
+                                    if (lego.specific.tag() == .fnkbox) {
+                                        const existing = Lego.Specific.Fnkbox.children(lego.index).fnkname;
+                                        if (Lego.Specific.Sexpr.equalValue(fnkname, existing)) {
+                                            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+                                            fnkname.get().specific.sexpr.atom_name = new_name;
+                                            continue :blk;
+                                        }
+                                    }
+                                } else break;
+                            }
+
+                            const description = try std.fmt.allocPrint(workspace.arena_for_atom_names.allocator(), "Custom machine {s}", .{new_name});
+                            const fnkbox = try Toybox.buildFnkbox(
+                                hot_index.get().local_point,
+                                fnkname,
+                                description,
+                                &.{},
+                                null,
+                                undo_stack,
+                            );
+                            Toybox.addChildLast(workspace.fnkboxes_layer, fnkbox, undo_stack);
+
+                            if (true) { // add to fnkslist
+                                const fnkslist = workspace.toolbar_fnks.get().tree.first;
+                                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                                Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                                    Toybox.childCount(fnkslist),
+                                    &.{ .atom_lit = .{ .value = new_name } },
+                                    description,
+                                    undo_stack,
+                                ), undo_stack);
+                            }
+
+                            grabbed_element_index = fnkbox;
+                            plucked = false;
+                        },
                     }
                 } else if (hot_index.get().grabsWithoutPlucking()) {
                     // Case A.3: grabbing rather than plucking, including buttons
@@ -5177,7 +5226,27 @@ const Workspace = struct {
                 ).garland, garland, null);
                 fnkbox_index.get().local_point.pos = pos;
             } else {
-                // TODO(game)
+                const description = try std.fmt.allocPrint(dst.arena_for_atom_names.allocator(), "Custom machine {any}", .{fnk.name});
+                const fnkbox = try Toybox.buildFnkbox(
+                    .{ .pos = pos },
+                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                    description,
+                    &.{},
+                    null,
+                    null,
+                );
+                Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
+
+                if (true) { // add to fnkslist
+                    const fnkslist = dst.toolbar_fnks.get().tree.first;
+                    fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                    Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                        Toybox.childCount(fnkslist),
+                        fnk.name,
+                        description,
+                        null,
+                    ), null);
+                }
             }
         }
 
