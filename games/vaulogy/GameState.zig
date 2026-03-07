@@ -13,7 +13,7 @@ pub const display_fps = true;
 
 // TODO(optim): set to true
 const ENABLE_REUSE = false;
-
+const SAVING_ENABLED = true;
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
@@ -817,6 +817,22 @@ pub const Lego = struct {
                 return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch), undo_stack);
             }
 
+            pub fn buildFromOldCoreValueV0(point: Point, definition: core.FnkBody, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
+                var cases: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, definition.cases.items.len);
+                for (definition.cases.items) |case| {
+                    cases.appendAssumeCapacity(try Toybox.buildCase(.{}, .{
+                        .pattern = try Sexpr.buildFromOldCoreValue(.{}, case.pattern, true, false, undo_stack),
+                        .template = try Sexpr.buildFromOldCoreValue(.{}, case.template, false, false, undo_stack),
+                        .fnkname = try Sexpr.buildFromOldCoreValue(.{}, case.fnk_name, false, true, undo_stack),
+                        .next = if (case.next) |next|
+                            try buildFromOldCoreValueV0(.{}, .{ .cases = next }, scratch, undo_stack)
+                        else
+                            null,
+                    }, undo_stack));
+                }
+                return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch), undo_stack);
+            }
+
             /// 0 -> default point
             /// 0...1 rotating
             /// 1 -> enqueued
@@ -1079,13 +1095,13 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, worspace: *Workspace, scratch: std.mem.Allocator) !void {
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator) !void {
                 // TODO(optim): improve somehow
                 const core = @import("core.zig");
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
                 var all_fnks: core.FnkCollection = .init(scratch);
                 if (true) {
-                    var cur = Toybox.get(worspace.fnkboxes_layer).tree.first;
+                    var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
                     while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
                         // const fnkbox = &Toybox.get(cur).specific.fnkbox;
                         const fnkname_value = try Toybox.get(children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
@@ -1123,8 +1139,8 @@ pub const Lego = struct {
                             actual_output,
                             false,
                             false,
-                            &worspace.undo_stack,
-                        ), &worspace.undo_stack);
+                            &workspace.undo_stack,
+                        ), &workspace.undo_stack);
                     }
                 }
 
@@ -1154,7 +1170,9 @@ pub const Lego = struct {
                         wrote_first_wrong = true;
                     }
                 }
-                fnkbox.status = .solved;
+                if (!wrote_first_wrong) {
+                    fnkbox.status = .solved;
+                }
             }
         };
 
@@ -4041,7 +4059,7 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
-        if (platform.keyboard.wasPressed(.KeyQ)) {
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
@@ -5082,6 +5100,104 @@ const Workspace = struct {
             .executor_crank => |crank| !crank.enabled,
         };
     }
+
+    // /// saves each lego
+    // pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+    //     const version: u32 = 0;
+    //     try out.writeInt(u32, version, ENDIANNESS);
+
+    //     writeLen(out, toybox.all_legos.items.len);
+    //     for (toybox.)
+    // }
+
+    // pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
+    //     const version = try in.readInt(u32, .little);
+    //     if (version != 0) @panic("Unsupported file version");
+    // }
+
+    /// only saves fnkboxes
+    pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        const version: u32 = 0;
+        try out.writeInt(u32, version, ENDIANNESS);
+
+        const core = @import("core.zig");
+        const Fnkbox = Lego.Specific.Fnkbox;
+        const Executor = Lego.Specific.Executor;
+        if (true) {
+            var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
+            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                // const fnkbox = &Toybox.get(cur).specific.fnkbox;
+                const fnkname_value = try Toybox.get(Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                const definition = try Toybox.get(Executor.children(Fnkbox.children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
+                // try all_fnks.putNoClobber(fnkname_value, definition);
+
+                try out.writeStructEndian(cur.get().local_point.pos, ENDIANNESS);
+                var tmp_out: std.ArrayList(u8) = .init(scratch);
+                defer tmp_out.deinit();
+                const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
+                try tmp_out.writer().print("{any}\n", .{fnk});
+                try writeString(out, tmp_out.items);
+            }
+        }
+    }
+
+    pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
+        const version = try in.readInt(u32, .little);
+        if (version != 0) @panic("Unsupported file version");
+
+        dst.deinit();
+        toybox.deinit();
+        try toybox.init(toybox.all_legos_arena.child_allocator);
+        try dst.init(dst.arena_for_atom_names.child_allocator, dst.random_instance.next());
+
+        const core = @import("core.zig");
+
+        var fnks_indices: std.ArrayHashMap(*const core.Sexpr, Lego.Index, core.SexprContext, true) = .init(scratch);
+        if (true) {
+            var cur = Toybox.get(dst.fnkboxes_layer).tree.first;
+            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                const fnkname_value = try Toybox.get(Lego.Specific.Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                try fnks_indices.putNoClobber(fnkname_value, cur);
+            }
+        }
+
+        while (true) {
+            const pos = in.readStructEndian(Vec2, ENDIANNESS) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
+            const ascii = try readString(in, dst.arena_for_atom_names.allocator());
+            var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+            const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
+
+            if (fnks_indices.get(fnk.name)) |fnkbox_index| {
+                const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
+                Toybox.changeChild(Lego.Specific.Executor.children(
+                    Lego.Specific.Fnkbox.children(fnkbox_index).executor,
+                ).garland, garland, null);
+                fnkbox_index.get().local_point.pos = pos;
+            } else {
+                // TODO(game)
+            }
+        }
+
+        try dst.canonizeAfterChanges(scratch);
+    }
+
+    pub fn canAutosaveNow(workspace: *const Workspace) bool {
+        if (workspace.grabbing.index != .nothing) return false;
+        // find any active animations at fnkboxes/executors
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.as(.fnkbox)) |fnkbox| {
+                if (fnkbox.execution != null) return false;
+            }
+            if (lego.specific.as(.executor)) |executor| {
+                if (executor.animation != null) return false;
+            }
+        }
+        return true;
+    }
 };
 
 pub fn init(
@@ -5128,18 +5244,48 @@ pub fn afterHotReload(self: *GameState) !void {
     toybox = &self.toybox_instance;
 }
 
+var first_frame_done = false;
+var seconds_since_last_save: f32 = 0;
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
+
+    if (!first_frame_done) {
+        first_frame_done = true;
+        if (SAVING_ENABLED) {
+            if (platform.getItem("vaulogy_save")) |reader| {
+                // TODO: debug why we can't directly use reader
+                // try self.workspace.load(reader, &self.core_mem);
+
+                std.log.debug("got reader: {any}", .{reader});
+                const data = try reader.readAllAlloc(self.usual.mem.frame.allocator(), std.math.maxInt(usize));
+                std.log.debug("data len: {d}", .{data.len});
+                var fbs = std.io.fixedBufferStream(data);
+                try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
+            }
+        }
+    }
 
     if (false and platform.keyboard.wasPressed(.KeyQ)) {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
-        std.log.debug("save size in bytes: {d}", .{asdf.items.len});
+        // std.log.debug("save size in bytes: {d}", .{asdf.items.len});
+        // std.log.debug("{s}", .{asdf.items});
         var fbs = std.io.fixedBufferStream(asdf.items);
-        try self.workspace.load(fbs.reader().any(), &self.core_mem);
+        try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
     }
+
+    if (seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
+        var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
+        defer asdf.deinit();
+        try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
+        platform.setItem("vaulogy_save", asdf.items);
+        seconds_since_last_save = 0;
+        std.log.debug("autosaved", .{});
+    }
+    seconds_since_last_save += platform.delta_seconds;
 
     platform.gl.clear(COLORS.bg);
     try self.workspace.update(platform, &self.drawer, self.usual.mem.frame.allocator());
@@ -5174,6 +5320,11 @@ fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse
     return result;
 }
 
+pub const ENDIANNESS: std.builtin.Endian = .little;
+comptime {
+    assert(@import("builtin").target.cpu.arch.endian() == ENDIANNESS);
+}
+
 pub fn writeEnum(out: std.io.AnyWriter, T: type, value: T, endian: std.builtin.Endian) !void {
     const type_info = @typeInfo(T).@"enum";
     try out.writeInt(type_info.tag_type, @intFromEnum(value), endian);
@@ -5201,13 +5352,21 @@ pub fn readBool(in: std.io.AnyReader) !bool {
     };
 }
 
+pub fn writeLen(out: std.io.AnyWriter, len: usize) !void {
+    try out.writeInt(u32, @intCast(len), ENDIANNESS);
+}
+
+pub fn readLen(in: std.io.AnyReader) !usize {
+    return @intCast(try in.readInt(u32, ENDIANNESS));
+}
+
 pub fn writeString(out: std.io.AnyWriter, value: []const u8) !void {
-    try out.writeInt(u32, @intCast(value.len), .little);
+    try writeLen(out, value.len);
     try out.writeAll(value);
 }
 
 pub fn readString(in: std.io.AnyReader, allocator: std.mem.Allocator) ![]u8 {
-    const len: usize = @intCast(try in.readInt(u32, .little));
+    const len = try readLen(in);
     const result = try allocator.alloc(u8, len);
     const actual_len = try in.readAll(result);
     if (actual_len != len) @panic("bad string");

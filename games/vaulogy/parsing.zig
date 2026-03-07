@@ -32,7 +32,7 @@ fn parseSexprTrue(input: []const u8, pool: *MemoryPool(Sexpr)) error{ OutOfMemor
     }
 
     // TODO: remove this special case
-    if (std.mem.startsWith(u8, input, "<empty>")) {
+    if (std.mem.startsWith(u8, rest, "<empty>")) {
         return .{
             .sexpr = Sexpr.builtin.empty,
             .rest = rest["<empty>".len..],
@@ -226,3 +226,18 @@ pub const Parser = struct {
         return true;
     }
 };
+
+test "asdf" {
+    const raw =
+        \\ uppercase {
+        \\     <empty> -> <empty>: <empty>;
+        \\ }    
+    ;
+    var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
+    defer mem.deinit();
+    const fnk = try parseSingleFnk(raw, &mem.pool_for_sexprs, mem.arena_for_cases.allocator());
+    const case = fnk.body.cases.items[0];
+    try std.testing.expect(Sexpr.equals(Sexpr.builtin.empty, case.fnk_name));
+    try std.testing.expect(Sexpr.equals(Sexpr.builtin.empty, case.pattern));
+    try std.testing.expect(Sexpr.equals(Sexpr.builtin.empty, case.template));
+}

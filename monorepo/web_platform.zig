@@ -17,8 +17,10 @@ const JsReader = struct {
         return bytes_readed;
     }
 
-    pub fn reader(self: *JsReader) std.io.Reader(*JsReader, Error, read) {
-        log_for_load_save_bug.debug("getting reader for self with index {d}", .{self.file_index});
+    pub const Reader = std.io.Reader(*JsReader, Error, read);
+
+    pub fn reader(self: *JsReader) Reader {
+        log_for_load_save_bug.info("getting reader for self with index {d}", .{self.file_index});
         return .{ .context = self };
     }
 };
@@ -409,6 +411,9 @@ const js = struct {
         extern fn downloadAsFile(filename_ptr: [*]const u8, filename_len: usize, mime_ptr: [*]const u8, mime_len: usize, contents_ptr: [*]const u8, contents_len: usize) void;
         /// returns index of reader
         extern fn askUserForFile() usize;
+        /// returns index of reader
+        extern fn getItem(key_ptr: [*]const u8, key_len: usize) usize;
+        extern fn setItem(key_ptr: [*]const u8, key_len: usize, value_ptr: [*]const u8, value_len: usize) void;
     };
 
     pub const reader = struct {
@@ -479,6 +484,16 @@ const js_better = struct {
                 .txt => "text/plain",
             };
             js.storage.downloadAsFile(filename.ptr, filename.len, mime_str.ptr, mime_str.len, contents.ptr, contents.len);
+        }
+
+        pub fn getItem(key: []const u8) ?JsReader {
+            const reader_index = js.storage.getItem(key.ptr, key.len);
+            if (reader_index == 0) return null;
+            return .{ .file_index = reader_index };
+        }
+
+        pub fn setItem(key: []const u8, value: []const u8) void {
+            js.storage.setItem(key.ptr, key.len, value.ptr, value.len);
         }
     };
 };
@@ -563,6 +578,20 @@ var web_platform: PlatformGives = .{
             user_uploaded_file = null;
         }
     }.anon,
+    .getItem = struct {
+        fn anon(key: []const u8) ?std.io.AnyReader {
+            if (js_better.storage.getItem(key)) |reader| {
+                getitem_lastreader = reader;
+                getitem_lastreader_reader = getitem_lastreader.reader();
+                return getitem_lastreader_reader.any();
+            } else return null;
+        }
+    }.anon,
+    .setItem = struct {
+        fn anon(key: []const u8, value: []const u8) void {
+            return js_better.storage.setItem(key, value);
+        }
+    }.anon,
     .setCursor = struct {
         fn anon(cursor: Mouse.Cursor) void {
             js.setCursor(cursor);
@@ -571,6 +600,9 @@ var web_platform: PlatformGives = .{
 };
 
 var user_uploaded_file: ?JsReader = null;
+// TODO: reconsider
+var getitem_lastreader: JsReader = undefined;
+var getitem_lastreader_reader: JsReader.Reader = undefined;
 
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
