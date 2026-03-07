@@ -4453,13 +4453,18 @@ const Workspace = struct {
                 }
             } else if (old_t <= 0.01) { // regenerate children
                 if (true) { // add a fresh case
-                    const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
-                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+                    const new_name_1 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+                    const new_name_2 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_1);
+                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_2);
 
-                    const index = try Toybox.buildCase(.{ .pos = .new(2.5, 5) }, .{
-                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name }, true, false, undo_stack),
+                    const index = try Toybox.buildCase(.{ .pos = .new(2.75, 5) }, .{
+                        .pattern = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                            .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_2 }, true, false, undo_stack),
+                            .down = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_1 }, true, false, undo_stack),
+                        } }, true, false, undo_stack),
                         .template = try Toybox.buildSexpr(.{}, .{ .pair = .{
-                            .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name }, false, false, undo_stack),
+                            .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_1 }, false, false, undo_stack),
                             .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false, false, undo_stack),
                         } }, false, false, undo_stack),
                         .fnkname = null,
