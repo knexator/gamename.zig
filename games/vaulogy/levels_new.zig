@@ -361,47 +361,7 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-    .{
-        .fnk_name = &Sexpr.doLit("changeCase"),
-        .description = "Change the casing of the given letter.",
-        .initial_definition = null,
-        .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                if (k < Vals.lowercase.len) {
-                    return .{
-                        .input = Vals.lowercase[k],
-                        .expected = Vals.uppercase[k],
-                    };
-                } else if (k < Vals.lowercase.len * 2) {
-                    return .{
-                        .input = Vals.uppercase[k - Vals.lowercase.len],
-                        .expected = Vals.lowercase[k - Vals.lowercase.len],
-                    };
-                } else return null;
-            }
-        }.generate_sample,
-    },
-    .{
-        .fnk_name = &Sexpr.doLit("letterToBothCases"),
-        .description = "Get the lowercase and uppercase versions of the given letter.",
-        .initial_definition = null,
-        .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                if (k < Vals.lowercase.len) {
-                    return .{
-                        .input = Vals.lowercase[k],
-                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k], Vals.uppercase[k])),
-                    };
-                } else if (k < Vals.lowercase.len * 2) {
-                    const k2 = k - Vals.lowercase.len;
-                    return .{
-                        .input = Vals.uppercase[k2],
-                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k2], Vals.uppercase[k2])),
-                    };
-                } else return null;
-            }
-        }.generate_sample,
-    },
+
     .{
         .fnk_name = &Sexpr.doLit("hasSomeB"),
         // intro to recursion
@@ -493,17 +453,25 @@ pub const levels: []const Level = &.{
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                if (k < 100) {
-                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
-                    const random = random_instance.random();
-                    const first = randomChoice(&Vals.lowercase, random);
-                    const second = randomChoice(&Vals.lowercase, random);
-                    const rest = try randomList(pool, &Vals.lowercase, random, random.intRangeAtMost(usize, 0, 7));
-                    return .{
-                        .input = try toListWithSentinel(pool, &.{ first, second }, rest),
-                        .expected = second,
-                    };
-                } else return null;
+                switch (k) {
+                    // (a . (b . ...)) -> b;
+                    0...3 => return .{
+                        .input = try toList(pool, Vals.lowercase[0 .. 2 + k]),
+                        .expected = Vals.lowercase[1],
+                    },
+                    4...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        const first = randomChoice(&Vals.lowercase, random);
+                        const second = randomChoice(&Vals.lowercase, random);
+                        const rest = try randomList(pool, &Vals.lowercase, random, random.intRangeAtMost(usize, 0, 7));
+                        return .{
+                            .input = try toListWithSentinel(pool, &.{ first, second }, rest),
+                            .expected = second,
+                        };
+                    },
+                    else => return null,
+                }
             }
         }.generate_sample,
     },
@@ -654,6 +622,47 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .fnk_name = &Sexpr.doLit("changeCase"),
+        .description = "Change the casing of the given letter.",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (k < Vals.lowercase.len) {
+                    return .{
+                        .input = Vals.lowercase[k],
+                        .expected = Vals.uppercase[k],
+                    };
+                } else if (k < Vals.lowercase.len * 2) {
+                    return .{
+                        .input = Vals.uppercase[k - Vals.lowercase.len],
+                        .expected = Vals.lowercase[k - Vals.lowercase.len],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = &Sexpr.doLit("letterToBothCases"),
+        .description = "Get the lowercase and uppercase versions of the given letter.",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (k < Vals.lowercase.len) {
+                    return .{
+                        .input = Vals.lowercase[k],
+                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k], Vals.uppercase[k])),
+                    };
+                } else if (k < Vals.lowercase.len * 2) {
+                    const k2 = k - Vals.lowercase.len;
+                    return .{
+                        .input = Vals.uppercase[k2],
+                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k2], Vals.uppercase[k2])),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
         .fnk_name = &Sexpr.doLit("reverse"),
         .description = "Reverse the given list.",
         .initial_definition = null,
@@ -761,6 +770,10 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
+};
+
+// TODO(game): include these
+pub const future_levels: []const Level = &.{
     .{
         .fnk_name = &Sexpr.doLit("brainfuck"),
         .description = "Implement a BrainF*ck interpreter.",

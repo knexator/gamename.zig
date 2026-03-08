@@ -2976,7 +2976,7 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "Pieces can", "match with", "the result", "of other pieces" });
             postit.addFromText(postit_pos.addX(7), &.{ "Try running", "the first two", "examples." });
             postit.addFromText(postit_pos.addX(14).add(.new(4, 13)), &.{ "These 'nested'", "machines are", "the same as", "regular machines" });
-            postit_pos.addInPlace(.new(35, 0));
+            postit_pos.addInPlace(.new(33, 0));
             postit.addFromText(postit_pos, &.{ "You can combine", "both tricks:", "invoke a machine", "and then match", "on its result" });
             postit.addFromText(postit_pos.addX(7), &.{ "Study this", "solved", "assignment", "in detail." });
             postit_pos.addInPlace(.new(35, 0));
@@ -2985,9 +2985,17 @@ const Workspace = struct {
 
             postit_pos.addInPlace(.new(35, 0));
             postit_pos.addInPlace(.new(35, 0));
-            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
-            postit_pos.addInPlace(.new(35, 0));
-            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            postit_pos.addInPlace(.new(31, 0));
+            postit.addFromText(postit_pos.addY(-7), &.{ "a \"list\" is an", "ordered collection", "of many values,", "compressed into", "a single one." });
+            postit.addFromText(postit_pos.addY(-7).addX(7), &.{ "The top half", "is the first", "element; the", "bottom half", "is the rest", "of the list." });
+            postit.addFromText(postit_pos.addY(-7).addX(14), &.{ "We use a special", "gray atom", "to mean", "an empty list." });
+            postit.addFromText(postit_pos.addX(4), &.{ "The second", "element is just", "the first element", "of the rest", "of the list" });
+            postit.addFromText(postit_pos.addX(11), &.{ "In other words,", "the top half", "of the", "bottom half" });
+
+            // TODO(game): make these correct
+            // postit_pos.addInPlace(.new(35, 0));
+            // postit.addFromText(postit_pos.addX(4), &.{ "The first example", "is a list with", "two elements,", "['a', 'b']" });
+            // postit.addFromText(postit_pos.addX(11), &.{ "The second example", "is a list with", "three elements,", "['a', 'b', 'c']" });
 
             postit_pos.addInPlace(.new(35 * 6, 0));
             postit_pos.addInPlace(.new(-7, -7));
@@ -4079,6 +4087,20 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
+        if (platform.keyboard.wasPressed(.KeyQ)) {
+            std.log.debug("-----", .{});
+            for (toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .fnkbox) {
+                    std.log.debug("{any} at pos {any}", .{
+                        try Lego.Specific.Fnkbox.children(lego.index).fnkname.get().specific.sexpr.toOldCoreValue(scratch),
+                        lego.local_point,
+                    });
+                }
+            }
+        }
+
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
             for (toybox.all_legos.items, 0..) |lego, k| {
