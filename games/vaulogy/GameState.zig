@@ -1660,7 +1660,7 @@ pub const Handle = struct {
         pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
         pub const default_extrahitbox: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 };
         pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 };
-        pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 };
+        pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 1.0 };
         pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
     };
 
