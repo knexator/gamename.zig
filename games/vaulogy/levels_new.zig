@@ -294,8 +294,8 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("withFirstUppercased"),
-        .description = "Change the top half to be uppercase.",
+        .fnk_name = &Sexpr.doLit("withBottomUppercased"),
+        .description = "Change the bottom half to be uppercase.",
         .initial_definition = null,
         // .{ .cases = &.{
         //     .{
@@ -338,7 +338,7 @@ pub const levels: []const Level = &.{
                 if (k2 < Vals.lowercase.len) {
                     return .{
                         .input = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.lowercase[k2])),
-                        .expected = try store(pool, Sexpr.doPair(Vals.uppercase[k1], Vals.lowercase[k2])),
+                        .expected = try store(pool, Sexpr.doPair(Vals.lowercase[k1], Vals.uppercase[k2])),
                     };
                 } else return null;
             }
@@ -659,17 +659,30 @@ pub const levels: []const Level = &.{
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
-                if (k == 0) {
+                const some_samples: []const []const *const Sexpr = &.{
+                    &.{},
+                    &.{Vals.lowercase[0]},
+                    &.{ Vals.lowercase[0], Vals.lowercase[1] },
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
+                    &.{ Vals.uppercase[0], Vals.uppercase[1] },
+                    &.{ Vals.lowercase[3], Vals.lowercase[4], Vals.lowercase[4] },
+                };
+                if (kommon.safeAt([]const *const Sexpr, some_samples, k)) |input| {
+                    const output = try arena.dupe(*const Sexpr, input);
+                    std.mem.reverse(*const Sexpr, output);
                     return .{
-                        .input = Sexpr.builtin.nil,
-                        .expected = Sexpr.builtin.nil,
+                        .input = try toList(pool, input),
+                        .expected = try toList(pool, output),
                     };
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                     const random = random_instance.random();
-                    var remaining_len = 1 + random.uintLessThan(usize, @min(k, 9));
-                    // long samples
-                    if (k > 90) remaining_len += 50;
+                    var remaining_len = 1 + random.uintLessThan(usize, switch (k) {
+                        0...19 => 4,
+                        20...59 => 7,
+                        60...100 => 50,
+                        else => unreachable,
+                    });
                     var input = Sexpr.builtin.nil;
                     var output: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, remaining_len);
                     while (remaining_len > 0) : (remaining_len -= 1) {
