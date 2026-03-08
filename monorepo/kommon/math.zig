@@ -77,6 +77,7 @@ pub fn lerp_towards_pure_with_ratio(current: f32, goal: f32, ratio: f32, delta_s
 }
 
 pub fn lerp_towards_pure(current: f32, goal: f32, halflife: f32, delta_seconds: f32) f32 {
+    assert(delta_seconds >= 0 and halflife >= 0);
     return goal + (current - goal) * std.math.exp2(-delta_seconds / halflife);
 }
 
