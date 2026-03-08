@@ -147,6 +147,9 @@ pub fn main() !void {
     };
     global_gpa_BAD = leaking_allocator;
 
+    var frame_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer frame_arena.deinit();
+
     errdefer |err| if (err == error.SdlError) std.log.err("SDL error: {s}", .{c.SDL_GetError()});
 
     // For programs that provide their own entry points instead of relying on SDL's main function
@@ -185,7 +188,7 @@ pub fn main() !void {
         stuff.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
-        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (true and hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
     ));
     defer c.SDL_DestroyWindow(sdl_window);
 
@@ -266,6 +269,9 @@ pub fn main() !void {
             .blackStencil = blackStencil,
             .doneStencil = doneStencil,
             .stopStencil = stopStencil,
+            .stencilFunc = stencilFunc,
+            .stencilOp = stencilOp,
+            .colorMask = colorMask,
         };
 
         fn startStencil() void {
@@ -294,6 +300,30 @@ pub fn main() !void {
 
         fn stopStencil() void {
             gl.Disable(gl.STENCIL_TEST);
+        }
+
+        fn stencilFunc(func: Gl.StencilFunc, ref: i32) void {
+            gl.StencilFunc(switch (func) {
+                .ALWAYS => gl.ALWAYS,
+                .EQUAL => gl.EQUAL,
+            }, ref, 0xFF);
+        }
+
+        fn stencilOp(fail: Gl.StencilOp, zfail: Gl.StencilOp, zpass: Gl.StencilOp) void {
+            gl.StencilOp(
+                @intFromEnum(fail),
+                @intFromEnum(zfail),
+                @intFromEnum(zpass),
+            );
+        }
+
+        fn colorMask(red: bool, green: bool, blue: bool, alpha: bool) void {
+            gl.ColorMask(
+                if (red) gl.TRUE else gl.FALSE,
+                if (green) gl.TRUE else gl.FALSE,
+                if (blue) gl.TRUE else gl.FALSE,
+                if (alpha) gl.TRUE else gl.FALSE,
+            );
         }
 
         pub fn clear(color: FColor) void {
@@ -498,6 +528,7 @@ pub fn main() !void {
                     .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                     .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                     .f32 => |v| gl.Uniform1f(u, v),
+                    .Vec2 => |v| gl.Uniform2f(u, v.x, v.y),
                 }
             }
 
@@ -675,6 +706,7 @@ pub fn main() !void {
                     .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                     .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                     .f32 => |v| gl.Uniform1f(u, v),
+                    .Vec2 => |v| gl.Uniform2f(u, v.x, v.y),
                 }
             }
 
@@ -688,6 +720,7 @@ pub fn main() !void {
 
     var sdl_platform: PlatformGives = .{
         .gpa = gpa,
+        .frame_arena = frame_arena.allocator(),
         .mouse = mouse,
         .keyboard = keyboard,
         .setKeyChanged = setKeyChanged,
@@ -831,6 +864,7 @@ pub fn main() !void {
             mouse.prev = mouse.cur;
             mouse.cur.scrolled = .none;
             keyboard.prev = keyboard.cur;
+            _ = frame_arena.reset(.retain_capacity);
         }
 
         // Sound
@@ -1107,6 +1141,7 @@ const Timekeeper = kommon.Timekeeper;
 const Mouse = kommon.input.Mouse;
 const Keyboard = kommon.input.Keyboard;
 const KeyboardButton = kommon.input.KeyboardButton;
+const Canvas = kommon.Canvas;
 const zstbi = @import("zstbi");
 
 pub const std_options: std.Options = .{

@@ -445,36 +445,51 @@ pub const levels: []const Level = &.{
         // simplest intro to lists
         .description = "Get the second element of the list.",
         .initial_definition = .{ .cases = &.{
-            .{ .pattern = &.doPair(
-                Vals.lowercase[0],
-                &.doPair(
-                    Vals.lowercase[1],
-                    Sexpr.builtin.nil,
-                ),
-            ), .template = Vals.uppercase[0], .fnk_name = Vals.lowercase[1], .next = null },
-            .{ .pattern = &.doPair(
-                Vals.lowercase[0],
-                &.doPair(
-                    Vals.lowercase[1],
+            .{
+                .pattern = &.doPair(
+                    Vals.lowercase[0],
                     &.doPair(
-                        Vals.lowercase[2],
+                        Vals.lowercase[1],
                         Sexpr.builtin.nil,
                     ),
                 ),
-            ), .template = Vals.uppercase[0], .fnk_name = Vals.lowercase[1], .next = null },
-            .{ .pattern = &.doPair(
-                Vals.lowercase[0],
-                &.doPair(
-                    Vals.lowercase[1],
+                .template = Vals.lowercase[1],
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(
+                    Vals.lowercase[0],
                     &.doPair(
-                        Vals.lowercase[2],
+                        Vals.lowercase[1],
                         &.doPair(
-                            Vals.lowercase[3],
+                            Vals.lowercase[2],
                             Sexpr.builtin.nil,
                         ),
                     ),
                 ),
-            ), .template = Vals.uppercase[0], .fnk_name = Vals.lowercase[1], .next = null },
+                .template = Vals.lowercase[1],
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(
+                    Vals.lowercase[0],
+                    &.doPair(
+                        Vals.lowercase[1],
+                        &.doPair(
+                            Vals.lowercase[2],
+                            &.doPair(
+                                Vals.lowercase[3],
+                                Sexpr.builtin.nil,
+                            ),
+                        ),
+                    ),
+                ),
+                .template = Vals.lowercase[1],
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
@@ -495,44 +510,82 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = &Sexpr.doLit("listHasSomeB"),
         // real intro to lists
-        .description = "Check if the given list has a 'B' anywhere.",
+        .description = "Check if the given list has a plain 'B' element.",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                // TODO: builtin samples:
-                // nil -> false;
-                // (f . nil) -> false;
-                // (a . (b . nil)) -> true;
-                // (c . (d . (e . nil))) -> false;
-                // // The first element of this list is '(b . b)',
-                // // which is not 'b'!
-                // ((b . b) . (a . nil)) -> false;
-                if (k == 0) {
-                    return .{
-                        .input = Sexpr.builtin.nil,
+                return switch (k) {
+                    // nil -> false;
+                    0 => .{
+                        .input = try store(pool, Sexpr.doPair(Vals.lowercase[5], Sexpr.builtin.nil)),
                         .expected = Sexpr.builtin.false,
-                    };
-                } else if (k < 100) {
-                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
-                    const random = random_instance.random();
-                    var remaining_len = 1 + random.uintLessThan(usize, @min(k, 9));
-                    // long samples
-                    if (k > 90) remaining_len += 50;
-                    var input = Sexpr.builtin.nil;
-                    var has_b = false;
-                    while (remaining_len > 0) : (remaining_len -= 1) {
-                        const v = if (random.float(f32) < 0.2)
-                            Vals.lowercase[1]
-                        else
-                            try randomSexpr(pool, &Vals.lowercase, random, 3);
-                        has_b = has_b or Helpers.isB(v);
-                        input = try store(pool, Sexpr.doPair(v, input));
-                    }
-                    return .{
-                        .input = input,
-                        .expected = Sexpr.fromBool(has_b),
-                    };
-                } else return null;
+                    },
+                    // (a . nil) -> false;
+                    1 => .{
+                        .input = try store(pool, Sexpr.doPair(Vals.lowercase[0], Sexpr.builtin.nil)),
+                        .expected = Sexpr.builtin.false,
+                    },
+                    // (a . (b . nil)) -> true;
+                    2 => .{
+                        .input = try store(pool, Sexpr.doPair(
+                            Vals.lowercase[0],
+                            try store(pool, Sexpr.doPair(
+                                Vals.lowercase[1],
+                                Sexpr.builtin.nil,
+                            )),
+                        )),
+                        .expected = Sexpr.builtin.true,
+                    },
+                    // (c . (d . (e . nil))) -> false;
+                    3 => .{
+                        .input = try store(pool, Sexpr.doPair(
+                            Vals.lowercase[2],
+                            try store(pool, Sexpr.doPair(
+                                Vals.lowercase[3],
+                                try store(pool, Sexpr.doPair(
+                                    Vals.lowercase[4],
+                                    Sexpr.builtin.nil,
+                                )),
+                            )),
+                        )),
+                        .expected = Sexpr.builtin.false,
+                    },
+                    // The first element of this list is '(b . b)',
+                    // which is not 'b'!
+                    // ((b . b) . (a . nil)) -> false;
+                    4 => .{
+                        .input = try store(pool, Sexpr.doPair(
+                            try store(pool, Sexpr.doPair(Vals.lowercase[1], Vals.lowercase[1])),
+                            try store(pool, Sexpr.doPair(
+                                Vals.lowercase[0],
+                                Sexpr.builtin.nil,
+                            )),
+                        )),
+                        .expected = Sexpr.builtin.false,
+                    },
+                    5...100 => blk: {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        var remaining_len = 1 + random.uintLessThan(usize, @min(k, 9));
+                        // long samples
+                        if (k > 90) remaining_len += 50;
+                        var input = Sexpr.builtin.nil;
+                        var has_b = false;
+                        while (remaining_len > 0) : (remaining_len -= 1) {
+                            const v = if (random.float(f32) < 0.05)
+                                Vals.lowercase[1]
+                            else
+                                try randomSexpr(pool, &Vals.lowercase, random, 3);
+                            has_b = has_b or Helpers.isB(v);
+                            input = try store(pool, Sexpr.doPair(v, input));
+                        }
+                        break :blk .{
+                            .input = input,
+                            .expected = Sexpr.fromBool(has_b),
+                        };
+                    },
+                    else => null,
+                };
             }
         }.generate_sample,
     },

@@ -2,35 +2,37 @@ pub const GameState = @This();
 pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
-const core = @import("core.zig");
+// Causes of bugs:
+// - functions that take a pointer and allocate memory might invalidate that pointer
+
 const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
 
-pub const display_fps = false;
+pub const display_fps = true;
 
+// TODO(optim): set to true
+const ENABLE_REUSE = false;
+const SAVING_ENABLED = true;
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
-const SAVING_ENABLED = false;
 const CRANKS_ENABLED = true;
 
-comptime {
-    std.testing.refAllDecls(@import("execution_tree.zig"));
-}
+const FuzzerContext = struct {
+    var toybox_instance: Toybox = undefined;
 
-test "fuzz example" {
     const TestPlatform = struct {
         global_seconds: f32 = 0,
         delta_seconds: f32 = 0,
         mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 },
         keyboard: Keyboard = .{ .cur = .init, .prev = .init, .cur_time = 0 },
-
-        const TestPlatform = @This();
+        frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator),
 
         pub fn after(self: *TestPlatform) void {
             self.mouse.prev = self.mouse.cur;
             self.mouse.cur.scrolled = .none;
             self.keyboard.prev = self.keyboard.cur;
+            _ = self.frame_arena.reset(.retain_capacity);
         }
 
         pub fn getGives(self: *TestPlatform, delta_seconds: f32) PlatformGives {
@@ -42,6 +44,7 @@ test "fuzz example" {
                 .mouse = self.mouse,
                 .keyboard = self.keyboard,
                 .gpa = std.testing.allocator,
+                .frame_arena = self.frame_arena.allocator(),
 
                 .aspect_ratio = stuff.metadata.desired_aspect_ratio,
                 .delta_seconds = delta_seconds,
@@ -51,6 +54,8 @@ test "fuzz example" {
                     fn anon(_: Mouse.Cursor) void {}
                 }.anon,
 
+                .setItem = undefined,
+                .getItem = undefined,
                 .askUserForFile = undefined,
                 .setKeyChanged = undefined,
                 .setButtonChanged = undefined,
@@ -74,42 +79,69 @@ test "fuzz example" {
         mouse_pos: Vec2,
     };
 
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            if (input.len < 8) return;
-            _ = context;
-            var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
-            defer mem.deinit();
+    const Player = struct {
+        workspace: Workspace,
+        test_platform: TestPlatform,
+
+        pub fn init() !Player {
+            toybox = &FuzzerContext.toybox_instance;
+            try toybox.init(std.testing.allocator);
             var workspace: Workspace = undefined;
-            try workspace.init(&mem, std.mem.readInt(u64, input[0..8], .little));
-            defer workspace.deinit(std.testing.allocator);
-            var frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-            defer frame_arena.deinit();
+            try workspace.init(std.testing.allocator, std.testing.random_seed);
+            return .{ .workspace = workspace, .test_platform = .{} };
+        }
 
-            var test_platform: TestPlatform = .{};
+        pub fn deinit(player: *Player) void {
+            player.workspace.deinit();
+            player.test_platform.frame_arena.deinit();
+            toybox.deinit();
+        }
 
-            var it = std.mem.window(u8, input[8..], @sizeOf(FakeInput), @sizeOf(FakeInput));
-            while (it.next()) |cur_input_raw| {
-                if (cur_input_raw.len == @sizeOf(FakeInput)) {
-                    const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
-                    test_platform.keyboard.cur.keys.KeyZ = cur_input.z_down;
-                    test_platform.mouse.cur.buttons.left = cur_input.mouse_left_down;
-                    test_platform.mouse.cur.position = cur_input.mouse_pos;
-                    try workspace.update(test_platform.getGives(1.0 / 60.0), null, &mem, frame_arena.allocator());
-                    _ = frame_arena.reset(.retain_capacity);
-                }
-            }
+        pub fn advance(player: *Player, input: FakeInput) !void {
+            player.test_platform.keyboard.cur.keys.KeyZ = input.z_down;
+            player.test_platform.mouse.cur.buttons.left = input.mouse_left_down;
+            player.test_platform.mouse.cur.position = input.mouse_pos;
+            try player.workspace.update(player.test_platform.getGives(1.0 / 60.0), null, player.test_platform.frame_arena.allocator());
+            player.test_platform.after();
         }
     };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+
+    fn testOne(_: @This(), input: []const u8) anyerror!void {
+        var player: Player = try .init();
+        defer player.deinit();
+
+        var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
+        while (it.next()) |cur_input_raw| {
+            if (cur_input_raw.len == @sizeOf(FakeInput)) {
+                const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
+                try player.advance(cur_input);
+            }
+        }
+    }
+};
+
+test "fuzz example" {
+    try std.testing.fuzz(FuzzerContext{}, FuzzerContext.testOne, .{});
+}
+
+test "custom replay" {
+    var player: FuzzerContext.Player = try .init();
+    defer player.deinit();
+
+    const inputs: []const FuzzerContext.FakeInput = &.{
+        .{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0, 0) },
+    };
+    for (inputs) |input| try player.advance(input);
 }
 
 test "No leaks on Workspace and Drawer" {
-    var mem: core.VeryPermamentGameStuff = .init(std.testing.allocator);
-    defer mem.deinit();
+    var toybox_instance: Toybox = undefined;
+    toybox = &toybox_instance;
+    try toybox.init(std.testing.allocator);
+    defer toybox.deinit();
     var workspace: Workspace = undefined;
-    try workspace.init(&mem, std.testing.random_seed);
-    defer workspace.deinit(std.testing.allocator);
+    try workspace.init(std.testing.allocator, std.testing.random_seed);
+    defer workspace.deinit();
     var usual: kommon.Usual = undefined;
     usual.init(
         std.testing.allocator,
@@ -121,7 +153,7 @@ test "No leaks on Workspace and Drawer" {
     _ = drawer;
 }
 
-// TODO: type
+// TODO(platform): type
 pub const stuff = .{
     .metadata = .{
         .name = "vaulogy",
@@ -131,7 +163,7 @@ pub const stuff = .{
     .sounds = .{},
     .loops = .{},
     .preloaded_images = .{
-        // TODO: don't require this here
+        // TODO(platform): don't require this here
         .arial_atlas = "fonts/Arial.png",
     },
 };
@@ -142,139 +174,1499 @@ var COLORS: struct {
 } = .{};
 
 usual: kommon.Usual,
-
+toybox_instance: Toybox,
 drawer: Drawer,
-core_mem: core.VeryPermamentGameStuff,
 workspace: Workspace,
 
-pub const HoveredSexpr = struct {
-    next: ?struct {
-        left: *HoveredSexpr,
-        right: *HoveredSexpr,
-    },
-    value: f32,
+var toybox: *Toybox = undefined;
 
-    pub const Pool = std.heap.MemoryPool(HoveredSexpr);
+/// Might be an Area, a Sexpr, a Case, etc
+pub const Lego = struct {
+    // TODO(optim-late): remove in release modes
+    exists: bool = false,
+    index: Index,
+    free_next: Index = .nothing,
+    /// respect to parent
+    local_point: Point,
+    /// computed each frame
+    absolute_point: Point = undefined,
+    /// local coordinates
+    visual_offset: Point = .{},
+    hot_t: f32 = 0,
+    // 1 if there is an element being dropped on this one
+    dropzone_t: f32 = 0,
+    // 1 if being grabbed
+    active_t: f32 = 0,
+    /// 1 if this element is being dropped into another
+    dropping_t: f32 = 0,
+    unhoverable: bool = false,
 
-    pub fn fromSexpr(pool: *Pool, value: *const Sexpr) !*HoveredSexpr {
-        return store(pool, .{ .value = 0, .next = switch (value.*) {
-            .atom_lit, .atom_var, .empty => null,
-            .pair => |p| .{
-                .left = try fromSexpr(pool, p.left),
-                .right = try fromSexpr(pool, p.right),
-            },
-        } });
-    }
+    tree: Tree = .empty,
 
-    pub fn clone(original: HoveredSexpr, pool: *Pool) !*HoveredSexpr {
-        return try store(pool, .{ .value = original.value, .next = if (original.next) |next| .{
-            .left = try clone(next.left.*, pool),
-            .right = try clone(next.right.*, pool),
-        } else null });
-    }
+    specific: Specific,
 
-    pub fn getAt(self: *HoveredSexpr, address: core.SexprAddress) *HoveredSexpr {
-        var current: *HoveredSexpr = self;
-        for (address) |dir| {
-            current = switch (dir) {
-                .left => current.next.?.left,
-                .right => current.next.?.right,
+    pub const Specific = union(enum) {
+        button: Button,
+        scrollbar: Scrollbar,
+        area: Area,
+        sexpr: Sexpr,
+        case: Case,
+        garland: Garland,
+        /// cable between cases, and the handle to create new ones
+        newcase: NewCase,
+        executor: Executor,
+        pill: Pill,
+        fnkbox: Fnkbox,
+        fnkbox_box: FnkboxBox,
+        testcase: Testcase,
+        microscope: Microscope,
+        lens: Lens,
+        postit: Postit,
+
+        // TODO(design): try to simplify these
+        garland_newcases: void,
+        fnkbox_description: struct {
+            text: []const u8,
+        },
+        fnkbox_testcases: struct {
+            scrollbar: Lego.Index,
+        },
+        fnkslist: struct {
+            scrollbar: Lego.Index,
+        },
+        fnkslist_element: FnkslistElement,
+        postit_text: struct {
+            text: []const u8,
+        },
+        postit_drawing: enum {
+            arrow,
+            launch_testcase_button,
+            piece_center,
+        },
+        executor_controls: struct {
+            pub fn brake(executor_controls: *const @This()) Lego.Index {
+                return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[0];
+            }
+
+            pub fn crank(executor_controls: *const @This()) Lego.Index {
+                return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[1];
+            }
+        },
+        executor_brake: struct {
+            /// in 0..1; 1 is braked, 0.5 is normal speed, 0 is speedup
+            brake_t: f32 = 0.5,
+            handle_pos: Vec2 = undefined,
+
+            pub fn brakeBody(brake: @This(), line_t: f32) Vec2 {
+                return Specific.Executor.Controls.brakeLineRaw(.{}, brake.brake_t, line_t);
+            }
+
+            pub fn brakeHandlePath(_: @This(), brake_t: f32) Vec2 {
+                return Specific.Executor.Controls.brakeLineRaw(.{}, brake_t, 1.0);
+                // return crank_center
+                //     .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
+                //     .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
+                //     .addY(0.25);
+            }
+        },
+        executor_crank: struct {
+            value: f32 = 0,
+            enabled: bool = false,
+            handle_pos: Vec2 = undefined,
+        },
+
+        pub const Tag = std.meta.Tag(Specific);
+
+        pub fn tag(specific: *const Specific) Tag {
+            return std.meta.activeTag(specific.*);
+        }
+
+        pub fn Tagged(comptime specific_tag: Tag) type {
+            inline for (@typeInfo(Specific).@"union".fields) |field| {
+                if (std.mem.eql(u8, field.name, @tagName(specific_tag))) return field.type;
+            } else comptime unreachable;
+        }
+
+        pub fn as(specific: *Specific, comptime specific_tag: Tag) ?*Tagged(specific_tag) {
+            return switch (specific.*) {
+                specific_tag => |*x| x,
+                else => null,
             };
         }
-        return current;
-    }
 
-    pub fn update(self: *HoveredSexpr, address: ?core.SexprAddress, target_value_if_matches: f32, delta_seconds: f32) void {
-        if (address) |a| {
-            if (a.len == 0) {
-                self._update(target_value_if_matches, delta_seconds);
-                if (self.next) |next| {
-                    next.left.update(null, target_value_if_matches, delta_seconds);
-                    next.right.update(null, target_value_if_matches, delta_seconds);
+        pub const FnkslistElement = struct {
+            text: []const u8,
+
+            pub const height: f32 = 2.0;
+
+            const core = @import("core.zig");
+            pub fn build(count: usize, fnkname: *const core.Sexpr, text: []const u8, undo_stack: ?*UndoStack) !Lego.Index {
+                return try Toybox.createWithChildren(.{ .pos = .new(0, tof32(count) * height) }, .{
+                    .fnkslist_element = .{ .text = text },
+                }, &.{
+                    try Sexpr.buildFromOldCoreValue(.{ .pos = .new(1.5, 0.65), .scale = 0.5, .turns = 0.25 }, fnkname, false, true, undo_stack),
+                }, undo_stack);
+            }
+        };
+
+        pub const Button = struct {
+            local_rect: Rect,
+            action: enum {
+                launch_testcase,
+                see_failing_testcase,
+                /// assumes that the scrollbar is the direct parent
+                scroll_up,
+                /// assumes that the scrollbar is the direct parent
+                scroll_down,
+            },
+            enabled: bool = true,
+
+            pub fn instant(button: Button) bool {
+                return switch (button.action) {
+                    .launch_testcase,
+                    .see_failing_testcase,
+                    .scroll_up,
+                    .scroll_down,
+                    => false,
+                };
+            }
+        };
+
+        pub const Scrollbar = struct {
+            total_rect: Rect,
+            total_length: f32,
+            visible_length: f32,
+            scroll_visual: f32,
+            scroll_target: f32,
+
+            const min_handle_length: f32 = 0.25;
+            const max_handle_length: f32 = 1;
+
+            pub fn build(bounding_rect: Rect, total_length: f32, visible_length: f32, undo_stack: ?*UndoStack) Lego.Index {
+                const arrows_height = bounding_rect.size.x;
+                return try Toybox.createWithChildren(.{}, .{
+                    .scrollbar = .{
+                        .total_rect = bounding_rect.withSize(.new(
+                            bounding_rect.size.x,
+                            bounding_rect.size.y - 2 * arrows_height,
+                        ), .center),
+                        .total_length = total_length,
+                        .visible_length = visible_length,
+                        .scroll_visual = 0,
+                        .scroll_target = 0,
+                    },
+                }, &.{
+                    (try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = bounding_rect.withSize(.both(arrows_height), .top_left),
+                        .action = .scroll_up,
+                    } }, undo_stack)).index,
+                    (try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = bounding_rect.withSize(.both(arrows_height), .bottom_left),
+                        .action = .scroll_down,
+                    } }, undo_stack)).index,
+                }, undo_stack);
+            }
+
+            pub fn buildForTestcases(n_testcases: usize, scroll: f32) Scrollbar {
+                const total_rect = Lego.Specific.FnkboxBox.testcases_box
+                    .withSize(.new(0.5, FnkboxBox.testcases_height - 1.2), .top_left)
+                    .move(.new(0.1, 0.6));
+                return .{
+                    .total_length = tof32(n_testcases),
+                    .visible_length = FnkboxBox.visible_testcases,
+                    .total_rect = total_rect,
+                    .scroll_visual = scroll,
+                    .scroll_target = scroll,
+                };
+            }
+
+            pub fn handleRectVisual(scrollbar: *const Scrollbar) Rect {
+                // assert(scrollbar.visible_length <= scrollbar.total_length);
+                const handle_size: Vec2 = scrollbar.total_rect.size.mul(.new(
+                    1,
+                    math.clamp(
+                        math.clamp01(scrollbar.visible_length / scrollbar.total_length),
+                        min_handle_length,
+                        max_handle_length,
+                    ),
+                ));
+                return scrollbar.total_rect
+                    .withSize(handle_size, .top_left)
+                    .move(.new(
+                    0,
+                    // (scrollbar.scroll_visual / tof32(@max(1, scrollbar.total_length - scrollbar.visible_length))) *
+                    math.clamp01(scrollbar.scroll_visual / (scrollbar.total_length - scrollbar.visible_length)) *
+                        (scrollbar.total_rect.size.y - handle_size.y),
+                ));
+            }
+
+            pub fn onMouseMoved(scrollbar: *Scrollbar, local_pos: Vec2) void {
+                const rect = scrollbar.total_rect
+                    .withSize(.new(
+                    scrollbar.total_rect.size.x,
+                    scrollbar.total_rect.size.y - scrollbar.handleRectVisual().size.y,
+                ), .top_left);
+                scrollbar.scroll_target = math.clamp01(rect.localFromWorldPosition(local_pos).y) *
+                    @max(0, scrollbar.total_length - scrollbar.visible_length);
+            }
+        };
+
+        pub const Area = struct {
+            /// kind of a collider
+            bg: Bg,
+
+            pub const Bg = union(enum) {
+                none,
+                all,
+                local_rect: Rect,
+
+                pub fn contains(bg_kind: Bg, area_absolute_point: Point, needle_absolute_pos: Vec2) bool {
+                    return switch (bg_kind) {
+                        .none => false,
+                        .all => true,
+                        .local_rect => |rect| rect.contains(area_absolute_point.inverseApplyGetLocalPosition(needle_absolute_pos)),
+                    };
                 }
-            } else {
-                self._update(0, delta_seconds);
-                if (self.next) |next| {
-                    next.left.update(if (a[0] == .left) a[1..] else null, target_value_if_matches, delta_seconds);
-                    next.right.update(if (a[0] == .right) a[1..] else null, target_value_if_matches, delta_seconds);
+            };
+        };
+
+        pub const Sexpr = struct {
+            kind: Kind,
+            is_pattern: bool,
+            is_pattern_t: f32,
+            is_fnkname: bool,
+            is_fnkname_t: f32,
+            atom_name: []const u8,
+            immutable: bool,
+
+            // TODO(design): rethink
+            executor_with_bindings: Lego.Index = .nothing,
+            /// for patterns, this means the "eating value"
+            emerging_value: Lego.Index = .nothing,
+            emerging_value_t: f32 = 0,
+            // TODO(design): this is very hacky
+            /// set to true on patterns that have eaten their value
+            emerging_value_ignore_updates_to_t: bool = false,
+
+            pub const Kind = enum { empty, atom_lit, atom_var, pair };
+
+            pub fn setEmergingValueT(parent: Lego.Index, t: f32) void {
+                var cur_sexpr = parent;
+                while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, parent).next) {
+                    Toybox.get(cur_sexpr).specific.sexpr.emerging_value_t = t;
                 }
             }
-        } else {
-            self._update(0, delta_seconds);
-            if (self.next) |next| {
-                next.left.update(null, target_value_if_matches, delta_seconds);
-                next.right.update(null, target_value_if_matches, delta_seconds);
-            }
-        }
-    }
 
-    fn _update(self: *HoveredSexpr, goal: f32, delta_seconds: f32) void {
-        math.lerp_towards(&self.value, goal, 0.6, delta_seconds);
-    }
-
-    pub fn fillVariables(hovered: *HoveredSexpr, original_value: *const Sexpr, bindings: []const core.Binding, pool: *Pool) !*HoveredSexpr {
-        switch (original_value.*) {
-            .atom_var => |templ| {
-                for (0..bindings.len) |k| {
-                    const bind = bindings[bindings.len - k - 1];
-                    if (std.mem.eql(u8, bind.name, templ.value)) {
-                        return try fromSexpr(pool, bind.value);
+            pub fn setIsPattern(parent: Lego.Index, is_pattern: bool) void {
+                var cur_sexpr = parent;
+                while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, parent).next) {
+                    Toybox.get(cur_sexpr).specific.sexpr.is_pattern = is_pattern;
+                    var cur_child = Toybox.get(cur_sexpr).specific.sexpr.emerging_value;
+                    while (cur_child != .nothing) : (cur_child = Toybox.next_preordered(cur_child, cur_sexpr).next) {
+                        Toybox.get(cur_child).specific.sexpr.is_pattern = is_pattern;
                     }
                 }
-                return hovered;
-            },
-            .atom_lit, .empty => return hovered,
-            .pair => |templ| {
-                return store(pool, .{ .value = hovered.value, .next = .{
-                    .left = try fillVariables(hovered.next.?.left, templ.left, bindings, pool),
-                    .right = try fillVariables(hovered.next.?.right, templ.right, bindings, pool),
-                } });
-            },
-        }
-    }
+            }
 
-    pub fn setAt(this: *const HoveredSexpr, pool: *Pool, address: core.SexprAddress, value: *HoveredSexpr) !*HoveredSexpr {
-        if (address.len == 0) {
-            return value;
-        } else {
-            const first = address[0];
-            const rest = address[1..];
-            if (this.next) |next| {
-                switch (first) {
-                    .left => {
-                        const new_left = try next.left.setAt(pool, rest, value);
-                        return try store(pool, .{ .value = this.value, .next = .{ .left = new_left, .right = next.right } });
+            pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
+                return ViewHelper.overlapsAtom(is_pattern, sexpr_point, needle_pos, switch (kind) {
+                    .atom_var, .atom_lit, .empty => .atom,
+                    .pair => .pair,
+                });
+            }
+
+            pub fn equalValue(a_index: Lego.Index, b_index: Lego.Index) bool {
+                const a = &Toybox.get(a_index).specific.sexpr;
+                const b = &Toybox.get(b_index).specific.sexpr;
+                return equalValueV2(a, b);
+            }
+
+            pub fn equalValueV2(a: *const Sexpr, b: *const Sexpr) bool {
+                if (a.kind != b.kind) return false;
+                switch (a.kind) {
+                    .empty => return true,
+                    .atom_var, .atom_lit => return std.mem.eql(u8, a.atom_name, b.atom_name),
+                    .pair => return equalValueV2(a.left(), b.left()) and equalValueV2(a.right(), b.right()),
+                }
+            }
+
+            pub fn generateBindings(value: Lego.Index, pattern: Lego.Index, bindings: *Bindings) !bool {
+                const p = Toybox.get(pattern).specific.sexpr;
+                const v = Toybox.get(value).specific.sexpr;
+                switch (p.kind) {
+                    .empty => return true,
+                    .atom_var => {
+                        try bindings.append(.{ .name = p.atom_name, .value = value });
+                        return true;
                     },
-                    .right => {
-                        const new_right = try next.right.setAt(pool, rest, value);
-                        return try store(pool, .{ .value = this.value, .next = .{ .left = next.left, .right = new_right } });
+                    .atom_lit => {
+                        switch (v.kind) {
+                            .empty => return true,
+                            .pair => return false,
+                            .atom_lit => return std.mem.eql(u8, v.atom_name, p.atom_name),
+                            .atom_var => return true,
+                        }
+                    },
+                    .pair => {
+                        switch (v.kind) {
+                            else => return false,
+                            .pair => {
+                                const pat_up, const pat_down = Toybox.getChildrenExact(2, pattern);
+                                const val_up, const val_down = Toybox.getChildrenExact(2, value);
+                                return try generateBindings(val_up, pat_up, bindings) and try generateBindings(val_down, pat_down, bindings);
+                            },
+                        }
                     },
                 }
-            } else panic("bad address", .{});
+            }
+
+            /// Should be called only when changing any of the _t values
+            pub fn updateLocalPositions(index: Lego.Index) void {
+                const lego = Toybox.get(index);
+                const sexpr = &lego.specific.sexpr;
+
+                const base_point: Point = if (!sexpr.is_pattern)
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
+                else
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
+
+                const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
+                    .{ .turns = -0.01, .pos = .new(0.25, 0) },
+                    .{ .turns = 0.01, .pos = .new(-0.25, 0) },
+                    sexpr.is_pattern_t,
+                ), lego.hot_t + lego.dropping_t * 2));
+
+                lego.visual_offset = hovered_point;
+
+                if (sexpr.kind == .pair) {
+                    const child_up, const child_down = Toybox.getChildrenExact(2, index);
+                    Toybox.get(child_up).local_point = (Point{})
+                        .applyToLocalPoint(lego.visual_offset)
+                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
+                    Toybox.get(child_down).local_point = (Point{})
+                        .applyToLocalPoint(lego.visual_offset)
+                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                }
+
+                if (sexpr.emerging_value != .nothing) {
+                    std.log.err("Shouldn't happen!", .{});
+                    updateLocalPositions(sexpr.emerging_value);
+                }
+            }
+
+            fn left(self: *const Sexpr) *const Sexpr {
+                assert(self.kind == .pair);
+                assert(Toybox.childCount(Lego.fromSpecificConst(.sexpr, self).index) == 2);
+                return &Toybox.get(Lego.fromSpecificConst(.sexpr, self).tree.first).specific.sexpr;
+            }
+
+            fn right(self: *const Sexpr) *const Sexpr {
+                assert(self.kind == .pair);
+                assert(Toybox.childCount(Lego.fromSpecificConst(.sexpr, self).index) == 2);
+                return &Toybox.get(Lego.fromSpecificConst(.sexpr, self).tree.last).specific.sexpr;
+            }
+
+            fn getAllVarNames(self: *const Sexpr, res: *std.ArrayList([]const u8)) !void {
+                const indexOfString = @import("kommon").funktional.indexOfString;
+                switch (self.kind) {
+                    .atom_lit, .empty => return,
+                    .atom_var => if (indexOfString(res.items, self.atom_name) == null) try res.append(self.atom_name),
+                    .pair => {
+                        try self.left().getAllVarNames(res);
+                        try self.right().getAllVarNames(res);
+                    },
+                }
+            }
+
+            pub fn getAllVarNamesHelper(pair: Lego.Index, allocator: std.mem.Allocator) !struct {
+                left: [][]const u8,
+                right: [][]const u8,
+            } {
+                var left_names: std.ArrayList([]const u8) = .init(allocator);
+                var right_names: std.ArrayList([]const u8) = .init(allocator);
+                const s = &Toybox.get(pair).specific.sexpr;
+                try s.left().getAllVarNames(&left_names);
+                try s.right().getAllVarNames(&right_names);
+                return .{
+                    .left = try left_names.toOwnedSlice(),
+                    .right = try right_names.toOwnedSlice(),
+                };
+            }
+
+            const core = @import("core.zig");
+            pub fn toOldCoreValue(sexpr: *const Sexpr, mem: std.mem.Allocator) !*core.Sexpr {
+                const result = try mem.create(core.Sexpr);
+                result.* = switch (sexpr.kind) {
+                    .empty => .empty,
+                    .atom_var => .{ .atom_var = .{ .value = sexpr.atom_name } },
+                    .atom_lit => .{ .atom_lit = .{ .value = sexpr.atom_name } },
+                    .pair => .{ .pair = .{
+                        .left = try sexpr.left().toOldCoreValue(mem),
+                        .right = try sexpr.right().toOldCoreValue(mem),
+                    } },
+                };
+                return result;
+            }
+
+            pub fn buildFromOldCoreValue(point: Point, value: *const core.Sexpr, is_pattern: bool, is_fnkname: bool, undo_stack: ?*UndoStack) !Lego.Index {
+                return try Toybox.buildSexpr(point, switch (value.*) {
+                    .empty => .empty,
+                    .atom_lit => |s| .{ .atom_lit = s.value },
+                    .atom_var => |s| .{ .atom_var = s.value },
+                    .pair => |pair| .{ .pair = .{
+                        .up = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .up)), pair.left, is_pattern, is_fnkname, undo_stack),
+                        .down = try buildFromOldCoreValue(point.applyToLocalPoint(ViewHelper.offsetFor(false, .down)), pair.right, is_pattern, is_fnkname, undo_stack),
+                    } },
+                }, is_pattern, is_fnkname, undo_stack);
+            }
+
+            pub fn drawEatingPattern(parent: Lego.Index, var_name: []const u8, t: f32, camera: Rect, drawer: *Drawer, base_alpha: f32) !void {
+                var cur = parent;
+                const alpha = t * base_alpha;
+                while (cur != .nothing) : (cur = Toybox.next_preordered(cur, parent).next) {
+                    const point = cur.get().absolute_point;
+                    const sexpr = cur.get().specific.sexpr;
+                    assert(sexpr.is_pattern);
+                    switch (sexpr.kind) {
+                        .empty => {
+                            // TODO(game)
+                        },
+                        .atom_lit => try drawer.drawPatternAtomSolidColor(
+                            camera,
+                            point,
+                            sexpr.atom_name,
+                            var_name,
+                            alpha,
+                        ),
+                        .pair => try drawer.drawPatterPairHolderSolidColor(camera, point, var_name, alpha),
+                        .atom_var => {
+                            // TODO(game)
+                        },
+                    }
+                }
+            }
+        };
+
+        pub const Case = struct {
+            /// offset for the next garland, used during animations
+            next_point_extra: Point = .{},
+            /// offset for the fnk name, used during animations
+            fnk_name_extra: Point = .{},
+
+            const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
+            const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
+
+            const Children = struct {
+                pattern: Lego.Index,
+                template: Lego.Index,
+                fnkname: Lego.Index,
+                next: Lego.Index,
+            };
+
+            pub fn destroyForParts(index: Lego.Index, undo_stack: *UndoStack) Children {
+                const result = children(index);
+                Toybox.popWithUndoAndChangingCoords(result.pattern, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(result.template, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(result.fnkname, undo_stack);
+                Toybox.popWithUndoAndChangingCoords(result.next, undo_stack);
+
+                if (index.get().tree.parent != .nothing) {
+                    Toybox.popWithUndo(index, undo_stack);
+                }
+                Toybox.destroyFloatingWithUndo(index, undo_stack);
+
+                return result;
+            }
+
+            pub fn children(index: Lego.Index) Children {
+                assert(Toybox.get(index).specific.tag() == .case);
+                const asdf = Toybox.getChildrenExact(4, index);
+                return .{
+                    .pattern = asdf[0],
+                    .template = asdf[1],
+                    .fnkname = asdf[2],
+                    .next = asdf[3],
+                };
+            }
+
+            pub fn next(case: *const Case) *const Garland {
+                return &children(Lego.fromSpecificConst(.case, case).index).next.get().specific.garland;
+            }
+
+            /// only call when next_point_extra or fnk_name_extra changes
+            pub fn updateLocalPositions(index: Lego.Index) void {
+                const case = index.get().specific.case;
+                const offsets: [4]Point = .{
+                    .{ .pos = .xneg },
+                    .{ .pos = .xpos },
+                    (Point{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }).applyToLocalPoint(case.fnk_name_extra),
+                    (Point{ .pos = .new(8, 1) }).applyToLocalPoint(case.next_point_extra),
+                };
+                for (Toybox.getChildrenExact(4, index), offsets) |i, offset| {
+                    Toybox.get(i).local_point = offset;
+                }
+            }
+        };
+
+        pub const Garland = struct {
+            visible: bool = undefined,
+            computed_height: f32 = 0,
+            /// valid only for garlands that are enqueued in an executor
+            enqueued_parent_pill_index: usize = undefined,
+            /// valid only for garlands that are enqueued in an executor
+            next_enqueued: Lego.Index = .nothing,
+
+            pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
+            pub const dist_between_cases_first: f32 = 1.5;
+            pub const dist_between_cases_rest: f32 = 2.5;
+            pub const relative_fnkname_point: Point = .{ .pos = .{ .x = -2, .y = 0 }, .turns = 0.25, .scale = 0.5 };
+
+            pub fn stealFnkname(garland: Lego.Index, replacement: ?Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+                const original_fnkname = Lego.Specific.Garland.children(garland).fnkname;
+                if (replacement) |r| {
+                    r.get().local_point = Lego.Specific.Garland.relative_fnkname_point;
+                    r.get().specific.sexpr.is_pattern = true;
+                    Toybox.changeChild(original_fnkname, r, undo_stack);
+                } else {
+                    const new_fnkname = try Toybox.buildSexpr(undefined, .empty, true, true, undo_stack);
+                    Toybox.changeChild(original_fnkname, new_fnkname, undo_stack);
+                }
+                return original_fnkname;
+            }
+
+            pub fn popCase(case: Lego.Index, undo_stack: ?*UndoStack) void {
+                Toybox.refreshAbsolutePoints(&.{case});
+
+                assert(case.hasTag(.case));
+                const parent = case.get().tree.parent;
+                assert(parent.hasTag(.newcase));
+
+                Toybox.popWithUndoAndChangingCoords(case, undo_stack);
+                const original_parent_tree = Toybox.get(parent).tree;
+                const l_a = Toybox.get(original_parent_tree.next).specific.newcase.length();
+                const l_b = Toybox.get(parent).specific.newcase.length();
+                Toybox.get(original_parent_tree.next).specific.newcase.length_before = l_b;
+                Toybox.get(original_parent_tree.next).specific.newcase.length_after = l_a;
+                Toybox.get(original_parent_tree.next).dropzone_t = case.get().hot_t;
+                Toybox.get(original_parent_tree.next).local_point = parent.get().local_point;
+                Toybox.pop(parent, undo_stack);
+                Toybox.destroyFloating(parent, undo_stack);
+
+                Toybox.refreshAbsolutePoints(&.{ case, original_parent_tree.next });
+            }
+
+            pub fn children(index: Lego.Index) struct {
+                fnkname: Lego.Index,
+                cases: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .garland);
+                const asdf = Toybox.getChildrenExact(2, index);
+                return .{
+                    .fnkname = asdf[0],
+                    .cases = asdf[1],
+                };
+            }
+
+            pub fn hasChildCases(garland: *const Garland) bool {
+                return Toybox.childCount(garland.casesHolder()) > 1;
+            }
+
+            pub fn casesHolder(garland: *const Garland) Lego.Index {
+                return children(Lego.fromSpecificConst(.garland, garland).index).cases;
+            }
+
+            pub fn firstNewcase(garland: *const Garland) *Specific.NewCase {
+                return &garland.casesHolder().get().tree.first.get().specific.newcase;
+            }
+
+            const core = @import("core.zig");
+            pub fn toOldCoreValue(garland: *const Garland, allocator: std.mem.Allocator) !core.FnkBody {
+                const cable_segments = try Toybox.getChildrenUnknown(allocator, garland.casesHolder());
+                defer allocator.free(cable_segments);
+
+                var cases: core.MatchCases = try .initCapacity(allocator, cable_segments.len - 1);
+                for (cable_segments[0 .. cable_segments.len - 1]) |i| {
+                    const c = Case.children(i.get().tree.first);
+                    const next: ?core.MatchCases = blk: {
+                        const asdf = try c.next.get().specific.garland.toOldCoreValue(allocator);
+                        if (asdf.cases.items.len == 0) {
+                            break :blk null;
+                        } else {
+                            break :blk asdf.cases;
+                        }
+                    };
+                    cases.appendAssumeCapacity(.{
+                        .pattern = try c.pattern.get().specific.sexpr.toOldCoreValue(allocator),
+                        .fnk_name = try c.fnkname.get().specific.sexpr.toOldCoreValue(allocator),
+                        .template = try c.template.get().specific.sexpr.toOldCoreValue(allocator),
+                        .next = next,
+                    });
+                }
+                return .{ .cases = cases };
+            }
+
+            pub fn buildFromOldCoreValue(point: Point, definition: core.FnkBodyV2, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
+                var cases: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, definition.cases.len);
+                for (definition.cases) |case| {
+                    cases.appendAssumeCapacity(try Toybox.buildCase(.{}, .{
+                        .pattern = try Sexpr.buildFromOldCoreValue(.{}, case.pattern, true, false, undo_stack),
+                        .template = try Sexpr.buildFromOldCoreValue(.{}, case.template, false, false, undo_stack),
+                        .fnkname = try Sexpr.buildFromOldCoreValue(.{}, case.fnk_name, false, true, undo_stack),
+                        .next = if (case.next) |next|
+                            try buildFromOldCoreValue(.{}, .{ .cases = next }, scratch, undo_stack)
+                        else
+                            null,
+                    }, undo_stack));
+                }
+                return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch), undo_stack);
+            }
+
+            pub fn buildFromOldCoreValueV0(point: Point, definition: core.FnkBody, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
+                var cases: std.ArrayListUnmanaged(Lego.Index) = try .initCapacity(scratch, definition.cases.items.len);
+                for (definition.cases.items) |case| {
+                    cases.appendAssumeCapacity(try Toybox.buildCase(.{}, .{
+                        .pattern = try Sexpr.buildFromOldCoreValue(.{}, case.pattern, true, false, undo_stack),
+                        .template = try Sexpr.buildFromOldCoreValue(.{}, case.template, false, false, undo_stack),
+                        .fnkname = try Sexpr.buildFromOldCoreValue(.{}, case.fnk_name, false, true, undo_stack),
+                        .next = if (case.next) |next|
+                            try buildFromOldCoreValueV0(.{}, .{ .cases = next }, scratch, undo_stack)
+                        else
+                            null,
+                    }, undo_stack));
+                }
+                return try Toybox.buildGarland(point, try cases.toOwnedSlice(scratch), undo_stack);
+            }
+
+            /// 0 -> default point
+            /// 0...1 rotating
+            /// 1 -> enqueued
+            fn extraForDequeuingNext(enqueueing_t: f32) Point {
+                return .{
+                    .pos = .new(enqueueing_t * 6, -3 * math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
+                    .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 0.7, .easeInOutCubic)),
+                };
+            }
+
+            /// same as extraForDequeuingNext but applied from a case (so it has to climb more, for example)
+            fn extraForEnqueuingNext(enqueueing_t: f32) Point {
+                assert(math.in01(enqueueing_t));
+                return .{
+                    .pos = .new(enqueueing_t * 4, (-3 - Case.next_garland_offset.y - Garland.dist_between_cases_first) *
+                        math.smoothstepEased(enqueueing_t, 0, 0.35, .easeInOutCubic)),
+                    .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0.0, 0.3, .easeInOutCubic)),
+                };
+            }
+        };
+
+        pub const NewCase = struct {
+            length_before: f32 = undefined,
+            length_after: f32 = undefined,
+            /// used when updating animation
+            offset_t: f32 = 0,
+            /// used when updating animation
+            offset_ghost: Lego.Index = .nothing,
+
+            pub fn length(newcase: *const NewCase) f32 {
+                return newcase.length_before + newcase.length_after;
+            }
+        };
+
+        pub const Pill = struct {
+            next_pill: Lego.Index,
+
+            remaining_lifetime: f32 = std.math.inf(f32),
+            velocity: Vec2 = .zero,
+
+            pub fn alpha(pill: *const Pill) f32 {
+                return math.smoothstep(pill.remaining_lifetime, 0, 0.4);
+            }
+
+            pub fn build(
+                pattern_point: Point,
+                old_first: Lego.Index,
+                data: struct {
+                    pattern: Lego.Index,
+                    input: Lego.Index,
+                    fnkname_call: Lego.Index,
+                    fnkname_response: Lego.Index,
+                    // TODO(game)
+                    // bindings: []const Binding,
+                },
+                undo_stack: ?*UndoStack,
+            ) !Lego.Index {
+                const result = try Toybox.new(pattern_point, .{
+                    .pill = .{ .next_pill = old_first },
+                }, undo_stack);
+
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.pattern, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.input, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_call, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_response, undo_stack);
+
+                return result.index;
+            }
+        };
+
+        pub const Executor = struct {
+            controlled_by_parent_fnkbox: bool,
+            animation: ?struct {
+                t: f32 = 0,
+                active_case: Lego.Index,
+                matching: bool,
+                invoked_fnk: Lego.Index,
+                // parent_pill: ?usize,
+                // TODO(design): rethink
+                new_bindings: []const Binding,
+                // original_point: Point,
+                garland_fnkname: Lego.Index,
+                // paused: bool = false,
+            } = null,
+            first_enqueued: Lego.Index = .nothing,
+            first_pill: Lego.Index = .nothing,
+            garland_appearing_t: f32 = 1,
+
+            const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
+            const relative_garland_point: Point = .{ .pos = .new(4, 0) };
+            const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
+            const first_case_point: Point = relative_garland_point.applyToLocalPoint(.{ .pos = .new(0, 1.5) });
+
+            // TODO(design): rethink
+            pub fn bindingsActive(executor_index: Lego.Index) BindingsState {
+                const executor = Toybox.get(executor_index).specific.executor;
+                return if (executor.animation) |anim| .{
+                    .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
+                    .old = &.{},
+                    // TODO(game)
+                    // .old = if (anim.parent_pill) |k| executor.prev_pills.items[k].bindings else &.{},
+                    .new = anim.new_bindings,
+                } else .{
+                    .anim_t = null,
+                    .old = &.{},
+                    .new = &.{},
+                };
+            }
+
+            pub fn children(index: Lego.Index) struct {
+                input: Lego.Index,
+                garland: Lego.Index,
+                controls: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .executor);
+                const asdf = Toybox.getChildrenExact(3, index);
+                return .{
+                    .input = asdf[0],
+                    .garland = asdf[1],
+                    .controls = asdf[2],
+                };
+            }
+
+            pub fn getBrakeT(executor_index: Lego.Index) f32 {
+                return children(executor_index).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t;
+            }
+
+            pub fn shouldStartExecution(executor_index: Lego.Index) bool {
+                const executor = Toybox.get(executor_index).specific.executor;
+                const garland = children(executor_index).garland;
+                const input = children(executor_index).input;
+                return executor.animation == null and
+                    garland.garland().hasChildCases() and
+                    Toybox.get(input).specific.sexpr.kind != .empty;
+            }
+
+            pub const Controls = struct {
+                pub fn brakeHandlePath(brake_t: f32) Vec2 {
+                    return brakeLineRaw(.{}, brake_t, 1.0);
+                }
+
+                pub fn brakeLineRaw(crank_center: Point, brake_t: f32, line_t: f32) Vec2 {
+                    const radius: f32 = std.math.exp(2 - brake_t) / 2.0;
+                    // const radius: f32 = math.remapFrom01(std.math.exp(1 - brake_t) / std.math.e, 1.3, 5);
+                    // const radius: f32 = math.remapFrom01(math.easings.linear(1 - brake_t), 1.3, 5);
+                    // const radius: f32 = math.remapFrom01(math.easings.easeInQuad(1 - brake_t), 1.3, 5);
+                    return crank_center
+                        .applyToLocalPoint(.{ .turns = -0.25 })
+                        .applyToLocalPoint(.{ .pos = .new(0, 1.2) })
+                        .applyToLocalPoint(.{ .pos = .new(0, -radius) })
+                        .applyToLocalPosition(.fromPolar(radius - (1 - line_t) * 0.2, 0.25 + 0.65 * line_t / radius));
+
+                    // return crank_center
+                    //     .applyToLocalPosition(.fromPolar(
+                    //     math.remapFrom01(line_t, 0.5, 1.5 + 0.5 * (1 - brake_t)),
+                    //     math.remapFrom01(brake_t, 0.125, 0.375),
+                    // ));
+                }
+
+                fn speedScale(brake_t: f32) f32 {
+                    // 1 -> 0
+                    // 0.5 -> 1
+                    // 0 -> mucho
+                    return std.math.exp2((1 - brake_t) * 2) - 1;
+                }
+
+                test "speedScale" {
+                    try std.testing.expectApproxEqAbs(0, speedScale(1), 0.0001);
+                    try std.testing.expectApproxEqAbs(1, speedScale(0.5), 0.0001);
+                    try std.testing.expectApproxEqAbs(3, speedScale(0), 0.0001);
+                }
+            };
+        };
+
+        pub const FnkboxBox = struct {
+            const relative_box: Rect = .fromMeasureAndSizeV2(
+                .top_center,
+                .new(0, 0.75),
+                .new(16, box_height),
+            );
+            const testcases_box: Rect = relative_box.plusMargin3(.top, -box_height + testcases_height);
+            const relative_top_testcase_pos: Vec2 = .new(0, box_height - testcases_height);
+            const text_height: f32 = 2.4;
+            const status_bar_height: f32 = 1;
+            const testcases_header_height: f32 = 0.85;
+            const testcases_height: f32 = 2.5 * visible_testcases;
+            const box_height = text_height + status_bar_height + testcases_header_height + testcases_height;
+            const visible_testcases = 2;
+            const status_bar_goal: Rect = .fromMeasureAndSizeV2(
+                .top_center,
+                Vec2.new(0, 0.75).addY(text_height),
+                .new(16, status_bar_height),
+            );
+
+            pub fn children(index: Lego.Index) struct {
+                description: Lego.Index,
+                status_bar: Lego.Index,
+                testcases_scrollbar: Lego.Index,
+                testcases_area: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .fnkbox_box);
+                const asdf = Toybox.getChildrenExact(4, index);
+                return .{
+                    .description = asdf[0],
+                    .status_bar = asdf[1],
+                    .testcases_scrollbar = asdf[2],
+                    .testcases_area = asdf[3],
+                };
+            }
+        };
+
+        pub const Fnkbox = struct {
+            execution: ?struct {
+                original_garland: Lego.Index,
+                source: union(enum) {
+                    testcase: Lego.Index,
+                    input,
+                },
+                /// only valid if source is testcase
+                old_testcase_actual_value: Lego.Index,
+                /// only valid if source is testcase and state is .starting or .ending
+                original_or_final_input_point: Point,
+                /// only present if source is testcase and state is .starting or .ending
+                floating_input_or_output: Lego.Index = .nothing,
+                /// if source is input, this is ignored
+                state: enum { scrolling_towards_case, starting, executing, ending },
+                state_t: f32,
+            } = null,
+            status: Status,
+
+            const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
+            const relative_executor_point: Point = .{ .pos = .new(-3, 1 + FnkboxBox.box_height) };
+
+            pub const Status = union(enum) {
+                /// the failing testcase
+                unsolved: Lego.Index,
+                // TODO(game): score
+                solved,
+            };
+
+            pub fn fnkname(fnkbox: *const Fnkbox) Lego.Index {
+                return children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).fnkname;
+            }
+
+            pub fn executor(fnkbox: *const Fnkbox) ApiFor.Executor {
+                return .{ .index = children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).executor };
+            }
+
+            pub fn children(index: Lego.Index) struct {
+                box: Lego.Index,
+                fnkname: Lego.Index,
+                executor: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .fnkbox);
+                const asdf = Toybox.getChildrenExact(3, index);
+                return .{
+                    .box = asdf[0],
+                    .fnkname = asdf[1],
+                    .executor = asdf[2],
+                };
+            }
+
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator) !void {
+                // TODO(optim): improve somehow
+                const core = @import("core.zig");
+                const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
+                var all_fnks: core.FnkCollection = .init(scratch);
+                if (true) {
+                    var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
+                    while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                        // const fnkbox = &Toybox.get(cur).specific.fnkbox;
+                        const fnkname_value = try Toybox.get(children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                        const definition = try Toybox.get(Executor.children(children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
+                        try all_fnks.putNoClobber(fnkname_value, definition);
+                    }
+                }
+                const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
+                defer temp_mem.deinit();
+                var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
+                defer scoring_run.deinit(false);
+                // Update 'actual' values
+                var cur_testcase = FnkboxBox.children(children(fnkbox_index).box).testcases_area.get().tree.first;
+                while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
+                    const t = Testcase.children(cur_testcase);
+                    const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
+                    const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
+                    var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run);
+                    defer exec.deinit();
+
+                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true) catch |err| switch (err) {
+                        error.FnkNotFound,
+                        error.UsedUndefinedVariable,
+                        error.InvalidMetaFnk,
+                        error.TookTooLong,
+                        => core.Sexpr.builtin.empty,
+                        error.OutOfMemory => return err,
+                        error.BAD_INPUT => @panic("panic"),
+                        error.NoMatchingCase => unreachable,
+                    };
+                    if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
+                        Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(
+                            t.actual.get().local_point,
+                            actual_output,
+                            false,
+                            false,
+                            &workspace.undo_stack,
+                        ), &workspace.undo_stack);
+                    }
+                }
+
+                // Get the actual status and update testcases solved
+                const box_index = children(fnkbox_index).box;
+                cur_testcase = FnkboxBox.children(box_index).testcases_area.get().tree.first;
+                var wrote_first_wrong = false;
+                while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
+                    const actual: Lego.Index = if (fnkbox.execution) |execution|
+                        switch (execution.source) {
+                            .testcase => |source| if (source == cur_testcase)
+                                execution.old_testcase_actual_value
+                            else
+                                Testcase.children(cur_testcase).actual,
+                            .input => Testcase.children(cur_testcase).actual,
+                        }
+                    else
+                        Testcase.children(cur_testcase).actual;
+
+                    const expected = Testcase.children(cur_testcase).expected;
+
+                    const correct = Sexpr.equalValue(actual, expected);
+                    cur_testcase.get().specific.testcase.solved = correct;
+
+                    if (!correct and !wrote_first_wrong) {
+                        fnkbox.status = .{ .unsolved = cur_testcase };
+                        wrote_first_wrong = true;
+                    }
+                }
+                if (!wrote_first_wrong) {
+                    fnkbox.status = .solved;
+                }
+            }
+        };
+
+        pub const Testcase = struct {
+            solved: bool = false,
+
+            pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
+            pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
+            pub const relative_input_point: Point = .{ .pos = .new(-4, 0) };
+            pub const relative_bounding_box: Rect = .fromCenterAndSize(.zero, .new(FnkboxBox.relative_box.size.x, 2.5));
+            pub fn children(index: Lego.Index) struct {
+                input: Lego.Index,
+                expected: Lego.Index,
+                actual: Lego.Index,
+                play_button: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .testcase);
+                const asdf = Toybox.getChildrenExact(4, index);
+                return .{
+                    .input = asdf[0],
+                    .expected = asdf[1],
+                    .actual = asdf[2],
+                    .play_button = asdf[3],
+                };
+            }
+        };
+
+        pub const Microscope = struct {
+            /// To understand this, think of the fixed point of the lenses zoom
+            pub const Transform = struct {
+                center: Vec2,
+                scale: f32,
+
+                pub const identity: Transform = .{ .center = .zero, .scale = 1 };
+
+                pub fn inverse(transform: Transform) Transform {
+                    return .{ .center = transform.center, .scale = 1.0 / transform.scale };
+                }
+
+                pub fn actOnPosition(transform: Transform, position: Vec2) Vec2 {
+                    return transform.actOn(.{ .pos = position }).pos;
+                }
+
+                pub fn actOn(transform: Transform, point: Point) Point {
+                    return .{
+                        .pos = transform.center.add(
+                            point.pos.sub(transform.center).scale(transform.scale),
+                        ),
+                        .scale = point.scale * transform.scale,
+                        .turns = point.turns,
+                    };
+                }
+
+                pub fn combine(first: Transform, second: Transform) Transform {
+                    // center is the fixed point of applying first, then second
+                    return .{
+                        .center = Vec2.add(
+                            first.center.scale((1.0 - first.scale) * second.scale),
+                            second.center.scale(1.0 - second.scale),
+                        ).scale(1.0 / (1.0 - first.scale * second.scale)),
+                        .scale = first.scale * second.scale,
+                    };
+                }
+
+                pub fn getCamera(transform: Transform, original_camera: Rect) Rect {
+                    return .fromCorners(
+                        transform.inverse().actOnPosition(original_camera.top_left),
+                        transform.inverse().actOnPosition(original_camera.get(.bottom_right)),
+                    );
+                }
+
+                test getCamera {
+                    const original_camera: Rect = .unit;
+                    const transform: Transform = fromLenses(.new(1.5, 0.5), 0.25, .new(0.5, 0.5), 0.5);
+                    const expected_camera: Rect = .fromCenterAndSize(.new(1.5, 0.5), .both(0.5));
+                    try Rect.expectApproxEqAbs(expected_camera, transform.getCamera(original_camera), 0.001);
+                }
+
+                fn fromLenses(source_pos: Vec2, source_radius: f32, target_pos: Vec2, target_radius: f32) Transform {
+                    const scale = target_radius / source_radius;
+                    const delta = target_pos.sub(source_pos);
+                    return .{
+                        .center = source_pos.sub(delta.scale(1.0 / (scale - 1.0))),
+                        .scale = scale,
+                    };
+                }
+            };
+        };
+
+        pub const Lens = struct {
+            local_radius: f32,
+            /// set by the parent each frame
+            transform: Microscope.Transform = undefined,
+            /// set by the parent each frame
+            is_target: bool = undefined,
+            /// set by the parent each frame
+            roots_to_interact: []Lego.Index = undefined,
+            /// set by the parent each frame
+            roots_to_draw: []Lego.Index = undefined,
+
+            pub const source: Lens = .{ .local_radius = 0.25 };
+            pub const target: Lens = .{ .local_radius = 1 };
+        };
+
+        pub const Postit = struct {
+            pub const local_rect: Rect = .fromCenterAndSize(.zero, .both(6));
+
+            pub const Helper = struct {
+                main_area: Lego.Index,
+                undo_stack: ?*UndoStack,
+
+                const DrawingPart = struct {
+                    point: Point,
+                    part: union(enum) {
+                        paragraph: []const []const u8,
+                        arrow,
+                        launch_testcase_button,
+                        piece_center,
+                    },
+                };
+
+                pub fn addFromParts(this: @This(), pos: Vec2, parts: []const DrawingPart) void {
+                    Toybox.addChildLast(this.main_area, blk: {
+                        const postit = try Toybox.new(
+                            .{ .pos = pos },
+                            .{ .postit = .{} },
+                            this.undo_stack,
+                        );
+
+                        for (parts) |part| {
+                            const top_left: Point = .{ .pos = Lego.Specific.Postit.local_rect.top_left };
+                            const center = top_left.applyToLocalPoint(part.point);
+                            switch (part.part) {
+                                inline else => |_, part_tag| {
+                                    Toybox.addChildLast(postit.index, (try Toybox.new(
+                                        center,
+                                        .{ .postit_drawing = switch (part_tag) {
+                                            .paragraph => comptime unreachable,
+                                            .arrow => .arrow,
+                                            .piece_center => .piece_center,
+                                            .launch_testcase_button => .launch_testcase_button,
+                                        } },
+                                        this.undo_stack,
+                                    )).index, this.undo_stack);
+                                },
+                                .paragraph => |lines| {
+                                    for (lines, 0..) |line, k| {
+                                        Toybox.addChildLast(postit.index, (try Toybox.new(
+                                            center.applyToLocalPoint(.{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) }),
+                                            .{ .postit_text = .{ .text = line } },
+                                            this.undo_stack,
+                                        )).index, this.undo_stack);
+                                    }
+                                },
+                            }
+                        }
+
+                        break :blk postit.index;
+                    }, this.undo_stack);
+                }
+
+                pub fn addFromText(this: @This(), pos: Vec2, lines: []const []const u8) void {
+                    Toybox.addChildLast(this.main_area, blk: {
+                        const postit = try Toybox.new(
+                            .{ .pos = pos },
+                            .{ .postit = .{} },
+                            this.undo_stack,
+                        );
+
+                        for (lines, 0..) |line, k| {
+                            Toybox.addChildLast(postit.index, (try Toybox.new(
+                                .{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) },
+                                .{ .postit_text = .{ .text = line } },
+                                this.undo_stack,
+                            )).index, this.undo_stack);
+                        }
+
+                        break :blk postit.index;
+                    }, this.undo_stack);
+                }
+            };
+        };
+    };
+
+    pub const Tree = struct {
+        first: Index,
+        last: Index,
+        next: Index,
+        prev: Index,
+        parent: Index,
+
+        pub const empty: Tree = .{
+            .first = .nothing,
+            .last = .nothing,
+            .next = .nothing,
+            .prev = .nothing,
+            .parent = .nothing,
+        };
+
+        pub fn isFloating(tree: Tree) bool {
+            if (tree.parent == .nothing) {
+                assert(tree.next == .nothing);
+                assert(tree.prev == .nothing);
+                return true;
+            } else return false;
+        }
+
+        pub fn isChildless(tree: Tree) bool {
+            if (tree.first == .nothing) {
+                assert(tree.last == .nothing);
+                return true;
+            } else {
+                assert(tree.last != .nothing);
+                return false;
+            }
+        }
+
+        pub fn equals(a: Tree, b: Tree) bool {
+            return std.meta.eql(a, b);
+        }
+    };
+
+    pub const Index = enum(u32) {
+        nothing = std.math.maxInt(u32),
+        _,
+
+        pub fn asI32(index: Index) i32 {
+            return @bitCast(@intFromEnum(index));
+        }
+
+        pub fn hasTag(index: Index, tag: Specific.Tag) bool {
+            return Toybox.get(index).specific.tag() == tag;
+        }
+
+        pub fn get(index: Index) *Lego {
+            return Toybox.get(index);
+        }
+
+        pub fn getSafe(index: Index) ?*Lego {
+            return Toybox.safeGet(index);
+        }
+
+        pub fn case(index: Index) struct {
+            self: Lego.Index,
+            pattern: Lego.Index,
+            template: Lego.Index,
+            fnkname: Lego.Index,
+            next: Lego.Index,
+
+            pub fn hasIdentityFnkname(this: @This()) bool {
+                const sexpr = Toybox.get(this.fnkname).specific.sexpr;
+                return sexpr.kind == .empty or
+                    (sexpr.kind == .atom_lit and std.mem.eql(u8, sexpr.atom_name, "identity"));
+            }
+        } {
+            const children = Specific.Case.children(index);
+            return .{
+                .self = index,
+                .pattern = children.pattern,
+                .template = children.template,
+                .fnkname = children.fnkname,
+                .next = children.next,
+            };
+        }
+
+        pub fn garland(index: Index) struct {
+            self: Lego.Index,
+
+            pub fn cases(this: @This()) Index {
+                return this.self.get().tree.last;
+            }
+
+            pub fn hasChildCases(this: @This()) bool {
+                return Toybox.childCount(this.cases()) > 1;
+            }
+        } {
+            assert(Toybox.get(index).specific.tag() == .garland);
+            return .{ .self = index };
+        }
+    };
+
+    pub fn handle(lego: *const Lego) ?Handle {
+        const radius: Handle.Size = switch (lego.specific) {
+            .sexpr,
+            .area,
+            .microscope,
+            .button,
+            .scrollbar,
+            .fnkbox_box,
+            .fnkbox_description,
+            .fnkbox_testcases,
+            .fnkslist,
+            .fnkslist_element,
+            .executor,
+            .testcase,
+            .pill,
+            .postit,
+            .postit_text,
+            .postit_drawing,
+            .executor_controls,
+            .garland_newcases,
+            => return null,
+            .executor_brake => .default_extrahitbox,
+            .executor_crank => |crank| if (crank.enabled) .default_extrahitbox else return null,
+            .case => .default,
+            .newcase => .new_case,
+            .garland => .garland,
+            .lens => .lens,
+            .fnkbox => .default,
+        };
+        const enabled: bool = switch (lego.specific) {
+            else => true,
+            .garland => |garland| garland.visible,
+        };
+        return .{
+            .point = lego.absolute_point.applyToLocalPoint(.{ .pos = lego.handleLocalOffset() }),
+            .hot_t = lego.hot_t + lego.dropzone_t,
+            .radius = radius,
+            .enabled = enabled,
+        };
+    }
+
+    fn handleLocalOffset(lego: *const Lego) Vec2 {
+        return switch (lego.specific) {
+            .lens => |lens| .fromPolar(lens.local_radius + 0.1, 1.0 / 8.0),
+            .newcase => |newcase| .new(0, newcase.length_before),
+            .executor_brake => |brake| brake.handle_pos,
+            .executor_crank => |crank| crank.handle_pos,
+            else => .zero,
+        };
+    }
+
+    fn draggable(lego: *const Lego) bool {
+        _ = lego;
+        return true;
+    }
+
+    pub fn fromSpecific(comptime tag: Specific.Tag, pointer: *Specific.Tagged(tag)) *Lego {
+        return @fieldParentPtr("specific", @as(
+            *Specific,
+            @alignCast(@fieldParentPtr(@tagName(tag), pointer)),
+        ));
+    }
+
+    pub fn fromSpecificConst(comptime tag: Specific.Tag, pointer: *const Specific.Tagged(tag)) *const Lego {
+        return @fieldParentPtr("specific", @as(
+            *const Specific,
+            @alignCast(@fieldParentPtr(@tagName(tag), pointer)),
+        ));
+    }
+
+    pub fn addScroll(lego: *Lego, amount: f32) void {
+        switch (lego.specific) {
+            else => unreachable,
+            .scrollbar => |*scrollbar| {
+                scrollbar.scroll_target += amount;
+            },
+            .fnkslist => |fnkslist| {
+                fnkslist.scrollbar.get().specific.scrollbar.scroll_target += amount;
+            },
+            .fnkbox_testcases => |fnkbox_testcases| {
+                fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target += amount;
+            },
         }
     }
 
-    fn store(pool: *Pool, value: HoveredSexpr) !*HoveredSexpr {
-        const ptr = try pool.create();
-        ptr.* = value;
-        return ptr;
+    pub fn getGrabbedOffset(lego: *const Lego, absolute_needle: Vec2) Vec2 {
+        return switch (lego.specific) {
+            .postit => lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle),
+            .scrollbar => |scrollbar| lego.absolute_point.applyToLocalPoint(.{ .pos = scrollbar.handleRectVisual().top_left }).inverseApplyGetLocalPosition(absolute_needle),
+            else => .zero,
+        };
+    }
+
+    pub fn canDuplicate(lego: *const Lego) enum { yes, no, fnkbox } {
+        return switch (lego.specific) {
+            .sexpr,
+            .garland,
+            .executor,
+            .case,
+            .postit,
+            => .yes,
+            .scrollbar,
+            .button,
+            .executor_brake,
+            .executor_crank,
+            => .no,
+            .fnkbox => .fnkbox,
+            .lens => blk: {
+                std.log.err("TODO(game): handle better", .{});
+                break :blk .no;
+            },
+            .garland_newcases,
+            .executor_controls,
+            .microscope,
+            .fnkbox_box,
+            .fnkbox_description,
+            .fnkbox_testcases,
+            .fnkslist,
+            .fnkslist_element,
+            .newcase,
+            .area,
+            .testcase,
+            .pill,
+            .postit_text,
+            .postit_drawing,
+            => unreachable,
+        };
+    }
+
+    pub fn grabsWithoutPlucking(lego: *const Lego) bool {
+        return switch (lego.specific) {
+            .button,
+            .lens,
+            .fnkbox,
+            .executor_crank,
+            .executor_brake,
+            .scrollbar,
+            => true,
+            .sexpr,
+            .garland,
+            .case,
+            .postit,
+            .executor,
+            => false,
+            .garland_newcases,
+            .executor_controls,
+            .microscope,
+            .fnkbox_box,
+            .fnkbox_description,
+            .fnkbox_testcases,
+            .fnkslist,
+            .fnkslist_element,
+            .newcase,
+            .area,
+            .testcase,
+            .pill,
+            .postit_text,
+            .postit_drawing,
+            => unreachable,
+        };
+    }
+
+    pub fn localBoundingBoxThatContainsSelfAndAllChildren(lego: *const Lego) Bounds {
+        return switch (lego.specific) {
+            else => .infinite,
+            .sexpr => .fromRect(.fromCenterAndSize(.zero, .new(5, 2.5))),
+            .testcase => .fromRect(Specific.Testcase.relative_bounding_box),
+            .fnkbox_testcases => .fromRect(Specific.FnkboxBox.testcases_box),
+            .fnkbox => Bounds.fromRect(Specific.FnkboxBox.relative_box)
+                // for the garland
+                .plusMargin3(.bottom, std.math.inf(f32))
+                .plusMargin3(.right, std.math.inf(f32)),
+        };
     }
 };
 
-const Handle = struct {
-    point: Point,
-    hot_t: f32 = 0,
-    enabled: bool = true,
-    radius: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 },
+pub const ApiFor = struct {
+    pub const Executor = struct {
+        index: Lego.Index,
 
-    // extern so it can be saved/loaded without defining stuff
+        pub fn garland(this: @This()) Garland {
+            return .{ .index = Lego.Specific.Executor.children(this.index).garland };
+        }
+    };
+
+    pub const Garland = struct {
+        index: Lego.Index,
+    };
+};
+
+pub const Handle = struct {
+    point: Point,
+    radius: Size,
+    hot_t: f32,
+    enabled: bool,
+
     pub const Size = extern struct {
         base: f32,
         hot: f32,
         hitbox: f32,
+
+        pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
+        pub const default_extrahitbox: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 };
+        pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 };
+        pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 };
+        pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
     };
 
-    pub fn draw(handle: Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
+    pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
         if (handle.enabled) {
             const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
             drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
@@ -282,5244 +1674,3602 @@ const Handle = struct {
         }
     }
 
-    pub fn update(handle: *Handle, hot_target: bool, delta_seconds: f32) void {
-        if (!handle.enabled) assert(!hot_target);
-        math.lerp_towards(&handle.hot_t, if (hot_target) 1 else 0, 0.6, delta_seconds);
-    }
-
-    pub fn updateHoverT(handle: *Handle, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
-        handle.update(hovering.equalsExceptForLens(self_address), delta_seconds);
-    }
-
     pub fn overlapped(handle: *const Handle, pos: Vec2) bool {
         return handle.enabled and pos.distTo(handle.point.pos) < handle.radius.hitbox * handle.point.scale;
     }
+};
 
-    pub fn save(handle: *const Handle, out: std.io.AnyWriter, _: std.mem.Allocator) !void {
-        try out.writeStructEndian(handle.point, .little);
-        try out.writeStructEndian(handle.radius, .little);
-        try writeBool(out, handle.enabled);
-    }
+pub const Toybox = struct {
+    // TODO(optim-late): use a fancy arena thing
+    all_legos: std.ArrayListUnmanaged(Lego),
+    all_legos_arena: std.heap.ArenaAllocator,
+    free_head: Lego.Index = .nothing,
 
-    pub fn load(dst: *Handle, in: std.io.AnyReader, version: u32, _: *core.VeryPermamentGameStuff) !void {
-        assert(version == 0);
+    pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
         dst.* = .{
-            .point = try in.readStructEndian(Point, .little),
-            .radius = try in.readStructEndian(Size, .little),
-            .enabled = try readBool(in),
+            .all_legos_arena = .init(gpa),
+            .all_legos = .empty,
         };
-    }
-};
-
-const VeryPhysicalGarland = struct {
-    // TODO: doubly linked list?
-    cases: std.ArrayListUnmanaged(VeryPhysicalCase),
-    // TODO: change from 'handle' to 'segment'
-    handles_for_new_cases_first: HandleForNewCase,
-    handles_for_new_cases_rest: std.ArrayListUnmanaged(HandleForNewCase),
-
-    /// only present on invoked fnks, always as pattern
-    fnkname: ?VeryPhysicalSexpr = null,
-
-    handle: Handle,
-    pub const case_drop_preview_dist: f32 = 0.5 * dist_between_cases_rest;
-    pub const dist_between_cases_first: f32 = 1.5;
-    pub const dist_between_cases_rest: f32 = 2.5;
-
-    pub const newcase_handle_size: Handle.Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.5 };
-
-    const HandleForNewCase = struct {
-        length: f32,
-        // TODO: extract hot_t
-        handle: Handle,
-
-        pub fn save(self: *const HandleForNewCase, out: std.io.AnyWriter, m: std.mem.Allocator) !void {
-            try self.handle.save(out, m);
-            try writeF32(out, self.length);
-        }
-
-        pub fn load(dst: *HandleForNewCase, in: std.io.AnyReader, version: u32, m: *core.VeryPermamentGameStuff) !void {
-            assert(version == 0);
-            try dst.handle.load(in, version, m);
-            dst.length = try readF32(in);
-        }
-    };
-
-    pub fn save(garland: *const VeryPhysicalGarland, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
-        try out.writeStructEndian(garland.handle.point, .little);
-        try out.writeInt(u32, @intCast(garland.cases.items.len), .little);
-        for (garland.cases.items) |case| {
-            try case.save(out, scratch);
-        }
-        try garland.handles_for_new_cases_first.save(out, scratch);
-        for (garland.handles_for_new_cases_rest.items) |c| {
-            try c.save(out, scratch);
-        }
-        if (garland.fnkname) |fnkname| {
-            try writeBool(out, true);
-            try fnkname.save(out, scratch);
-        } else {
-            try writeBool(out, false);
-        }
+        // TODO(optim-late): tweak this number
+        try dst.all_legos.ensureUnusedCapacity(
+            dst.all_legos_arena.allocator(),
+            1024,
+        );
     }
 
-    pub fn load(dst: *VeryPhysicalGarland, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
-        assert(version == 0);
-        dst.*.handle = .{ .point = try in.readStructEndian(Point, .little) };
-        const n_cases: usize = @intCast(try in.readInt(u32, .little));
-        dst.cases = .fromOwnedSlice(try mem.gpa.alloc(VeryPhysicalCase, n_cases));
-        for (dst.cases.items) |*c| {
-            try c.load(in, version, mem);
-        }
-        try dst.handles_for_new_cases_first.load(in, version, mem);
-        dst.handles_for_new_cases_rest = .fromOwnedSlice(try mem.gpa.alloc(HandleForNewCase, n_cases));
-        for (dst.handles_for_new_cases_rest.items) |*c| {
-            try c.load(in, version, mem);
-        }
-        if (try readBool(in)) {
-            dst.fnkname = undefined;
-            try dst.fnkname.?.load(in, version, mem);
-        } else {
-            dst.fnkname = null;
-        }
+    pub fn deinit(self: *Toybox) void {
+        self.all_legos.deinit(self.all_legos_arena.allocator());
+        self.all_legos_arena.deinit();
     }
 
-    pub fn init(point: Point) VeryPhysicalGarland {
-        return .{
-            .handle = .{ .point = point, .radius = .{ .base = 0.3, .hot = 0.5, .hitbox = 0.5 } },
-            .cases = .empty,
-            .handles_for_new_cases_rest = .empty,
-            .handles_for_new_cases_first = .{ .length = dist_between_cases_first, .handle = .{
-                .point = point.applyToLocalPoint(.{ .pos = .new(0, dist_between_cases_first / 2.0) }),
-                .radius = newcase_handle_size,
-            } },
+    pub fn OoM() noreturn {
+        std.debug.panic("OoM", .{});
+    }
+
+    pub fn createWithChildren(local_point: Point, specific: Lego.Specific, children: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+        const lego = try new(local_point, specific, undo_stack);
+        for (children) |child| {
+            addChildLast(lego.index, child, undo_stack);
+        }
+        return lego.index;
+    }
+
+    pub fn new(local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !*Lego {
+        const result: *Lego, const index: Lego.Index = if (ENABLE_REUSE and toybox.free_head != .nothing) blk: {
+            const result_index = toybox.free_head;
+            const result = Toybox.getUnsafe(result_index);
+            toybox.free_head = result.free_next;
+            break :blk .{ result, result_index };
+        } else blk: {
+            if (toybox.all_legos.items.len >= std.math.maxInt(i31)) OoM();
+            const result = toybox.all_legos.addOne(toybox.all_legos_arena.allocator()) catch OoM();
+            break :blk .{ result, @enumFromInt(toybox.all_legos.items.len - 1) };
         };
-    }
 
-    pub fn deinit(garland: *VeryPhysicalGarland, allocator: std.mem.Allocator) void {
-        garland.handles_for_new_cases_rest.deinit(allocator);
-        for (garland.cases.items) |*c| {
-            c.next.deinit(allocator);
-        }
-        garland.cases.deinit(allocator);
-    }
-
-    pub fn hash(garland: *const VeryPhysicalGarland) u32 {
-        var hasher = std.hash.Wyhash.init(0);
-        for (garland.cases.items) |case| {
-            std.hash.autoHash(&hasher, case.hash());
-        }
-        return @truncate(hasher.final());
-    }
-
-    pub fn fromDefinition(base: Point, definition: core.FnkBodyV2, mem: *core.VeryPermamentGameStuff, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalGarland {
-        var result: VeryPhysicalGarland = .init(base);
-        try result.cases.ensureUnusedCapacity(mem.gpa, definition.cases.len);
-        try result.handles_for_new_cases_rest.ensureUnusedCapacity(mem.gpa, definition.cases.len);
-        for (definition.cases, 0..) |case, k| {
-            try result.insertCase(mem.gpa, k, try .fromValues(hover_pool, .{
-                .pattern = case.pattern,
-                .fnk_name = case.fnk_name,
-                .template = case.template,
-                .next = if (case.next) |n|
-                    try .fromDefinition(base.applyToLocalPoint(.{
-                        .pos = .new(1, tof32(k)),
-                    }), .{ .cases = n }, mem, hover_pool)
-                else
-                    .init(base.applyToLocalPoint(.{ .pos = .new(1, tof32(k)) })),
-            }, base.applyToLocalPoint(.{ .pos = .new(0, tof32(k)) })));
-        }
+        result.* = .{
+            .index = index,
+            .exists = true,
+            .local_point = local_point,
+            .absolute_point = local_point,
+            .specific = specific,
+        };
+        if (undo_stack) |stack| stack.append(.{ .destroy_floating = index });
         return result;
     }
 
-    pub fn toDefinition(garland: *const VeryPhysicalGarland, res: std.mem.Allocator) !core.FnkBody {
-        // TODO: leaks
-        var cases: core.MatchCases = try .initCapacity(res, garland.cases.items.len);
-        for (garland.cases.items) |c| {
-            cases.appendAssumeCapacity(.{
-                .pattern = c.pattern.value,
-                .fnk_name = c.fnk_name.value,
-                .template = c.template.value,
-                .next = if (c.next.cases.items.len > 0)
-                    (try c.next.toDefinition(res)).cases
-                else
-                    null,
-            });
-        }
-        return .{ .cases = cases };
+    pub fn get(index: Lego.Index) *Lego {
+        const result = getUnsafe(index);
+        assert(result.exists);
+        return result;
     }
 
-    pub fn fillVariables(garland: *VeryPhysicalGarland, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) error{
-        OutOfMemory,
-        BAD_INPUT,
-        UsedUndefinedVariable,
-    }!void {
-        for (garland.cases.items) |*c| try c.fillVariables(bindings, mem);
+    pub fn getUnsafe(index: Lego.Index) *Lego {
+        assert(index != .nothing);
+        return &toybox.all_legos.items[@intFromEnum(index)];
     }
 
-    pub fn getBoardPos(garland: VeryPhysicalGarland) Vec2 {
-        return garland.handle;
+    pub fn safeGet(index: Lego.Index) ?*Lego {
+        if (index == .nothing) return null;
+        const result = getUnsafe(index);
+        if (!result.exists) return null;
+        return result;
     }
 
-    pub fn clone(original: VeryPhysicalGarland, res: std.mem.Allocator, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalGarland {
-        var new_cases: @FieldType(VeryPhysicalGarland, "cases") = try .initCapacity(res, original.cases.items.len);
-        for (original.cases.items) |c| {
-            new_cases.appendAssumeCapacity(try c.clone(res, hover_pool));
-        }
-        assert(new_cases.items.len == original.handles_for_new_cases_rest.items.len);
-        return .{
-            .handle = original.handle,
-            .handles_for_new_cases_first = original.handles_for_new_cases_first,
-            .handles_for_new_cases_rest = try original.handles_for_new_cases_rest.clone(res),
-            .cases = new_cases,
-        };
+    pub fn addChildLastWithoutChangingAbsPoint(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        addChildLast(parent, new_child, undo_stack);
+        changeCoordinates(new_child, .{}, parent.get().absolute_point);
     }
 
-    pub fn draw(garland: VeryPhysicalGarland, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        try garland.drawWithBindings(null, holding, drawer, camera);
+    pub fn addChildLastWithLocalPoint(local_point: Point, parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        new_child.get().local_point = local_point;
+        addChildLast(parent, new_child, undo_stack);
     }
 
-    pub fn drawWithAlpha(garland: VeryPhysicalGarland, alpha: f32, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        try garland.drawWithBindingsAndAlpha(null, alpha, holding, drawer, camera);
-    }
-
-    pub fn drawWithBindings(garland: VeryPhysicalGarland, bindings: ?BindingsState, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        try garland.drawWithBindingsAndAlpha(bindings, 1, holding, drawer, camera);
-    }
-
-    pub fn drawWithBindingsAndAlpha(
-        garland: VeryPhysicalGarland,
-        bindings: ?BindingsState,
-        alpha: f32,
-        holding: VeryPhysicalCase.Holding,
-        drawer: *Drawer,
-        camera: Rect,
-    ) error{
-        InvalidUtf8,
-        OutOfMemory,
-        BadVertexOrder,
-
-        ShaderCreationError,
-        ProgramCreationError,
-        AttributeLocationError,
-        UniformLocationError,
-        TooManyUniforms,
-    }!void {
-        assert(math.in01(alpha));
-        if (garland.fnkname) |f| try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        var last_pos = garland.handle.point.pos;
-        for (0..garland.cases.items.len + 1) |k| {
-            const h = garland.handleForNewCases(&.{k});
-            const cur_pos = h.point.pos;
-            // TODO: cable with wildcard info
-            drawer.canvas.line(camera, &.{ last_pos, cur_pos }, 0.05, .blackAlpha(alpha));
-            last_pos = cur_pos;
-        }
-        try garland.handle.draw(drawer, camera, alpha);
-        try garland.handle.draw(drawer, camera, alpha);
-        for (0..garland.cases.items.len + 1) |k| {
-            const h = garland.handleForNewCases(&.{k});
-            try h.draw(drawer, camera, alpha);
-        }
-        for (garland.cases.items) |c| try c.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
-    }
-
-    pub fn handleForNewCases(garland: *const VeryPhysicalGarland, address: core.CaseAddress) *const Handle {
-        return &garland.handleForNewCasesInner(address).handle;
-    }
-
-    pub fn handleForNewCasesInner(garland: *const VeryPhysicalGarland, address: core.CaseAddress) *const HandleForNewCase {
-        assert(address.len > 0);
-        if (address.len == 1) {
-            const k = address[0];
-            assert(k <= garland.cases.items.len);
-            return if (k == 0)
-                &garland.handles_for_new_cases_first
-            else
-                &garland.handles_for_new_cases_rest.items[k - 1];
+    // TODO(design): remove the old version
+    pub fn addChildLastV2(local_point: ?Point, parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        if (local_point) |l| {
+            addChildLast(parent, new_child, undo_stack);
+            new_child.get().local_point = l;
         } else {
-            return garland.constChildCase(address[0 .. address.len - 1]).next.handleForNewCasesInner(address[address.len - 1 ..]);
+            addChildLastWithoutChangingAbsPoint(parent, new_child, undo_stack);
         }
     }
 
-    pub fn handleForNewCasesRef(garland: *VeryPhysicalGarland, k: usize) *Handle {
-        return &garland.handleForNewCasesRefInner(k).handle;
-    }
-
-    pub fn handleForNewCasesRefInner(garland: *VeryPhysicalGarland, k: usize) *HandleForNewCase {
-        assert(k <= garland.cases.items.len);
-        return if (k == 0)
-            &garland.handles_for_new_cases_first
-        else
-            &garland.handles_for_new_cases_rest.items[k - 1];
-    }
-
-    pub fn update(garland: *VeryPhysicalGarland, delta_seconds: f32) void {
-        garland.updateWithOffset(0, null, delta_seconds);
-    }
-
-    // TODO: maybe remove delta_seconds
-    // TODO: maybe remove this method
-    pub fn kinematicUpdate(garland: *VeryPhysicalGarland, center: Point, first_ghost: ?*const VeryPhysicalCase, delta_seconds: f32) void {
-        garland.updateWithOffsetMaybeKinematic(true, center, 1, first_ghost, delta_seconds);
-
-        // assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
-        // garland.handle.pos = center.pos;
-        // if (garland.fnkname) |*f| {
-        //     f.point = center.applyToLocalPoint(Fnkviewer.fnkname_from_garland_pattern);
-        // }
-        // // _ = delta_seconds;
-        // // for (0..100) |_| {
-        // //     garland.updateWithOffset(1, first_ghost, 1.0 / 60.0);
-        // // }
-        // for (garland.cases.items, 0..) |*c, k| {
-        //     const target = center.applyToLocalPoint(.{ .pos = .new(0, (if (first_ghost) |f| 2.5 + f.next.getExtraHeight() else 0) + dist_between_cases_first + dist_between_cases_rest * tof32(k)) });
-        //     c.kinematicUpdate(target, null, null, delta_seconds);
-        // }
-        // for (0..garland.cases.items.len + 1) |k| {
-        //     const h = garland.handleForNewCasesRef(k);
-        //     h.pos = if (k == 0)
-        //         garland.handle.pos.addY(dist_between_cases_first / 2.0)
-        //     else
-        //         garland.handle.pos.addY(dist_between_cases_first + dist_between_cases_rest * (tof32(k) - 0.5));
-        // }
-    }
-
-    fn getExtraHeight(garland: *const VeryPhysicalGarland) f32 {
-        var result: f32 = case_drop_preview_dist * garland.handles_for_new_cases_first.handle.hot_t;
-        for (garland.cases.items, 0..) |case, k| {
-            // if (k != garland.cases.items.len - 1) result += case.next.getExtraHeight();
-            result += case.next.getExtraHeight() + case_drop_preview_dist * garland.handles_for_new_cases_rest.items[k].handle.hot_t;
-            result += dist_between_cases_rest;
+    pub fn addChildLast(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        assert(parent != .nothing);
+        if (new_child == .nothing) return;
+        if (undo_stack) |stack| {
+            stack.append(.{ .pop = new_child });
         }
-        return @max(0, result - 1);
+        const parent_tree = &Toybox.get(parent).tree;
+        const child_tree = &Toybox.get(new_child).tree;
+        assert(child_tree.isFloating());
+        child_tree.parent = parent;
+        child_tree.prev = parent_tree.last;
+        child_tree.next = .nothing;
+        if (parent_tree.last != .nothing) {
+            Toybox.get(parent_tree.last).tree.next = new_child;
+        }
+        parent_tree.last = new_child;
+        if (parent_tree.first == .nothing) {
+            parent_tree.first = new_child;
+        }
     }
 
-    pub fn updateWithOffset(garland: *VeryPhysicalGarland, offset: f32, offset_ghost: ?*const VeryPhysicalCase, delta_seconds: f32) void {
-        garland.updateWithOffsetMaybeKinematic(false, garland.handle.point, offset, offset_ghost, delta_seconds);
+    pub fn isFloating(index: Lego.Index) bool {
+        return Toybox.get(index).tree.isFloating();
     }
 
-    pub fn updateWithOffsetMaybeKinematic(garland: *VeryPhysicalGarland, comptime kinematic: bool, center: Point, offset: f32, offset_ghost: ?*const VeryPhysicalCase, delta_seconds: f32) void {
-        const ratio: f32 = if (kinematic) 1 else 0.6;
-        assert(math.in01(offset));
-        assert(garland.handles_for_new_cases_rest.items.len == garland.cases.items.len);
-        if (kinematic) garland.handle.point = center;
-        if (garland.fnkname) |*f| {
-            f.point.lerp_towards(center.applyToLocalPoint(Fnkviewer.fnkname_from_garland_pattern), ratio, delta_seconds);
+    pub fn destroyFloatingWithUndo(index: Lego.Index, undo_stack: *UndoStack) void {
+        Toybox.destroyFloating(index, undo_stack);
+    }
+
+    pub fn destroyFloating(index: Lego.Index, undo_stack: ?*UndoStack) void {
+        assert(Toybox.isFloating(index));
+
+        // TODO(optim): avoid recursion
+        while (index.get().tree.first != .nothing) {
+            const child = index.get().tree.first;
+            Toybox.pop(child, undo_stack);
+            Toybox.destroyFloating(child, undo_stack);
         }
 
-        // update segment lengths
-        for (0..garland.cases.items.len + 1) |k| {
-            const segment = garland.handleForNewCasesRefInner(k);
-            const target_length = (if (k == 0) dist_between_cases_first else dist_between_cases_rest) +
-                case_drop_preview_dist * segment.handle.hot_t +
-                (if (k > 0) garland.cases.items[k - 1].next.getExtraHeight() else 0) +
-                (if (offset_ghost != null and k == 0) offset * (dist_between_cases_rest + offset_ghost.?.next.getExtraHeight()) else 0);
-            // segment.length = target_length;
-            math.lerp_towards(&segment.length, target_length, ratio, delta_seconds);
+        if (undo_stack) |stack| {
+            stack.append(.{ .recreate_floating = Toybox.get(index).* });
         }
 
-        // update handles, for new and existing cases
-        for (0..garland.cases.items.len * 2 + 1) |raw_k| {
-            if (raw_k % 2 == 0) {
-                // updating a segment
-                const k = @divExact(raw_k, 2);
-                const segment = garland.handleForNewCasesRefInner(k);
-                const reference_position: Point = if (k == 0) garland.handle.point else garland.cases.items[k - 1].handle.point;
-                const y_offset = if (k == 0)
-                    0.5 * (dist_between_cases_first + case_drop_preview_dist * segment.handle.hot_t)
-                else
-                    segment.length - 0.5 * (dist_between_cases_rest + case_drop_preview_dist * segment.handle.hot_t);
+        const lego = Toybox.get(index);
+        lego.* = undefined;
+        lego.index = index;
+        lego.exists = false;
+        lego.free_next = toybox.free_head;
+        toybox.free_head = index;
+    }
 
-                const target = reference_position.applyToLocalPoint(.{ .pos = .new(0, y_offset) });
-                segment.handle.point.lerp_towards(target, ratio, delta_seconds);
+    pub fn recreateFloating(data: Lego) void {
+        assert(data.tree.isFloating());
+        const lego = Toybox.getUnsafe(data.index);
+        assert(!lego.exists);
+        lego.* = data;
+    }
+
+    pub fn dupeIntoFloatingWithoutChangingPos(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try Toybox.dupeIntoFloating(original, dupe_children, undo_stack);
+        Toybox.get(result).local_point = Toybox.get(original).absolute_point;
+        return result;
+    }
+
+    pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try Toybox.new(undefined, undefined, undo_stack);
+        const result_index = result.index;
+        result.* = Toybox.get(original).*;
+        result.index = result_index;
+        result.tree.parent = .nothing;
+        result.tree.next = .nothing;
+        result.tree.prev = .nothing;
+
+        if (dupe_children) {
+            var cur = result.tree.first;
+            result.tree.first = .nothing;
+            result.tree.last = .nothing;
+            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                const new_child_index = try Toybox.dupeIntoFloating(cur, true, undo_stack);
+                Toybox.addChildLast(result_index, new_child_index, undo_stack);
+            }
+        } else {
+            result.tree.first = .nothing;
+            result.tree.last = .nothing;
+        }
+
+        return result_index;
+    }
+
+    pub fn getChildrenExact(comptime expected_count: usize, parent: Lego.Index) [expected_count]Lego.Index {
+        var cur = Toybox.get(parent).tree.first;
+        var result: [expected_count]Lego.Index = undefined;
+        for (&result) |*dst| {
+            assert(cur != .nothing);
+            dst.* = cur;
+            cur = Toybox.get(cur).tree.next;
+        }
+        assert(cur == .nothing);
+        return result;
+    }
+
+    pub fn childCount(index: Lego.Index) usize {
+        var count: usize = 0;
+        var cur = Toybox.get(index).tree.first;
+        while (cur != .nothing) {
+            count += 1;
+            cur = Toybox.get(cur).tree.next;
+        }
+        return count;
+    }
+
+    pub fn getChildrenUnknown(allocator: std.mem.Allocator, parent: Lego.Index) ![]Lego.Index {
+        const children_count: usize = Toybox.childCount(parent);
+        const result = try allocator.alloc(Lego.Index, children_count);
+        var cur = Toybox.get(parent).tree.first;
+        for (result) |*dst| {
+            assert(cur != .nothing);
+            dst.* = cur;
+            cur = Toybox.get(cur).tree.next;
+        }
+        assert(cur == .nothing);
+        return result;
+    }
+
+    pub fn pop(child: Lego.Index, undo_stack: ?*UndoStack) void {
+        assert(!Toybox.isFloating(child));
+        changeChild(child, .nothing, undo_stack);
+    }
+
+    pub fn popWithUndo(child: Lego.Index, undo_stack: *UndoStack) void {
+        Toybox.pop(child, undo_stack);
+    }
+
+    pub fn popWithUndoAndChangingCoords(child: Lego.Index, undo_stack: ?*UndoStack) void {
+        const old_parent_abs_point = Toybox.parentAbsolutePoint(child);
+        Toybox.pop(child, undo_stack);
+        Toybox.changeCoordinates(child, old_parent_abs_point, .{});
+    }
+
+    pub fn insert(child: Lego.Index, where: Lego.Tree, undo_stack: ?*UndoStack) void {
+        assert(Toybox.isFloating(child));
+        assert(!where.isFloating());
+        defer assert(Toybox.get(child).tree.equals(where));
+
+        if (undo_stack) |stack| stack.append(.{ .pop = child });
+
+        if (where.prev != .nothing) {
+            assert(Toybox.get(where.prev).tree.next == where.next);
+            Toybox.get(where.prev).tree.next = child;
+        } else {
+            Toybox.get(where.parent).tree.first = child;
+        }
+
+        if (where.next != .nothing) {
+            assert(Toybox.get(where.next).tree.prev == where.prev);
+            Toybox.get(where.next).tree.prev = child;
+        } else {
+            Toybox.get(where.parent).tree.last = child;
+        }
+
+        Toybox.get(child).tree = where;
+    }
+
+    pub fn changeChildWithUndo(original_child: Lego.Index, new_child: Lego.Index, undo_stack: *UndoStack) void {
+        Toybox.changeChild(original_child, new_child, undo_stack);
+    }
+
+    // TODO(design): remove
+    pub fn changeChildWithUndoAndAlsoCoords(original_child: Lego.Index, new_child: Lego.Index, undo_stack: *UndoStack) void {
+        const old_parent_abs_point = Toybox.parentAbsolutePoint(original_child);
+        Toybox.changeChild(original_child, new_child, undo_stack);
+        Toybox.changeCoordinates(original_child, old_parent_abs_point, .{});
+        Toybox.changeCoordinates(new_child, .{}, old_parent_abs_point);
+    }
+
+    /// things that pointed to original, now will point to new
+    /// original will be left floating
+    pub fn changeChild(original_child: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        assert(original_child != .nothing);
+        assert(new_child == .nothing or isFloating(new_child));
+        defer assert(isFloating(original_child));
+
+        if (undo_stack) |undo| {
+            if (new_child == .nothing) {
+                const original_parent_tree = Toybox.get(original_child).tree;
+                undo.append(.{
+                    .insert = .{
+                        .what = original_child,
+                        .where = original_parent_tree,
+                    },
+                });
             } else {
-                // updating a case
-                const k = @divExact(raw_k - 1, 2);
-                const last_point: Point = if (k == 0) center else garland.cases.items[k - 1].handle.point;
-                const prev_handle = garland.handleForNewCasesInner(&.{k});
-                const cur_point = last_point.applyToLocalPoint(.{ .pos = .new(0, prev_handle.length) });
-                const case = &garland.cases.items[k];
-                case.handle.point.lerp_towards(cur_point, ratio, delta_seconds);
-                if (kinematic) {
-                    case.kinematicUpdate(cur_point, null, null, delta_seconds);
-                } else {
-                    case.update(delta_seconds);
-                }
-            }
-        }
-    }
-
-    pub fn constChildCase(parent: *const VeryPhysicalGarland, local: core.CaseAddress) *const VeryPhysicalCase {
-        assert(local.len >= 1);
-        return if (local.len == 1)
-            &parent.cases.items[local[0]]
-        else
-            parent.cases.items[local[0]].next.constChildCase(local[1..]);
-    }
-
-    pub fn childCase(parent: *VeryPhysicalGarland, local: core.CaseAddress) *VeryPhysicalCase {
-        assert(local.len >= 1);
-        return if (local.len == 1)
-            &parent.cases.items[local[0]]
-        else
-            parent.cases.items[local[0]].next.childCase(local[1..]);
-    }
-
-    pub fn constChildGarland(parent: *const VeryPhysicalGarland, local: core.CaseAddress) *const VeryPhysicalGarland {
-        return if (local.len == 0)
-            parent
-        else
-            &parent.constChildCase(local).next;
-    }
-
-    pub fn childGarland(parent: *VeryPhysicalGarland, local: core.CaseAddress) *VeryPhysicalGarland {
-        return if (local.len == 0)
-            parent
-        else
-            &parent.childCase(local).next;
-    }
-
-    pub fn popCase(parent: *VeryPhysicalGarland, index: usize) VeryPhysicalCase {
-        const old_segment = parent.handles_for_new_cases_rest.orderedRemove(index);
-        const case = parent.cases.orderedRemove(index);
-        parent.handleForNewCasesRef(index).point = case.handle.point;
-        parent.handleForNewCasesRefInner(index).length += old_segment.length;
-        return case;
-    }
-
-    pub fn popFirstCaseForExecution(parent: *VeryPhysicalGarland) VeryPhysicalCase {
-        const old_segment = parent.handles_for_new_cases_rest.orderedRemove(0);
-        parent.handles_for_new_cases_first.length += old_segment.length;
-        const case = parent.cases.orderedRemove(0);
-        return case;
-    }
-
-    pub fn insertCase(parent: *VeryPhysicalGarland, mem: std.mem.Allocator, index: usize, case: VeryPhysicalCase) !void {
-        const old_length = parent.handleForNewCasesInner(&.{index}).length;
-        try parent.handles_for_new_cases_rest.insert(mem, index, .{
-            .handle = .{ .point = parent.handleForNewCases(&.{index}).point, .radius = newcase_handle_size },
-            .length = old_length / 2.0,
-        });
-        try parent.cases.insert(mem, index, case);
-        parent.handleForNewCasesRefInner(index + 1).length = old_length / 2;
-    }
-
-    pub fn childGarlandsAddressIterator(garland: *const VeryPhysicalGarland, mem: std.mem.Allocator) AddressIterator {
-        return .{ .mem = mem, .garland = garland, .start_with_empty = true };
-    }
-
-    pub fn addressIterator(garland: *const VeryPhysicalGarland, mem: std.mem.Allocator) AddressIterator {
-        return .{ .mem = mem, .garland = garland };
-    }
-
-    // TODO: memory usage could be improved
-    pub const AddressIterator = struct {
-        mem: std.mem.Allocator,
-        child: ?*AddressIterator = null,
-        k: usize = 0,
-        garland: *const VeryPhysicalGarland,
-        start_with_empty: bool = false,
-
-        pub fn next(it: *AddressIterator) !?core.CaseAddress {
-            if (it.start_with_empty) {
-                it.start_with_empty = false;
-                return &.{};
-            }
-            if (it.child == null) {
-                if (it.k >= it.garland.cases.items.len) return null;
-                it.child = try it.mem.create(AddressIterator);
-                it.child.?.* = .{ .garland = &it.garland.cases.items[it.k].next, .mem = it.mem };
-                return try it.mem.dupe(usize, &.{it.k});
-            } else {
-                const maybe_rest = try it.child.?.next();
-                if (maybe_rest) |rest| {
-                    const result = try it.mem.alloc(usize, rest.len + 1);
-                    @memcpy(result[1..], rest);
-                    it.mem.free(rest);
-                    result[0] = it.k;
-                    return result;
-                } else {
-                    it.mem.destroy(it.child.?);
-                    it.child = null;
-                    it.k += 1;
-                    return it.next();
-                }
-            }
-        }
-    };
-
-    pub fn newHandlesAddressIterator(garland: *const VeryPhysicalGarland, mem: std.mem.Allocator) NewCasesHandlesAddressIterator {
-        return .{ .mem = mem, .garland = garland };
-    }
-
-    // TODO: memory usage could be improved
-    pub const NewCasesHandlesAddressIterator = struct {
-        mem: std.mem.Allocator,
-        child: ?*NewCasesHandlesAddressIterator = null,
-        k: usize = 0,
-        garland: *const VeryPhysicalGarland,
-
-        pub fn next(it: *NewCasesHandlesAddressIterator) !?core.CaseAddress {
-            if (it.child == null) {
-                if (it.k == it.garland.cases.items.len) {
-                    it.k += 1;
-                    return try it.mem.dupe(usize, &.{it.k - 1});
-                }
-                if (it.k > it.garland.cases.items.len) return null;
-                it.child = try it.mem.create(NewCasesHandlesAddressIterator);
-                it.child.?.* = .{ .garland = &it.garland.cases.items[it.k].next, .mem = it.mem };
-                return try it.mem.dupe(usize, &.{it.k});
-            } else {
-                const maybe_rest = try it.child.?.next();
-                if (maybe_rest) |rest| {
-                    const result = try it.mem.alloc(usize, rest.len + 1);
-                    @memcpy(result[1..], rest);
-                    it.mem.free(rest);
-                    result[0] = it.k;
-                    return result;
-                } else {
-                    it.mem.destroy(it.child.?);
-                    it.child = null;
-                    it.k += 1;
-                    return it.next();
-                }
-            }
-        }
-    };
-};
-
-const VeryPhysicalCase = struct {
-    pattern: VeryPhysicalSexpr,
-    fnk_name: VeryPhysicalSexpr,
-    template: VeryPhysicalSexpr,
-    next: VeryPhysicalGarland,
-    handle: Handle,
-
-    const fnk_name_offset: Point = .{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) };
-    const next_garland_offset: Vec2 = .new(8, if (SEQUENTIAL_GOES_DOWN) 1 else -1.5);
-
-    pub fn save(case: *const VeryPhysicalCase, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        try case.handle.save(out, scratch);
-        try case.pattern.save(out, scratch);
-        try case.fnk_name.save(out, scratch);
-        try case.template.save(out, scratch);
-        try case.next.save(out, scratch);
-    }
-
-    pub fn load(dst: *VeryPhysicalCase, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
-        assert(version == 0);
-        try dst.handle.load(in, version, mem);
-        try dst.pattern.load(in, version, mem);
-        try dst.fnk_name.load(in, version, mem);
-        try dst.template.load(in, version, mem);
-        try dst.next.load(in, version, mem);
-    }
-
-    pub fn getBoardPos(case: VeryPhysicalCase) Vec2 {
-        return case.handle;
-    }
-
-    pub fn fromValues(
-        pool: *HoveredSexpr.Pool,
-        values: struct {
-            pattern: *const Sexpr,
-            fnk_name: *const Sexpr,
-            template: *const Sexpr,
-            next: ?VeryPhysicalGarland = null,
-        },
-        center: Point,
-    ) !VeryPhysicalCase {
-        return .{
-            .handle = .{ .point = center },
-            .pattern = try .fromSexpr(pool, values.pattern, center.applyToLocalPoint(.{ .pos = .xneg }), true),
-            .template = try .fromSexpr(pool, values.template, center.applyToLocalPoint(.{ .pos = .xpos }), false),
-            .fnk_name = try .fromSexpr(pool, values.fnk_name, center.applyToLocalPoint(fnk_name_offset), false),
-            .next = values.next orelse .init(center.applyToLocalPoint(.{ .pos = .new(6, 0) })),
-        };
-    }
-
-    pub fn hash(case: *const VeryPhysicalCase) u32 {
-        var hasher = std.hash.Wyhash.init(0);
-        std.hash.autoHash(&hasher, case.pattern.value.hash());
-        std.hash.autoHash(&hasher, case.template.value.hash());
-        std.hash.autoHash(&hasher, case.fnk_name.value.hash());
-        std.hash.autoHash(&hasher, case.next.hash());
-        return @truncate(hasher.final());
-    }
-
-    pub fn clone(case: *const VeryPhysicalCase, res: std.mem.Allocator, hover_pool: *HoveredSexpr.Pool) error{OutOfMemory}!VeryPhysicalCase {
-        assert(kommon.meta.isPlainOldData(Handle));
-        return .{
-            .pattern = try case.pattern.clone(hover_pool),
-            .fnk_name = try case.fnk_name.clone(hover_pool),
-            .template = try case.template.clone(hover_pool),
-            .next = try case.next.clone(res, hover_pool),
-            .handle = case.handle,
-        };
-    }
-
-    pub fn fillVariables(case: *VeryPhysicalCase, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
-        try case.pattern.fillVariables(bindings, mem);
-        try case.template.fillVariables(bindings, mem);
-        try case.next.fillVariables(bindings, mem);
-    }
-
-    pub const Holding = enum { other, sexpr, case_or_garland };
-
-    pub fn drawWithBindingsAndAlpha(
-        case: VeryPhysicalCase,
-        bindings: ?BindingsState,
-        alpha: f32,
-        holding: Holding,
-        drawer: *Drawer,
-        camera: Rect,
-    ) !void {
-        // TODO: draw variables in the cable
-        drawer.canvas.line(camera, &.{
-            case.pattern.point.pos,
-            case.template.point.pos,
-        }, 0.05 * case.handle.point.scale, .blackAlpha(alpha));
-        if (holding == .case_or_garland or case.next.cases.items.len > 0) {
-            drawer.canvas.line(camera, &.{
-                case.template.point.applyToLocalPosition(.new(0.5, if (SEQUENTIAL_GOES_DOWN) 1 else -1)),
-                case.next.handle.point.pos,
-            }, 0.05 * case.handle.point.scale, .blackAlpha(alpha));
-            try case.next.drawWithBindingsAndAlpha(bindings, alpha, holding, drawer, camera);
-        }
-        if (holding == .sexpr or !case.fnk_name.isEmpty()) try case.fnk_name.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        try case.handle.draw(drawer, camera, alpha);
-        try case.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        try case.template.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-    }
-
-    pub fn drawWithBindings(case: VeryPhysicalCase, bindings: ?BindingsState, holding: Holding, drawer: *Drawer, camera: Rect) !void {
-        try case.drawWithBindingsAndAlpha(bindings, 1, holding, drawer, camera);
-    }
-
-    pub fn draw(case: VeryPhysicalCase, holding: Holding, drawer: *Drawer, camera: Rect) !void {
-        try case.drawWithBindings(null, holding, drawer, camera);
-    }
-
-    pub fn update(case: *VeryPhysicalCase, delta_seconds: f32) void {
-        const center: Point = case.handle.point;
-        case.pattern.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xneg }), 0.6, delta_seconds);
-        case.template.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .xpos }), 0.6, delta_seconds);
-        case.fnk_name.point.lerp_towards(center.applyToLocalPoint(fnk_name_offset), 0.6, delta_seconds);
-        case.next.handle.point.lerp_towards(center.applyToLocalPoint(.{ .pos = next_garland_offset }), 0.6, delta_seconds);
-        case.next.update(delta_seconds);
-    }
-
-    pub fn kinematicUpdate(case: *VeryPhysicalCase, center: Point, next_point_extra: ?Point, fnk_name_extra: ?Point, delta_seconds: f32) void {
-        case.handle.point = center;
-        case.pattern.point = center.applyToLocalPoint(.{ .pos = .xneg });
-        case.template.point = center.applyToLocalPoint(.{ .pos = .xpos });
-        case.fnk_name.point = center.applyToLocalPoint(fnk_name_offset).applyToLocalPoint(fnk_name_extra orelse .{});
-        case.next.kinematicUpdate(center.applyToLocalPoint(.{ .pos = next_garland_offset }).applyToLocalPoint(next_point_extra orelse .{}), null, delta_seconds);
-    }
-
-    pub fn sexprAt(case: *VeryPhysicalCase, part: core.CasePart) *VeryPhysicalSexpr {
-        return switch (part) {
-            .template => &case.template,
-            .pattern => &case.pattern,
-            .fnk_name => &case.fnk_name,
-        };
-    }
-
-    pub fn changeCoordinateSpace(case: *VeryPhysicalCase, transform: Point) void {
-        case.handle.point = transform.applyToLocalPoint(case.handle.point);
-        case.pattern.changeCoordinateSpace(transform);
-        case.fnk_name.changeCoordinateSpace(transform);
-        case.template.changeCoordinateSpace(transform);
-        if (case.next.cases.items.len > 0) @panic("TODO: changeCoordinateSpace for child cases");
-    }
-};
-
-const VeryPhysicalSexpr = struct {
-    hovered: *HoveredSexpr,
-    point: Point,
-    value: *const Sexpr,
-    is_pattern: bool,
-    is_pattern_t: f32,
-
-    pub fn save(sexpr: *const VeryPhysicalSexpr, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        try out.writeStructEndian(sexpr.point, .little);
-        try writeBool(out, sexpr.is_pattern);
-        var asdf: std.ArrayList(u8) = .init(scratch);
-        defer asdf.deinit();
-        // TODO: improve
-        try sexpr.value.format("", .{}, asdf.writer().any());
-        try writeString(out, asdf.items);
-    }
-
-    pub fn load(dst: *VeryPhysicalSexpr, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
-        assert(version == 0);
-        const point: Point = try in.readStructEndian(Point, .little);
-        const is_pattern: bool = try readBool(in);
-        // TODO: who clears this memory?
-        const value_bytes = try readString(in, mem.gpa);
-        const value = try core.parsing.parseSingleSexpr(value_bytes, &mem.pool_for_sexprs);
-        dst.* = try .fromSexpr(&mem.hover_pool, value, point, is_pattern);
-    }
-
-    pub fn getBoardPos(sexpr: VeryPhysicalSexpr) Vec2 {
-        return sexpr.point.pos;
-    }
-
-    pub fn fromSexpr(pool: *HoveredSexpr.Pool, value: *const Sexpr, point: Point, is_pattern: bool) !VeryPhysicalSexpr {
-        return .{
-            .hovered = try HoveredSexpr.fromSexpr(pool, value),
-            .point = point,
-            .value = value,
-            .is_pattern = is_pattern,
-            .is_pattern_t = if (is_pattern) 1.0 else 0.0,
-        };
-    }
-
-    pub fn empty(point: Point, hover_pool: *HoveredSexpr.Pool, is_pattern: bool) !VeryPhysicalSexpr {
-        return .fromSexpr(hover_pool, Sexpr.builtin.empty, point, is_pattern);
-    }
-
-    pub fn isEmpty(sexpr: VeryPhysicalSexpr) bool {
-        return switch (sexpr.value.*) {
-            .empty => true,
-            else => false,
-        };
-    }
-
-    pub fn fillVariables(sexpr: *VeryPhysicalSexpr, bindings: []const core.Binding, mem: *core.VeryPermamentGameStuff) !void {
-        // TODO: make more efficient (don't replace the whole hovered if not needed)
-        sexpr.hovered = try sexpr.hovered.fillVariables(sexpr.value, bindings, &mem.hover_pool);
-        sexpr.value = (try core.partiallyFillTemplateV2(sexpr.value, bindings, &mem.pool_for_sexprs)).result;
-    }
-
-    fn updateIsPattern(sexpr: *VeryPhysicalSexpr, delta_seconds: f32) void {
-        math.lerp_towards(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, 0.6, delta_seconds);
-    }
-
-    fn _draw(
-        drawer: *Drawer,
-        camera: Rect,
-        value: *const Sexpr,
-        hovered: *HoveredSexpr,
-        point: Point,
-        is_pattern: bool,
-        is_pattern_t: f32,
-        maybe_bindings: ?BindingsState,
-        alpha: f32,
-    ) !void {
-        const actual_point = point.applyToLocalPoint(.lerp(.{}, .lerp(
-            .{ .turns = -0.02, .pos = .new(0.5, 0) },
-            .{ .turns = 0.02, .pos = .new(-0.5, 0) },
-            is_pattern_t,
-        ), hovered.value / 2.0));
-        // TODO: use the actual screen resolution
-        if (actual_point.scale * 1000 < camera.size.y) return;
-        switch (value.*) {
-            .empty => {},
-            .atom_lit, .atom_var => try if (is_pattern)
-                drawer.drawPatternSexpr(camera, value, actual_point, alpha)
-            else
-                drawer.drawTemplateSexpr(camera, value, actual_point, alpha),
-            .pair => |pair| {
-                try if (is_pattern)
-                    drawer.drawPatternPairHolder(camera, actual_point, alpha)
-                else
-                    drawer.drawTemplatePairHolder(camera, actual_point, alpha);
-                try if (is_pattern)
-                    drawer.drawPatternWildcardLinesNonRecursive(camera, pair.left, pair.right, actual_point, alpha)
-                else
-                    drawer.drawTemplateWildcardLinesNonRecursive(camera, pair.left, pair.right, actual_point, maybe_bindings orelse .{
-                        .anim_t = null,
-                        .old = &.{},
-                        .new = &.{},
-                    }, alpha);
-                const offset = if (is_pattern) ViewHelper.OFFSET_PATTERN else ViewHelper.OFFSET_TEMPLATE;
-                try _draw(drawer, camera, pair.left, hovered.next.?.left, actual_point.applyToLocalPoint(offset.LEFT), is_pattern, is_pattern_t, maybe_bindings, alpha);
-                try _draw(drawer, camera, pair.right, hovered.next.?.right, actual_point.applyToLocalPoint(offset.RIGHT), is_pattern, is_pattern_t, maybe_bindings, alpha);
-            },
-        }
-        if (maybe_bindings) |bindings| {
-            switch (value.*) {
-                // TODO: cables?
-                else => {},
-                .atom_var => |x| {
-                    // TODO: check that compiler skips the loop if anim_t is null
-                    for (bindings.new) |binding| {
-                        if (bindings.anim_t) |anim_t| {
-                            if (std.mem.eql(u8, binding.name, x.value)) {
-                                if (is_pattern) {
-                                    const t = math.smoothstep(anim_t, 0, 0.1);
-                                    try drawer.drawEatingPattern(camera, actual_point, binding, t, alpha);
-                                } else {
-                                    try drawer.clipAtomRegion(camera, actual_point);
-                                    const t = math.smoothstep(anim_t, 0, 0.4);
-                                    try drawer.drawSexpr(camera, .{
-                                        .is_pattern = is_pattern_t,
-                                        .value = binding.value,
-                                        .pos = actual_point.applyToLocalPoint(.{ .pos = .new(math.remap(t, 0, 1, -2.3, 0), 0) }),
-                                    }, alpha);
-                                    drawer.endClip();
-
-                                    try drawer.drawSexpr(camera, .{
-                                        .is_pattern = is_pattern_t,
-                                        .value = value,
-                                        .pos = actual_point,
-                                    }, alpha * (1 - anim_t));
-
-                                    // TODO: uncomment
-                                    // if (anim_t < 0.5) {
-                                    //     try out_particles.append(.{ .point = actual_point, .t = t, .name = binding.name });
-                                    // }
-                                }
-                                break;
-                            }
-                        }
-                    } else for (bindings.old) |binding| {
-                        if (std.mem.eql(u8, binding.name, x.value)) {
-                            if (is_pattern) {
-                                const t = 1;
-                                try drawer.drawEatingPattern(camera, actual_point, binding, t, alpha);
-                            } else {
-                                try drawer.drawSexpr(camera, .{
-                                    .is_pattern = is_pattern_t,
-                                    .value = binding.value,
-                                    .pos = actual_point,
-                                }, alpha);
-                            }
-                            break;
-                        }
-                    } else {
-                        try drawer.drawSexpr(camera, .{
-                            .is_pattern = is_pattern_t,
-                            .value = value,
-                            .pos = actual_point,
-                        }, alpha);
-                    }
-                },
-            }
-        }
-    }
-
-    pub fn draw(sexpr: VeryPhysicalSexpr, drawer: *Drawer, camera: Rect) !void {
-        try sexpr.drawWithBindings(null, drawer, camera);
-    }
-
-    pub fn drawWithBindings(sexpr: VeryPhysicalSexpr, bindings: ?BindingsState, drawer: *Drawer, camera: Rect) !void {
-        try sexpr.drawWithBindingsAndAlpha(bindings, 1, drawer, camera);
-    }
-
-    pub fn drawWithBindingsAndAlpha(
-        sexpr: VeryPhysicalSexpr,
-        bindings: ?BindingsState,
-        alpha: f32,
-        drawer: *Drawer,
-        camera: Rect,
-    ) !void {
-        // dont draw out of bounds sexprs
-        if (!camera.plusMargin(sexpr.point.scale * 3).contains(sexpr.point.pos)) return;
-
-        assert(math.in01(sexpr.is_pattern_t));
-        assert(math.in01(alpha));
-        // TODO: use the actual bool?
-        const base_point = if (!sexpr.is_pattern)
-            sexpr.point.applyToLocalPoint(.{ .turns = math.remap(
-                sexpr.is_pattern_t,
-                0.5,
-                0,
-                -0.25,
-                0,
-            ) })
-        else
-            sexpr.point.applyToLocalPoint(.{ .turns = math.remap(
-                sexpr.is_pattern_t,
-                0.5,
-                1,
-                0.25,
-                0,
-            ) });
-
-        if (sexpr.isEmpty()) {
-            try drawer.drawPlaceholder(camera, base_point, sexpr.is_pattern, alpha);
-        } else {
-            return _draw(
-                drawer,
-                camera,
-                sexpr.value,
-                sexpr.hovered,
-                base_point,
-                sexpr.is_pattern,
-                sexpr.is_pattern_t,
-                bindings,
-                alpha,
-            );
-        }
-    }
-
-    pub fn updateSubValue(
-        self: *VeryPhysicalSexpr,
-        address: core.SexprAddress,
-        new_value: *const Sexpr,
-        new_hovered: *HoveredSexpr,
-        core_mem: *core.VeryPermamentGameStuff,
-        hover_pool: *HoveredSexpr.Pool,
-    ) !void {
-        self.value = try self.value.setAt(core_mem, address, new_value);
-        self.hovered = try self.hovered.setAt(hover_pool, address, new_hovered);
-    }
-
-    pub fn getSubValue(
-        self: VeryPhysicalSexpr,
-        address: core.SexprAddress,
-    ) VeryPhysicalSexpr {
-        return .{
-            .hovered = self.hovered.getAt(address),
-            .point = ViewHelper.sexprChildView(
-                self.is_pattern,
-                self.point,
-                address,
-            ),
-            .value = self.value.getAt(address).?,
-            .is_pattern = self.is_pattern,
-            .is_pattern_t = self.is_pattern_t,
-        };
-    }
-
-    pub fn clone(self: *const VeryPhysicalSexpr, hover_pool: *HoveredSexpr.Pool) !VeryPhysicalSexpr {
-        return self.dupeSubValue(&.{}, hover_pool);
-    }
-
-    pub fn dupeSubValue(
-        self: *const VeryPhysicalSexpr,
-        address: core.SexprAddress,
-        hover_pool: *HoveredSexpr.Pool,
-    ) !VeryPhysicalSexpr {
-        return .{
-            .hovered = try self.hovered.getAt(address).clone(hover_pool),
-            .point = ViewHelper.sexprChildView(
-                self.is_pattern,
-                self.point,
-                address,
-            ),
-            .value = self.value.getAt(address).?,
-            .is_pattern = self.is_pattern,
-            .is_pattern_t = self.is_pattern_t,
-        };
-    }
-
-    pub fn popSubValue(
-        self: *VeryPhysicalSexpr,
-        address: core.SexprAddress,
-        hover_pool: *HoveredSexpr.Pool,
-        mem: *VeryPermamentGameStuff,
-    ) !VeryPhysicalSexpr {
-        const result: VeryPhysicalSexpr = .{
-            .hovered = self.hovered.getAt(address),
-            .point = ViewHelper.sexprChildView(
-                self.is_pattern,
-                self.point,
-                address,
-            ),
-            .value = self.value.getAt(address).?,
-            .is_pattern = self.is_pattern,
-            .is_pattern_t = self.is_pattern_t,
-        };
-        self.value = try self.value.setAt(mem, address, Sexpr.builtin.empty);
-        self.hovered = try self.hovered.setAt(hover_pool, address, try HoveredSexpr.store(hover_pool, .{ .next = null, .value = 0 }));
-        return result;
-    }
-
-    pub fn changeCoordinateSpace(sexpr: *VeryPhysicalSexpr, transform: Point) void {
-        sexpr.point = transform.applyToLocalPoint(sexpr.point);
-    }
-};
-
-const Pill = struct {
-    input: VeryPhysicalSexpr,
-    pattern: VeryPhysicalSexpr,
-    fnkname_call: ?VeryPhysicalSexpr,
-    fnkname_response: ?VeryPhysicalSexpr,
-    bindings: []const core.Binding,
-
-    pub fn draw(pill: Pill, alpha: f32, drawer: *Drawer, camera: Rect) !void {
-        const bindings: BindingsState = .{
-            .anim_t = null,
-            .new = &.{},
-            .old = pill.bindings,
-        };
-        try pill.input.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        try pill.pattern.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        if (pill.fnkname_call) |f| if (!f.isEmpty()) try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-        if (pill.fnkname_response) |f| if (!f.isEmpty()) try f.drawWithBindingsAndAlpha(bindings, alpha, drawer, camera);
-    }
-};
-
-/// limited lifetime, basically particles, but the last_input remains (TODO: redesign)
-const ExecutionTrace = struct {
-    pills: std.ArrayListUnmanaged(Pill),
-    last_input: ?VeryPhysicalSexpr,
-    // bindings: ?BindingsState,
-
-    // TODO: rethink
-    velocity: Vec2,
-    remaining_lifetime: f32,
-
-    pub const empty: ExecutionTrace = .{ .pills = .empty };
-
-    pub fn fromExecutor(
-        pills: []const Pill,
-        input: ?*const VeryPhysicalSexpr,
-        velocity: Vec2,
-        lifetime: f32,
-        mem: *core.VeryPermamentGameStuff,
-        hover: *HoveredSexpr.Pool,
-    ) !ExecutionTrace {
-        return .{
-            .pills = .fromOwnedSlice(try mem.gpa.dupe(Pill, pills)),
-            .last_input = if (input) |f| try f.clone(hover) else null,
-            .velocity = velocity,
-            .remaining_lifetime = lifetime,
-        };
-    }
-
-    pub fn deinit(execution_trace: *ExecutionTrace, gpa: std.mem.Allocator) void {
-        execution_trace.pills.deinit(gpa);
-    }
-
-    pub fn draw(execution_trace: ExecutionTrace, drawer: *Drawer, camera: Rect) !void {
-        const alpha: f32 = math.smoothstep(execution_trace.remaining_lifetime, 0, 0.4);
-        for (execution_trace.pills.items) |p| try p.draw(alpha, drawer, camera);
-        if (execution_trace.last_input) |f| try f.drawWithBindingsAndAlpha(null, 1, drawer, camera);
-    }
-
-    pub fn update(execution_trace: *ExecutionTrace, delta_seconds: f32) void {
-        execution_trace.remaining_lifetime -= delta_seconds;
-        const offset: Point = .{ .pos = execution_trace.velocity.scale(delta_seconds) };
-        for (execution_trace.pills.items) |*p| {
-            p.input.point = offset.applyToLocalPoint(p.input.point);
-            p.pattern.point = offset.applyToLocalPoint(p.pattern.point);
-            if (p.fnkname_call) |*f| f.point = offset.applyToLocalPoint(f.point);
-            if (p.fnkname_response) |*f| f.point = offset.applyToLocalPoint(f.point);
-        }
-        if (execution_trace.last_input) |*f| f.point = offset.applyToLocalPoint(f.point);
-    }
-};
-
-// automatically consumes garland cases when input is present
-const Executor = struct {
-    input: VeryPhysicalSexpr,
-    garland: VeryPhysicalGarland,
-    handle: Handle,
-
-    animation: ?struct {
-        t: f32 = 0,
-        active_case: VeryPhysicalCase,
-        matching: bool,
-        invoked_fnk: ?VeryPhysicalGarland,
-        parent_pill: ?usize,
-        new_bindings: []const core.Binding,
-        original_point: Point,
-        garland_fnkname: ?VeryPhysicalSexpr,
-        paused: bool = false,
-    } = null,
-    // execution_trace: ExecutionTrace = .empty,
-    prev_pills: std.ArrayListUnmanaged(Pill) = .empty,
-    /// last one is the next one to apply
-    enqueued_stack: std.ArrayListUnmanaged(struct { garland: VeryPhysicalGarland, parent_pill: usize }) = .empty,
-    /// in 0..1; 1 is braked, 0.5 is normal speed, 0 is speedup
-    brake_t: f32 = 0.5,
-
-    brake_handle: Handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
-    crank_handle: Handle = .{ .point = undefined, .radius = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } },
-
-    const relative_input_point: Point = .{ .pos = .new(-1, 1.5) };
-    const relative_garland_point: Point = .{ .pos = .new(4, 0) };
-    const relative_crank_center: Point = .{ .pos = .new(-1, 4) };
-
-    pub fn init(point: Point, hover_pool: *HoveredSexpr.Pool) !Executor {
-        return .initWithThings(
-            try .empty(point.applyToLocalPoint(relative_input_point), hover_pool, false),
-            .init(point.applyToLocalPoint(relative_input_point)),
-            point,
-            true,
-        );
-    }
-
-    pub fn initWithThings(input: VeryPhysicalSexpr, garland: VeryPhysicalGarland, point: Point, handle_enabled: bool) Executor {
-        var result: Executor = .{
-            .handle = .{ .point = point, .enabled = handle_enabled },
-            .garland = garland,
-            .input = input,
-        };
-        result.recomputeBrakeHandlePos();
-        result.recomputeCrankHandlePos();
-        return result;
-    }
-
-    pub fn save(executor: *const Executor, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
-        try executor.handle.save(out, scratch);
-        try executor.input.save(out, scratch);
-        try executor.garland.save(out, scratch);
-        try executor.brake_handle.save(out, scratch);
-        try executor.crank_handle.save(out, scratch);
-        try writeF32(out, executor.brake_t);
-    }
-
-    pub fn load(dst: *Executor, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
-        assert(version == 0);
-        dst.* = kommon.meta.initDefaultFields(Executor);
-        try dst.handle.load(in, version, mem);
-        try dst.input.load(in, version, mem);
-        try dst.garland.load(in, version, mem);
-        try dst.brake_handle.load(in, version, mem);
-        try dst.crank_handle.load(in, version, mem);
-        dst.brake_t = try readF32(in);
-        dst.animation = null;
-    }
-
-    fn recomputeBrakeHandlePos(executor: *Executor) void {
-        executor.brake_handle.point = .{ .pos = executor.brakeHandlePath(executor.brake_t) };
-    }
-
-    fn recomputeCrankHandlePos(executor: *Executor) void {
-        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-        executor.crank_handle.point = .{ .pos = crank_center.applyToLocalPosition(
-            .fromPolar(0.75, if (executor.animation) |anim| anim.t else 0),
-        ) };
-        executor.crank_handle.enabled = executor.animation != null;
-    }
-
-    pub fn draw(executor: *const Executor, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        try drawWithGarlandAlpha(executor, 1, holding, drawer, camera);
-    }
-
-    pub fn drawWithGarlandAlpha(executor: *const Executor, garland_alpha: f32, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        try executor.handle.draw(drawer, camera, 1);
-        // const bindings_anim_t: ?f32 = if (executor.animation) |anim| if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8) else null;
-        const bindings_active: BindingsState = if (executor.animation) |anim| .{
-            .anim_t = if (anim.t < 0.2) null else math.remapTo01Clamped(anim.t, 0.2, 0.8),
-            .old = if (anim.parent_pill) |k| executor.prev_pills.items[k].bindings else &.{},
-            .new = anim.new_bindings,
-        } else .{
-            .anim_t = null,
-            .old = &.{},
-            .new = &.{},
-        };
-        try executor.input.drawWithBindings(bindings_active, drawer, camera);
-        if (executor.animation) |anim| {
-            try anim.active_case.drawWithBindings(bindings_active, holding, drawer, camera);
-            if (anim.garland_fnkname) |f| try f.draw(drawer, camera);
-            if (anim.invoked_fnk) |f| try f.draw(holding, drawer, camera);
-        }
-        if (CRANKS_ENABLED) {
-            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-                executor,
-                .brakeBody,
-                &kommon.funktional.linspace01(32, true),
-            ), executor.handle.point.scale * 0.2, .gray(0.4));
-            drawer.canvas.line(camera, &kommon.funktional.mapOOP(
-                executor,
-                .brakeHandlePath,
-                &kommon.funktional.linspace01(32, true),
-            ), Drawer.pixelWidth(camera), FColor.gray(1));
-            try executor.brake_handle.draw(drawer, camera, 1.0);
-            const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-            drawer.canvas.fillShape(camera, crank_center.plusTurns(
-                if (executor.animation) |anim| anim.t else 0,
-            ), Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
-            try executor.crank_handle.draw(drawer, camera, 1.0);
-        }
-        for (executor.prev_pills.items) |p| try p.draw(1, drawer, camera);
-        // TODO: revise that .new is correct
-        for (executor.enqueued_stack.items) |s| try s.garland.drawWithBindings(.{
-            .anim_t = bindings_active.anim_t,
-            .new = &.{},
-            .old = executor.prev_pills.items[s.parent_pill].bindings,
-        }, holding, drawer, camera);
-        try executor.garland.drawWithAlpha(garland_alpha, holding, drawer, camera);
-    }
-
-    pub fn crankMovedTo(executor: *Executor, pos: Vec2, delta_seconds: f32) !void {
-        assert(executor.animation != null);
-        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-        const relative_pos = crank_center.inverseApplyGetLocalPosition(pos);
-        const raw_t = relative_pos.getTurns();
-        const cur_t = executor.animation.?.t;
-        const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
-        // math.lerp_towards(&executor.animation.?.t, @max(0, target_t), 0.6, delta_seconds);
-        math.towards(&executor.animation.?.t, target_t, delta_seconds * 5);
-        executor.recomputeCrankHandlePos();
-    }
-
-    pub fn brakeMovedTo(executor: *Executor, pos: Vec2, delta_seconds: f32) !void {
-        const S = struct {
-            p: Vec2,
-            e: *const Executor,
-            pub fn score(ctx: @This(), t: f32) f32 {
-                return ctx.e.brakeHandlePath(t).sub(ctx.p).magSq();
-            }
-        };
-        const raw_t = kommon.funktional.findFunctionMin(
-            S,
-            .{ .p = pos, .e = executor },
-            0,
-            1,
-            10,
-            0.0001,
-        );
-        // math.lerp_towards(&executor.brake_t, raw_t, 0.6, delta_seconds);
-        math.towards(&executor.brake_t, raw_t, delta_seconds * 5);
-        executor.recomputeBrakeHandlePos();
-    }
-
-    pub fn brakeLineRaw(crank_center: Point, brake_t: f32, line_t: f32) Vec2 {
-        const radius: f32 = std.math.exp(2 - brake_t) / 2.0;
-        // const radius: f32 = math.remapFrom01(std.math.exp(1 - brake_t) / std.math.e, 1.3, 5);
-        // const radius: f32 = math.remapFrom01(math.easings.linear(1 - brake_t), 1.3, 5);
-        // const radius: f32 = math.remapFrom01(math.easings.easeInQuad(1 - brake_t), 1.3, 5);
-        return crank_center
-            .applyToLocalPoint(.{ .turns = -0.25 })
-            .applyToLocalPoint(.{ .pos = .new(0, 1.2) })
-            .applyToLocalPoint(.{ .pos = .new(0, -radius) })
-            .applyToLocalPosition(.fromPolar(radius - (1 - line_t) * 0.2, 0.25 + 0.65 * line_t / radius));
-
-        // return crank_center
-        //     .applyToLocalPosition(.fromPolar(
-        //     math.remapFrom01(line_t, 0.5, 1.5 + 0.5 * (1 - brake_t)),
-        //     math.remapFrom01(brake_t, 0.125, 0.375),
-        // ));
-    }
-
-    pub fn brakeBody(executor: *const Executor, line_t: f32) Vec2 {
-        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-        return brakeLineRaw(crank_center, executor.brake_t, line_t);
-    }
-
-    pub fn brakeHandlePath(executor: *const Executor, brake_t: f32) Vec2 {
-        const crank_center = executor.handle.point.applyToLocalPoint(relative_crank_center);
-        return brakeLineRaw(crank_center, brake_t, 1.0);
-        // return crank_center
-        //     .applyToLocalPosition(.fromPolar(1.5, math.remapFrom01(t, 0.125, 0.375)))
-        //     .rotateAround(crank_center.applyToLocalPosition(.new(0.4, 0.25)), 0.1)
-        //     .addY(0.25);
-    }
-
-    fn speedScale(brake_t: f32) f32 {
-        // 1 -> 0
-        // 0.5 -> 1
-        // 0 -> mucho
-        return std.math.exp2((1 - brake_t) * 2) - 1;
-    }
-
-    test "speedScale" {
-        try std.testing.expectApproxEqAbs(0, speedScale(1), 0.0001);
-        try std.testing.expectApproxEqAbs(1, speedScale(0.5), 0.0001);
-        try std.testing.expectApproxEqAbs(3, speedScale(0), 0.0001);
-    }
-
-    pub fn animating(executor: *const Executor) bool {
-        return executor.animation != null;
-    }
-
-    pub fn startedExecution(executor: *const Executor) bool {
-        return executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty();
-    }
-
-    pub fn updateHoverT(executor: *Executor, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
-        executor.handle.updateHoverT(self_address, hovering, delta_seconds);
-        executor.brake_handle.updateHoverT(.{ .area = self_address.area, .kind = .{
-            .executor_brake_handle = self_address.kind.executor_handle,
-        } }, hovering, delta_seconds);
-        executor.crank_handle.updateHoverT(.{ .area = self_address.area, .kind = .{
-            .executor_crank_handle = self_address.kind.executor_handle,
-        } }, hovering, delta_seconds);
-    }
-
-    // try core.fillTemplateV2(case.template.value, new_bindings.items, &mem.pool_for_sexprs)
-    pub fn update(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        try updateSpringsAndStuff(executor, delta_seconds);
-        try advanceAnimation(executor, mem, known_fnks, hover_pool, delta_seconds);
-    }
-
-    pub fn advanceAnimation(executor: *Executor, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        // var this_frame_ended_an_execution_without_direct_next: bool = false;
-        var parent_pill_index: ?usize = null;
-
-        if (executor.animation) |*animation| {
-            animation.t += delta_seconds * speedScale(executor.brake_t);
-            if (animation.t >= 1) {
-                if (animation.matching) {
-                    try executor.prev_pills.append(mem.gpa, .{
-                        .pattern = animation.active_case.pattern,
-                        .input = executor.input,
-                        .fnkname_call = animation.active_case.fnk_name,
-                        .fnkname_response = animation.garland_fnkname,
-                        // TODO: should include previous bindings? not really, since they have now been merged
-                        .bindings = try mem.gpa.dupe(core.Binding, animation.new_bindings),
-                    });
-                    // TODO: revise
-                    // pill_offset -= 1;
-                    try animation.active_case.fillVariables(animation.new_bindings, mem);
-                    executor.input = animation.active_case.template;
-
-                    if (animation.invoked_fnk) |*fnk| {
-                        executor.garland = fnk.*;
-                        if (animation.active_case.next.cases.items.len > 0) {
-                            try executor.enqueued_stack.append(mem.gpa, .{ .garland = animation.active_case.next, .parent_pill = executor.prev_pills.items.len - 1 });
-                        }
-                    } else if (animation.active_case.next.cases.items.len > 0) {
-                        executor.garland = animation.active_case.next;
-                        // this_frame_ended_an_execution_without_direct_next = true;
-                        parent_pill_index = executor.prev_pills.items.len - 1;
-                    } else if (executor.enqueued_stack.pop()) |g| {
-                        executor.garland = g.garland;
-                        // this_frame_ended_an_execution_without_direct_next = true;
-                        parent_pill_index = g.parent_pill;
-                    } else {
-                        executor.garland = .init(executor.garlandPoint());
-                    }
-                } else {
-                    assert(animation.new_bindings.len == 0);
-                    executor.garland.fnkname = animation.garland_fnkname;
-                }
-                executor.animation = null;
-            }
-        }
-
-        if (executor.animation == null and executor.garland.cases.items.len > 0 and !executor.input.isEmpty()) {
-            const case = executor.garland.popFirstCaseForExecution();
-            var new_bindings: std.ArrayList(core.Binding) = .init(mem.gpa);
-            const matching = try core.generateBindingsV2(case.pattern.value, executor.input.value, &new_bindings, true);
-            const invoked_fnk: ?VeryPhysicalGarland = if (!matching)
-                null
-            else if (case.fnk_name.value.equals(Sexpr.builtin.identity) or case.fnk_name.isEmpty())
-                null
-            else blk: {
-                const offset = 3.0;
-                const function_point = executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
-                if (try getGarlandForFnk(known_fnks, case.fnk_name.value, function_point, mem, hover_pool)) |garland| {
-                    break :blk garland;
-                } else @panic("TODO: handle this");
-            };
-            const garland_fnkname = executor.garland.fnkname;
-            executor.garland.fnkname = null;
-            executor.animation = .{
-                .active_case = case,
-                .matching = matching,
-                .invoked_fnk = invoked_fnk,
-                .new_bindings = try new_bindings.toOwnedSlice(),
-                .original_point = executor.handle.point,
-                .garland_fnkname = garland_fnkname,
-                .parent_pill = parent_pill_index,
-            };
-        }
-        executor.recomputeCrankHandlePos();
-    }
-
-    /// 0 -> default point
-    /// 0...1 rotating
-    /// 1 -> enqueued
-    fn extraForDequeuingNext(enqueueing_t: f32) Point {
-        return .{
-            .pos = .new(enqueueing_t * 6, -3 * math.smoothstepEased(enqueueing_t, 0, 1, .easeInOutCubic)),
-            .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0, 0.7, .easeInOutCubic)),
-        };
-    }
-
-    /// same as extraForDequeuingNext but applied from a case (so it has to climb more, for example)
-    fn extraForEnqueuingNext(enqueueing_t: f32) Point {
-        assert(math.in01(enqueueing_t));
-        return .{
-            .pos = .new(enqueueing_t * 4, (-3 - VeryPhysicalCase.next_garland_offset.y - VeryPhysicalGarland.dist_between_cases_first) *
-                math.smoothstepEased(enqueueing_t, 0, 0.35, .easeInOutCubic)),
-            .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0.0, 0.3, .easeInOutCubic)),
-        };
-    }
-
-    pub fn updateSpringsAndStuff(executor: *Executor, delta_seconds: f32) !void {
-        executor.garland.handle.point.lerp_towards(executor.garlandPoint(), 0.6, delta_seconds);
-        executor.recomputeBrakeHandlePos();
-        executor.recomputeCrankHandlePos();
-
-        var pill_offset: f32 = 0;
-        if (executor.animation) |*animation| {
-            assert(executor.garland.fnkname == null);
-            const anim_t = math.clamp01(animation.t);
-            if (!animation.matching) {
-                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
-                const flyaway_t = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
-                const offset_t = math.remapClamped(anim_t, 0.2, 0.8, 1, 0);
-
-                const case_floating_away = executor.firstCasePoint()
-                    .applyToLocalPoint(Point.lerp(
-                    .{ .pos = .new(-match_t, 0) },
-                    .{ .pos = .new(6, -2), .scale = 0, .turns = -0.2 },
-                    flyaway_t,
-                ));
-                executor.garland.updateWithOffset(offset_t, &animation.active_case, delta_seconds);
-                animation.active_case.kinematicUpdate(case_floating_away, null, null, delta_seconds);
-                executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
-                if (animation.garland_fnkname) |*f| f.point.lerp_towards(executor.inputPoint().applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), 0.6, delta_seconds);
-                for (executor.enqueued_stack.items, 0..) |*x, k| {
-                    x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(
-                        extraForDequeuingNext(tof32(executor.enqueued_stack.items.len - k - 1) + 1),
-                    ), null, delta_seconds);
-                }
-            } else {
-                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
-                // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
-                const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
-                const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
-                const discarded_t = anim_t;
-                pill_offset = enqueueing_t;
-
-                if (!EXECUTOR_MOVES_LEFT) {
-                    executor.handle.point.pos = animation.original_point.pos.addX(enqueueing_t * 5);
-                }
-
-                const case_point = executor.firstCasePoint().applyToLocalPoint(
-                    .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
-                );
-
-                executor.garland.kinematicUpdate(
-                    executor.garlandPoint()
-                        .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t)),
-                    &animation.active_case,
-                    delta_seconds,
-                );
-                if (animation.invoked_fnk) |*invoked| {
-                    const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
-                    const function_point = executor.garlandPoint()
-                        .applyToLocalPoint(.{ .pos = .new(2 * offset + 6 - match_t - enqueueing_t * 5, 6 * offset) });
-                    invoked.kinematicUpdate(function_point, null, delta_seconds);
-
-                    animation.active_case.kinematicUpdate(
-                        case_point,
-                        extraForEnqueuingNext(enqueueing_t),
-                        .{ .pos = .new(-invoking_t * 4, 0) },
-                        delta_seconds,
-                    );
-
-                    const enqueueing = animation.active_case.next.cases.items.len > 0;
-                    for (executor.enqueued_stack.items, 0..) |*x, k| {
-                        x.garland.kinematicUpdate(executor.garlandPoint()
-                            .applyToLocalPoint(extraForDequeuingNext(1 + tof32(executor.enqueued_stack.items.len - k - 1) + if (enqueueing) enqueueing_t else 0)), null, delta_seconds);
-                    }
-                } else {
-                    animation.active_case.kinematicUpdate(case_point, .{
-                        .pos = .new(-enqueueing_t * 2, -(VeryPhysicalCase.next_garland_offset.y + VeryPhysicalGarland.dist_between_cases_first) *
-                            math.smoothstep(enqueueing_t, 0, 0.6)),
-                    }, .{ .pos = .new(-invoking_t * 4, 0) }, delta_seconds);
-                    const dequeueing = animation.active_case.next.cases.items.len == 0;
-                    for (executor.enqueued_stack.items, 0..) |*x, k| {
-                        x.garland.kinematicUpdate(executor.garlandPoint().applyToLocalPoint(extraForDequeuingNext(
-                            tof32(executor.enqueued_stack.items.len - k - 1) + 1 - if (dequeueing) enqueueing_t else 0,
-                        )), null, delta_seconds);
-                    }
-                }
-                executor.input.point = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
-                if (animation.garland_fnkname) |*f| f.point = executor.input.point.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 });
-            }
-        } else {
-            executor.garland.update(delta_seconds);
-            executor.input.point.lerp_towards(executor.inputPoint(), 0.6, delta_seconds);
-        }
-
-        for (executor.prev_pills.items, 0..) |*pill, k| {
-            const pill_input_pos = executor.inputPoint().applyToLocalPoint(.{ .pos = .new(-5 * (tof32(executor.prev_pills.items.len - k) + pill_offset), 0) });
-            const ratio: f32 = 1; // 0.6;
-            pill.input.point.lerp_towards(pill_input_pos, ratio, delta_seconds);
-            pill.pattern.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, 0) }), ratio, delta_seconds);
-            if (pill.fnkname_call) |*f| f.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(8, -3), .turns = 0.25, .scale = 0.5 }), ratio, delta_seconds);
-            if (pill.fnkname_response) |*g| g.point.lerp_towards(pill_input_pos.applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }), ratio, delta_seconds);
-        }
-    }
-
-    pub fn inputPoint(executor: *const Executor) Point {
-        return executor.handle.point.applyToLocalPoint(Executor.relative_input_point);
-    }
-
-    pub fn firstCasePoint(executor: *const Executor) Point {
-        return executor.garlandPoint().applyToLocalPoint(.{ .pos = .new(0, 1.5) });
-    }
-
-    pub fn garlandPoint(executor: *const Executor) Point {
-        return executor.handle.point.applyToLocalPoint(Executor.relative_garland_point);
-    }
-};
-
-// TODO: invoking a fnk doesn't undo
-const Fnkviewer = struct {
-    handle: Handle,
-    fnkname: VeryPhysicalSexpr,
-    garland: VeryPhysicalGarland,
-
-    last_fnkname_hash: u32 = 0,
-    // last_garland_hash: u32 = 0,
-
-    const relative_fnkname_point: Point = .{ .pos = .new(-1, 0), .scale = 0.5, .turns = 0.25 };
-    const relative_garland_point: Point = .{ .pos = .new(1, 1.5) };
-    const fnkname_from_garland_template: Point = Point.inverseApplyGetLocal(relative_garland_point, relative_fnkname_point);
-    const fnkname_from_garland_pattern: Point = fnkname_from_garland_template.applyToLocalPoint(.{ .pos = .new(3, 0) });
-
-    pub fn point(fnkviewer: *const Fnkviewer) Point {
-        return fnkviewer.handle.point;
-    }
-
-    pub fn init(base: Point, hover_pool: *HoveredSexpr.Pool) !Fnkviewer {
-        return .{
-            .handle = .{ .point = base },
-            .garland = .init(base.applyToLocalPoint(relative_garland_point)),
-            .fnkname = try .empty(base.applyToLocalPoint(relative_fnkname_point), hover_pool, false),
-        };
-    }
-
-    pub fn draw(fnkviewer: Fnkviewer, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        try fnkviewer.handle.draw(drawer, camera, 1);
-        try fnkviewer.fnkname.draw(drawer, camera);
-        try fnkviewer.garland.draw(holding, drawer, camera);
-    }
-
-    pub fn update(fnkviewer: *Fnkviewer, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !void {
-        fnkviewer.garland.handle.point.lerp_towards(fnkviewer.point().applyToLocalPoint(relative_garland_point), 0.6, delta_seconds);
-        fnkviewer.garland.update(delta_seconds);
-        fnkviewer.fnkname.point.lerp_towards(fnkviewer.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
-
-        // TODO: better invocation anim
-        const cur_fnkname_hash = fnkviewer.fnkname.value.hash();
-        if (cur_fnkname_hash != fnkviewer.last_fnkname_hash) {
-            fnkviewer.last_fnkname_hash = cur_fnkname_hash;
-            if (try getGarlandForFnk(known_fnks, fnkviewer.fnkname.value, fnkviewer.point().applyToLocalPoint(relative_garland_point), mem, hover_pool)) |garland| {
-                fnkviewer.garland = garland;
-                // TODO: handle this better
-                fnkviewer.garland.fnkname = null;
-            }
-        }
-    }
-};
-
-pub const TestCase = struct {
-    input: VeryPhysicalSexpr,
-    expected: VeryPhysicalSexpr,
-    actual: VeryPhysicalSexpr,
-    // tested: bool = false,
-    play_button: Button,
-
-    pub fn save(testcase: *const TestCase, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
-        try testcase.input.save(out, scratch);
-        try testcase.expected.save(out, scratch);
-        try testcase.actual.save(out, scratch);
-    }
-
-    pub fn load(dst: *TestCase, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
-        assert(version == 0);
-        dst.play_button = .{ .kind = .launch_testcase, .rect = .unit };
-        try dst.input.load(in, version, mem);
-        try dst.expected.load(in, version, mem);
-        try dst.actual.load(in, version, mem);
-    }
-
-    const Part = enum { input, expected, actual };
-    pub const parts: [3]TestCase.Part = .{ .input, .expected, .actual };
-
-    pub fn partRef(testcase: *TestCase, part: Part) *VeryPhysicalSexpr {
-        return switch (part) {
-            .input => &testcase.input,
-            .expected => &testcase.expected,
-            .actual => &testcase.actual,
-        };
-    }
-
-    pub fn partConst(testcase: *const TestCase, part: Part) *const VeryPhysicalSexpr {
-        return switch (part) {
-            .input => &testcase.input,
-            .expected => &testcase.expected,
-            .actual => &testcase.actual,
-        };
-    }
-
-    pub fn draw(testcase: *const TestCase, drawer: *Drawer, camera: Rect) !void {
-        try testcase.input.draw(drawer, camera);
-        try testcase.expected.draw(drawer, camera);
-        try testcase.actual.draw(drawer, camera);
-        try testcase.play_button.draw(drawer, camera);
-    }
-};
-
-const Button = struct {
-    hot_t: f32 = 0,
-    active_t: f32 = 0,
-    rect: Rect,
-    enabled: bool = true,
-    kind: enum { unknown, launch_testcase, see_failing_case, postit },
-
-    pub fn draw(button: *const Button, drawer: *Drawer, camera: Rect) !void {
-        switch (button.kind) {
-            .postit => {
-                // drawer.canvas.fillRect(camera, button.rect, .fromHex("#FFEBA1"));
-                const t: f32 = 2.0 + button.hot_t * 0.7 + button.active_t * 1.2;
-                drawer.canvas.fillShape(camera, .{ .pos = button.rect.getCenter(), .scale = button.rect.size.y / 2.0 }, try drawer.canvas.tmpShape(&.{
-                    .new(-1, -1),
-                    .new(1, -1),
-                    .new(1, 1 - t * 0.1),
-                    .new(1 - t * 0.25, 1),
-                    .new(-1, 1),
-                }), .fromHex("#FFEBA1"));
-                drawer.canvas.fillShape(camera, .{ .pos = button.rect.getCenter(), .scale = button.rect.size.y / 2.0 }, try drawer.canvas.tmpShape(&.{
-                    .new(1, 1 - t * 0.1),
-                    .new(1 - t * 0.25, 1),
-                    Vec2.new(1, 1).mirrorAroundSegment(
-                        .new(1, 1 - t * 0.1),
-                        .new(1 - t * 0.25, 1),
-                    ),
-                }), .fromHex("#d4bd68"));
-            },
-            .unknown => {
-                drawer.canvas.fillRect(camera, button.rect, COLORS.bg);
-                drawer.canvas.borderRect(camera, button.rect, math.lerp(0.05, 0.1, button.hot_t), .inner, .black);
-            },
-            .launch_testcase => {
-                drawer.canvas.fillRect(camera, button.rect, .gray(0.4));
-                const rect = button.rect.move(Vec2.new(-1, -1).scale((1 - button.hot_t) * 0.05 + (1 - @min(button.active_t, button.hot_t)) * 0.1));
-                drawer.canvas.fillRect(camera, rect, COLORS.bg);
-                drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
-                drawer.canvas.line(camera, &.{
-                    rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
-                    rect.getCenter().add(.new(0, 0)).addX(0.15),
-                    rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
-                }, 0.05, .black);
-            },
-            .see_failing_case => {
-                if (button.enabled) {
-                    drawer.canvas.rectGradient(
-                        camera,
-                        button.rect,
-                        .gray(0.75 + button.hot_t * 0.2 - button.active_t * 0.1),
-                        .gray(0.95 - button.hot_t * 0.2 - button.active_t * 0.1),
-                    );
-                } else {
-                    drawer.canvas.fillRect(camera, button.rect, .gray(0.7));
-                    return;
-                }
-            },
-        }
-    }
-
-    pub fn updateHot(button: *Button, self: Workspace.Focus.UiTarget.Kind, hot: Workspace.Focus.UiTarget, active: Workspace.Focus.UiTarget, delta_seconds: f32) void {
-        button.updateHot2(hot.equals(.{ .kind = self }), active.equals(.{ .kind = self }), delta_seconds);
-    }
-
-    pub fn updateHot2(button: *Button, hot: bool, active: bool, delta_seconds: f32) void {
-        math.lerp_towards(&button.hot_t, if (hot) 1 else 0, 0.6, delta_seconds);
-        math.lerp_towards(&button.active_t, if (active) 1 else 0, 0.6, delta_seconds);
-    }
-};
-
-// TODO: leave execution trace behind
-// reel + definition + explanation
-const Fnkbox = struct {
-    handle: Handle,
-    fnkname: VeryPhysicalSexpr,
-    testcases: std.ArrayListUnmanaged(TestCase),
-    scroll_testcases: f32 = 0,
-    executor: Executor,
-    execution: ?struct {
-        original_garland: VeryPhysicalGarland,
-        source: union(enum) {
-            testcase: usize,
-            input,
-        },
-        /// only valid if source is testcase
-        old_testcase_actual_value: *const Sexpr,
-        /// if source is input, this is ignored
-        state: enum { scrolling_towards_case, starting, executing, ending },
-        state_t: f32,
-        final_result: VeryPhysicalSexpr = undefined,
-    } = null,
-    text: []const u8,
-    status: Status,
-    status_bar: Button = .{ .rect = .unit, .kind = .see_failing_case },
-    folded: bool,
-    folded_t: f32,
-    fold_button: Button = .{ .rect = .unit, .kind = .unknown },
-    scroll_button_up: Button = .{ .rect = .unit, .kind = .unknown },
-    scroll_button_down: Button = .{ .rect = .unit, .kind = .unknown },
-    scroll_button_handle: Button = .{ .rect = .unit, .kind = .unknown },
-
-    pub fn save(fnkbox: *const Fnkbox, out: std.io.AnyWriter, scratch: std.mem.Allocator) anyerror!void {
-        try fnkbox.handle.save(out, scratch);
-        try fnkbox.executor.save(out, scratch);
-        if (fnkbox.execution) |e| {
-            try writeBool(out, true);
-            try e.original_garland.save(out, scratch);
-        } else {
-            try writeBool(out, false);
-        }
-        try fnkbox.fnkname.save(out, scratch);
-        try writeString(out, fnkbox.text);
-        try writeBool(out, fnkbox.folded);
-        try writeF32(out, fnkbox.scroll_testcases);
-
-        // TODO: don't save testcases for default fnks
-        try out.writeInt(u32, @intCast(fnkbox.testcases.items.len), .little);
-        for (fnkbox.testcases.items) |c| {
-            try c.save(out, scratch);
-        }
-    }
-
-    pub fn load(dst: *Fnkbox, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) anyerror!void {
-        assert(version == 0);
-        try dst.handle.load(in, version, mem);
-        try dst.executor.load(in, version, mem);
-        if (try readBool(in)) {
-            try dst.executor.garland.load(in, version, mem);
-            dst.executor.input = try .empty(dst.executor.input.point, &mem.hover_pool, dst.executor.input.is_pattern);
-        }
-        try dst.fnkname.load(in, version, mem);
-        dst.text = try readString(in, mem.gpa);
-        dst.folded = try readBool(in);
-        dst.folded_t = if (dst.folded) 1 else 0;
-        dst.scroll_testcases = try readF32(in);
-        dst.execution = null;
-        assert(dst.executor.animation == null);
-
-        // TODO: avoid jumping
-        dst.status_bar = .{ .rect = .unit, .kind = .see_failing_case };
-        dst.fold_button = .{ .rect = .unit, .kind = .unknown };
-        dst.scroll_button_up = .{ .rect = .unit, .kind = .unknown };
-        dst.scroll_button_down = .{ .rect = .unit, .kind = .unknown };
-        dst.scroll_button_handle = .{ .rect = .unit, .kind = .unknown };
-
-        const n_testcases: usize = @intCast(try in.readInt(u32, .little));
-        dst.testcases = .fromOwnedSlice(try mem.gpa.alloc(TestCase, n_testcases));
-        for (dst.testcases.items) |*c| {
-            try c.load(in, version, mem);
-        }
-    }
-
-    pub const Status = union(enum) {
-        /// index of the failing testcase
-        unsolved: usize,
-        // TODO: score
-        solved,
-    };
-
-    const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
-    const relative_top_testcase_point: Point = .{ .pos = .new(0, box_height - testcases_height) };
-    const text_height: f32 = 2.4;
-    const status_bar_height: f32 = 1;
-    const testcases_header_height: f32 = 0.85;
-    const testcases_height: f32 = 2.5 * visible_testcases;
-    const box_height = text_height + status_bar_height + testcases_header_height + testcases_height;
-    const visible_testcases = 2;
-
-    pub fn point(fnkbox: *const Fnkbox) Point {
-        return fnkbox.handle.point;
-    }
-
-    pub fn executorPoint(fnkbox: *const Fnkbox) Point {
-        const relative_executor_point: Point = .{ .pos = .new(-3, 1) };
-        const offset_y = box_height * (1 - fnkbox.folded_t);
-        return fnkbox.point().applyToLocalPoint(relative_executor_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
-    }
-
-    pub fn inputPoint(fnkbox: *const Fnkbox) Point {
-        return fnkbox.executorPoint().applyToLocalPoint(Executor.relative_input_point);
-        // const relative_input_point: Point = .{ .pos = .new(-4, 2.5) };
-        // const offset_y = box_height * (1 - fnkbox.folded_t);
-        // return fnkbox.point().applyToLocalPoint(relative_input_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
-    }
-
-    pub fn garlandPoint(fnkbox: *const Fnkbox) Point {
-        return fnkbox.executorPoint().applyToLocalPoint(Executor.relative_garland_point);
-        // const relative_garland_point: Point = .{ .pos = .new(1, 1) };
-        // const offset_y = box_height * (1 - fnkbox.folded_t);
-        // return fnkbox.point().applyToLocalPoint(relative_garland_point).applyToLocalPoint(.{ .pos = .new(0, offset_y) });
-    }
-
-    pub fn init(
-        text: []const u8,
-        fnkname: *const Sexpr,
-        base: Point,
-        testcases_values: []const Sample,
-        initial_definition: ?core.FnkBodyV2,
-        hover_pool: *HoveredSexpr.Pool,
-        mem: *core.VeryPermamentGameStuff,
-    ) !Fnkbox {
-        var geo: Fnkbox = undefined;
-        geo.handle = .{ .point = base };
-        geo.folded = false;
-        geo.folded_t = 0;
-        var testcases: @FieldType(Fnkbox, "testcases") = try .initCapacity(mem.gpa, testcases_values.len);
-        for (testcases_values) |v| {
-            testcases.appendAssumeCapacity(.{
-                // TODO: better default pos
-                .input = try .fromSexpr(hover_pool, v.input, base, false),
-                .expected = try .fromSexpr(hover_pool, v.expected, base, false),
-                .actual = try .empty(base, hover_pool, false),
-                .play_button = .{ .rect = .unit, .kind = .launch_testcase },
-            });
-        }
-        const result: Fnkbox = .{
-            .text = text,
-            .handle = geo.handle,
-            .executor = .initWithThings(
-                try .empty(geo.inputPoint(), hover_pool, false),
-                if (initial_definition) |def|
-                    try .fromDefinition(geo.garlandPoint(), def, mem, hover_pool)
-                else
-                    .init(geo.garlandPoint()),
-                geo.executorPoint(),
-                false,
-            ),
-            .fnkname = try .fromSexpr(hover_pool, fnkname, base.applyToLocalPoint(relative_fnkname_point), true),
-            .testcases = testcases,
-            .folded = false,
-            .folded_t = 0,
-            .status = undefined,
-        };
-        return result;
-    }
-
-    pub fn deinit(fnkbox: *Fnkbox, gpa: std.mem.Allocator) void {
-        fnkbox.testcases.deinit(gpa);
-        fnkbox.executor.garland.deinit(gpa);
-    }
-
-    pub fn cloneAsEmpty(
-        original: *const Fnkbox,
-        new_fnkname: *const Sexpr,
-        mem: *core.VeryPermamentGameStuff,
-    ) !Fnkbox {
-        const result: Fnkbox = .{
-            .text = "custom machine",
-            .handle = .{ .point = original.handle.point },
-            .executor = try .init(original.executorPoint(), &mem.hover_pool),
-            .fnkname = try .fromSexpr(&mem.hover_pool, new_fnkname, original.fnkname.point, true),
-            .testcases = .empty,
-            .folded = original.folded,
-            .folded_t = original.folded_t,
-            .status = undefined,
-        };
-        return result;
-    }
-
-    pub fn box(fnkbox: *const Fnkbox) Rect {
-        return .fromMeasureAndSizeV2(
-            .top_center,
-            fnkbox.point().pos.addY(0.75),
-            Vec2.new(16, box_height).scale(1.0 - fnkbox.folded_t),
-        );
-    }
-
-    pub fn statusBarGoal(fnkbox: *const Fnkbox) Rect {
-        return .fromMeasureAndSizeV2(
-            .top_center,
-            fnkbox.point().pos.addY(0.75).addY(text_height),
-            Vec2.new(16, status_bar_height),
-        );
-    }
-
-    pub fn testcasesBoxUnfolded(fnkbox: *const Fnkbox) Rect {
-        return .fromMeasureAndSizeV2(
-            .top_center,
-            fnkbox.point().pos.addY(0.75).addY(text_height + status_bar_height + testcases_header_height),
-            Vec2.new(16, testcases_height),
-        );
-    }
-
-    /// pos is the desired top-left for the handle
-    pub fn scrollHandleMovedTo(fnkbox: *Fnkbox, pos: Vec2, delta_seconds: f32) void {
-        // TODO: simplify
-        const handle_size: f32 = 1;
-        const rect = fnkbox.testcasesBoxUnfolded().withSize(.new(
-            undefined,
-            (1.0 / tof32(@max(1, fnkbox.testcases.items.len -| visible_testcases))) * (testcases_height - 1.2 - handle_size),
-        ), .top_left)
-            .move(.new(0.1, 0.6));
-        fnkbox.scroll_testcases = math.clamp(rect.localFromWorldPosition(pos).y, 0, tof32(fnkbox.testcases.items.len -| visible_testcases));
-        _ = delta_seconds;
-    }
-
-    pub fn scrollHandleGoal(fnkbox: *const Fnkbox, part: Workspace.Focus.UiTarget.ScrollbarPart) Rect {
-        // const handle_size = (testcases_height - 1.2) / @min(20.0, tof32(@max(fnkbox.testcases.items.len, visible_testcases) - visible_testcases));
-        const handle_size: f32 = 1;
-        return switch (part) {
-            .up => fnkbox.testcasesBoxUnfolded().withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1),
-            .down => fnkbox.testcasesBoxUnfolded().withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1),
-            // TODO: simplify
-            .handle => fnkbox.testcasesBoxUnfolded().withSize(.new(0.5, handle_size), .top_left).move(.new(0.1, 0.6))
-                .move(.new(0, (fnkbox.scroll_testcases / tof32(@max(1, fnkbox.testcases.items.len -| visible_testcases))) * (testcases_height - 1.2 - handle_size))),
-        };
-    }
-
-    pub fn foldButtonGoal(fnkbox: *const Fnkbox) Rect {
-        return .fromMeasureAndSizeV2(
-            .center,
-            fnkbox.point().pos.addY(0.75),
-            .half,
-        );
-    }
-
-    pub fn draw(fnkbox: *const Fnkbox, holding: VeryPhysicalCase.Holding, drawer: *Drawer, camera: Rect) !void {
-        const rect = fnkbox.box();
-        drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(0.65));
-        if (fnkbox.folded_t < 1) {
-            {
-                drawer.canvas.gl.startStencil();
-                drawer.canvas.fillRect(camera, rect, .white);
-                drawer.canvas.gl.doneStencil();
-                defer drawer.canvas.gl.stopStencil();
-                try drawer.canvas.drawText(0, camera, fnkbox.text, .centeredAt(fnkbox.handle.point.pos.addY(0.75 + text_height / 2.0)), 0.8, .black);
-
-                try fnkbox.status_bar.draw(drawer, camera);
-                switch (fnkbox.status) {
-                    .solved => {
-                        try drawer.canvas.drawText(0, camera, "Solved!", .centeredAt(fnkbox.statusBarGoal().getCenter()), 0.8, .black);
-                    },
-                    .unsolved => {
-                        try drawer.canvas.drawText(0, camera, "Unsolved!", .centeredAt(fnkbox.statusBarGoal().getCenter()), 0.75, .black);
-                    },
-                }
-
-                const testcases_labels_center = fnkbox.testcasesBoxUnfolded().get(.top_center).addY(-testcases_header_height * 0.5).addX(0.85);
-                try drawer.canvas.drawText(0, camera, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
-                try drawer.canvas.drawText(0, camera, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
-                try drawer.canvas.drawText(0, camera, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
-                try drawer.canvas.drawText(0, camera, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
-            }
-
-            if (rect.intersect(fnkbox.testcasesBoxUnfolded())) |r| {
-                drawer.canvas.gl.startStencil();
-                drawer.canvas.fillRect(camera, r, .white);
-                drawer.canvas.gl.doneStencil();
-                defer drawer.canvas.gl.stopStencil();
-                const min_k: usize = @intFromFloat(@max(0, fnkbox.scroll_testcases - 5));
-                const max_k: usize = @min(fnkbox.testcases.items.len, @as(usize, @intFromFloat(fnkbox.scroll_testcases + visible_testcases + 5)));
-                for (min_k..max_k) |k| {
-                    try fnkbox.testcases.items[k].draw(drawer, camera);
-                }
-                // for (fnkbox.testcases.items) |t| {
-                //     try t.draw(drawer, camera);
-                // }
-                try fnkbox.scroll_button_up.draw(drawer, camera);
-                try fnkbox.scroll_button_down.draw(drawer, camera);
-                try fnkbox.scroll_button_handle.draw(drawer, camera);
-            }
-        }
-        drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
-        if (fnkbox.execution == null or !fnkbox.folded) try fnkbox.fnkname.draw(drawer, camera);
-        try fnkbox.handle.draw(drawer, camera, 1);
-
-        if (fnkbox.execution != null and fnkbox.execution.?.state == .ending) {
-            const e = fnkbox.execution.?;
-            try fnkbox.executor.drawWithGarlandAlpha(
-                math.smoothstep(e.state_t, 0.9, 1),
-                holding,
-                drawer,
-                camera,
-            );
-            try e.final_result.draw(drawer, camera);
-        } else {
-            try fnkbox.executor.draw(holding, drawer, camera);
-        }
-        try fnkbox.fold_button.draw(drawer, camera);
-    }
-
-    pub fn updateUiHotness(fnkbox: *Fnkbox, fnkbox_index: usize, ui_hot: Workspace.Focus.UiTarget, ui_active: Workspace.Focus.UiTarget, delta_seconds: f32) void {
-        fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
-        fnkbox.status_bar.updateHot(.{ .fnkbox_see_failing_case = fnkbox_index }, ui_hot, ui_active, delta_seconds);
-        fnkbox.fold_button.updateHot(.{ .fnkbox_toggle_fold = fnkbox_index }, ui_hot, ui_active, delta_seconds);
-        fnkbox.scroll_button_up.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } }, ui_hot, ui_active, delta_seconds);
-        fnkbox.scroll_button_down.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } }, ui_hot, ui_active, delta_seconds);
-        fnkbox.scroll_button_handle.updateHot(.{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .handle } }, ui_hot, ui_active, delta_seconds);
-        for (fnkbox.testcases.items, 0..) |*testcase, testcase_index| {
-            testcase.play_button.updateHot(.{ .fnkbox_launch_testcase = .{ .fnkbox = fnkbox_index, .testcase = testcase_index } }, ui_hot, ui_active, delta_seconds);
-        }
-    }
-
-    pub fn updateStatus(fnkbox: *Fnkbox, known_fnks: []const Fnkbox, mem: *core.VeryPermamentGameStuff) !void {
-        // TODO: improve somehow
-        // TODO: leaks?
-        var all_fnks: FnkCollection = .init(mem.scratch.allocator());
-        for (known_fnks) |k| {
-            try all_fnks.putNoClobber(k.fnkname.value, try k.executor.garland.toDefinition(mem.scratch.allocator()));
-        }
-        var temp_mem: core.VeryPermamentGameStuff = .init(mem.scratch.allocator());
-        defer temp_mem.deinit();
-        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
-        defer scoring_run.deinit(false);
-        // Update 'actual' values
-        for (fnkbox.testcases.items) |*t| {
-            var exec = try core.ExecutionThread.init(t.input.value, fnkbox.fnkname.value, &scoring_run);
-            defer exec.deinit();
-
-            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true) catch |err| switch (err) {
-                // TODO: "NoMatchingCase" is no longer an error
-                error.FnkNotFound,
-                error.NoMatchingCase,
-                error.UsedUndefinedVariable,
-                error.InvalidMetaFnk,
-                error.TookTooLong,
-                => Sexpr.builtin.empty,
-                error.OutOfMemory => return err,
-                error.BAD_INPUT => @panic("panic"),
-            };
-            if (!actual_output.equals(t.actual.value) and fnkbox.execution == null) {
-                t.actual = try VeryPhysicalSexpr.fromSexpr(
-                    &mem.hover_pool,
-                    try mem.deepCloneSexpr(false, actual_output),
-                    t.actual.point,
-                    false,
-                );
-            }
-        }
-        // Get the actual status
-        for (fnkbox.testcases.items, 0..) |t, k| {
-            const actual_value: *const Sexpr = if (fnkbox.execution) |execution|
-                switch (execution.source) {
-                    .testcase => |k_source| if (k == k_source)
-                        execution.old_testcase_actual_value
-                    else
-                        t.actual.value,
-                    .input => t.actual.value,
-                }
-            else
-                t.actual.value;
-            if (!actual_value.equals(t.expected.value)) {
-                fnkbox.status = .{ .unsolved = k };
-                return;
-            }
-        }
-        fnkbox.status = .solved;
-    }
-
-    pub fn updateHoverT(fnkbox: *Fnkbox, self_address: Workspace.Focus.Target, hovering: Workspace.Focus.Target, delta_seconds: f32) void {
-        fnkbox.handle.updateHoverT(self_address, hovering, delta_seconds);
-
-        fnkbox.executor.updateHoverT(.{ .area = self_address.area, .kind = .{
-            .executor_handle = .{ .fnkbox = self_address.kind.fnkbox_handle },
-        } }, hovering, delta_seconds);
-    }
-
-    pub fn update(fnkbox: *Fnkbox, mem: *core.VeryPermamentGameStuff, known_fnks: []const Fnkbox, hover_pool: *HoveredSexpr.Pool, delta_seconds: f32) !?ExecutionTrace {
-        var result: ?ExecutionTrace = null;
-        math.lerp_towards_range(&fnkbox.scroll_testcases, 0, @max(0, tof32(fnkbox.testcases.items.len) - visible_testcases), 0.6, delta_seconds);
-        fnkbox.fold_button.rect.lerpTowards(fnkbox.foldButtonGoal(), 0.6, delta_seconds);
-        fnkbox.status_bar.rect.lerpTowards(fnkbox.statusBarGoal(), 0.6, delta_seconds);
-        fnkbox.status_bar.enabled = switch (fnkbox.status) {
-            .solved => false,
-            .unsolved => true,
-        };
-        fnkbox.scroll_button_up.rect.lerpTowards(fnkbox.scrollHandleGoal(.up), 0.6, delta_seconds);
-        fnkbox.scroll_button_down.rect.lerpTowards(fnkbox.scrollHandleGoal(.down), 0.6, delta_seconds);
-        fnkbox.scroll_button_handle.rect.lerpTowards(fnkbox.scrollHandleGoal(.handle), 0.6, delta_seconds);
-        math.lerp_towards(&fnkbox.folded_t, if (fnkbox.folded) 1 else 0, 0.6, delta_seconds);
-        fnkbox.executor.handle.point.lerp_towards(fnkbox.executorPoint(), 0.6, delta_seconds);
-        try fnkbox.executor.updateSpringsAndStuff(delta_seconds);
-        fnkbox.fnkname.point.lerp_towards(fnkbox.point().applyToLocalPoint(relative_fnkname_point), 0.6, delta_seconds);
-        for (fnkbox.testcases.items, 0..) |*t, k| {
-            const center = fnkbox.point()
-                .applyToLocalPoint(relative_top_testcase_point)
-                .applyToLocalPoint(.{ .pos = .new(0, 2 + 2.5 * (tof32(k) - fnkbox.scroll_testcases)) });
-            t.input.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(-4, 0) }), 0.6, delta_seconds);
-            t.expected.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(0, 0) }), 0.6, delta_seconds);
-            t.actual.point.lerp_towards(center.applyToLocalPoint(.{ .pos = .new(4, 0) }), 0.6, delta_seconds);
-            t.play_button.rect.lerpTowards(.fromCenterAndSize(center.applyToLocalPosition(.new(-6, 0)), .one), 0.6, delta_seconds);
-        }
-        if (fnkbox.execution) |*execution| {
-            switch (execution.source) {
-                .testcase => |testcase_index| switch (execution.state) {
-                    .scrolling_towards_case => {
-                        const min: f32 = tof32(testcase_index) - visible_testcases + 1;
-                        const max: f32 = tof32(testcase_index);
-                        math.lerp_towards_range(&fnkbox.scroll_testcases, min, max, 0.1, delta_seconds);
-                        math.towards_range(&fnkbox.scroll_testcases, tof32(testcase_index) - visible_testcases + 1, tof32(testcase_index), delta_seconds * 0.1);
-                        if (math.inRangeClosed(fnkbox.scroll_testcases, min, max)) {
-                            execution.state = .starting;
-                            execution.state_t = 0;
-                            fnkbox.executor.input = try fnkbox.testcases.items[testcase_index].input.dupeSubValue(&.{}, hover_pool);
-                            // fnkbox.executor.input.point = fnkbox.testcases.items[testcase_index].input.point;
-                        }
-                    },
-                    .starting => {
-                        fnkbox.executor.input.point = .lerp(
-                            fnkbox.testcases.items[testcase_index].input.point,
-                            fnkbox.executor.inputPoint(),
-                            execution.state_t,
-                        );
-                        execution.state_t += delta_seconds / 0.8;
-                        if (execution.state_t >= 1) {
-                            execution.state = .executing;
-                            execution.state_t = 0;
-                        }
-                    },
-                    .executing => {
-                        const executor = &fnkbox.executor;
-                        try executor.advanceAnimation(mem, known_fnks, hover_pool, delta_seconds);
-                        if (executor.animation == null) {
-                            execution.state = .ending;
-                            execution.state_t = 0;
-                            execution.final_result = executor.input; // try executor.input.clone(hover_pool);
-                            result = try .fromExecutor(executor.prev_pills.items, null, .new(0, 0), 0.75, mem, hover_pool);
-
-                            try fnkbox.resetExecutor(execution.original_garland, hover_pool);
-                        }
-                    },
-                    .ending => {
-                        execution.final_result.point = .lerp(
-                            fnkbox.inputPoint(),
-                            fnkbox.testcases.items[testcase_index].expected.point.applyToLocalPoint(.{ .pos = .new(4, 0) }),
-                            execution.state_t,
-                        );
-
-                        {
-                            const min: f32 = tof32(testcase_index) - visible_testcases + 1;
-                            const max: f32 = tof32(testcase_index);
-                            math.lerp_towards_range(&fnkbox.scroll_testcases, min, max, 0.3, delta_seconds);
-                            math.towards_range(&fnkbox.scroll_testcases, tof32(testcase_index) - visible_testcases + 1, tof32(testcase_index), delta_seconds * 0.2);
-                        }
-
-                        execution.state_t += delta_seconds / 0.8;
-                        if (execution.state_t >= 1) {
-                            fnkbox.testcases.items[testcase_index].actual = execution.final_result;
-                            // TODO: memory leak here
-                            fnkbox.execution = null;
-                            // TODO: call this somewhere else
-                            try fnkbox.updateStatus(known_fnks, mem);
-                        }
-                    },
-                },
-                .input => {
-                    const executor = &fnkbox.executor;
-                    try executor.advanceAnimation(mem, known_fnks, hover_pool, delta_seconds);
-                    if (executor.animation == null) {
-                        result = try .fromExecutor(executor.prev_pills.items, &executor.input, .new(-5, 0), 0.75, mem, hover_pool);
-                        try fnkbox.resetExecutor(execution.original_garland, hover_pool);
-                        // TODO: memory leak here?
-                        fnkbox.execution = null;
-                    }
-                },
-            }
-
-            // TODO: this is ignored when the animation is active
-            // e.handle.pos.lerpTowards(fnkbox.point().applyToLocalPoint(relative_executor_point).pos, 0.6, delta_seconds);
-        }
-        return result;
-    }
-
-    pub fn resetExecutor(fnkbox: *Fnkbox, original_garland: VeryPhysicalGarland, hover_pool: *HoveredSexpr.Pool) !void {
-        fnkbox.executor.garland = original_garland;
-        fnkbox.executor.input = try .empty(fnkbox.inputPoint(), hover_pool, false);
-        fnkbox.executor.prev_pills.clearRetainingCapacity();
-        fnkbox.executor.enqueued_stack.clearRetainingCapacity();
-        fnkbox.executor.animation = null;
-    }
-};
-
-// in-world notes/tutorials
-// TODO: player should be able to draw on these, freehand
-pub const Postit = struct {
-    button: Button,
-    parts: []const DrawingPart,
-
-    // TODO: remove this hack
-    var asdf_arena_for_all_postit_parts: std.mem.Allocator = undefined;
-
-    const DrawingPart = struct {
-        point: Point,
-        part: union(enum) {
-            paragraph: []const []const u8,
-            arrow,
-            launch_testcase_button,
-            piece_center,
-        },
-    };
-
-    pub fn fromText(lines: []const []const u8, center: Vec2) Postit {
-        return .{
-            .button = .{ .rect = .fromCenterAndSize(center, .both(6)), .kind = .postit },
-            // .parts = try asdf_arena_for_all_postit_parts.dupe(DrawingPart, &.{
-            //     .point = .{ .pos = .both(3) },
-            .parts = asdf_arena_for_all_postit_parts.dupe(DrawingPart, &.{.{
-                .point = .{ .pos = .both(3) },
-                .part = .{ .paragraph = lines },
-            }}) catch @panic("TODO"),
-        };
-    }
-
-    pub fn fromParts(comptime parts: []const DrawingPart, center: Vec2) Postit {
-        return .{
-            .button = .{ .rect = .fromCenterAndSize(center, .both(6)), .kind = .postit },
-            .parts = parts,
-        };
-    }
-
-    pub fn draw(postit: *const Postit, drawer: *Drawer, camera: Rect) !void {
-        try postit.button.draw(drawer, camera);
-        const top_left: Point = .{ .pos = postit.button.rect.top_left };
-        for (postit.parts) |part| {
-            const center = top_left.applyToLocalPoint(part.point);
-            switch (part.part) {
-                .paragraph => |lines| {
-                    for (lines, 0..) |line, k| {
-                        try drawer.canvas.drawText(0, camera, line, .centeredAt(center.applyToLocalPosition(
-                            .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)),
-                        )), 0.8 * part.point.scale, .black);
-                    }
-                },
-                .arrow => {
-                    drawer.canvas.line(camera, &.{
-                        center.applyToLocalPosition(.new(-0.5, 0)),
-                        center.applyToLocalPosition(.new(0.5, 0)),
-                        center.applyToLocalPosition(.new(0.0, 0.25)),
-                        center.applyToLocalPosition(.new(0.5, 0)),
-                        center.applyToLocalPosition(.new(0.0, -0.25)),
-                    }, 0.1 * part.point.scale, .black);
-                },
-                .launch_testcase_button => {
-                    const temp: Button = .{ .kind = .launch_testcase, .rect = .fromPoint(center, .center, .one) };
-                    // try temp.draw(drawer, camera);
-                    const rect = temp.rect;
-                    drawer.canvas.borderRect(camera, rect, 0.05, .inner, .black);
-                    drawer.canvas.line(camera, &.{
-                        rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
-                        rect.getCenter().add(.new(0, 0)).addX(0.15),
-                        rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
-                    }, 0.05, .black);
-                },
-                .piece_center => {
-                    drawer.canvas.line(camera, &.{
-                        center.applyToLocalPosition(.new(-0.5, 0)),
-                        center.applyToLocalPosition(.new(-0.2, 0)),
-                    }, 0.05 * center.scale, .black);
-                    drawer.canvas.line(camera, &.{
-                        center.applyToLocalPosition(.new(0.2, 0)),
-                        center.applyToLocalPosition(.new(0.5, 0)),
-                    }, 0.05 * center.scale, .black);
-                    drawer.canvas.strokeCircle(128, camera, center.pos, center.scale * 0.2, 0.05 * center.scale, .black);
-                    const arc: [32]Vec2 = comptime funk.map(
-                        Vec2.fromTurns,
-                        &funk.linspace(-0.15, 0.15, 32, true),
-                    );
-                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(-1.5, 0) }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
-                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(1.5, 0), .turns = 0.5 }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
-                },
-            }
-        }
-    }
-};
-
-const ToolbarTrash = struct {
-    rect: Rect,
-    hot_t: f32 = 0,
-
-    pub fn draw(trash: *const ToolbarTrash, drawer: *Drawer, camera: Rect) !void {
-        const line_width = camera.size.y * 0.003;
-        drawer.canvas.fillRect(camera, trash.rect, COLORS.bg);
-        drawer.canvas.borderRect(camera, trash.rect, line_width * (1 + trash.hot_t), .inner, .black);
-        const center = trash.rect.getCenter();
-        drawer.canvas.line(camera, &.{
-            center.add(Vec2.xneg_yneg.scale(line_width * 10)),
-            center.add(Vec2.xpos_ypos.scale(line_width * 10)),
-        }, line_width * 3, .black);
-        drawer.canvas.line(camera, &.{
-            center.add(Vec2.xneg_ypos.scale(line_width * 10)),
-            center.add(Vec2.xpos_yneg.scale(line_width * 10)),
-        }, line_width * 3, .black);
-    }
-};
-
-pub const Lens = struct {
-    source: Vec2,
-    target: Vec2,
-    comptime source_radius: f32 = 0.25,
-    comptime target_radius: f32 = 1,
-    source_hot_t: f32 = 0,
-    target_hot_t: f32 = 0,
-    tmp_visible_sexprs: std.ArrayListUnmanaged(struct {
-        original_place: Workspace.BaseSexprPlace,
-        lens_transform: Transform,
-    }) = .empty,
-    const handle_radius: f32 = 0.1;
-
-    /// To understand this, think of the fixed point of the lenses zoom
-    pub const Transform = struct {
-        center: Vec2,
-        scale: f32,
-
-        pub const identity: Transform = .{ .center = .zero, .scale = 1 };
-
-        pub fn actOn(transform: Transform, point: Point) Point {
-            return .{
-                .pos = transform.center.add(
-                    point.pos.sub(transform.center).scale(transform.scale),
-                ),
-                .scale = point.scale * transform.scale,
-                .turns = point.turns,
-            };
-        }
-
-        pub fn combine(first: Transform, second: Transform) Transform {
-            // center is the fixed point of applying first, then second
-            return .{
-                .center = Vec2.add(
-                    first.center.scale((1.0 - first.scale) * second.scale),
-                    second.center.scale(1.0 - second.scale),
-                ).scale(1.0 / (1.0 - first.scale * second.scale)),
-                .scale = first.scale * second.scale,
-            };
-        }
-    };
-
-    pub fn getTransform(lens: Lens) Transform {
-        const scale = lens.target_radius / lens.source_radius;
-        const delta = lens.target.sub(lens.source);
-        return .{
-            .center = lens.source.sub(delta.scale(1.0 / (scale - 1.0))),
-            .scale = scale,
-        };
-    }
-
-    pub fn setHandlePos(self: *Lens, part: Part, pos: Vec2) void {
-        switch (part) {
-            .source => self.source = pos.sub(.fromPolar(self.source_radius + 0.05, 0.125)),
-            .target => self.target = pos.sub(.fromPolar(self.target_radius + 0.05, 0.125)),
-        }
-    }
-
-    // TODO: refactor to use Point?
-    pub fn handlePos(self: Lens, part: Part) Vec2 {
-        return switch (part) {
-            .source => self.sourceHandlePos(),
-            .target => self.targetHandlePos(),
-        };
-    }
-
-    pub fn sourceHandlePos(self: Lens) Vec2 {
-        return self.source.add(.fromPolar(self.source_radius + 0.05, 0.125));
-    }
-
-    pub fn targetHandlePos(self: Lens) Vec2 {
-        return self.target.add(.fromPolar(self.target_radius + 0.05, 0.125));
-    }
-
-    pub const Part = enum { source, target };
-
-    pub fn update(self: *Lens, part: ?Part, delta_seconds: f32) void {
-        math.lerp_towards(&self.source_hot_t, if (part != null and part.? == .source) 1 else 0, 0.6, delta_seconds);
-        math.lerp_towards(&self.target_hot_t, if (part != null and part.? == .target) 1 else 0, 0.6, delta_seconds);
-    }
-
-    pub fn clone(self: *const Lens) Lens {
-        // not plain old data due to tmp_*, but that's not important
-        return self.*;
-    }
-};
-
-pub fn getGarlandForFnk(
-    known_fnks: []const Fnkbox,
-    fnkname: *const Sexpr,
-    new_point: Point,
-    mem: *core.VeryPermamentGameStuff,
-    hover_pool: *HoveredSexpr.Pool,
-) !?VeryPhysicalGarland {
-    for (known_fnks) |k| {
-        if (k.fnkname.value.equals(fnkname)) {
-            var garland = try (if (k.execution) |e|
-                e.original_garland
-            else
-                k.executor.garland).clone(mem.gpa, hover_pool);
-            garland.fnkname = try .fromSexpr(hover_pool, fnkname, .{}, true);
-            garland.kinematicUpdate(new_point, null, std.math.inf(f32));
-            return garland;
-        }
-    } else return null;
-}
-
-pub const SerializedTag = enum(u32) {
-    VeryPhysicalSexpr,
-    VeryPhysicalCase,
-    VeryPhysicalGarland,
-    Fnkbox,
-};
-
-const WorkspaceArea = struct {
-    lenses: std.ArrayListUnmanaged(Lens),
-    sexprs: std.ArrayListUnmanaged(VeryPhysicalSexpr),
-    cases: std.ArrayListUnmanaged(VeryPhysicalCase),
-    garlands: std.ArrayListUnmanaged(VeryPhysicalGarland),
-    executors: std.ArrayListUnmanaged(Executor),
-    fnkviewers: std.ArrayListUnmanaged(Fnkviewer),
-    fnkboxes: std.ArrayListUnmanaged(Fnkbox),
-    traces: std.ArrayListUnmanaged(ExecutionTrace),
-    trashes: std.ArrayListUnmanaged(ToolbarTrash),
-    postits: std.ArrayListUnmanaged(Postit),
-
-    gpa_for_arraylists: std.mem.Allocator,
-    area: Focus.Target.Area,
-
-    const Focus = Workspace.Focus;
-    const BaseSexprPlace = Workspace.BaseSexprPlace;
-    const CaseHandle = Workspace.CaseHandle;
-    const GarlandHandle = Workspace.GarlandHandle;
-    const SexprPlace = Workspace.SexprPlace;
-
-    pub fn init(dst: *WorkspaceArea, area: Focus.Target.Area, gpa: std.mem.Allocator) void {
-        dst.* = .{
-            .lenses = .empty,
-            .sexprs = .empty,
-            .cases = .empty,
-            .garlands = .empty,
-            .executors = .empty,
-            .fnkviewers = .empty,
-            .fnkboxes = .empty,
-            .traces = .empty,
-            .postits = .empty,
-            .trashes = .empty,
-            .gpa_for_arraylists = gpa,
-            .area = area,
-        };
-    }
-
-    pub fn deinit(workspace: *WorkspaceArea, gpa: std.mem.Allocator) void {
-        for (workspace.cases.items) |*c| {
-            c.next.deinit(gpa);
-        }
-        for (workspace.garlands.items) |*g| {
-            g.deinit(gpa);
-        }
-        inline for (.{
-            workspace.executors.items,
-            workspace.fnkviewers.items,
-            workspace.fnkboxes.items,
-            workspace.traces.items,
-        }) |things| {
-            for (things) |*e| {
-                if (std.meta.hasMethod(@TypeOf(e), "deinit")) {
-                    e.deinit(gpa);
-                } else {
-                    e.garland.deinit(gpa);
-                }
-            }
-        }
-        workspace.lenses.deinit(workspace.gpa_for_arraylists);
-        workspace.sexprs.deinit(workspace.gpa_for_arraylists);
-        workspace.cases.deinit(workspace.gpa_for_arraylists);
-        workspace.garlands.deinit(workspace.gpa_for_arraylists);
-        workspace.executors.deinit(workspace.gpa_for_arraylists);
-        workspace.fnkviewers.deinit(workspace.gpa_for_arraylists);
-        workspace.fnkboxes.deinit(workspace.gpa_for_arraylists);
-        workspace.traces.deinit(workspace.gpa_for_arraylists);
-        workspace.postits.deinit(workspace.gpa_for_arraylists);
-    }
-
-    pub fn save(workspace: *const WorkspaceArea, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        // TODO: don't use tags, instead store the length of the array
-        for (workspace.sexprs.items) |s| {
-            try writeEnum(out, SerializedTag, .VeryPhysicalSexpr, .little);
-            try s.save(out, scratch);
-        }
-        for (workspace.cases.items) |s| {
-            try writeEnum(out, SerializedTag, .VeryPhysicalCase, .little);
-            try s.save(out, scratch);
-        }
-        for (workspace.garlands.items) |s| {
-            try writeEnum(out, SerializedTag, .VeryPhysicalGarland, .little);
-            try s.save(out, scratch);
-        }
-        for (workspace.fnkboxes.items) |s| {
-            try writeEnum(out, SerializedTag, .Fnkbox, .little);
-            try s.save(out, scratch);
-        }
-    }
-
-    pub fn load(dst: *WorkspaceArea, in: std.io.AnyReader, version: u32, mem: *core.VeryPermamentGameStuff) !void {
-        dst.init(.main_area, mem.gpa);
-
-        while (in.readEnum(SerializedTag, .little) catch |err| switch (err) {
-            error.EndOfStream => null,
-            else => return err,
-        }) |tag| {
-            switch (tag) {
-                .VeryPhysicalSexpr => {
-                    var x: VeryPhysicalSexpr = undefined;
-                    try x.load(in, version, mem);
-                    try dst.sexprs.append(dst.gpa_for_arraylists, x);
-                },
-                .VeryPhysicalCase => {
-                    var x: VeryPhysicalCase = undefined;
-                    try x.load(in, version, mem);
-                    try dst.cases.append(dst.gpa_for_arraylists, x);
-                },
-                .VeryPhysicalGarland => {
-                    var x: VeryPhysicalGarland = undefined;
-                    try x.load(in, version, mem);
-                    try dst.garlands.append(dst.gpa_for_arraylists, x);
-                },
-                .Fnkbox => {
-                    var x: Fnkbox = undefined;
-                    try x.load(in, version, mem);
-                    try dst.fnkboxes.append(dst.gpa_for_arraylists, x);
-                },
-            }
-        }
-    }
-
-    pub fn draw(workspace: *WorkspaceArea, camera: Rect, holding: VeryPhysicalCase.Holding, platform: PlatformGives, drawer: *Drawer) !void {
-        // TODO: remove duplication
-        for (workspace.sexprs.items) |s| {
-            try s.draw(drawer, camera);
-        }
-        for (workspace.cases.items) |s| {
-            try s.draw(holding, drawer, camera);
-        }
-        for (workspace.garlands.items) |s| {
-            try s.draw(holding, drawer, camera);
-        }
-
-        inline for (.{
-            workspace.fnkboxes.items,
-            workspace.executors.items,
-            workspace.fnkviewers.items,
-        }) |things| {
-            for (things) |g| {
-                try g.draw(holding, drawer, camera);
-            }
-        }
-
-        inline for (.{
-            workspace.traces.items,
-            workspace.postits.items,
-        }) |things| {
-            for (things) |g| {
-                try g.draw(drawer, camera);
-            }
-        }
-
-        for (workspace.lenses.items) |lens| {
-            drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .gray(0.5));
-
-            if (camera.plusMargin(lens.target_radius + 1).contains(lens.target)) {
-                platform.gl.startStencil();
-                drawer.canvas.fillCircle(camera, lens.target, lens.target_radius, .white);
-                platform.gl.doneStencil();
-                defer platform.gl.stopStencil();
-
-                for (lens.tmp_visible_sexprs.items) |s| {
-                    var scaled = workspace.sexprAtPlace(s.original_place).*;
-                    scaled.point = s.lens_transform.actOn(scaled.point);
-                    try scaled.draw(drawer, camera);
-                }
-            }
-
-            drawer.canvas.line(camera, &.{
-                lens.source.towardsPure(lens.target, lens.source_radius),
-                lens.target.towardsPure(lens.source, lens.target_radius),
-            }, 0.05, .black);
-            drawer.canvas.strokeCircle(128, camera, lens.source, lens.source_radius, 0.05, .black);
-            drawer.canvas.strokeCircle(128, camera, lens.target, lens.target_radius, 0.05, .black);
-            drawer.canvas.fillCircle(
-                camera,
-                lens.sourceHandlePos(),
-                Lens.handle_radius * (1.0 + 0.2 * lens.source_hot_t),
-                .black,
-            );
-            drawer.canvas.fillCircle(
-                camera,
-                lens.targetHandlePos(),
-                Lens.handle_radius * (1.0 + 0.2 * lens.target_hot_t),
-                .black,
-            );
-        }
-    }
-
-    pub fn updateLensesData(workspace: *WorkspaceArea, frame_arena: std.mem.Allocator) !void {
-        // set lenses data
-        for (workspace.lenses.items, 0..) |*lens, lens_index| {
-            lens.tmp_visible_sexprs = .empty;
-
-            // TODO: cull and only store visible parts
-
-            const top_level_things = try workspace.topLevelThings(frame_arena);
-            for (top_level_things) |parent_address| {
-                const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
-                for (owned_sexprs) |base| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = base,
-                        .lens_transform = lens.getTransform(),
-                    });
-                }
-            }
-
-            for (0..lens_index) |other_lens_index| {
-                const other_lens = workspace.lenses.items[other_lens_index];
-                if (lens.source.distTo(other_lens.target) > lens.source_radius + other_lens.target_radius) continue;
-                for (other_lens.tmp_visible_sexprs.items) |s| {
-                    try lens.tmp_visible_sexprs.append(frame_arena, .{
-                        .original_place = s.original_place,
-                        .lens_transform = .combine(s.lens_transform, lens.getTransform()),
-                    });
-                }
-            }
-        }
-    }
-
-    pub fn updateSpringsAndStuff(workspace: *WorkspaceArea, delta_seconds: f32) void {
-        for (workspace.cases.items) |*s| {
-            s.update(delta_seconds);
-        }
-
-        for (workspace.garlands.items) |*g| {
-            g.update(delta_seconds);
-        }
-
-        for (workspace.traces.items) |*c| {
-            c.update(delta_seconds);
-        }
-    }
-
-    pub fn updateHoverT(
-        workspace: *WorkspaceArea,
-        hovered_or_dropzone_thing: Focus.Target,
-        grabbing: Focus.Target,
-        frame_arena: std.mem.Allocator,
-        delta_seconds: f32,
-        general: *Workspace,
-    ) !void {
-        const hovering: Focus.Target = switch (grabbing.kind) {
-            else => .nothing,
-            .nothing => hovered_or_dropzone_thing,
-        };
-        const dropzone: Focus.Target = switch (grabbing.kind) {
-            else => hovered_or_dropzone_thing,
-            .nothing => .nothing,
-        };
-
-        const top_level_things = try workspace.topLevelThings(frame_arena);
-        for (top_level_things) |parent_address| {
-            const owned_sexprs = try workspace.ownedSexprs(parent_address, frame_arena);
-            for (owned_sexprs) |base| {
-                assert(parent_address.area == workspace.area);
-                const s_address: Focus.Target = .fromBaseSexpr(base, parent_address.area);
-                const s = workspace.sexprAtPlace(base);
-                if (grabbing.equalsExceptForLens(s_address)) {
-                    s.is_pattern = switch (dropzone.kind) {
-                        .nothing => s.is_pattern,
-                        else => unreachable,
-                        .sexpr => |x| general.sexprAtPlace(x.base, dropzone.area).is_pattern,
-                    };
-                    s.hovered.update(switch (dropzone.kind) {
-                        .sexpr => &.{},
-                        .nothing => null,
-                        else => unreachable,
-                    }, 2.0, delta_seconds);
-                    s.updateIsPattern(delta_seconds);
-                } else {
-                    const hovered = if (hovering.area != parent_address.area) null else switch (hovering.kind) {
-                        else => null,
-                        .sexpr => |sexpr| blk: {
-                            break :blk if (sexpr.base.equals(base)) sexpr.local else null;
-                        },
-                    };
-                    s.hovered.update(hovered, 1.0, delta_seconds);
-                    s.updateIsPattern(delta_seconds);
-                }
-            }
-
-            const owned_garlands = try workspace.ownedGarlands(parent_address, frame_arena);
-            for (owned_garlands) |base| {
-                const g = workspace.garlandAt(base);
-                const handle = &g.handle;
-                const hovered: f32 = if (hovered_or_dropzone_thing.area != workspace.area) 0 else switch (hovered_or_dropzone_thing.kind) {
-                    else => 0,
-                    .garland_handle => |h| if (workspace.garlandHandleRef(h) == handle) 1 else 0,
-                };
-                math.lerp_towards(&handle.hot_t, hovered, 0.6, delta_seconds);
-            }
-
-            const owned_cases = try workspace.ownedCases(parent_address, frame_arena);
-            for (owned_cases) |base| {
-                const handle = workspace.caseHandleRef(base);
-                const hovered: f32 = if (hovered_or_dropzone_thing.area != workspace.area) 0 else switch (hovered_or_dropzone_thing.kind) {
-                    else => 0,
-                    .case_handle => |h| if (workspace.caseHandleRef(h) == handle) 1 else 0,
-                };
-                math.lerp_towards(&handle.hot_t, hovered, 0.6, delta_seconds);
-            }
-        }
-
-        // TODO: reduce duplication?
-        // update hover_t for other kinds of handles
-        for (workspace.lenses.items, 0..) |*lens, k| {
-            const hovered = switch (hovering.kind) {
-                else => null,
-                .lens_handle => |handle| if (handle.index == k) handle.part else null,
-            };
-            lens.update(hovered, delta_seconds);
-        }
-        for (workspace.executors.items, 0..) |*executor, k| {
-            executor.updateHoverT(.{ .area = workspace.area, .kind = .{ .executor_handle = .{ .board = k } } }, hovering, delta_seconds);
-        }
-        for (workspace.fnkviewers.items, 0..) |*thing, k| {
-            const hovered: bool = switch (hovering.kind) {
-                else => false,
-                .fnkviewer_handle => |index| index == k,
-            };
-            thing.handle.update(hovered, delta_seconds);
-        }
-        for (workspace.fnkboxes.items, 0..) |*thing, k| {
-            thing.updateHoverT(.{ .area = workspace.area, .kind = .{ .fnkbox_handle = k } }, hovering, delta_seconds);
-        }
-    }
-
-    pub fn addOne(workspace: *WorkspaceArea, kind: enum { sexpr, case, garland }) !Focus.Target {
-        switch (kind) {
-            .garland => {
-                _ = try workspace.garlands.addOne(workspace.gpa_for_arraylists);
-                return .{ .kind = .{
-                    .garland_handle = .{
-                        .local = &.{},
-                        .parent = .{ .garland = workspace.garlands.items.len - 1 },
-                    },
-                }, .area = workspace.area };
-            },
-            .case => {
-                _ = try workspace.cases.addOne(workspace.gpa_for_arraylists);
-                return .{ .kind = .{
-                    .case_handle = .{ .board = workspace.cases.items.len - 1 },
-                }, .area = workspace.area };
-            },
-            .sexpr => {
-                _ = try workspace.sexprs.addOne(workspace.gpa_for_arraylists);
-                return .{ .kind = .{ .sexpr = .{
-                    .local = &.{},
-                    .base = .{ .board = workspace.sexprs.items.len - 1 },
-                } }, .area = workspace.area };
-            },
-        }
-    }
-
-    fn findHoverableOrDropzoneAtPosition(
-        workspace: *WorkspaceArea,
-        grabbed_tag: Focus.Target.Kind.Tag,
-        pos: Vec2,
-        res: std.mem.Allocator,
-        scratch: std.mem.Allocator,
-    ) !Focus.Target {
-        // lenses
-        if (grabbed_tag == .nothing) {
-            for (workspace.lenses.items, 0..) |lens, k| {
-                if (pos.distTo(lens.sourceHandlePos()) < Lens.handle_radius) {
-                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .source } }, .area = workspace.area };
-                }
-                if (pos.distTo(lens.targetHandlePos()) < Lens.handle_radius) {
-                    return .{ .kind = .{ .lens_handle = .{ .index = k, .part = .target } }, .area = workspace.area };
-                }
-            }
-        }
-
-        // executors
-        if (grabbed_tag == .nothing) {
-            for (workspace.executors.items, 0..) |executor, k| {
-                if (executor.brake_handle.overlapped(pos) and CRANKS_ENABLED) {
-                    return .{ .kind = .{ .executor_brake_handle = .{ .board = k } }, .area = workspace.area };
-                }
-                if (executor.crank_handle.overlapped(pos) and CRANKS_ENABLED) {
-                    return .{ .kind = .{ .executor_crank_handle = .{ .board = k } }, .area = workspace.area };
-                }
-                if (executor.handle.overlapped(pos)) {
-                    return .{ .kind = .{ .executor_handle = .{ .board = k } }, .area = workspace.area };
-                }
-            }
-        }
-
-        // executors in fnkboxes
-        if (grabbed_tag == .nothing) {
-            for (workspace.fnkboxes.items, 0..) |thing, k| {
-                const executor = thing.executor;
-                if (executor.crank_handle.overlapped(pos) and CRANKS_ENABLED) {
-                    return .{ .kind = .{ .executor_crank_handle = .{ .fnkbox = k } }, .area = workspace.area };
-                }
-                if (executor.brake_handle.overlapped(pos) and CRANKS_ENABLED) {
-                    return .{ .kind = .{ .executor_brake_handle = .{ .fnkbox = k } }, .area = workspace.area };
-                }
-            }
-        }
-
-        // fnkviewers
-        if (grabbed_tag == .nothing) {
-            for (workspace.fnkviewers.items, 0..) |fnkviewer, k| {
-                if (fnkviewer.handle.overlapped(pos)) {
-                    return .{ .kind = .{ .fnkviewer_handle = k }, .area = workspace.area };
-                }
-            }
-        }
-
-        // fnkboxes handles
-        if (grabbed_tag == .nothing) {
-            for (workspace.fnkboxes.items, 0..) |thing, k| {
-                if (thing.handle.overlapped(pos)) {
-                    return .{ .kind = .{ .fnkbox_handle = k }, .area = workspace.area };
-                }
-            }
-        }
-
-        const top_level_things = try workspace.topLevelThings(scratch);
-
-        // sexprs inside lenses and everywhere else
-        if (grabbed_tag == .nothing or grabbed_tag == .sexpr) {
-            const is_dropzone = grabbed_tag != .nothing;
-            for (workspace.lenses.items) |lens| {
-                if (pos.distTo(lens.target) < lens.target_radius) {
-                    for (lens.tmp_visible_sexprs.items) |s| {
-                        const original = sexprAtPlace(workspace, s.original_place);
-                        if (try ViewHelper.overlapsSexpr(
-                            // TODO: check this doesn't leak
-                            res,
-                            original.is_pattern,
-                            original.value,
-                            s.lens_transform.actOn(original.point),
-                            pos,
-                            is_dropzone,
-                        )) |address| {
-                            return .{
-                                .kind = .{
-                                    .sexpr = .{
-                                        .base = try s.original_place.clone(res),
-                                        .local = address,
-                                    },
-                                },
-                                .lens_transform = s.lens_transform,
-                                .area = workspace.area,
-                            };
-                        }
-                    }
-                }
-            }
-
-            for (top_level_things) |parent_address| {
-                const owned_sexprs = try workspace.ownedSexprs(parent_address, scratch);
-                for (owned_sexprs) |base| {
-                    // some special cases
-                    if (grabbed_tag != .nothing and base.immutable(parent_address.area)) continue;
-                    switch (base) {
-                        .executor_input => |h| switch (h) {
-                            .board => |k| if (workspace.executors.items[k].animating()) continue,
-                            .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
-                        },
-                        .fnkbox_fnkname => {
-                            // TODO: change this if some part of fnkbox gets mutable
-                            if (grabbed_tag != .nothing) continue;
-                        },
-                        .fnkbox_testcase => |t| {
-                            // TODO: change this if some part of fnkbox gets mutable
-                            if (grabbed_tag != .nothing) continue;
-                            const fnkbox = &workspace.fnkboxes.items[t.fnkbox];
-                            if (!fnkbox.box().contains(pos)) continue;
-                            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
-                        },
-                        .case => |t| switch (t.parent) {
-                            else => {},
-                            .garland => |g| switch (g.parent.parent) {
-                                else => {},
-                                .executor => |h| switch (h) {
-                                    .board => |k| if (workspace.executors.items[k].animating()) continue,
-                                    .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
-                                },
-                            },
-                        },
-                        else => {},
-                    }
-
-                    const s = workspace.sexprAtPlace(base);
-                    if (try ViewHelper.overlapsSexpr(
-                        // TODO: check this doesn't leak
-                        res,
-                        s.is_pattern,
-                        s.value,
-                        s.point,
-                        pos,
-                        is_dropzone,
-                    )) |address| {
-                        return .{ .kind = .{ .sexpr = .{
-                            .base = try base.clone(res),
-                            .local = address,
-                        } }, .area = workspace.area };
-                    }
-                }
-            }
-        }
-
-        // garlands
-        if (grabbed_tag == .nothing or grabbed_tag == .garland_handle) {
-            for (top_level_things) |parent_address| {
-                const owned_garlands = try workspace.ownedGarlands(parent_address, scratch);
-                for (owned_garlands) |base| {
-                    // some special cases
-                    switch (base.parent) {
-                        .garland => {
-                            // don't place garlands over board-level garlands (TODO: maybe not a bad idea?)
-                            if (grabbed_tag == .garland_handle and base.local.len == 0) continue;
-                        },
-                        // TODO: this triplication would be removed if we traversed top-to-bottom instead of by each type
-                        .executor => |h| switch (h) {
-                            .board => |k| if (workspace.executors.items[k].animating()) continue,
-                            .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
-                        },
-                        else => {},
-                    }
-
-                    const g = workspace.garlandAt(base);
-
-                    // another special case: don't overlap invisible garlands!
-                    if (grabbed_tag != .garland_handle and g.cases.items.len == 0) continue;
-
-                    if (g.handle.overlapped(pos)) {
-                        return .{ .kind = .{ .garland_handle = try base.clone(res) }, .area = workspace.area };
-                    }
-                }
-            }
-        }
-
-        // cases, for picking and for dropping
-        for (top_level_things) |parent_address| {
-            const owned_cases = try workspace.ownedCases(parent_address, scratch);
-            for (owned_cases) |base| {
-                const handle = workspace.caseHandleRef(base);
-
-                // some special cases
-                switch (base) {
-                    .board => {},
-                    .garland => |t| switch (t.parent.parent) {
-                        else => {},
-                        // TODO: this triplication would be removed if we traversed top-to-bottom instead of by each type
-                        .executor => |h| switch (h) {
-                            .board => |k| if (workspace.executors.items[k].animating()) continue,
-                            .fnkbox => |k| if (workspace.fnkboxes.items[k].execution != null) continue,
-                        },
-                    },
-                }
-
-                // picking
-                if (base.exists() and grabbed_tag == .nothing) {
-                    if (handle.overlapped(pos)) {
-                        return .{ .kind = .{ .case_handle = try base.clone(res) }, .area = workspace.area };
-                    }
-                }
-
-                // dropping
-                if (!base.exists() and grabbed_tag == .case_handle) {
-                    if (handle.overlapped(pos)) {
-                        return .{ .kind = .{ .case_handle = try base.clone(res) }, .area = workspace.area };
-                    }
-                }
-            }
-        }
-
-        // postits
-        if (grabbed_tag == .nothing) {
-            for (0..workspace.postits.items.len) |k_rev| {
-                const k = workspace.postits.items.len - k_rev - 1;
-                const postit = workspace.postits.items[k];
-                if (postit.button.rect.contains(pos)) {
-                    return .{ .kind = .{ .postit = k }, .area = workspace.area };
-                }
-            }
-        }
-
-        return .nothing;
-    }
-
-    fn executorAt(workspace: *WorkspaceArea, place: Workspace.ExecutorPlace) *Executor {
-        return switch (place) {
-            .board => |k| &workspace.executors.items[k],
-            .fnkbox => |k| &workspace.fnkboxes.items[k].executor,
-        };
-    }
-
-    fn sexprAtPlace(workspace: *WorkspaceArea, place: BaseSexprPlace) *VeryPhysicalSexpr {
-        return switch (place) {
-            .board => |k| &workspace.sexprs.items[k],
-            .case => |case| workspace.caseAt(case.parent).sexprAt(case.part),
-            .executor_input => |k| &workspace.executorAt(k).input,
-            .fnkviewer_fnkname => |k| &workspace.fnkviewers.items[k].fnkname,
-            .fnkbox_fnkname => |k| &workspace.fnkboxes.items[k].fnkname,
-            .fnkbox_testcase => |t| workspace.fnkboxes.items[t.fnkbox].testcases.items[t.testcase].partRef(t.part),
-        };
-    }
-
-    fn caseAt(workspace: *WorkspaceArea, place: CaseHandle) *VeryPhysicalCase {
-        assert(place.exists());
-        return switch (place) {
-            .board => |k| &workspace.cases.items[k],
-            .garland => |t| &workspace.garlandAt(t.parent).cases.items[t.local],
-        };
-    }
-
-    fn garlandHandleRef(workspace: *WorkspaceArea, place: GarlandHandle) *Handle {
-        return &workspace.garlandAt(place).handle;
-    }
-
-    fn garlandAt(workspace: *WorkspaceArea, place: GarlandHandle) *VeryPhysicalGarland {
-        return switch (place.parent) {
-            .garland => |k| workspace.garlands.items[k].childGarland(place.local),
-            .case => |k| workspace.cases.items[k].next.childGarland(place.local),
-            .executor => |k| workspace.executorAt(k).garland.childGarland(place.local),
-            .fnkviewer => |k| workspace.fnkviewers.items[k].garland.childGarland(place.local),
-        };
-    }
-
-    fn caseHandleRef(workspace: *WorkspaceArea, place: CaseHandle) *Handle {
-        return switch (place) {
-            .board => |k| &workspace.cases.items[k].handle,
-            .garland => |t| if (t.existing_case)
-                &garlandAt(workspace, t.parent).cases.items[t.local].handle
-            else
-                garlandAt(workspace, t.parent).handleForNewCasesRef(t.local),
-        };
-    }
-
-    // TODO: could be an iterator
-    pub fn topLevelThings(workspace: *WorkspaceArea, res: std.mem.Allocator) ![]const Focus.Target {
-        const area = workspace.area;
-        var result: std.ArrayListUnmanaged(Focus.Target) = try .initCapacity(res, workspace.sexprs.items.len +
-            workspace.cases.items.len +
-            workspace.garlands.items.len +
-            workspace.executors.items.len +
-            workspace.fnkviewers.items.len +
-            workspace.fnkboxes.items.len
-                // TODO: traces
-        );
-
-        for (workspace.sexprs.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{
-                .base = .{ .board = k },
-                .local = &.{},
-            } }, .area = area });
-        }
-        for (workspace.cases.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .{ .board = k } }, .area = area });
-        }
-        for (workspace.garlands.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .garland_handle = .{
-                .local = &.{},
-                .parent = .{ .garland = k },
-            } }, .area = area });
-        }
-        for (workspace.executors.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .executor_handle = .{ .board = k } }, .area = area });
-        }
-        for (workspace.fnkviewers.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .fnkviewer_handle = k }, .area = area });
-        }
-        for (workspace.fnkboxes.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .fnkbox_handle = k }, .area = area });
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    pub fn ownedSexprs(workspace: *WorkspaceArea, parent: Focus.Target, res: std.mem.Allocator) ![]const BaseSexprPlace {
-        var result: std.ArrayListUnmanaged(BaseSexprPlace) = .empty;
-
-        // sexprs owned directly and not due to a case
-        switch (parent.kind) {
-            .sexpr => |p| {
-                try result.append(res, p.base);
-            },
-            .executor_handle => |k| {
-                try result.append(res, .{ .executor_input = k });
-            },
-            .fnkviewer_handle => |k| {
-                try result.append(res, .{ .fnkviewer_fnkname = k });
-            },
-            .fnkbox_handle => |k| {
-                try result.append(res, .{ .fnkbox_fnkname = k });
-                try result.append(res, .{ .executor_input = .{ .fnkbox = k } });
-                const parent_fnkbox = &workspace.fnkboxes.items[k];
-                for (parent_fnkbox.testcases.items, 0..) |_, testcase_index| {
-                    inline for (TestCase.parts) |part| {
-                        try result.append(res, .{ .fnkbox_testcase = .{
-                            .fnkbox = k,
-                            .testcase = testcase_index,
-                            .part = part,
-                        } });
-                    }
-                }
-            },
-            .nothing,
-            .lens_handle,
-            .case_handle,
-            .garland_handle,
-            .postit,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            => {},
-        }
-
-        // sexprs owned due to owning a case
-        const owned_cases = try workspace.ownedCases(parent, res);
-        for (owned_cases) |case_address| {
-            if (!case_address.exists()) continue;
-            inline for (core.CasePart.all) |part| {
-                try result.append(res, .{ .case = .{
-                    .parent = case_address,
-                    .part = part,
+                undo.append(.{ .change_child = .{
+                    .original = new_child,
+                    .new = original_child,
                 } });
             }
         }
 
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    // TODO: don't assume that parent is a top level thing
-    pub fn ownedGarlands(workspace: *WorkspaceArea, parent: Focus.Target, res: std.mem.Allocator) ![]const GarlandHandle {
-        var result: std.ArrayListUnmanaged(GarlandHandle) = .empty;
-
-        if (@as(?GarlandHandle.Parent, switch (parent.kind) {
-            .case_handle => |case_handle| switch (case_handle) {
-                .board => |k| .{ .case = k },
-                else => null,
-            },
-            .garland_handle => |garland_handle| .{ .garland = garland_handle.parent.garland },
-            .executor_handle => |k| .{ .executor = k },
-            .fnkviewer_handle => |k| .{ .fnkviewer = k },
-            .fnkbox_handle => |k| .{ .executor = .{ .fnkbox = k } },
-            .nothing,
-            .lens_handle,
-            .sexpr,
-            .postit,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            => null,
-        })) |parent_garland_handle| {
-            const parent_garland = workspace.garlandAt(
-                .{ .local = &.{}, .parent = parent_garland_handle },
-            );
-            var it = parent_garland.childGarlandsAddressIterator(res);
-            while (try it.next()) |address| {
-                try result.append(res, .{
-                    .local = address,
-                    .parent = parent_garland_handle,
-                });
+        const original_tree: Lego.Tree = get(original_child).tree;
+        assert(original_tree.parent != .nothing);
+        const parent_tree: *Lego.Tree = &get(original_tree.parent).tree;
+        if (parent_tree.first == original_child) {
+            parent_tree.first = if (new_child != .nothing) new_child else original_tree.next;
+        }
+        if (@hasField(Lego.Tree, "last")) {
+            if (parent_tree.last == original_child) {
+                parent_tree.last = if (new_child != .nothing) new_child else original_tree.prev;
             }
         }
-
-        return try result.toOwnedSlice(res);
+        if (original_tree.prev != .nothing) {
+            get(original_tree.prev).tree.next = if (new_child != .nothing) new_child else original_tree.next;
+        }
+        if (original_tree.next != .nothing) {
+            get(original_tree.next).tree.prev = if (new_child != .nothing) new_child else original_tree.prev;
+        }
+        if (new_child != .nothing) {
+            const new_child_tree = &get(new_child).tree;
+            assert(new_child_tree.parent == .nothing and
+                new_child_tree.prev == .nothing and
+                new_child_tree.next == .nothing);
+            new_child_tree.parent = original_tree.parent;
+            new_child_tree.next = original_tree.next;
+            new_child_tree.prev = original_tree.prev;
+        }
+        get(original_child).tree.parent = .nothing;
+        get(original_child).tree.next = .nothing;
+        get(original_child).tree.prev = .nothing;
     }
 
-    // TODO: could be an iterator
-    // TODO: don't assume that parent is a top level thing
-    pub fn ownedCases(workspace: *WorkspaceArea, parent: Focus.Target, res: std.mem.Allocator) ![]const CaseHandle {
-        var result: std.ArrayListUnmanaged(CaseHandle) = .empty;
+    pub const VisitStep = struct {
+        next: Lego.Index,
+        // push_count: i32,
+        // pop_count: i32,
+    };
 
-        // cases owned directly and not due to a garland
-        switch (parent.kind) {
-            .case_handle => |case_handle| {
-                try result.append(res, case_handle);
-            },
-            .garland_handle,
-            .executor_handle,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            .fnkviewer_handle,
-            .fnkbox_handle,
-            .nothing,
-            .lens_handle,
-            .sexpr,
-            .postit,
-            => {},
-        }
-
-        // cases owned due to owning a garland
-        const owned_garlands = try workspace.ownedGarlands(parent, res);
-        for (owned_garlands) |garland_address| {
-            const garland = workspace.garlandAt(garland_address);
-            for (0..garland.cases.items.len) |case_index| {
-                try result.append(res, .{
-                    .garland = .{
-                        .local = case_index,
-                        .parent = garland_address,
-                        .existing_case = true,
-                    },
-                });
-            }
-            for (0..garland.cases.items.len + 1) |case_index| {
-                try result.append(res, .{
-                    .garland = .{
-                        .local = case_index,
-                        .parent = garland_address,
-                        .existing_case = false,
-                    },
-                });
+    /// root to leaf, from first to last child
+    pub fn next_preordered(current: Lego.Index, root: Lego.Index) VisitStep {
+        assert(root != .nothing and current != .nothing);
+        var result: VisitStep = .{ .next = .nothing };
+        // var result: VisitStep = .{ .next = .nothing, .pop_count = 0, .push_count = 0 };
+        const cur = Toybox.get(current);
+        if (cur.tree.first != .nothing) {
+            result.next = cur.tree.first;
+            // result.push_count = 1;
+        } else {
+            var p = current;
+            while (p != .nothing and p != root) : (p = Toybox.get(p).tree.parent) {
+                const next = Toybox.get(p).tree.next;
+                if (next != .nothing) {
+                    result.next = next;
+                    break;
+                } else {
+                    // result.pop_count += 1;
+                }
             }
         }
-
-        return try result.toOwnedSlice(res);
+        return result;
     }
 
-    fn popSexprAt(workspace: *WorkspaceArea, p: SexprPlace, mem: *VeryPermamentGameStuff) !VeryPhysicalSexpr {
-        if (p.local.len == 0) switch (p.base) {
-            else => {},
-            .board => |k| return workspace.sexprs.swapRemove(k),
+    /// root to leaf, from last to first child
+    pub fn next_postordered(current: Lego.Index, root: Lego.Index) VisitStep {
+        assert(root != .nothing and current != .nothing);
+        var result: VisitStep = .{ .next = .nothing };
+        // var result: VisitStep = .{ .next = .nothing, .pop_count = 0, .push_count = 0 };
+        const cur = Toybox.get(current);
+        if (cur.tree.last != .nothing) {
+            result.next = cur.tree.last;
+            // result.push_count = 1;
+        } else {
+            var p = current;
+            while (p != .nothing and p != root) : (p = Toybox.get(p).tree.parent) {
+                const next = Toybox.get(p).tree.prev;
+                if (next != .nothing) {
+                    result.next = next;
+                    break;
+                } else {
+                    // result.pop_count += 1;
+                }
+            }
+        }
+        return result;
+    }
+
+    pub fn treeIterator(root: Lego.Index, first_to_last: bool) TreeIterator {
+        return .{
+            .root = root,
+            .cur = root,
+            .first_to_last = first_to_last,
+        };
+    }
+
+    pub const TreeIterator = struct {
+        root: Lego.Index,
+        cur: Lego.Index,
+        going_up: bool = false,
+        first_to_last: bool,
+
+        pub const Step = struct {
+            index: Lego.Index,
+            children_already_visited: bool,
         };
 
-        const base = workspace.sexprAtPlace(p.base);
-        return try base.popSubValue(p.local, &mem.hover_pool, mem);
+        pub fn next(it: *TreeIterator) ?Step {
+            if (it.cur == .nothing) return null;
+            const result: Step = .{
+                .children_already_visited = it.going_up,
+                .index = it.cur,
+            };
+            const tree = Toybox.get(it.cur).tree;
+            const child = if (it.first_to_last) tree.first else tree.last;
+            const sibling = if (it.first_to_last) tree.next else tree.prev;
+
+            if (it.going_up) {
+                if (it.cur == it.root) {
+                    it.cur = .nothing;
+                } else if (sibling != .nothing) {
+                    it.cur = sibling;
+                    it.going_up = false;
+                } else {
+                    it.cur = tree.parent;
+                }
+            } else {
+                if (child != .nothing) {
+                    it.cur = child;
+                } else {
+                    it.going_up = true;
+                }
+            }
+            return result;
+        }
+
+        pub fn skipChildren(it: *TreeIterator) void {
+            if (!it.going_up) {
+                it.cur = Toybox.get(it.cur).tree.parent;
+                it.going_up = true;
+            }
+        }
+    };
+
+    test "iteration order" {
+        try toybox.init(std.testing.allocator);
+        defer toybox.deinit();
+        const undo_stack: ?*UndoStack = null;
+        const root = try Toybox.new(undefined, undefined, undo_stack);
+        const child_1 = try Toybox.new(undefined, undefined, undo_stack);
+        const child_2 = try Toybox.new(undefined, undefined, undo_stack);
+        const grandchild_1_1 = try Toybox.new(undefined, undefined, undo_stack);
+        const grandchild_1_2 = try Toybox.new(undefined, undefined, undo_stack);
+        const grandchild_2_1 = try Toybox.new(undefined, undefined, undo_stack);
+        const grandchild_2_2 = try Toybox.new(undefined, undefined, undo_stack);
+
+        Toybox.addChildLast(root.index, child_1.index, undo_stack);
+        Toybox.addChildLast(root.index, child_2.index, undo_stack);
+
+        Toybox.addChildLast(child_1.index, grandchild_1_1.index, undo_stack);
+        Toybox.addChildLast(child_1.index, grandchild_1_2.index, undo_stack);
+
+        Toybox.addChildLast(child_2.index, grandchild_2_1.index, undo_stack);
+        Toybox.addChildLast(child_2.index, grandchild_2_2.index, undo_stack);
+
+        try std.testing.expectEqual(child_1.index, Toybox.get(grandchild_1_1.index).tree.parent);
+
+        if (true) {
+            const expected_order: [7]VisitStep = .{
+                .{ .next = root.index },
+                .{ .next = child_1.index },
+                .{ .next = grandchild_1_1.index },
+                .{ .next = grandchild_1_2.index },
+                .{ .next = child_2.index },
+                .{ .next = grandchild_2_1.index },
+                .{ .next = grandchild_2_2.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(VisitStep) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var cur: VisitStep = .{ .next = root.index };
+            while (cur.next != .nothing) : (cur = Toybox.next_preordered(cur.next, root.index)) {
+                try actual_order.append(std.testing.allocator, cur);
+            }
+
+            try std.testing.expectEqualSlices(VisitStep, &expected_order, actual_order.items);
+        }
+
+        if (true) {
+            const expected_order: [14]TreeIterator.Step = .{
+                .{ .children_already_visited = false, .index = root.index },
+                .{ .children_already_visited = false, .index = child_1.index },
+                .{ .children_already_visited = false, .index = grandchild_1_1.index },
+                .{ .children_already_visited = true, .index = grandchild_1_1.index },
+                .{ .children_already_visited = false, .index = grandchild_1_2.index },
+                .{ .children_already_visited = true, .index = grandchild_1_2.index },
+                .{ .children_already_visited = true, .index = child_1.index },
+                .{ .children_already_visited = false, .index = child_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = grandchild_2_1.index },
+                .{ .children_already_visited = false, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = child_2.index },
+                .{ .children_already_visited = true, .index = root.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var it = Toybox.treeIterator(root.index, true);
+            while (it.next()) |step| {
+                try actual_order.append(std.testing.allocator, step);
+            }
+
+            try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
+        }
+
+        if (true) {
+            const expected_order: [10]TreeIterator.Step = .{
+                .{ .children_already_visited = false, .index = root.index },
+                .{ .children_already_visited = false, .index = child_1.index },
+                .{ .children_already_visited = true, .index = child_1.index },
+                .{ .children_already_visited = false, .index = child_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = grandchild_2_1.index },
+                .{ .children_already_visited = false, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = child_2.index },
+                .{ .children_already_visited = true, .index = root.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var it = Toybox.treeIterator(root.index, true);
+            while (it.next()) |step| {
+                try actual_order.append(std.testing.allocator, step);
+                if (step.index == child_1.index and !step.children_already_visited) {
+                    it.skipChildren();
+                }
+            }
+
+            try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
+        }
+
+        if (true) {
+            const expected_order: [10]TreeIterator.Step = .{
+                .{ .children_already_visited = false, .index = root.index },
+                .{ .children_already_visited = false, .index = child_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_2.index },
+                .{ .children_already_visited = true, .index = grandchild_2_2.index },
+                .{ .children_already_visited = false, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = grandchild_2_1.index },
+                .{ .children_already_visited = true, .index = child_2.index },
+                .{ .children_already_visited = false, .index = child_1.index },
+                .{ .children_already_visited = true, .index = child_1.index },
+                .{ .children_already_visited = true, .index = root.index },
+            };
+
+            var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
+            defer actual_order.deinit(std.testing.allocator);
+
+            var it = Toybox.treeIterator(root.index, false);
+            while (it.next()) |step| {
+                try actual_order.append(std.testing.allocator, step);
+                if (step.index == child_1.index and !step.children_already_visited) {
+                    it.skipChildren();
+                }
+            }
+
+            try std.testing.expectEqualSlices(TreeIterator.Step, &expected_order, actual_order.items);
+        }
+    }
+
+    pub fn oldestAncestor(index: Lego.Index) Lego.Index {
+        assert(index != .nothing);
+        var cur = index;
+        while (true) {
+            const next = Toybox.get(cur).tree.parent;
+            if (next == .nothing) return cur;
+            cur = next;
+        }
+    }
+
+    pub fn isAncestor(parent: Lego.Index, child: Lego.Index) bool {
+        var cur = child;
+        while (cur != .nothing) {
+            if (cur == parent) return true;
+            cur = cur.get().tree.parent;
+        }
+        return false;
+    }
+
+    pub fn findAncestor(index: Lego.Index, kind: Lego.Specific.Tag) Lego.Index {
+        assert(index != .nothing);
+        var cur = index;
+        while (cur != .nothing) {
+            if (Toybox.get(cur).specific.tag() == kind) return cur;
+            cur = Toybox.get(cur).tree.parent;
+        }
+        return .nothing;
+    }
+
+    pub fn parentAbsolutePoint(index: Lego.Index) Point {
+        assert(index != .nothing);
+        const parent = Toybox.get(index).tree.parent;
+        if (parent == .nothing) return .{};
+        return Toybox.get(parent).absolute_point;
+    }
+
+    pub fn refreshAbsolutePoints(roots: []const Lego.Index) void {
+        const zone = tracy.initZone(@src(), .{ .name = "refresh absolute points" });
+        defer zone.deinit();
+
+        for (roots) |root| {
+            var cur: Lego.Index = root;
+            while (cur != .nothing) : (cur = next_preordered(cur, root).next) {
+                Toybox.get(cur).absolute_point = parentAbsolutePoint(cur)
+                    .applyToLocalPoint(Toybox.get(cur).local_point);
+            }
+        }
+    }
+
+    pub fn changeCoordinates(index: Lego.Index, old_parent: Point, new_parent: Point) void {
+        Toybox.get(index).local_point = new_parent.inverseApplyGetLocal(old_parent.applyToLocalPoint(Toybox.get(index).local_point));
+        Toybox.refreshAbsolutePoints(&.{index});
+    }
+
+    pub fn setAbsolutePoint(index: Lego.Index, abs_point: Point) void {
+        Toybox.get(index).local_point = Toybox.parentAbsolutePoint(index).inverseApplyGetLocal(abs_point);
+        Toybox.refreshAbsolutePoints(&.{index});
+    }
+
+    pub fn buildSexpr(local_point: Point, value: union(Lego.Specific.Sexpr.Kind) {
+        empty,
+        atom_lit: []const u8,
+        atom_var: []const u8,
+        pair: struct { up: Lego.Index, down: Lego.Index },
+    }, is_pattern: bool, is_fnkname: bool, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try Toybox.new(local_point, .{ .sexpr = .{
+            .is_pattern = is_pattern,
+            .is_pattern_t = if (is_pattern) 1 else 0,
+            .is_fnkname = is_fnkname,
+            .is_fnkname_t = if (is_fnkname) 1 else 0,
+            .immutable = false,
+            .atom_name = switch (value) {
+                .atom_lit, .atom_var => |v| v,
+                else => undefined,
+            },
+            .kind = value,
+        } }, undo_stack);
+        switch (value) {
+            else => {},
+            .pair => |pair| {
+                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .up), result.index, pair.up, undo_stack);
+                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .down), result.index, pair.down, undo_stack);
+            },
+        }
+        return result.index;
+    }
+
+    pub fn buildCase(local_point: Point, data: struct {
+        pattern: Lego.Index,
+        template: Lego.Index,
+        fnkname: ?Lego.Index,
+        next: ?Lego.Index,
+    }, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try Toybox.new(local_point, .{ .case = .{} }, undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .xneg }, result.index, data.pattern, undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .xpos }, result.index, data.template, undo_stack);
+        Toybox.addChildLastV2(.{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }, result.index, data.fnkname orelse try Toybox.buildSexpr(.{}, .empty, false, true, undo_stack), undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .new(8, 1) }, result.index, data.next orelse try Toybox.buildGarland(local_point, &.{}, undo_stack), undo_stack);
+        return result.index;
+    }
+
+    /// The garland's children are a linear list of newcase, all except the last one with a child case
+    /// the newcase position is the very top of the segment
+    pub fn buildGarland(local_point: Point, child_cases: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+        const result = try Toybox.new(local_point, .{ .garland = .{} }, undo_stack);
+        Toybox.addChildLast(result.index, try buildSexpr(
+            Lego.Specific.Garland.relative_fnkname_point,
+            .empty,
+            true,
+            true,
+            undo_stack,
+        ), undo_stack);
+
+        const cases_holder = try Toybox.new(.{}, .garland_newcases, undo_stack);
+        for (child_cases) |case| {
+            const new_segment = try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack);
+            Toybox.addChildLast(new_segment.index, case, undo_stack);
+            Toybox.addChildLast(cases_holder.index, new_segment.index, undo_stack);
+        }
+        Toybox.addChildLast(cases_holder.index, (try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack)).index, undo_stack);
+
+        Toybox.addChildLast(result.index, cases_holder.index, undo_stack);
+        return result.index;
+    }
+
+    /// Children are:
+    /// - box with (description area, status bar, testcases scroll bar, testcases area)
+    /// - fnkname
+    /// - executor
+    pub fn buildFnkbox(
+        local_point: Point,
+        // TODO(design): take *const Sepxr
+        fnkname: Lego.Index,
+        text: []const u8,
+        testcases: []const [2]Lego.Index,
+        initial_definition: ?Lego.Index,
+        undo_stack: ?*UndoStack,
+    ) !Lego.Index {
+        const Fnkbox = Lego.Specific.Fnkbox;
+        const FnkboxBox = Lego.Specific.FnkboxBox;
+        const Executor = Lego.Specific.Executor;
+
+        const scrollbar =
+            try createWithChildren(.{}, .{ .scrollbar = .buildForTestcases(testcases.len, 0) }, &.{
+                (try new(.{}, .{ .button = .{
+                    .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1),
+                    .action = .scroll_up,
+                } }, undo_stack)).index,
+                (try new(.{}, .{ .button = .{
+                    .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1),
+                    .action = .scroll_down,
+                } }, undo_stack)).index,
+            }, undo_stack);
+
+        const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
+            (try new(.{}, .{ .fnkbox_description = .{
+                .text = text,
+            } }, undo_stack)).index,
+            (try new(.{}, .{ .button = .{
+                .local_rect = FnkboxBox.status_bar_goal,
+                .action = .see_failing_testcase,
+            } }, undo_stack)).index,
+            scrollbar,
+            blk: {
+                const fnkbox_testcases = try Toybox.new(.{}, .{
+                    .fnkbox_testcases = .{ .scrollbar = scrollbar },
+                }, undo_stack);
+                for (testcases) |values| {
+                    const Testcase = Lego.Specific.Testcase;
+                    const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_input_point, testcase.index, values[0], undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_expected_point, testcase.index, values[1], undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_actual_point, testcase.index, try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack), undo_stack);
+                    Toybox.addChildLast(testcase.index, (try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
+                        .action = .launch_testcase,
+                    } }, undo_stack)).index, undo_stack);
+                    Toybox.addChildLast(fnkbox_testcases.index, testcase.index, undo_stack);
+                }
+                break :blk fnkbox_testcases.index;
+            },
+        }, undo_stack);
+
+        fnkname.get().local_point = Fnkbox.relative_fnkname_point;
+
+        if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
+
+        const executor = try Toybox.createWithChildren(Fnkbox.relative_executor_point, .{
+            .executor = .{ .controlled_by_parent_fnkbox = true },
+        }, &.{
+            try Toybox.buildSexpr(Executor.relative_input_point, .empty, false, false, undo_stack),
+            initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, undo_stack),
+            blk: {
+                const controls = try Toybox.new(Executor.relative_crank_center, .executor_controls, undo_stack);
+                Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } }, undo_stack)).index, undo_stack);
+                Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, undo_stack)).index, undo_stack);
+                break :blk controls.index;
+            },
+        }, undo_stack);
+
+        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined } }, &.{
+            box,
+            fnkname,
+            executor,
+        }, undo_stack);
+    }
+
+    pub fn buildMicroscope(source: Vec2, target: Vec2, undo_stack: ?*UndoStack) !Lego.Index {
+        const lens_source = try Toybox.new(.{ .pos = source }, .{ .lens = .source }, undo_stack);
+        const lens_target = try Toybox.new(.{ .pos = target }, .{ .lens = .target }, undo_stack);
+        const result = try Toybox.new(.{}, .microscope, undo_stack);
+        Toybox.addChildLast(result.index, lens_source.index, undo_stack);
+        Toybox.addChildLast(result.index, lens_target.index, undo_stack);
+        return result.index;
+    }
+};
+
+pub const UndoStack = struct {
+    commands: std.ArrayList(Workspace.UndoableCommand),
+    last_frame_command_count: usize = 0,
+
+    pub fn init(gpa: std.mem.Allocator) UndoStack {
+        return .{ .commands = .init(gpa) };
+    }
+
+    pub fn deinit(self: *UndoStack) void {
+        self.commands.deinit();
+    }
+
+    pub fn append(self: *UndoStack, command: Workspace.UndoableCommand) void {
+        self.commands.append(command) catch Toybox.OoM();
+    }
+
+    pub fn storeAllData(self: *UndoStack, index: Lego.Index) void {
+        self.append(.{ .set_data_except_tree = Toybox.get(index).* });
+    }
+
+    pub fn pop(self: *UndoStack) ?Workspace.UndoableCommand {
+        return self.commands.pop();
+    }
+
+    pub fn startFrame(self: *UndoStack) void {
+        self.last_frame_command_count = self.commands.items.len;
+    }
+
+    pub fn anyChangesThisFrame(self: *UndoStack) bool {
+        return self.commands.items.len != self.last_frame_command_count;
     }
 };
 
 const Workspace = struct {
-    toolbar_trash: ToolbarTrash,
+    main_area: Lego.Index,
+    fnkboxes_layer: Lego.Index,
+    toolbar_left: Lego.Index,
+    toolbar_left_unfolded_t: f32 = 0,
+    toolbar_fnks: Lego.Index,
+    toolbar_fnks_unfolded_t: f32 = 0,
+    lenses_layer: Lego.Index,
+    floating_inputs_layer: Lego.Index,
+    hand_layer: Lego.Index = .nothing,
 
-    hand: WorkspaceArea,
-    main_area: WorkspaceArea,
-    toolbar: WorkspaceArea,
+    grabbing: Grabbing = .nothing,
 
-    focus: Focus = .{},
-    camera: Rect = .fromCenterAndSize(.new(100, 4), Vec2.new(16, 9).scale(2.75)),
-
-    toolbar_left: f32 = 0,
-
-    toolbar_case_enabled: bool = false,
-
-    undo_stack: std.ArrayList(UndoableCommand),
+    undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
-    hover_pool: HoveredSexpr.Pool,
+    arena_for_atom_names: std.heap.ArenaAllocator,
+    arena_for_lenses_data: std.heap.ArenaAllocator,
 
-    area: Focus.Target.Area = .main_area,
+    // TODO(design): remove
+    gpa_for_bindings: std.mem.Allocator,
 
-    pub const Focus = struct {
-        // TODO: Not really any Target, since for sexprs it's .grabbed with no local
-        grabbing: Target = .nothing,
-        ui_active: UiTarget = .nothing,
-        /// only used for postits and scrollbar handle
-        grabbing_offset: Vec2 = .zero,
+    pub const Grabbing = struct {
+        index: Lego.Index,
+        offset: Vec2,
 
-        pub const UiTarget = struct {
-            kind: Kind,
-            // TODO: remove default
-            area: Target.Area = .main_area,
-
-            pub const nothing: UiTarget = .{ .kind = .nothing };
-
-            pub const Kind = union(enum) {
-                nothing,
-                fnkbox_toggle_fold: usize,
-                fnkbox_see_failing_case: usize,
-                fnkbox_launch_testcase: struct {
-                    fnkbox: usize,
-                    testcase: usize,
-                },
-                fnkbox_scroll: struct {
-                    fnkbox: usize,
-                    direction: ScrollbarPart,
-                },
-            };
-
-            pub const ScrollbarPart = enum { up, down, handle };
-
-            pub fn equals(a: UiTarget, b: UiTarget) bool {
-                return std.meta.eql(a, b);
-            }
-        };
-
-        const Target = struct {
-            kind: Kind,
-            area: Area,
-            lens_transform: Lens.Transform = .identity,
-
-            pub const nothing: Target = .{ .kind = .nothing, .area = .nowhere };
-
-            pub const Area = enum { nowhere, main_area, hand, toolbar };
-
-            pub const Kind = union(enum) {
-                nothing,
-                sexpr: SexprPlace,
-                lens_handle: struct {
-                    index: usize,
-                    part: Lens.Part,
-                },
-                case_handle: CaseHandle,
-                garland_handle: GarlandHandle,
-                executor_handle: ExecutorPlace,
-                executor_crank_handle: ExecutorPlace,
-                executor_brake_handle: ExecutorPlace,
-                fnkviewer_handle: usize,
-                fnkbox_handle: usize,
-                postit: usize,
-
-                pub const Tag = std.meta.Tag(Kind);
-
-                pub fn equals(a: Kind, b: Kind) bool {
-                    return kommon.meta.eql(a, b);
-                }
-            };
-
-            pub fn immutable(target: Target) bool {
-                return switch (target.kind) {
-                    else => false,
-                    .sexpr => |h| h.base.immutable(target.area),
-                };
-            }
-
-            pub fn fromBaseSexpr(base: BaseSexprPlace, area: Area) Target {
-                return .{ .kind = .{ .sexpr = .{ .base = base, .local = &.{} } }, .area = area };
-            }
-
-            pub fn equalsExceptForLens(a: Target, b: Target) bool {
-                return a.area == b.area and a.kind.equals(b.kind);
-            }
-        };
-
-        const Value = union(enum) {
-            sexpr: VeryPhysicalSexpr,
-            case: VeryPhysicalCase,
-            garland: VeryPhysicalGarland,
-            // TODO: lenses, etc
-        };
+        pub const nothing: Grabbing = .{ .index = .nothing, .offset = .zero };
     };
 
-    const CaseHandle = union(enum) {
-        board: usize,
-        garland: struct {
-            local: usize,
-            parent: GarlandHandle,
-            existing_case: bool,
+    pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
+    pub const toolbar_fnks_rect: Rect = .{ .top_left = .zero, .size = .new(12, 15) };
+
+    const UndoableCommand = union(enum) {
+        fence,
+        set_data_except_tree: Lego,
+
+        destroy_floating: Lego.Index,
+        recreate_floating: Lego,
+
+        change_child: struct {
+            original: Lego.Index,
+            new: Lego.Index,
         },
 
-        pub fn exists(case_handle: CaseHandle) bool {
-            return switch (case_handle) {
-                .board => true,
-                .garland => |t| t.existing_case,
-            };
-        }
-
-        pub fn clone(original: CaseHandle, res: std.mem.Allocator) !CaseHandle {
-            return switch (original) {
-                .garland => |t| .{ .garland = .{
-                    .existing_case = t.existing_case,
-                    .local = t.local,
-                    .parent = try t.parent.clone(res),
-                } },
-                else => original,
-            };
-        }
-    };
-
-    const GarlandHandle = struct {
-        local: core.CaseAddress,
-        parent: Parent,
-
-        pub const Parent = union(enum) {
-            garland: usize,
-            case: usize,
-            executor: ExecutorPlace,
-            fnkviewer: usize,
-        };
-
-        pub fn clone(original: GarlandHandle, res: std.mem.Allocator) !GarlandHandle {
-            return .{
-                .local = try res.dupe(usize, original.local),
-                .parent = original.parent,
-            };
-        }
-    };
-
-    const BaseSexprPlace = union(enum) {
-        board: usize,
-        case: struct {
-            parent: CaseHandle,
-            part: core.CasePart,
+        insert: struct {
+            where: Lego.Tree,
+            what: Lego.Index,
         },
-        executor_input: ExecutorPlace,
-        fnkviewer_fnkname: usize,
-        fnkbox_fnkname: usize,
-        fnkbox_testcase: struct {
-            fnkbox: usize,
-            testcase: usize,
-            part: TestCase.Part,
-        },
+        pop: Lego.Index,
 
-        pub fn immutable(place: BaseSexprPlace, area: Focus.Target.Area) bool {
-            return switch (place) {
-                .fnkbox_fnkname, .fnkbox_testcase => true,
-                .case => switch (area) {
-                    .toolbar => false,
-                    // .toolbar => true,
-                    else => false,
-                },
-                .board,
-                .executor_input,
-                .fnkviewer_fnkname,
-                => false,
-            };
-        }
-
-        pub fn equals(a: BaseSexprPlace, b: BaseSexprPlace) bool {
-            return kommon.meta.eql(a, b);
-        }
-
-        pub fn clone(original: BaseSexprPlace, res: std.mem.Allocator) !BaseSexprPlace {
-            return switch (original) {
-                .case => |c| .{ .case = .{
-                    .part = c.part,
-                    .parent = try c.parent.clone(res),
-                } },
-                else => original,
-            };
-        }
+        set_grabbing: Grabbing,
+        set_handlayer: Lego.Index,
     };
 
-    const SexprPlace = struct {
-        base: BaseSexprPlace,
-        local: core.SexprAddress,
-    };
+    /// in draw order
+    fn roots(workspace: Workspace, config: struct {
+        include_hand: bool,
+        include_lenses: bool,
+        include_toolbars: bool,
+        include_floating_inputs: bool,
 
-    const ExecutorPlace = union(enum) {
-        board: usize,
-        fnkbox: usize,
-    };
-
-    const UndoableCommand = struct {
-        specific: union(enum) {
-            noop,
-            // TODO: rethink/remove
-            spawned_trace,
-            // TODO: rethink/remove
-            despawned_trace: struct {
-                trace: ExecutionTrace,
-                spawned_sexpr: bool,
-            },
-            // TODO: aghh idk
-            refreshed_case_in_toolbar: struct {
-                old_case: ?VeryPhysicalCase,
-            },
-            deleted: struct {
-                old_place: Focus.Target,
-                value: Focus.Value,
-            },
-            dropped: Dropped,
-            grabbed: Grabbed,
-            started_execution_fnkbox_from_input: struct {
-                fnkbox: usize,
-                input: VeryPhysicalSexpr,
-            },
-            started_execution: struct {
-                executor: usize,
-                input: VeryPhysicalSexpr,
-                garland: VeryPhysicalGarland,
-                prev_pills: []Pill,
-                prev_point: Point,
-            },
-            fnkbox_launch_testcase: struct {
-                fnkbox: usize,
-                testcase: usize,
-                old_actual: VeryPhysicalSexpr,
-            },
-            fnkbox_toggle_fold: usize,
-            fnkbox_scroll: struct {
-                fnkbox: usize,
-                old_position: f32,
-            },
-        },
-
-        pub const noop: UndoableCommand = .{ .specific = .noop };
-
-        pub const Grabbed = struct {
-            duplicate: bool,
-            from: Focus.Target,
-            /// not all fields are used
-            old_data: OldData,
-
-            pub const OldData = struct {
-                point: Point,
-                is_pattern: bool,
-            };
+        pub const all: @This() = .{
+            .include_hand = true,
+            .include_lenses = true,
+            .include_toolbars = true,
+            .include_floating_inputs = true,
         };
-
-        pub const Dropped = struct {
-            at: Focus.Target,
-            /// only used when 'at' is of kind sexpr
-            overwritten_sexpr: ?VeryPhysicalSexpr,
-            /// only used when 'at' is of kind garland_handle
-            overwritten_garland: ?VeryPhysicalGarland,
-            /// for sexprs is always 'board',
-            /// for lens_handle is equal to .at,
-            /// for case_handle might be different
-            /// if it was dropped in a garland and thus
-            /// removed from its old board position.
-            old_grabbed_position: Focus.Target,
+        pub const interactable: @This() = .{
+            .include_hand = false,
+            .include_lenses = true,
+            .include_toolbars = true,
+            .include_floating_inputs = false,
         };
-    };
+        pub const with_main_camera: @This() = .{
+            .include_hand = false,
+            .include_lenses = true,
+            .include_toolbars = false,
+            .include_floating_inputs = true,
+        };
+    }) std.BoundedArray(Lego.Index, 8) {
+        var result: std.BoundedArray(Lego.Index, 8) = .{};
+        result.appendAssumeCapacity(workspace.main_area);
+        result.appendAssumeCapacity(workspace.fnkboxes_layer);
+        if (config.include_floating_inputs) result.appendAssumeCapacity(workspace.floating_inputs_layer);
+        if (config.include_toolbars) result.appendAssumeCapacity(workspace.toolbar_left);
+        if (config.include_toolbars) result.appendAssumeCapacity(workspace.toolbar_fnks);
+        if (config.include_hand) result.appendAssumeCapacity(workspace.hand_layer);
+        if (config.include_lenses) result.appendAssumeCapacity(workspace.lenses_layer);
+        return result;
+    }
 
-    pub fn init(dst: *Workspace, mem: *core.VeryPermamentGameStuff, random_seed: u64) !void {
+    pub fn init(dst: *Workspace, gpa: std.mem.Allocator, random_seed: u64) !void {
         dst.* = kommon.meta.initDefaultFields(Workspace);
-        Postit.asdf_arena_for_all_postit_parts = mem.arena_for_permanent_stuff.allocator();
-
-        dst.hand.init(.hand, mem.gpa);
-        dst.main_area.init(.main_area, mem.gpa);
-        dst.toolbar.init(.toolbar, mem.gpa);
-
+        dst.undo_stack = .init(gpa);
         dst.random_instance = .init(random_seed);
+        dst.arena_for_atom_names = .init(gpa);
+        dst.arena_for_lenses_data = .init(gpa);
+        dst.gpa_for_bindings = gpa;
 
-        dst.undo_stack = .init(mem.gpa);
+        const undo_stack: ?*UndoStack = null;
 
-        dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
+        dst.main_area = (try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, undo_stack)).index;
+        dst.toolbar_left = (try Toybox.new(.{}, .{
+            .area = .{
+                .bg = .{
+                    // ensure that "mouse off-screen on the left" also overlaps the toolbar
+                    .local_rect = toolbar_left_rect.plusMargin3(.left, 100),
+                },
+            },
+        }, undo_stack)).index;
+        dst.toolbar_fnks, const fnkslist: Lego.Index = blk: {
+            const area = (try Toybox.new(.{}, .{
+                .area = .{
+                    .bg = .{
+                        // ensure that "mouse off-screen on the right" also overlaps the toolbar
+                        .local_rect = toolbar_fnks_rect.plusMargin3(.right, 100),
+                    },
+                },
+            }, undo_stack)).index;
 
-        dst.toolbar_trash = .{ .rect = .unit };
-
-        if (false) {
-            try dst.main_area.lenses.append(mem.gpa, .{ .source = ViewHelper.sexprTemplateChildView(
-                .{},
-                &.{ .right, .left },
-            ).applyToLocalPosition(.new(1, 0)), .target = .new(3, 0) });
-            try dst.main_area.lenses.append(mem.gpa, .{ .source = .new(3, 0), .target = .new(6, 0) });
-
-            var random: std.Random.DefaultPrng = .init(1);
-            try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(&dst.hover_pool, try randomSexpr(mem, random.random(), 7), .{}, false));
-            if (false) {
-                try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, valid[0], .{ .pos = .new(-3, 0) }, false));
-
-                for ([_][]const u8{
-                    "Hermes",    "Mercury",
-                    "Ares",      "Mars",
-                    "Zeus",      "Jupiter",
-                    "Aphrodite", "Venus",
-                }, 0..) |n, k| {
-                    try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, try mem.storeSexpr(.doLit(n)), .{ .pos = .new(tof32(k) * 3, -2 + tof32(k % 2) - tof32(k)) }, k % 2 == 0));
-                }
-                // } else {
-                //     try dst.sexprs.append(try .fromSexpr(&dst.hover_pool, Sexpr.pair_nil_nil, .{}, false));
-            }
-
-            try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
-                .pattern = Sexpr.builtin.true,
-                .template = Sexpr.builtin.false,
-                .fnk_name = Sexpr.builtin.identity,
-            }, .{ .pos = .new(0, 3) }));
-            try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
-                .pattern = Sexpr.builtin.vars.v1,
-                .template = try mem.storeSexpr(.doPair(Sexpr.builtin.vars.v1, Sexpr.builtin.vars.v1)),
-                .fnk_name = Sexpr.builtin.identity,
-            }, .{ .pos = .new(-7, 5) }));
-
-            try dst.main_area.garlands.append(mem.gpa, .{
-                .cases = try .initCapacity(mem.gpa, 4),
-                .handle = .{ .point = .{ .pos = .new(0, 5) } },
-                .handles_for_new_cases_first = .{ .handle = .{ .point = .{ .pos = .new(0, 5) } }, .length = 1 },
-                .handles_for_new_cases_rest = try .initCapacity(mem.gpa, 4),
-            });
-
-            for (0..4) |k| {
-                dst.main_area.garlands.items[0].handles_for_new_cases_rest.appendAssumeCapacity(.{ .handle = .{ .point = .{ .pos = .new(0, tof32(k + 1)) } }, .length = 1 });
-            }
-            for ([_][2][]const u8{
-                .{ "Hermes", "Mercury" },
-                .{ "Ares", "Mars" },
-                .{ "Zeus", "Jupiter" },
-                .{ "Aphrodite", "Venus" },
-            }, 0..) |p, k| {
-                dst.main_area.garlands.items[0].cases.appendAssumeCapacity(try .fromValues(&dst.hover_pool, .{
-                    .pattern = try mem.storeSexpr(.doLit(p[0])),
-                    .template = try mem.storeSexpr(.doLit(p[1])),
-                    .fnk_name = Sexpr.builtin.empty,
-                }, dst.main_area.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(0, 1 + 2.5 * tof32(k)) })));
-            }
-            try dst.main_area.garlands.items[0].cases.items[0].next.insertCase(mem.gpa, 0, try .fromValues(&dst.hover_pool, .{
-                .pattern = Sexpr.builtin.true,
-                .template = valid[1],
-                .fnk_name = valid[0],
-            }, dst.main_area.garlands.items[0].handle.point.applyToLocalPoint(.{ .pos = .new(6, 0) })));
-
-            try dst.main_area.executors.append(mem.gpa, try .init(.{ .pos = .new(-5, -5) }, &dst.hover_pool));
-
-            try dst.main_area.fnkviewers.append(mem.gpa, try .init(.{ .pos = .new(-10, -7) }, &dst.hover_pool));
-
-            if (false) {
-                const debug_fnk = try core.parsing.parseSingleFnk(
-                    \\asdf {
-                    \\ (a . @x) -> asdf: (b . f) {
-                    \\  B -> @x; 
-                    \\ }
-                    \\ (b . @x) -> B;
-                    \\ (a . B) -> nil;
-                    \\}
-                , &mem.pool_for_sexprs, mem.scratch.allocator());
-
-                try dst.fnkboxes.append(
-                    try .init(
-                        "TODO: remove",
-                        debug_fnk.name,
-                        .{ .pos = .new(60, -6) },
-                        &.{},
-                        try debug_fnk.body.toV2(mem.scratch.allocator()),
-                        &dst.hover_pool,
-                        mem,
-                    ),
-                );
-            }
-        }
-
-        const levels = @import("levels_new.zig").levels;
-        var x: f32 = 100;
-        for (levels, 0..) |level, k| {
-            const samples = blk: {
-                var samples_it = level.samplesIterator();
-                var samples: std.ArrayListUnmanaged(Sample) = .empty;
-                while (try samples_it.next(&mem.pool_for_sexprs, mem.scratch.allocator())) |item| {
-                    try samples.append(mem.scratch.allocator(), item);
-                }
-                break :blk try samples.toOwnedSlice(mem.scratch.allocator());
-            };
-            try dst.main_area.fnkboxes.append(
-                mem.gpa,
-                try .init(
-                    level.description,
-                    level.fnk_name,
-                    .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
-                    samples,
-                    level.initial_definition,
-                    &dst.hover_pool,
-                    mem,
-                ),
+            const scrollbar = Lego.Specific.Scrollbar.build(
+                toolbar_fnks_rect
+                    .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
+                0,
+                toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
+                undo_stack,
             );
-            if (k == 0) {
-                dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].executor.brake_t = 0.9;
-                dst.main_area.fnkboxes.items[dst.main_area.fnkboxes.items.len - 1].scroll_testcases = 3;
-            }
-            x += if (k < 4) 25 else if (k == 4) 30 else 35;
-        }
 
-        var postit_pos: Vec2 = .new(40, -3);
-        dst.camera = .fromCenterAndSize(postit_pos.add(.new(13, 8)), Vec2.new(16, 9).scale(2.75));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Welcome", "to the lab!" }, postit_pos));
-        postit_pos.addInPlace(.new(12, 4));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Move around", "with WASD", "or Arrow Keys" }, postit_pos));
-        postit_pos.addInPlace(.new(-15, 5));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Left click", "to pick up", "Atoms ->" }, postit_pos));
-        postit_pos.addInPlace(.new(4.5, 1.25));
-        try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(
-            &dst.hover_pool,
-            try mem.storeSexpr(.doLit("a")),
-            .{ .pos = postit_pos },
-            false,
-        ));
-        try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(
-            &dst.hover_pool,
-            try mem.storeSexpr(.doLit("b")),
-            .{ .pos = postit_pos.add(.new(5, -1.5)) },
-            true,
-        ));
-        try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(
-            &dst.hover_pool,
-            try mem.storeSexpr(.doLit("C")),
-            .{ .pos = postit_pos.add(.new(-2, 4)) },
-            false,
-        ));
-        postit_pos.addInPlace(.new(5.5, 5.5));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Right click to", "duplicate them" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Z to undo"}, postit_pos.add(.new(6.5, 0.7))));
+            const fnkslist = try Toybox.new(.{}, .{
+                .fnkslist = .{ .scrollbar = scrollbar },
+            }, undo_stack);
 
-        postit_pos.addInPlace(.new(19, -14));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" }, postit_pos));
+            Toybox.addChildLast(area, fnkslist.index, undo_stack);
+
+            Toybox.addChildLast(area, scrollbar, undo_stack);
+
+            break :blk .{ area, fnkslist.index };
+        };
+        dst.fnkboxes_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
+        dst.lenses_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
+        dst.floating_inputs_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
+
         if (false) {
+            Toybox.addChildLast(
+                dst.fnkboxes_layer,
+                try Toybox.buildFnkbox(
+                    .{ .pos = .new(-4, -8) },
+                    try Toybox.buildSexpr(
+                        .{},
+                        .{ .atom_lit = "true" },
+                        true,
+                        true,
+                        undo_stack,
+                    ),
+                    "do lowercase",
+                    &.{
+                        .{
+                            try Toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, false, false, undo_stack),
+                            try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                        },
+                        .{
+                            try Toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, false, false, undo_stack),
+                            try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                        },
+                        .{
+                            try Toybox.buildSexpr(.{}, .{ .atom_lit = "C" }, false, false, undo_stack),
+                            try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                        },
+                    },
+                    try Toybox.buildGarland(.{}, &.{
+                        try Toybox.buildCase(.{}, .{
+                            .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "A" }, true, false, undo_stack),
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, false, false, undo_stack),
+                            .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+                            .next = try Toybox.buildGarland(.{}, &.{
+                                try Toybox.buildCase(.{}, .{
+                                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                                    .fnkname = null,
+                                    .next = null,
+                                }, undo_stack),
+                            }, undo_stack),
+                        }, undo_stack),
+                        try Toybox.buildCase(.{}, .{
+                            .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "B" }, true, false, undo_stack),
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "C" }, false, false, undo_stack),
+                            .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, true, undo_stack),
+                            .next = try Toybox.buildGarland(.{}, &.{
+                                try Toybox.buildCase(.{}, .{
+                                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                                    .fnkname = null,
+                                    .next = null,
+                                }, undo_stack),
+                            }, undo_stack),
+                        }, undo_stack),
+                        try Toybox.buildCase(.{}, .{
+                            .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "C" }, true, false, undo_stack),
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                            .fnkname = null,
+                            .next = null,
+                        }, undo_stack),
+                    }, undo_stack),
+                    undo_stack,
+                ),
+                undo_stack,
+            );
+
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = .new(0, 0) },
+                .{ .atom_lit = "true" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = .new(0, 1) },
+                .{ .atom_lit = "false" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = .new(3, 0) },
+                .{ .pair = .{
+                    .up = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, false, false, undo_stack),
+                    .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+                } },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+
+            Toybox.addChildLast(dst.main_area, try Toybox.buildCase(
+                .{ .pos = .new(0, 4) },
+                .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                },
+                undo_stack,
+            ), undo_stack);
+
+            const case_1 = try Toybox.buildCase(.{}, .{
+                .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true, false, undo_stack),
+                .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+                .fnkname = null,
+                .next = null,
+            }, undo_stack);
+            const case_2 = try Toybox.buildCase(.{}, .{
+                .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, true, false, undo_stack),
+                .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+                .fnkname = null,
+                .next = null,
+            }, undo_stack);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildGarland(
+                .{ .pos = .new(7, 4) },
+                &.{ case_1, case_2 },
+                undo_stack,
+            ), undo_stack);
+
+            Toybox.addChildLast(dst.main_area, blk: {
+                const postit = try Toybox.new(
+                    .{ .pos = .new(3, 5) },
+                    .{ .postit = .{} },
+                    undo_stack,
+                );
+                Toybox.addChildLast(postit.index, (try Toybox.new(
+                    .{ .pos = .new(0, 0) },
+                    .{ .postit_text = .{ .text = "hi" } },
+                    undo_stack,
+                )).index, undo_stack);
+
+                break :blk postit.index;
+            }, undo_stack);
+        }
+
+        if (false) {
+            Toybox.addChildLast(dst.lenses_layer, try Toybox.buildMicroscope(
+                .new(2, 2),
+                .new(4, 3),
+                undo_stack,
+            ), undo_stack);
+
+            Toybox.addChildLast(dst.lenses_layer, try Toybox.buildMicroscope(
+                .new(4, 3),
+                .new(6, 2),
+                undo_stack,
+            ), undo_stack);
+        }
+
+        if (true) { // add levels
+            const core = @import("core.zig");
+            var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
+            defer pool.deinit();
+            var scratch: std.heap.ArenaAllocator = .init(gpa);
+            defer scratch.deinit();
+            const levels = @import("levels_new.zig").levels;
+            var x: f32 = 100;
+            const Sexpr = Lego.Specific.Sexpr;
+            for (levels, 0..) |level, k| {
+                defer _ = scratch.reset(.retain_capacity);
+                const samples: []const [2]Lego.Index = blk: {
+                    var samples_it = level.samplesIterator();
+                    var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
+                    while (try samples_it.next(&pool, scratch.allocator())) |item| {
+                        try samples.append(scratch.allocator(), .{
+                            try Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
+                            try Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
+                        });
+                        _ = pool.reset(.retain_capacity);
+                    }
+                    break :blk try samples.toOwnedSlice(scratch.allocator());
+                };
+
+                const fnkbox =
+                    try Toybox.buildFnkbox(
+                        .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
+                        try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true, true, undo_stack),
+                        level.description,
+                        samples,
+                        if (level.initial_definition) |definition|
+                            try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch.allocator(), undo_stack)
+                        else
+                            null,
+                        undo_stack,
+                    );
+                Toybox.addChildLast(
+                    dst.fnkboxes_layer,
+                    fnkbox,
+                    undo_stack,
+                );
+
+                if (k == 0) {
+                    Lego.Specific.Executor.children(Lego.Specific.Fnkbox.children(fnkbox).executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+                    Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_target = 2;
+                    Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_visual = 2;
+                }
+                x += if (k < 4) 25 else if (k < 6) 30 else 35;
+
+                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                    k,
+                    level.fnk_name,
+                    // level.fnk_name.atom_lit.value,
+                    level.description,
+                    undo_stack,
+                ), undo_stack);
+            }
+        }
+
+        if (true) { // tutorial postits
+            var postit_pos: Vec2 = .new(40, -3);
+            dst.main_area.get().local_point = Point.inverseApplyGetLocal(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, .{});
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
+
+            postit.addFromText(postit_pos, &.{ "Welcome", "to the lab!" });
+            postit_pos.addInPlace(.new(12, 4));
+            postit.addFromText(postit_pos, &.{ "Move around", "with WASD", "or Arrow Keys" });
+            postit_pos.addInPlace(.new(-15, 5));
+            postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Atoms ->" });
+            postit_pos.addInPlace(.new(4.5, 1.25));
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "a" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                .{ .atom_lit = "b" },
+                true,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(-2, 4)) },
+                .{ .atom_lit = "C" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            postit_pos.addInPlace(.new(5.5, 5.5));
+            postit.addFromText(postit_pos, &.{ "Right click to", "duplicate them" });
+            postit.addFromText(postit_pos.add(.new(6.5, 0.7)), &.{"Z to undo"});
+
+            postit_pos.addInPlace(.new(19, -14));
+            postit.addFromText(postit_pos, &.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" });
+            if (false) {
+                postit_pos.addInPlace(.new(7, 0));
+                postit.addFromText(postit_pos, &.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" });
+                Toybox.addChildLast(dst.main_area, Toybox.buildCase(.{ .pos = postit_pos.addY(5) }, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false),
+                    .fnkname = null,
+                    .next = null,
+                }));
+            }
             postit_pos.addInPlace(.new(7, 0));
-            try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The piece below", "(when active)", "will match with", "the atom 'a'", "and transform it", "into 'b'" }, postit_pos));
-            try dst.main_area.cases.append(mem.gpa, try .fromValues(&dst.hover_pool, .{
-                .pattern = try mem.storeSexpr(.doLit("a")),
-                .template = try mem.storeSexpr(.doLit("b")),
-                .fnk_name = Sexpr.builtin.empty,
-            }, .{ .pos = postit_pos.addY(5) }));
+            postit.addFromText(postit_pos, &.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" });
+            Toybox.addChildLast(dst.main_area, try Toybox.buildGarland(.{ .pos = postit_pos.addY(5) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new machine to", "solve each one." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromParts(postit_pos.addY(-2), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That box     ", "is the first", "assignment,", "already solved", "as an example." } } },
+                .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+            });
+            postit.addFromParts(postit_pos.add(.new(0.5, 4.5)), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "see it in action!" } } },
+                .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
+            });
+            // postit.addFromText(postit_pos.add(.new(0.5, 4.5)), &.{ "Click the '>'", "buttons to", "see it in action!" });
+            postit.addFromText(postit_pos.add(.new(3.5, 11.5)), &.{ "Use the crank", "and brake", "to control", "execution speed" });
+            postit_pos.addInPlace(.new(25, -2));
+            postit.addFromText(postit_pos, &.{"Your turn!"});
+            postit.addFromText(postit_pos.add(.new(0.5, 6.5)), &.{ "Click the", "'Unsolved!'", "button to see", "an example", "where the", "machine fails" });
+            postit.addFromText(postit_pos.add(.new(0.5, 6.5 * 2)), &.{ "and modify", "the machine", "to fix it" });
+            postit_pos.addInPlace(.new(25, 0));
+            postit_pos.addInPlace(.new(7, -6.1));
+            postit.addFromText(postit_pos, &.{ "You can create", "new pieces", "by duplicating", "existing ones" });
+            postit.addFromParts(postit_pos.addX(7), &.{
+                .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "(right click", "on the piece's", "circular center)" } } },
+                .{ .point = (Point{ .pos = .new(2, 3) }).rotateAround(.both(3), 0.35).moveAbs(.new(0, 1.5)), .part = .arrow },
+                .{ .point = .{ .pos = .new(3, 4.5) }, .part = .piece_center },
+            });
+            postit.addFromText(postit_pos.addX(7.5).addY(30), &.{ "You only need", "5 pieces!" });
+            postit.addFromParts(postit_pos.addX(1).addY(24), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That    ", "is a Wildcard,", "which matches", "with everything" } } },
+                .{ .point = .{ .pos = .new(4.5, 1.5) }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(25, 1));
+            postit.addFromText(postit_pos, &.{ "Use Wildcards", "to match", "any value", "and use it later" });
+            postit.addFromText(postit_pos.addX(7), &.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" });
+            postit.addFromText(postit_pos.addX(14), &.{ "Remember,", "right click", "to duplicate." });
+            postit.addFromText(postit_pos.addX(7).addY(Lego.Specific.FnkboxBox.box_height + 12), &.{ "Solve all the", "examples with", "a single piece!" });
+            postit_pos.addInPlace(.new(25, -1));
+            postit.addFromText(postit_pos, &.{ "Machines can", "invoke other", "machines" });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromParts(postit_pos.addY(0.6), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Each machine", "has its own", "\"name\"" } } },
+                .{ .point = .{ .pos = .new(0.9, 5.25), .turns = 0.25 }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That's the       ", "name of the first", "machine, the one", "that transforms", "'a' into 'A'" } } },
+                .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+            });
+            Toybox.addChildLast(dst.main_area, try Lego.Specific.Sexpr.buildFromOldCoreValue(
+                .{ .pos = postit_pos.add(.new(4, -2.5)), .scale = 0.5, .turns = 0.25 },
+                @import("levels_new.zig").levels[0].fnk_name,
+                false,
+                true,
+                undo_stack,
+            ), undo_stack);
+            // postit.addFromText(postit_pos.add(.new(3, 8)), &.{ "The toolbar on the right", "has the name for", "every machine" });
+            postit.addFromText(postit_pos.add(.new(6.5, 2.5)), &.{ "You can also", "find it", "on the toolbar", "on the right" });
+            postit.addFromParts(postit_pos.add(.new(1.5, 16.75)), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Placed there,", "it will invoke", "the machine", "with that name" } } },
+                .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(30 - 14, 0));
+            postit.addFromText(postit_pos, &.{ "Pieces can", "match with", "the result", "of other pieces" });
+            postit.addFromText(postit_pos.addX(7), &.{ "Try running", "the first two", "examples." });
+            postit.addFromText(postit_pos.addX(14).add(.new(4, 13)), &.{ "These 'nested'", "machines are", "the same as", "regular machines" });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos, &.{ "You can combine", "both tricks:", "invoke a machine", "and then match", "on its result" });
+            postit.addFromText(postit_pos.addX(7), &.{ "Study this", "solved", "assignment", "in detail." });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos, &.{ "You now know", "everything!" });
+            postit.addFromText(postit_pos.addX(7), &.{"Good luck."});
+
+            postit_pos.addInPlace(.new(35, 0));
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+
+            postit_pos.addInPlace(.new(35 * 6, 0));
+            postit_pos.addInPlace(.new(-7, -7));
+            postit.addFromText(postit_pos.addX(7), &.{ "The first example", "is an empty list." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "The second one", "is a list with only", "one element, 'a'." });
+            postit_pos.addInPlace(.new(-7, 7));
+            postit.addFromText(postit_pos.addX(7), &.{ "The third example", "is the list ['a', 'b']" });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "The next one", "is ['a', 'b', 'c']" });
+
+            postit_pos.addInPlace(.new(35 * 2, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            postit_pos.addInPlace(.new(35, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
         }
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The machine", "below, made of", "two pieces,", "will turn", "'a' into 'b',", "and 'b' into 'a'" }, postit_pos));
-        try dst.main_area.garlands.append(mem.gpa, try .fromDefinition(.{ .pos = postit_pos.addY(5) }, .{ .cases = &.{
-            .{
-                .pattern = try mem.storeSexpr(.doLit("a")),
-                .template = try mem.storeSexpr(.doLit("b")),
-                .fnk_name = Sexpr.builtin.empty,
-                .next = null,
-            },
-            .{
-                .pattern = try mem.storeSexpr(.doLit("b")),
-                .template = try mem.storeSexpr(.doLit("a")),
-                .fnk_name = Sexpr.builtin.empty,
-                .next = null,
-            },
-        } }, mem, &mem.hover_pool));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "I will give you", "assignments.", "You must make", "a new machine to", "solve each one." }, postit_pos));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That box     ", "is the first", "assignment,", "already solved", "as an example." } } },
-            .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
-        }, postit_pos.addY(-2)));
 
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "see it in action!" } } },
-            .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
-        }, postit_pos.add(.new(0.5, 4.5))));
-        // try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the '>'", "buttons to", "see it in action!" }, postit_pos.add(.new(0.5, 4.5))));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use the crank", "and brake", "to control", "execution speed" }, postit_pos.add(.new(3.5, 11.5))));
-        postit_pos.addInPlace(.new(25, -2));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Your turn!"}, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Click the", "'Unsolved!'", "button to see", "an example", "where the", "machine fails" }, postit_pos.add(.new(0.5, 6.5))));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "and modify", "the machine", "to fix it" }, postit_pos.add(.new(0.5, 6.5 * 2))));
-        postit_pos.addInPlace(.new(25, 0));
-        postit_pos.addInPlace(.new(7, -6.1));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can create", "new pieces", "by duplicating", "existing ones" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "(right click", "on the piece's", "circular center)" } } },
-            .{ .point = (Point{ .pos = .new(2, 3) }).rotateAround(.both(3), 0.35).moveAbs(.new(0, 1.5)), .part = .arrow },
-            .{ .point = .{ .pos = .new(3, 4.5) }, .part = .piece_center },
-        }, postit_pos.addX(7)));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You only need", "5 pieces!" }, postit_pos.addX(7.5).addY(30)));
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That    ", "is a Wildcard,", "which matches", "with everything" } } },
-            .{ .point = .{ .pos = .new(4.5, 1.5) }, .part = .arrow },
-        }, postit_pos.addX(1).addY(24)));
-        postit_pos.addInPlace(.new(25, 1));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Use Wildcards", "to match", "any value", "and use it later" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can grab", "fresh wildcards", "from the toolbar", "at the left border" }, postit_pos.addX(7)));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Remember,", "right click", "to duplicate." }, postit_pos.addX(14)));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Solve all the", "examples with", "a single piece!" }, postit_pos.addX(7).addY(Fnkbox.box_height + 12)));
-        postit_pos.addInPlace(.new(25, -1));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Machines can", "invoke other", "machines" }, postit_pos));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Each machine", "has its own", "\"name\"" } } },
-            .{ .point = .{ .pos = .new(0.9, 5.25), .turns = 0.25 }, .part = .arrow },
-        }, postit_pos.addY(0.6)));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That's the       ", "name of the first", "machine, the one", "that transforms", "'a' into 'A'" } } },
-            .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
-        }, postit_pos));
-        try dst.main_area.sexprs.append(mem.gpa, try .fromSexpr(
-            &mem.hover_pool,
-            @import("levels_new.zig").levels[0].fnk_name,
-            .{ .pos = postit_pos.add(.new(4, -2.5)), .scale = 0.5, .turns = 0.25 },
-            false,
-        ));
-        try dst.main_area.postits.append(mem.gpa, .fromParts(&.{
-            .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Placed there,", "it will invoke", "the machine", "with that name" } } },
-            .{ .point = .{ .pos = .new(1, 0.75), .turns = 0.5 }, .part = .arrow },
-        }, postit_pos.add(.new(1.5, 16.75))));
-        postit_pos.addInPlace(.new(30 - 14, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Pieces can", "match with", "the result", "of other pieces" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Try running", "the first two", "examples." }, postit_pos.addX(7)));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "These 'nested'", "machines are", "the same as", "regular machines" }, postit_pos.addX(14).add(.new(4, 13))));
-        postit_pos.addInPlace(.new(35, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You can combine", "both tricks:", "invoke a machine", "and then match", "on its result" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "Study this", "solved", "assignment", "in detail." }, postit_pos.addX(7)));
-        postit_pos.addInPlace(.new(35, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "You now know", "everything!" }, postit_pos));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{"Good luck."}, postit_pos.addX(7)));
-
-        postit_pos.addInPlace(.new(35, 0));
-        postit_pos.addInPlace(.new(35, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
-        postit_pos.addInPlace(.new(35, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
-
-        postit_pos.addInPlace(.new(35 * 6, 0));
-        postit_pos.addInPlace(.new(-7, -7));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The first example", "is an empty list." }, postit_pos.addX(7)));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The second one", "is a list with only", "one element, 'a'." }, postit_pos.addX(7)));
-        postit_pos.addInPlace(.new(-7, 7));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The third example", "is the list ['a', 'b']" }, postit_pos.addX(7)));
-        postit_pos.addInPlace(.new(7, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "The next one", "is ['a', 'b', 'c']" }, postit_pos.addX(7)));
-
-        postit_pos.addInPlace(.new(35 * 2, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
-        postit_pos.addInPlace(.new(35, 0));
-        try dst.main_area.postits.append(mem.gpa, .fromText(&.{ "DEBUG:", "skip this one" }, postit_pos.addX(7)));
-
-        // dst.camera = dst.camera.with2(.center, postit_pos, .size);
-
-        try dst.canonizeAfterChanges(mem);
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        try dst.canonizeAfterChanges(arena.allocator());
     }
 
-    pub fn deinit(workspace: *Workspace, gpa: std.mem.Allocator) void {
-        workspace.toolbar.deinit(gpa);
-        workspace.hand.deinit(gpa);
-        workspace.main_area.deinit(gpa);
+    pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
+        const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
+        defer zone.deinit();
 
-        workspace.hover_pool.deinit();
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.tag() == .fnkbox) {
+                try lego.specific.fnkbox.updateStatus(workspace, scratch);
+            }
+        }
+    }
+
+    pub fn deinit(workspace: *Workspace) void {
         workspace.undo_stack.deinit();
+        workspace.arena_for_atom_names.deinit();
+        workspace.arena_for_lenses_data.deinit();
     }
 
-    fn freshToolbarCase(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !VeryPhysicalCase {
-        const new_name = try mem.arena_for_names.allocator().alloc(u8, 10);
-        math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
-        const var_value = try mem.storeSexpr(.doVar(new_name));
+    const HotAndDropzone = struct {
+        hot: Lego.Index = .nothing,
+        dropzone: Lego.Index = .nothing,
+        over_background: Lego.Index,
 
-        // TODO: change variable on each toolbar opening
-
-        return .fromValues(&mem.hover_pool, .{
-            .pattern = var_value,
-            .fnk_name = Sexpr.builtin.empty,
-            .template = try mem.storeSexpr(.doPair(var_value, Sexpr.builtin.nil)),
-            .next = null,
-        }, .{ .pos = .new(2.5, 5) });
-    }
-
-    pub fn save(workspace: *const Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 0;
-        try out.writeInt(u32, version, .little);
-        try out.writeStructEndian(workspace.camera, .little);
-        try workspace.main_area.save(out, scratch);
-    }
-
-    pub fn load(dst: *Workspace, in: std.io.AnyReader, mem: *core.VeryPermamentGameStuff) !void {
-        const version = try in.readInt(u32, .little);
-        assert(version == 0);
-
-        try dst.init(mem, 0);
-        dst.camera = try in.readStructEndian(Rect, .little);
-        const old_postits = dst.main_area.postits;
-        try dst.main_area.load(in, version, mem);
-        dst.main_area.postits = old_postits;
-
-        // dst.* = kommon.meta.initDefaultFields(Workspace);
-        // dst.undo_stack = .init(mem.gpa);
-        // dst.hover_pool = try .initPreheated(mem.gpa, 0x100);
-        // dst.camera = try in.readStructEndian(Rect, .little);
-        // dst.hand.init(.hand, mem.gpa);
-        // dst.toolbar.init(.toolbar, mem.gpa);
-        // try dst.main_area.load(in, version, mem);
-        // dst.toolbar_trash = .{ .rect = .unit };
-
-        try dst.canonizeAfterChanges(mem);
-    }
-
-    const valid: []const *const Sexpr = &.{
-        &Sexpr.doLit("toLowerCase"),
-        &Sexpr.doLit("A"),
-        &Sexpr.doLit("a"),
-        &Sexpr.doLit("B"),
-        &Sexpr.doLit("b"),
-        &Sexpr.doLit("C"),
-        &Sexpr.doLit("c"),
-        &Sexpr.doLit("D"),
-        &Sexpr.doLit("d"),
-        &Sexpr.doLit("E"),
-        &Sexpr.doLit("e"),
-        &Sexpr.doLit("F"),
-        &Sexpr.doLit("f"),
-        &.empty,
-    };
-
-    const valid2 = .{
-        .toUpperCase = &Sexpr.doLit("toUpperCase"),
-        .isVowel = &Sexpr.doLit("isVowel"),
-        .swap = &Sexpr.doLit("swap"),
-    };
-
-    fn randomSexpr(mem: *core.VeryPermamentGameStuff, random: std.Random, max_depth: usize) !*const Sexpr {
-        if (max_depth == 0 or random.float(f32) < 0.3) {
-            return valid[random.uintLessThan(usize, valid.len)];
-        } else {
-            return try mem.storeSexpr(Sexpr.doPair(
-                try randomSexpr(mem, random, max_depth - 1),
-                try randomSexpr(mem, random, max_depth - 1),
-            ));
+        pub fn empty(x: @This()) bool {
+            return x.hot == .nothing and x.dropzone == .nothing;
         }
-    }
+    };
+    fn findHotAndDropzone(workspace: *Workspace, absolute_needle_pos: Vec2) HotAndDropzone {
+        const zone = tracy.initZone(@src(), .{ .name = "find hot" });
+        defer zone.deinit();
 
-    // TODO: could be an iterator
-    pub fn topLevelThings(workspace: *Workspace, res: std.mem.Allocator) ![]const Focus.Target {
-        const area = workspace.area;
-        var result: std.ArrayListUnmanaged(Focus.Target) = try .initCapacity(res,
-            // TODO: revise 'main_area'
-            workspace.main_area.sexprs.items.len +
-                workspace.main_area.cases.items.len +
-                workspace.main_area.garlands.items.len +
-                workspace.executors.items.len +
-                workspace.fnkviewers.items.len +
-                workspace.fnkboxes.items.len
-                    // TODO: traces
+        return _findHotAndDropzone(
+            workspace.roots(.interactable).constSlice(),
+            absolute_needle_pos,
+            workspace.grabbing.index,
         );
-
-        // TODO: revise 'main_area'
-        for (workspace.main_area.sexprs.items, 0..) |_, k| {
-            assert(area == .main_area);
-            result.appendAssumeCapacity(.{ .kind = .{ .sexpr = .{
-                .base = .{ .board = k },
-                .local = &.{},
-            } }, .area = area });
-        }
-        for (workspace.main_area.cases.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .case_handle = .{ .board = k } }, .area = area });
-        }
-        for (workspace.main_area.garlands.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .garland_handle = .{
-                .local = &.{},
-                .parent = .{ .garland = k },
-            } }, .area = area });
-        }
-        for (workspace.executors.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .executor_handle = k }, .area = area });
-        }
-        for (workspace.fnkviewers.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .fnkviewer_handle = k }, .area = area });
-        }
-        for (workspace.fnkboxes.items, 0..) |_, k| {
-            result.appendAssumeCapacity(.{ .kind = .{ .fnkbox_handle = k }, .area = area });
-        }
-
-        return try result.toOwnedSlice(res);
     }
 
-    // TODO: could be an iterator
-    pub fn ownedSexprs(workspace: *Workspace, parent: Focus.Target, res: std.mem.Allocator) ![]const BaseSexprPlace {
-        assert(parent.area == .main_area);
-        var result: std.ArrayListUnmanaged(BaseSexprPlace) = .empty;
+    fn _findHotAndDropzone(roots_in_draw_order: []const Lego.Index, absolute_needle_pos: Vec2, grabbing: Lego.Index) HotAndDropzone {
+        var roots_it = std.mem.reverseIterator(roots_in_draw_order);
+        while (roots_it.next()) |root| {
+            var it = Toybox.treeIterator(root, false);
+            while (it.next()) |step| {
+                const cur = step.index;
+                const lego = Toybox.get(cur);
+                assert(lego.exists);
+                const relative_needle_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
+                if (lego.unhoverable and !step.children_already_visited) {
+                    it.skipChildren();
+                    _ = it.next();
+                    continue;
+                }
+                assert(!lego.unhoverable);
 
-        // sexprs owned directly and not due to a case
-        switch (parent.kind) {
-            .sexpr => |p| {
-                try result.append(res, p.base);
-            },
-            .executor_handle => |k| {
-                try result.append(res, .{ .executor_input = k });
-            },
-            .fnkviewer_handle => |k| {
-                try result.append(res, .{ .fnkviewer_fnkname = k });
-            },
-            .fnkbox_handle => |k| {
-                try result.append(res, .{ .fnkbox_fnkname = k });
-                try result.append(res, .{ .fnkbox_input = k });
-                const parent_fnkbox = &workspace.fnkboxes.items[k];
-                for (parent_fnkbox.testcases.items, 0..) |_, testcase_index| {
-                    inline for (TestCase.parts) |part| {
-                        try result.append(res, .{ .fnkbox_testcase = .{
-                            .fnkbox = k,
-                            .testcase = testcase_index,
-                            .part = part,
-                        } });
+                // TODO(optim): check that this works
+                const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
+                const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
+                if (!absolute_bounds.contains(absolute_needle_pos)) {
+                    it.skipChildren();
+                    _ = it.next();
+                    continue;
+                }
+
+                switch (lego.specific) {
+                    .sexpr => |sexpr| {
+                        if (!step.children_already_visited and
+                            Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos))
+                        {
+                            if (grabbing == .nothing and sexpr.kind != .empty) {
+                                return .{ .hot = cur, .over_background = root };
+                            } else if (grabbing != .nothing and !sexpr.immutable and Toybox.get(grabbing).specific.tag() == .sexpr) {
+                                return .{ .dropzone = cur, .over_background = root };
+                            }
+                        }
+                    },
+                    .lens => |lens| {
+                        if (step.children_already_visited and
+                            lens.is_target and
+                            lego.absolute_point.inRange(absolute_needle_pos, lens.local_radius))
+                        {
+                            const interaction_nested = _findHotAndDropzone(
+                                lens.roots_to_interact,
+                                lens.transform.inverse().actOnPosition(absolute_needle_pos),
+                                grabbing,
+                            );
+                            if (!interaction_nested.empty()) {
+                                return interaction_nested;
+                            }
+
+                            // Avoid interacting with things hidden by the lens
+                            return .{ .over_background = root };
+                        }
+                    },
+                    .area => |area| {
+                        if (step.children_already_visited and
+                            area.bg.contains(lego.absolute_point, absolute_needle_pos) and
+                            (grabbing == .nothing or Toybox.get(grabbing).tree.parent == .nothing or Toybox.isAncestor(cur, grabbing)))
+                        {
+                            return .{ .over_background = cur };
+                        }
+                    },
+                    .button => |button| {
+                        if (step.children_already_visited and
+                            button.enabled and
+                            grabbing == .nothing and
+                            button.local_rect.contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
+                        {
+                            return .{ .hot = cur, .over_background = root };
+                        }
+                    },
+                    .scrollbar => |scrollbar| {
+                        if (step.children_already_visited and
+                            grabbing == .nothing and
+                            scrollbar.handleRectVisual().contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
+                        {
+                            return .{ .hot = cur, .over_background = root };
+                        }
+                    },
+                    .postit => {
+                        if (!step.children_already_visited and
+                            grabbing == .nothing and
+                            Lego.Specific.Postit.local_rect.contains(relative_needle_pos))
+                        {
+                            return .{ .hot = cur, .over_background = root };
+                        }
+                        if (!step.children_already_visited) {
+                            it.skipChildren();
+                        }
+                    },
+                    .fnkbox_testcases => {
+                        if (!step.children_already_visited and !Lego.Specific.FnkboxBox.testcases_box.contains(
+                            lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
+                        )) {
+                            it.skipChildren();
+                        }
+                    },
+                    .case,
+                    .newcase,
+                    .microscope,
+                    .garland,
+                    .garland_newcases,
+                    .executor,
+                    .fnkbox,
+                    .fnkbox_box,
+                    .fnkbox_description,
+                    .fnkslist,
+                    .fnkslist_element,
+                    .testcase,
+                    .pill,
+                    .postit_text,
+                    .postit_drawing,
+                    .executor_controls,
+                    .executor_brake,
+                    .executor_crank,
+                    => {},
+                }
+                if (step.children_already_visited) {
+                    if (lego.handle()) |handle| {
+                        const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
+                            .sexpr,
+                            .area,
+                            .microscope,
+                            .fnkbox_description,
+                            .fnkbox_testcases,
+                            .fnkslist,
+                            .fnkslist_element,
+                            .button,
+                            .scrollbar,
+                            .executor,
+                            .fnkbox_box,
+                            .testcase,
+                            .pill,
+                            .postit,
+                            .postit_text,
+                            .postit_drawing,
+                            .executor_controls,
+                            .garland_newcases,
+                            => unreachable,
+                            .case, .lens, .fnkbox, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
+                            .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
+                            .garland => if (grabbing == .nothing)
+                                .{ true, .hot }
+                            else if (Toybox.get(grabbing).specific.tag() == .garland)
+                                .{ true, .drop }
+                            else
+                                .{ false, undefined },
+                        };
+
+                        if (overlappable and handle.overlapped(absolute_needle_pos)) {
+                            switch (kind) {
+                                .hot => return .{ .hot = cur, .over_background = root },
+                                .drop => return .{ .dropzone = cur, .over_background = root },
+                            }
+                        }
                     }
                 }
-            },
-            .nothing,
-            .lens_handle,
-            .case_handle,
-            .garland_handle,
-            .postit,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            => {},
-        }
-
-        // sexprs owned due to owning a case
-        const owned_cases = try workspace.ownedCases(parent, res);
-        for (owned_cases) |case_address| {
-            if (!case_address.exists()) continue;
-            inline for (core.CasePart.all) |part| {
-                try result.append(res, .{ .case = .{
-                    .parent = case_address,
-                    .part = part,
-                } });
             }
         }
 
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    // TODO: don't assume that parent is a top level thing
-    pub fn ownedGarlands(workspace: *Workspace, parent: Focus.Target, res: std.mem.Allocator) ![]const GarlandHandle {
-        var result: std.ArrayListUnmanaged(GarlandHandle) = .empty;
-
-        if (@as(?GarlandHandle.Parent, switch (parent.kind) {
-            .case_handle => |case_handle| switch (case_handle) {
-                .board => |k| .{ .case = k },
-                else => null,
-            },
-            .garland_handle => |garland_handle| .{ .garland = garland_handle.parent.garland },
-            .executor_handle => |k| .{ .executor = k },
-            .fnkviewer_handle => |k| .{ .fnkviewer = k },
-            .fnkbox_handle => |k| .{ .fnkbox = k },
-            .nothing,
-            .lens_handle,
-            .sexpr,
-            .postit,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            => null,
-        })) |parent_garland_handle| {
-            const parent_garland = workspace.garlandAt(
-                .{ .local = &.{}, .parent = parent_garland_handle },
-                .main_area,
-            );
-            var it = parent_garland.childGarlandsAddressIterator(res);
-            while (try it.next()) |address| {
-                try result.append(res, .{
-                    .local = address,
-                    .parent = parent_garland_handle,
-                });
-            }
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    // TODO: could be an iterator
-    // TODO: don't assume that parent is a top level thing
-    pub fn ownedCases(workspace: *Workspace, parent: Focus.Target, res: std.mem.Allocator) ![]const CaseHandle {
-        var result: std.ArrayListUnmanaged(CaseHandle) = .empty;
-
-        // cases owned directly and not due to a garland
-        switch (parent.kind) {
-            .case_handle => |case_handle| {
-                try result.append(res, case_handle);
-            },
-            .garland_handle,
-            .executor_handle,
-            .executor_crank_handle,
-            .executor_brake_handle,
-            .fnkviewer_handle,
-            .fnkbox_handle,
-            .nothing,
-            .lens_handle,
-            .sexpr,
-            .postit,
-            => {},
-        }
-
-        // cases owned due to owning a garland
-        const owned_garlands = try workspace.ownedGarlands(parent, res);
-        for (owned_garlands) |garland_address| {
-            const garland = workspace.garlandAt(garland_address, .main_area);
-            for (0..garland.cases.items.len) |case_index| {
-                try result.append(res, .{
-                    .garland = .{
-                        .local = case_index,
-                        .parent = garland_address,
-                        .existing_case = true,
-                    },
-                });
-            }
-            for (0..garland.cases.items.len + 1) |case_index| {
-                try result.append(res, .{
-                    .garland = .{
-                        .local = case_index,
-                        .parent = garland_address,
-                        .existing_case = false,
-                    },
-                });
-            }
-        }
-
-        return try result.toOwnedSlice(res);
-    }
-
-    fn fetchPut(
-        workspace: *Workspace,
-        place: Focus.Target,
-        maybe_value: ?Focus.Value,
-        mem: *VeryPermamentGameStuff,
-    ) !Focus.Value {
-        if (maybe_value) |value| {
-            switch (place.kind) {
-                .sexpr => |h| {
-                    const base = workspace.sexprAtPlace(h.base, place.area);
-                    const fetched = try base.dupeSubValue(h.local, &mem.hover_pool);
-                    try base.updateSubValue(place.kind.sexpr.local, value.sexpr.value, value.sexpr.hovered, mem, &mem.hover_pool);
-                    return .{ .sexpr = fetched };
-                },
-                .garland_handle => |h| {
-                    const base = workspace.garlandAt(h, place.area);
-                    const old = base.*;
-                    base.* = value.garland;
-                    return .{ .garland = old };
-                },
-                else => @panic("TODO"),
-            }
+        if (grabbing != .nothing) {
+            assert(grabbing.get().tree.parent != .nothing);
+            return .{ .over_background = Toybox.oldestAncestor(grabbing) };
         } else {
-            return workspace.popAt(place, mem);
+            unreachable;
         }
     }
 
-    fn sexprAtPlace(workspace: *Workspace, place: BaseSexprPlace, area: Focus.Target.Area) *VeryPhysicalSexpr {
-        return workspace.areaAt(area).sexprAtPlace(place);
-    }
+    fn dragGrabbing(grabbing: Grabbing, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+        if (grabbing.index == .nothing) return;
+        const cur = grabbing.index;
+        const lego = Toybox.get(cur);
+        if (lego.draggable()) {
+            switch (lego.specific) {
+                .sexpr => |sexpr| {
+                    const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
+                        dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
+                    else
+                        // i don't like the scale hack
+                        (Point{
+                            .pos = absolute_mouse_pos,
+                            .scale = Toybox.get(interaction.over_background).absolute_point.scale * @as(f32, if (sexpr.is_fnkname) 0.5 else 1),
+                            .turns = if (sexpr.is_fnkname) 0.25 else 0,
+                        })
+                            .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
+                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() });
 
-    fn caseHandleRef(workspace: *Workspace, place: CaseHandle, area: Focus.Target.Area) *Handle {
-        return switch (place) {
-            .board => |k| &workspace.cases(area).items[k].handle,
-            .garland => |t| if (t.existing_case)
-                &garlandAt(workspace, t.parent, area).cases.items[t.local].handle
-            else
-                garlandAt(workspace, t.parent, area).handleForNewCasesRef(t.local),
-        };
-    }
+                    lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
+                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
 
-    fn garlandHandleRef(workspace: *Workspace, place: GarlandHandle, area: Focus.Target.Area) *Handle {
-        return &workspace.garlandAt(place, area).handle;
-    }
+                    if (Toybox.safeGet(interaction.dropzone)) |dropzone| {
+                        const dropzone_is_pattern = dropzone.specific.sexpr.is_pattern;
+                        if (dropzone_is_pattern != sexpr.is_pattern) {
+                            Lego.Specific.Sexpr.setIsPattern(cur, dropzone_is_pattern);
+                        }
 
-    fn garlandAt(workspace: *Workspace, place: GarlandHandle, area: Focus.Target.Area) *VeryPhysicalGarland {
-        return workspace.areaAt(area).garlandAt(place);
-    }
-
-    fn caseAt(workspace: *Workspace, place: CaseHandle, area: Focus.Target.Area) *VeryPhysicalCase {
-        assert(place.exists());
-        return switch (place) {
-            .board => |k| &workspace.cases(area).items[k],
-            .garland => |t| &workspace.garlandAt(t.parent, area).cases.items[t.local],
-        };
-    }
-
-    fn executorAt(workspace: *Workspace, place: ExecutorPlace, area: Focus.Target.Area) *Executor {
-        return switch (place) {
-            .fnkbox => |k| &workspace.fnkboxes(area).items[k].executor,
-            .board => |k| &workspace.executors(area).items[k],
-        };
-    }
-
-    pub fn dupeAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
-        return switch (target.kind) {
-            .sexpr => |h| .{ .sexpr = try workspace.sexprAtPlace(h.base, target.area).dupeSubValue(h.local, &mem.hover_pool) },
-            .case_handle => |c| switch (c) {
-                .board => |k| .{ .case = try workspace.cases(target.area).items[k].clone(mem.gpa, &mem.hover_pool) },
-                .garland => |t| .{ .case = try workspace.garlandAt(t.parent, target.area).cases.items[t.local].clone(mem.gpa, &mem.hover_pool) },
-            },
-            .garland_handle => |h| .{ .garland = try workspace.garlandAt(h, target.area).clone(mem.gpa, &mem.hover_pool) },
-            else => @panic("TODO"),
-        };
-    }
-
-    pub fn popAt(workspace: *Workspace, target: Focus.Target, mem: *VeryPermamentGameStuff) !Focus.Value {
-        return switch (target.kind) {
-            .sexpr => |p| .{ .sexpr = try workspace.popSexprAt(p, target.area, mem) },
-            .case_handle => |c| switch (c) {
-                .board => |k| .{ .case = workspace.cases(target.area).swapRemove(k) },
-                .garland => |t| .{ .case = workspace.garlandAt(t.parent, target.area).popCase(t.local) },
-            },
-            .garland_handle => |g| .{ .garland = if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland)
-                workspace.areaAt(target.area).garlands.orderedRemove(g.parent.garland)
-            else blk: {
-                const place = workspace.garlandAt(g, target.area);
-                const garland = place.*;
-                place.* = .init(garland.handle.point);
-                break :blk garland;
-            } },
-            else => @panic("TODO"),
-        };
-    }
-
-    // TODO: remove?
-    pub fn sexprs(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(VeryPhysicalSexpr) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.sexprs,
-            .hand => &workspace.hand.sexprs,
-            .toolbar => &workspace.toolbar.sexprs,
-        };
-    }
-
-    pub fn cases(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(VeryPhysicalCase) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.cases,
-            .hand => &workspace.hand.cases,
-            .toolbar => &workspace.toolbar.cases,
-        };
-    }
-
-    pub fn garlands(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(VeryPhysicalGarland) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.garlands,
-            .hand => &workspace.hand.garlands,
-            .toolbar => &workspace.toolbar.garlands,
-        };
-    }
-
-    pub fn executors(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Executor) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.executors,
-            .hand => &workspace.hand.executors,
-            .toolbar => &workspace.toolbar.executors,
-        };
-    }
-
-    pub fn fnkviewers(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Fnkviewer) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.fnkviewers,
-            .hand => &workspace.hand.fnkviewers,
-            .toolbar => &workspace.toolbar.fnkviewers,
-        };
-    }
-
-    pub fn fnkboxes(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Fnkbox) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.fnkboxes,
-            .hand => &workspace.hand.fnkboxes,
-            .toolbar => &workspace.toolbar.fnkboxes,
-        };
-    }
-
-    pub fn postits(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Postit) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.postits,
-            .hand => &workspace.hand.postits,
-            .toolbar => &workspace.toolbar.postits,
-        };
-    }
-
-    pub fn lenses(workspace: *Workspace, area: Focus.Target.Area) *std.ArrayListUnmanaged(Lens) {
-        return switch (area) {
-            .nowhere => unreachable,
-            .main_area => &workspace.main_area.lenses,
-            .hand => &workspace.hand.lenses,
-            .toolbar => &workspace.toolbar.lenses,
-        };
-    }
-
-    pub fn unpopAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
-        switch (target.kind) {
-            .sexpr => |p| try workspace.unpopSexprAt(p, target.area, value.sexpr, &mem.hover_pool, mem),
-            .case_handle => |c| switch (c) {
-                // TODO: remove .insert
-                .board => |k| try workspace.cases(target.area).insert(mem.gpa, k, value.case),
-                .garland => |t| try workspace.garlandAt(t.parent, target.area).insertCase(mem.gpa, t.local, value.case),
-            },
-            .garland_handle => |g| if (g.local.len == 0 and std.meta.activeTag(g.parent) == .garland) {
-                // TODO: remove .insert
-                try workspace.garlands(target.area).insert(mem.gpa, g.parent.garland, value.garland);
-            } else {
-                const place = workspace.garlandAt(g, target.area);
-                place.* = value.garland;
-            },
-            else => @panic("TODO"),
-        }
-    }
-
-    pub fn setAt(workspace: *Workspace, target: Focus.Target, value: Focus.Value, mem: *VeryPermamentGameStuff) !void {
-        switch (target.kind) {
-            .sexpr => |p| try workspace.setSexprAt(p, target.area, value.sexpr, mem),
-            .case_handle => |h| switch (h) {
-                .board => |k| workspace.cases(target.area).items[k] = value.case,
-                // TODO: not really a set!
-                .garland => |t| {
-                    const garland = garlandAt(workspace, t.parent, target.area);
-                    try garland.insertCase(mem.gpa, t.local, value.case);
+                        const dropzone_is_fnkname = dropzone.specific.sexpr.is_fnkname;
+                        if (dropzone_is_fnkname != sexpr.is_fnkname) {
+                            var cur_sexpr = cur;
+                            while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, cur).next) {
+                                Toybox.get(cur_sexpr).specific.sexpr.is_fnkname = dropzone_is_fnkname;
+                                var cur_child = Toybox.get(cur_sexpr).specific.sexpr.emerging_value;
+                                while (cur_child != .nothing) : (cur_child = Toybox.next_preordered(cur_child, cur_sexpr).next) {
+                                    Toybox.get(cur_child).specific.sexpr.is_fnkname = dropzone_is_fnkname;
+                                }
+                            }
+                        }
+                    }
                 },
-            },
-            .garland_handle => |h| workspace.garlandAt(h, target.area).* = value.garland,
-            else => @panic("TODO"),
-        }
-    }
-
-    fn setSexprAt(workspace: *Workspace, p: SexprPlace, area: Focus.Target.Area, v: VeryPhysicalSexpr, mem: *VeryPermamentGameStuff) !void {
-        if (p.local.len == 0 and std.meta.activeTag(p.base) == .board) {
-            workspace.sexprs(area).items[p.base.board] = v;
-        } else {
-            try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, &mem.hover_pool);
-        }
-    }
-
-    fn areaAt(workspace: *Workspace, area: Focus.Target.Area) *WorkspaceArea {
-        return switch (area) {
-            .nowhere => unreachable,
-            .hand => &workspace.hand,
-            .toolbar => &workspace.toolbar,
-            .main_area => &workspace.main_area,
-        };
-    }
-
-    fn popSexprAt(workspace: *Workspace, p: SexprPlace, area: Focus.Target.Area, mem: *VeryPermamentGameStuff) !VeryPhysicalSexpr {
-        return try workspace.areaAt(area).popSexprAt(p, mem);
-    }
-
-    fn unpopSexprAt(workspace: *Workspace, p: SexprPlace, area: Focus.Target.Area, v: VeryPhysicalSexpr, hover_pool: *HoveredSexpr.Pool, mem: *VeryPermamentGameStuff) !void {
-        if (p.local.len == 0) {
-            switch (p.base) {
                 else => {
-                    try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
+                    const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
+                        dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
+                    else
+                        // i don't like the scale hack
+                        (Point{
+                            .pos = absolute_mouse_pos,
+                            .scale = Toybox.get(interaction.over_background).absolute_point.scale,
+                        })
+                            .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
+                            .applyToLocalPoint(.{ .pos = grabbing.offset.neg() });
+
+                    lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
+                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
                 },
-                .board => |k| swapInsertAssumeCapacity(VeryPhysicalSexpr, workspace.sexprs(area), k, v),
+                .button => |button| switch (button.action) {
+                    else => {},
+                    .scroll_up => {
+                        lego.tree.parent.get().specific.scrollbar.scroll_target -= delta_seconds / 0.2;
+                    },
+                    .scroll_down => {
+                        lego.tree.parent.get().specific.scrollbar.scroll_target += delta_seconds / 0.2;
+                    },
+                },
+                .scrollbar => |*scrollbar| {
+                    const local_pos = lego.absolute_point
+                        .inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    scrollbar.onMouseMoved(local_pos.sub(grabbing.offset));
+                },
+                .executor_brake => |*brake| {
+                    assert(interaction.dropzone == .nothing);
+                    const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    const S = struct {
+                        p: Vec2,
+                        pub fn score(ctx: @This(), t: f32) f32 {
+                            return Lego.Specific.Executor.Controls.brakeHandlePath(t).sub(ctx.p).magSq();
+                        }
+                    };
+                    const raw_t = kommon.funktional.findFunctionMin(
+                        S,
+                        .{ .p = local_pos },
+                        0,
+                        1,
+                        10,
+                        0.0001,
+                    );
+                    // math.lerp_towards(&brake.brake_t, raw_t, 0.6, delta_seconds);
+                    math.towards(&brake.brake_t, raw_t, delta_seconds * 5);
+                },
+                .executor_crank => |*crank| {
+                    assert(interaction.dropzone == .nothing);
+                    const local_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_mouse_pos);
+                    const raw_t = local_pos.getTurns();
+                    const executor = &Toybox.findAncestor(cur, .executor).get().specific.executor;
+                    const cur_t = executor.animation.?.t;
+                    const target_t = math.clamp01(math.mod(raw_t, cur_t - 0.5, cur_t + 0.5));
+                    // math.lerp_towards(&crank.t, @max(0, target_t), 0.6, delta_seconds);
+                    math.towards(&crank.value, target_t, delta_seconds * 5);
+                    executor.animation.?.t = crank.value;
+                },
             }
-        } else {
-            try workspace.sexprAtPlace(p.base, area).updateSubValue(p.local, v.value, v.hovered, mem, hover_pool);
+            Toybox.refreshAbsolutePoints(&.{grabbing.index});
+        }
+    }
+
+    fn updateSprings(workspace: *Workspace, roots_in_draw_order: []const Lego.Index, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+        const asdf = tracy.initZone(@src(), .{ .name = "updateSprings" });
+        defer asdf.deinit();
+
+        for (roots_in_draw_order) |root| {
+            var cur: Lego.Index = root;
+            while (cur != .nothing) : (cur = Toybox.next_preordered(cur, root).next) {
+                const lego = Toybox.get(cur);
+                defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
+
+                // TODO(design): remove this from here
+                lego.unhoverable = switch (lego.specific) {
+                    .sexpr, .case, .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
+                        .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
+                            fnkbox.specific.fnkbox.execution != null
+                        else
+                            executor.animation != null,
+                        else => false,
+                    },
+                    else => false,
+                };
+
+                switch (lego.specific) {
+                    .sexpr => |*sexpr| {
+
+                        // TODO(optim): skip children in most cases
+
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
+                        defer zone.deinit();
+
+                        sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
+                            else => false,
+                            .sexpr => |parent_sexpr| parent_sexpr.immutable,
+                            .garland, .fnkbox, .testcase, .fnkslist_element => true,
+                        };
+
+                        if (sexpr.emerging_value != .nothing and sexpr.executor_with_bindings != .nothing) {
+                            const bindings = Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings);
+                            const t: f32 = if (bindings.anim_t) |anim_t| math.smoothstep(anim_t, 0, 0.4) else 0;
+                            const offset: Point = if (sexpr.is_pattern)
+                                .{}
+                            else
+                                .{ .pos = .new(math.remap(
+                                    t,
+                                    0,
+                                    1,
+                                    -2.3,
+                                    0,
+                                ), 0) };
+                            if (!sexpr.emerging_value_ignore_updates_to_t) Lego.Specific.Sexpr.setEmergingValueT(cur, t);
+                            Toybox.get(sexpr.emerging_value).local_point = lego.absolute_point.applyToLocalPoint(offset);
+                            updateSprings(workspace, &.{sexpr.emerging_value}, absolute_mouse_pos, interaction, delta_seconds);
+                        }
+                    },
+                    .case => {
+                        // TODO(optim): this is needed since undoing a half-done anim doesn't properly restore all the local positions of the case parts
+                        Lego.Specific.Case.updateLocalPositions(cur);
+                    },
+                    .garland_newcases => {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
+                        defer zone.deinit();
+
+                        var a = Toybox.get(lego.tree.first);
+                        var offset: f32 = 0;
+                        while (true) {
+                            assert(a.specific.tag() == .newcase);
+                            a.local_point = .{ .pos = .new(0, offset) };
+                            offset += a.specific.newcase.length();
+
+                            if (a.tree.next == .nothing) break;
+                            a = Toybox.get(a.tree.next);
+                        }
+                        lego.tree.parent.get().specific.garland.computed_height = offset;
+                    },
+                    .newcase => |*newcase| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - newcase" });
+                        defer zone.deinit();
+
+                        const Garland = Lego.Specific.Garland;
+
+                        const is_first = lego.tree.prev == .nothing;
+                        const is_last = lego.tree.next == .nothing;
+
+                        const extra_before_offset_for_anim: f32 = if (newcase.offset_ghost == .nothing)
+                            0
+                        else
+                            newcase.offset_t * (Lego.Specific.Garland.dist_between_cases_rest * 0.5 +
+                                newcase.offset_ghost.get().specific.case.next().computed_height);
+
+                        const extra_after_offset_for_anim: f32 = if (newcase.offset_ghost == .nothing or !is_first)
+                            0
+                        else
+                            0.5 * newcase.offset_t * (Garland.dist_between_cases_rest - Garland.dist_between_cases_first);
+
+                        const maybe_child_case: Lego.Index = if (lego.tree.first != .nothing) blk: {
+                            assert(lego.tree.last == lego.tree.first);
+                            assert(lego.tree.next != .nothing);
+                            assert(Toybox.get(lego.tree.first).specific.tag() == .case);
+                            break :blk lego.tree.first;
+                        } else blk: {
+                            assert(lego.tree.next == .nothing);
+                            break :blk .nothing;
+                        };
+
+                        const base_len = if (is_first) Garland.dist_between_cases_first else Garland.dist_between_cases_rest;
+
+                        const extra_prev_height: f32 = if (is_first) 0 else blk: {
+                            const case_of_prev_segment = Toybox.get(lego.tree.prev).tree.first;
+                            assert(case_of_prev_segment.get().specific.tag() == .case);
+                            const garland_of_case_of_prev_segment = Toybox.get(case_of_prev_segment).tree.last;
+                            assert(garland_of_case_of_prev_segment.get().specific.tag() == .garland);
+                            const prev_height = if (garland_of_case_of_prev_segment == interaction.dropzone)
+                                Toybox.get(workspace.grabbing.index).specific.garland.computed_height
+                            else
+                                Toybox.get(garland_of_case_of_prev_segment).specific.garland.computed_height;
+                            break :blk prev_height - Garland.dist_between_cases_first * 0.5;
+                        };
+
+                        const height_of_case_hovered: f32 = if (interaction.dropzone != cur)
+                            0
+                        else
+                            workspace.grabbing.index.get().specific.case.next().computed_height - Garland.dist_between_cases_first * 0.5;
+
+                        const target_length_before: f32 = extra_before_offset_for_anim + base_len * 0.5 + extra_prev_height + base_len * 0.5 * lego.dropzone_t;
+                        const target_length_after: f32 = if (is_last) 0.0 else (extra_after_offset_for_anim + base_len * 0.5 +
+                            lego.dropzone_t * (height_of_case_hovered + 0.5 * (if (!is_first)
+                                Garland.dist_between_cases_rest
+                            else
+                                Garland.dist_between_cases_rest + (Garland.dist_between_cases_rest - Garland.dist_between_cases_first))));
+
+                        // const must_be_this_length = math.lerpTowardsPure(
+                        //     newcase.length_before + newcase.length_after,
+                        //     target_length_after + target_length_before,
+                        //     .slow,
+                        //     delta_seconds,
+                        // );
+
+                        math.lerpTowards(&newcase.length_before, target_length_before, .slow, delta_seconds);
+                        math.lerpTowards(&newcase.length_after, target_length_after, .slow, delta_seconds);
+
+                        // const error_length = newcase.length_before + newcase.length_after - must_be_this_length;
+                        // if (@abs(error_length) > 0.001) std.log.debug("error {d}", .{error_length});
+                        // newcase.length_before -= error_length / 6.0;
+                        // newcase.length_after -= error_length * 5.0 / 6.0;
+                        // assert(@abs(newcase.length_after + newcase.length_before - must_be_this_length) < 0.0001);
+
+                        if (Toybox.safeGet(maybe_child_case)) |case| case.local_point = .{ .pos = .new(0, newcase.length()) };
+                    },
+                    .fnkbox_box => {},
+                    .executor => |executor| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor" });
+                        defer zone.deinit();
+
+                        const Executor = Lego.Specific.Executor;
+                        const children = Executor.children(cur);
+
+                        var pill_offset: f32 = 0;
+                        if (executor.animation) |animation| {
+                            const anim_t = math.clamp01(animation.t);
+                            if (!animation.matching) { // match failed, draw case being discarded and next ones coming up
+                                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
+                                const flyaway_t = math.remapClamped(anim_t, 0.2, 0.8, 0, 1);
+                                const offset_t = math.remapClamped(anim_t, 0.2, 0.8, 1, 0);
+
+                                const case_floating_away = Executor.first_case_point
+                                    .applyToLocalPoint(Point.lerp(
+                                    .{ .pos = .new(-match_t, 0) },
+                                    .{ .pos = .new(6, -2), .scale = 0, .turns = -0.2 },
+                                    flyaway_t,
+                                ));
+                                Toybox.get(children.garland).local_point = Executor.relative_garland_point;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_t = offset_t;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
+                                Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_floating_away));
+                                Toybox.get(children.input).local_point = Executor.relative_input_point;
+                                Toybox.setAbsolutePoint(animation.garland_fnkname, lego.absolute_point
+                                    .applyToLocalPoint(Toybox.get(children.input).local_point)
+                                    .applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }));
+
+                                if (true) { // update enqueued garlands
+                                    var enqueued = executor.first_enqueued;
+                                    var k: usize = 0;
+                                    while (enqueued != .nothing) : ({
+                                        enqueued = enqueued.get().specific.garland.next_enqueued;
+                                        k += 1;
+                                    }) {
+                                        Toybox.setAbsolutePoint(enqueued, lego.absolute_point.applyToLocalPoint(Executor.relative_garland_point.applyToLocalPoint(
+                                            Lego.Specific.Garland.extraForDequeuingNext(tof32(k + 1)),
+                                        )));
+                                    }
+                                }
+                            } else { // match succeeded
+                                const match_t = math.remapClamped(anim_t, 0, 0.2, 0, 1);
+                                // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
+                                const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
+                                const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
+                                const discarded_t = anim_t;
+                                pill_offset = enqueueing_t;
+
+                                if (!EXECUTOR_MOVES_LEFT) {
+                                    executor.handle.point.pos = animation.original_point.pos.addX(enqueueing_t * 5);
+                                }
+
+                                const case_point = Executor.first_case_point.applyToLocalPoint(
+                                    .{ .pos = .new(-match_t - enqueueing_t * 5, 0) },
+                                );
+                                Toybox.get(children.garland).local_point = Executor.relative_garland_point
+                                    .applyToLocalPoint(.lerp(.{}, .{ .turns = 0.2, .scale = 0, .pos = .new(-4, 8) }, discarded_t));
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_ghost = animation.active_case;
+                                Toybox.get(children.garland).specific.garland.firstNewcase().offset_t = 1;
+
+                                if (animation.invoked_fnk != .nothing) {
+                                    const offset = (1.0 - invoking_t) + 2.0 * math.smoothstepEased(invoking_t, 0.4, 0.0, .linear);
+                                    const function_point = lego.absolute_point.applyToLocalPoint(Lego.Specific.Executor.relative_garland_point)
+                                        .applyToLocalPoint(.{ .pos = .new(2 * offset + 6 - match_t - enqueueing_t * 5, 6 * offset) });
+
+                                    Toybox.setAbsolutePoint(animation.invoked_fnk, function_point);
+
+                                    Toybox.get(animation.active_case).specific.case.next_point_extra = Lego.Specific.Garland.extraForEnqueuingNext(enqueueing_t);
+                                    Toybox.get(animation.active_case).specific.case.fnk_name_extra = .{ .pos = .new(-invoking_t * 4, 0) };
+                                    Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
+
+                                    const enqueueing = animation.active_case.case().next.garland().hasChildCases();
+                                    if (true) { // update enqueued garlands
+                                        var enqueued = executor.first_enqueued;
+                                        var k: usize = 0;
+                                        while (enqueued != .nothing) : ({
+                                            enqueued = enqueued.get().specific.garland.next_enqueued;
+                                            k += 1;
+                                        }) {
+                                            Toybox.setAbsolutePoint(enqueued, lego.absolute_point.applyToLocalPoint(Executor.relative_garland_point.applyToLocalPoint(
+                                                Lego.Specific.Garland.extraForDequeuingNext(tof32(k + 1) + if (enqueueing) enqueueing_t else 0),
+                                            )));
+                                        }
+                                    }
+                                } else {
+                                    Toybox.setAbsolutePoint(animation.active_case, lego.absolute_point.applyToLocalPoint(case_point));
+                                    Toybox.get(animation.active_case).specific.case.next_point_extra = .{
+                                        .pos = .new(-enqueueing_t * 2, -(Lego.Specific.Case.next_garland_offset.y + Lego.Specific.Garland.dist_between_cases_first) *
+                                            math.smoothstep(enqueueing_t, 0, 0.6)),
+                                    };
+                                    Toybox.get(animation.active_case).specific.case.fnk_name_extra = .{ .pos = .new(-invoking_t * 4, 0) };
+
+                                    const dequeueing = !animation.active_case.case().next.garland().hasChildCases();
+                                    if (true) { // update enqueued garlands
+                                        var enqueued = executor.first_enqueued;
+                                        var k: usize = 0;
+                                        while (enqueued != .nothing) : ({
+                                            enqueued = enqueued.get().specific.garland.next_enqueued;
+                                            k += 1;
+                                        }) {
+                                            Toybox.setAbsolutePoint(enqueued, lego.absolute_point.applyToLocalPoint(Executor.relative_garland_point.applyToLocalPoint(
+                                                Lego.Specific.Garland.extraForDequeuingNext(tof32(k + 1) - if (dequeueing) enqueueing_t else 0),
+                                            )));
+                                        }
+                                    }
+                                }
+                                Toybox.get(children.input).local_point = Executor.relative_input_point.applyToLocalPoint(.{ .pos = .new(-enqueueing_t * 5, 0) });
+                                Toybox.setAbsolutePoint(animation.garland_fnkname, lego.absolute_point
+                                    .applyToLocalPoint(Toybox.get(children.input).local_point)
+                                    .applyToLocalPoint(.{ .pos = .new(3, -1.5), .turns = 0.25, .scale = 0.5 }));
+                            }
+                        } else {
+                            Toybox.get(children.input).local_point = Executor.relative_input_point;
+                            Toybox.get(children.garland).local_point = Executor.relative_garland_point;
+                        }
+
+                        if (true) { // update pills
+                            var pill = executor.first_pill;
+                            var k: usize = 0;
+                            while (pill != .nothing) : ({
+                                pill = pill.get().specific.pill.next_pill;
+                                k += 1;
+                            }) {
+                                Toybox.setAbsolutePoint(pill, lego.absolute_point.applyToLocalPoint(
+                                    Executor.relative_input_point.applyToLocalPoint(
+                                        .{ .pos = .new(-5 * (tof32(k) + pill_offset) - 2, 0) },
+                                    ),
+                                ));
+                            }
+                        }
+                    },
+                    .executor_controls => {},
+                    .executor_brake => |*brake| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor_brake" });
+                        defer zone.deinit();
+
+                        lego.local_point = .{};
+                        brake.handle_pos = Lego.Specific.Executor.Controls.brakeHandlePath(brake.brake_t);
+                    },
+                    .executor_crank => |*crank| {
+                        lego.local_point = .{};
+                        crank.handle_pos = .fromPolar(0.75, crank.value);
+                    },
+                    .fnkbox_testcases => |fnkbox_testcases| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
+                        defer zone.deinit();
+
+                        const scroll_visual = fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_visual;
+
+                        var k: usize = 0;
+                        var cur_case: Lego.Index = lego.tree.first;
+                        while (cur_case != .nothing) {
+                            Toybox.get(cur_case).local_point = .{ .pos = Lego.Specific.FnkboxBox.relative_top_testcase_pos
+                                .addY(2 + 2.5 * (tof32(k) - scroll_visual)) };
+                            k += 1;
+                            cur_case = Toybox.get(cur_case).tree.next;
+                        }
+                    },
+                    .fnkslist => |fnkslist| {
+                        const scroll_visual = fnkslist.scrollbar.get().specific.scrollbar.scroll_visual;
+
+                        var k: usize = 0;
+                        var cur_element: Lego.Index = lego.tree.first;
+                        while (cur_element != .nothing) {
+                            Toybox.get(cur_element).local_point = .{ .pos = .new(0, Lego.Specific.FnkslistElement.height * (tof32(k) - scroll_visual)) };
+                            k += 1;
+                            cur_element = Toybox.get(cur_element).tree.next;
+                        }
+                    },
+                    .scrollbar => |*scrollbar| {
+                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - scrollbar" });
+                        defer zone.deinit();
+
+                        math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
+                        math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
+                    },
+                    .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                }
+            }
         }
     }
 
     fn draw(workspace: *Workspace, platform: PlatformGives, drawer: *Drawer) !void {
-        const asdf = tracy.initZone(@src(), .{ .name = "draw" });
-        defer asdf.deinit();
+        const zone = tracy.initZone(@src(), .{ .name = "draw" });
+        defer zone.deinit();
 
-        const camera = workspace.camera;
+        const camera = Rect
+            .fromCenterAndSize(.zero, .both(2))
+            .withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        const holding: VeryPhysicalCase.Holding = switch (workspace.focus.grabbing.kind) {
-            .sexpr => .sexpr,
-            .garland_handle, .case_handle => .case_or_garland,
-            else => .other,
-        };
+        drawer.canvas.clipper.reset();
+        drawer.canvas.clipper.use(drawer.canvas);
 
-        // TODO: remove duplication
-
-        try workspace.main_area.draw(camera, holding, platform, drawer);
-
-        drawer.canvas.fillRect(workspace.leftToolbarCamera(), left_toolbar_rect_ideal, .gray(0.4));
-        try workspace.toolbar_trash.draw(drawer, camera);
-        try workspace.toolbar.draw(workspace.leftToolbarCamera(), .other, platform, drawer);
-
-        try workspace.hand.draw(camera, .other, platform, drawer);
+        try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
+            lego.specific.tag() == .sexpr
+        else
+            false, camera, drawer);
 
         if (display_fps) try drawer.canvas.drawText(
             0,
             camera,
             try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
             .{
-                .pos = workspace.camera.top_left,
+                .pos = camera.top_left,
                 .hor = .left,
                 .ver = .ascender,
             },
-            workspace.camera.size.y * 0.05,
+            camera.size.y * 0.05,
             .black,
         );
     }
 
-    const left_toolbar_rect_ideal: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
-    fn leftToolbarCamera(workspace: *const Workspace) Rect {
-        return left_toolbar_rect_ideal
-            .moveRelative(.new(0.9 * (1 - workspace.toolbar_left), 0))
-            .withAspectRatio(
-            workspace.camera.size.aspectRatio(),
-            .grow,
-            .center_left,
-        );
-    }
+    // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
+    fn _draw(roots_in_draw_order: []const Lego.Index, holding_a_sexpr: bool, camera: Rect, drawer: *Drawer) !void {
+        for (roots_in_draw_order) |root| {
+            var it = Toybox.treeIterator(root, true);
+            while (it.next()) |step| {
+                const cur = step.index;
+                const lego = Toybox.get(cur);
+                const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g|
+                    @max(0, g.specific.executor.garland_appearing_t)
+                else if (Toybox.safeGet(Toybox.findAncestor(cur, .pill))) |p|
+                    p.specific.pill.alpha()
+                else
+                    1;
 
-    // TODO NOW: remove
-    fn leftToolbarRect(workspace: *const Workspace) Rect {
-        return workspace.camera.withAspectRatio(left_toolbar_rect_ideal.size.aspectRatio(), .shrink, .center_left)
-            .moveRelative(.new(-0.9 * (1 - workspace.toolbar_left), 0));
-    }
-
-    fn findUiAtPosition(workspace: *Workspace, pos: Vec2) !Focus.UiTarget {
-        for (workspace.fnkboxes(.main_area).items, 0..) |fnkbox, fnkbox_index| {
-            if (fnkbox.fold_button.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_toggle_fold = fnkbox_index } };
-            }
-            if (!fnkbox.box().contains(pos)) continue;
-            if (fnkbox.scroll_button_up.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .up } } };
-            }
-            if (fnkbox.scroll_button_down.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .down } } };
-            }
-            if (fnkbox.scroll_button_handle.rect.contains(pos)) {
-                return .{ .kind = .{ .fnkbox_scroll = .{ .fnkbox = fnkbox_index, .direction = .handle } } };
-            }
-            if (fnkbox.execution != null) continue;
-            if (fnkbox.statusBarGoal().contains(pos) and std.meta.activeTag(fnkbox.status) == .unsolved) {
-                return .{ .kind = .{ .fnkbox_see_failing_case = fnkbox_index } };
-            }
-            if (!fnkbox.testcasesBoxUnfolded().contains(pos)) continue;
-            for (fnkbox.testcases.items, 0..) |testcase, testcase_index| {
-                if (testcase.play_button.rect.contains(pos)) {
-                    return .{ .kind = .{ .fnkbox_launch_testcase = .{
-                        .fnkbox = fnkbox_index,
-                        .testcase = testcase_index,
-                    } } };
+                // TODO(polish): improve
+                const max_resolution = 2000;
+                const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
+                const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
+                if (camera.asBounds().intersect(absolute_bounds) == null or
+                    camera.size.div(absolute_bounds.size()).normLInf() > max_resolution)
+                {
+                    it.skipChildren();
+                    _ = it.next();
+                    continue;
                 }
-            }
-        }
-        return .nothing;
-    }
 
-    pub fn canonizeAfterChanges(workspace: *Workspace, mem: *core.VeryPermamentGameStuff) !void {
-        for (workspace.main_area.fnkboxes.items) |*fnkbox| {
-            try fnkbox.updateStatus(workspace.main_area.fnkboxes.items, mem);
-        }
-        // TODO: remove this debug
-        workspace.toolbar_case_enabled = true or
-            workspace.fnkboxes.items[0].status == .solved and
-                workspace.fnkboxes.items[1].status == .solved and
-                workspace.fnkboxes.items[2].status == .solved;
-    }
+                // if (lego.specific.tag() == .pill) {
+                //     // std.log.debug("abs pos: {any}", .{lego.absolute_point});
+                //     std.log.debug("abs pos of first child: {any}", .{lego.tree.first.get().absolute_point});
+                // }
 
-    pub fn canAutosaveNow(workspace: *const Workspace) bool {
-        if (workspace.focus.grabbing.kind != .nothing) return false;
-        if (workspace.focus.ui_active.kind != .nothing) return false;
-        for (workspace.main_area.fnkboxes.items) |fnkbox| {
-            if (fnkbox.execution != null) return false;
-        }
-        for (workspace.main_area.executors.items) |fnkbox| {
-            if (fnkbox.animation != null) return false;
-        }
-        return true;
-    }
+                const camera_relative = camera.reparentCamera(lego.absolute_point);
+                if (step.children_already_visited) {
+                    if (false and lego.specific.tag() == .sexpr) { // draw numbers
+                        try drawer.canvas.drawText(
+                            0,
+                            camera,
+                            try std.fmt.allocPrint(std.heap.page_allocator, "{d}", .{@intFromEnum(cur)}),
+                            .centeredAt(lego.absolute_point.pos),
+                            1 * lego.absolute_point.scale,
+                            .black,
+                        );
+                    }
+                    if (lego.handle()) |handle| try handle.draw(drawer, camera, alpha);
+                    switch (lego.specific) {
+                        .fnkbox_testcases => {
+                            drawer.canvas.clipper.pop();
+                            drawer.canvas.clipper.use(drawer.canvas);
+                        },
+                        .fnkbox_box => {
+                            drawer.canvas.borderRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
+                        },
+                        else => {},
+                    }
+                } else {
+                    const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
+                    switch (lego.specific) {
+                        .case => {
+                            // TODO(game): draw variables in the cable
+                            drawer.canvas.line(camera, &.{
+                                lego.absolute_point.applyToLocalPosition(.xneg),
+                                lego.absolute_point.applyToLocalPosition(.xpos),
+                            }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            const next_garland = Lego.Specific.Case.children(cur).next;
+                            if (next_garland.get().specific.garland.visible) {
+                                // TODO(game): draw variables in the cable
+                                drawer.canvas.line(camera, &.{
+                                    lego.absolute_point.applyToLocalPosition(.new(1.5, 1)),
+                                    next_garland.get().absolute_point.pos,
+                                }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            }
+                        },
+                        .sexpr => |sexpr| {
+                            if (sexpr.emerging_value != .nothing) {
+                                if (sexpr.is_pattern) {
+                                    assert(sexpr.kind == .atom_var);
+                                    try Lego.Specific.Sexpr.drawEatingPattern(sexpr.emerging_value, sexpr.atom_name, sexpr.emerging_value_t, camera, drawer, alpha);
+                                    // const t = math.smoothstep(sexpr.emerging_value_t, 0, 0.4);
+                                    // try drawer.drawEatingPatternV2(camera, point, sexpr.atom_name, t, alpha);
+                                    // try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
+                                } else {
+                                    if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{
+                                        .custom = .{ .point = lego.absolute_point, .shape = Drawer.AtomVisuals.Geometry.template_mask },
+                                    } })) {
+                                        drawer.canvas.clipper.use(drawer.canvas);
+                                        defer {
+                                            drawer.canvas.clipper.pop();
+                                            drawer.canvas.clipper.use(drawer.canvas);
+                                        }
+                                        try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
+                                    } else |_| {
+                                        std.log.err("reached max lens depth, TODO(polish): improve", .{});
+                                    }
+                                }
+                            }
 
-    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, mem: *VeryPermamentGameStuff, frame_arena: std.mem.Allocator) !void {
-        _ = mem.scratch.reset(.retain_capacity);
+                            const maybe_bindings: ?BindingsState = if (sexpr.executor_with_bindings != .nothing)
+                                Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings)
+                            else
+                                null;
 
-        // std.log.debug("fps {d}", .{1.0 / platform.delta_seconds});
-        const camera = workspace.camera.withAspectRatio(platform.aspect_ratio, .grow, .center);
-
-        workspace.toolbar_trash.rect = workspace.leftToolbarRect().subrectAsIf(
-            .{ .top_left = .half, .size = .both(3) },
-            left_toolbar_rect_ideal,
-        );
-
-        try workspace.main_area.updateLensesData(frame_arena);
-        try workspace.toolbar.updateLensesData(frame_arena);
-        try workspace.hand.updateLensesData(frame_arena);
-
-        // state changes
-        if (platform.keyboard.wasPressed(.KeyZ)) {
-            if (workspace.undo_stack.pop()) |command| {
-                again: switch (command.specific) {
-                    .noop => {},
-                    .refreshed_case_in_toolbar => |g| {
-                        _ = workspace.toolbar.cases.pop();
-                        if (g.old_case) |c| {
-                            workspace.toolbar.cases.appendAssumeCapacity(c);
-                        }
-                        if (workspace.undo_stack.pop()) |next_cmd| continue :again next_cmd.specific;
-                    },
-                    .deleted => |d| {
-                        try workspace.unpopAt(d.old_place, d.value, mem);
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        continue :again next_cmd.specific;
-                    },
-                    .spawned_trace => {
-                        _ = workspace.main_area.traces.pop().?;
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        continue :again next_cmd.specific;
-                    },
-                    .despawned_trace => |t| {
-                        try workspace.main_area.traces.append(mem.gpa, t.trace);
-                        if (t.spawned_sexpr) _ = workspace.main_area.sexprs.pop().?;
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        continue :again next_cmd.specific;
-                    },
-                    .started_execution => |g| {
-                        const executor = &workspace.executors(.main_area).items[g.executor];
-                        executor.input = g.input;
-                        executor.garland = g.garland;
-                        executor.prev_pills = .fromOwnedSlice(g.prev_pills);
-                        executor.enqueued_stack.clearRetainingCapacity();
-                        executor.animation = null;
-                        executor.handle.point = g.prev_point;
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .dropped or std.meta.activeTag(next_cmd.specific) == .fnkbox_launch_testcase);
-                        continue :again next_cmd.specific;
-                    },
-                    .started_execution_fnkbox_from_input => |g| {
-                        const fnkbox = &workspace.fnkboxes(.main_area).items[g.fnkbox];
-                        if (fnkbox.execution) |e| {
-                            try fnkbox.resetExecutor(e.original_garland, &mem.hover_pool);
-                            fnkbox.execution = null;
-                        }
-                        fnkbox.executor.input = g.input;
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        assert(std.meta.activeTag(next_cmd.specific) == .dropped);
-                        continue :again next_cmd.specific;
-                    },
-                    .fnkbox_launch_testcase => |t| {
-                        const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
-                        fnkbox.testcases.items[t.testcase].actual = t.old_actual;
-                        if (fnkbox.execution) |e| {
-                            try fnkbox.resetExecutor(e.original_garland, &mem.hover_pool);
-                            fnkbox.execution = null;
-                        }
-                    },
-                    .fnkbox_toggle_fold => |k| {
-                        const fnkbox = &workspace.fnkboxes(.main_area).items[k];
-                        fnkbox.folded = !fnkbox.folded;
-                    },
-                    .fnkbox_scroll => |t| {
-                        const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
-                        fnkbox.scroll_testcases = t.old_position;
-                    },
-                    .grabbed => |g| {
-                        if (g.duplicate) {
-                            // delete the last created thing
-                            switch (g.from.kind) {
-                                .nothing => unreachable,
-                                .fnkviewer_handle,
-                                .executor_handle,
-                                .executor_crank_handle,
-                                .executor_brake_handle,
-                                => @panic("TODO"),
-                                .fnkbox_handle => _ = workspace.fnkboxes(.main_area).pop().?,
-                                .postit => _ = workspace.postits(.main_area).pop().?,
-                                .lens_handle => _ = workspace.lenses(.main_area).pop().?,
-                                .garland_handle => {
-                                    // TODO: better memory management?
-                                    var old = workspace.hand.garlands.pop().?;
-                                    old.deinit(mem.gpa);
+                            switch (sexpr.kind) {
+                                .empty => if (lego.tree.parent.get().specific.tag() != .sexpr and
+                                    (holding_a_sexpr or !sexpr.is_fnkname) and
+                                    // Don't draw empty garland fnknames
+                                    !(sexpr.is_fnkname and sexpr.is_pattern))
+                                {
+                                    try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha);
                                 },
-                                .case_handle => _ = workspace.hand.cases.pop().?,
-                                .sexpr => |h| {
-                                    _ = workspace.hand.sexprs.pop().?;
-                                    // visual flair
-                                    workspace.sexprAtPlace(h.base, g.from.area).getSubValue(h.local).hovered.value = 10;
+                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
+                                .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
+                                .atom_var => if (!sexpr.emerging_value_ignore_updates_to_t) {
+                                    const extra_alpha: f32 = if (maybe_bindings) |bindings| blk: {
+                                        if (bindings.anim_t) |t| {
+                                            break :blk for (bindings.new) |binding| {
+                                                if (std.mem.eql(u8, binding.name, sexpr.atom_name)) break :blk (1.0 - t);
+                                            } else 1;
+                                        } else break :blk 1;
+                                    } else 1;
+                                    try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha * extra_alpha);
                                 },
                             }
-                        } else {
-                            // undo any grabbing-related changes to the thing
-                            switch (g.from.kind) {
-                                .nothing => unreachable,
-                                .executor_handle => |h| {
-                                    const e = &workspace.executors(.main_area).items[h.board];
-                                    e.handle.point = g.old_data.point;
+
+                            if (sexpr.kind == .pair) {
+                                const names = try Lego.Specific.Sexpr.getAllVarNamesHelper(lego.index, drawer.canvas.frame_arena.allocator());
+                                try if (sexpr.is_pattern)
+                                    drawer.drawPatternWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, alpha)
+                                else
+                                    drawer.drawTemplateWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, maybe_bindings orelse .{
+                                        .anim_t = null,
+                                        .old = &.{},
+                                        .new = &.{},
+                                    }, alpha);
+                            }
+                        },
+                        .lens => |lens| {
+                            // TODO(game): lens distortion effect, on source and target
+
+                            if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
+                                const lens_circle: math.Circle = .{ .center = .zero, .radius = lens.local_radius };
+                                if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{ .circle = lens_circle } })) {
+                                    drawer.canvas.clipper.use(drawer.canvas);
+                                    defer {
+                                        drawer.canvas.clipper.pop();
+                                        drawer.canvas.clipper.use(drawer.canvas);
+                                    }
+                                    drawer.canvas.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
+
+                                    try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer);
+                                } else |_| {
+                                    std.log.err("reached max lens depth, TODO(polish): improve", .{});
+                                }
+                            }
+
+                            drawer.canvas.strokeCircle(
+                                128,
+                                camera,
+                                lego.absolute_point.pos,
+                                lego.absolute_point.scale * lens.local_radius,
+                                lego.absolute_point.scale * 0.05,
+                                .black,
+                            );
+                        },
+                        .area => |area| {
+                            switch (area.bg) {
+                                // TODO(game): .all background
+                                .all, .none => {},
+                                .local_rect => |rect| {
+                                    drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
                                 },
-                                .executor_crank_handle,
-                                .executor_brake_handle,
-                                => {
-                                    std.log.err("TODO: undo crank/brake handle moves", .{});
-                                    if (workspace.undo_stack.pop()) |next_cmd| {
-                                        continue :again next_cmd.specific;
+                            }
+                        },
+                        .postit => {
+                            const t: f32 = 2.0 + lego.hot_t * 0.7 + lego.active_t * 1.2;
+                            drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                                .new(-1, -1),
+                                .new(1, -1),
+                                .new(1, 1 - t * 0.1),
+                                .new(1 - t * 0.25, 1),
+                                .new(-1, 1),
+                            }), .fromHex("#FFEBA1"));
+                            drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                                .new(1, 1 - t * 0.1),
+                                .new(1 - t * 0.25, 1),
+                                Vec2.new(1, 1).mirrorAroundSegment(
+                                    .new(1, 1 - t * 0.1),
+                                    .new(1 - t * 0.25, 1),
+                                ),
+                            }), .fromHex("#d4bd68"));
+                        },
+                        .postit_text => |postit_text| {
+                            try drawer.canvas.drawText(0, camera_relative, postit_text.text, .centeredAt(.zero), 0.8, .black);
+                        },
+                        .postit_drawing => |kind| {
+                            switch (kind) {
+                                .arrow => {
+                                    const center: Point = lego.absolute_point;
+                                    drawer.canvas.line(camera, &.{
+                                        center.applyToLocalPosition(.new(-0.5, 0)),
+                                        center.applyToLocalPosition(.new(0.5, 0)),
+                                        center.applyToLocalPosition(.new(0.0, 0.25)),
+                                        center.applyToLocalPosition(.new(0.5, 0)),
+                                        center.applyToLocalPosition(.new(0.0, -0.25)),
+                                    }, 0.1 * center.scale, .black);
+                                },
+                                .launch_testcase_button => {
+                                    const center: Point = lego.absolute_point;
+                                    const rect: Rect = .fromPoint(center, .center, .one);
+                                    drawer.canvas.borderRect(camera, rect, 0.05 * center.scale, .inner, .black);
+                                    const arrow_center = center.applyToLocalPoint(.{ .pos = .new(0.15, 0) });
+                                    drawer.canvas.line(camera, &.{
+                                        arrow_center.applyToLocalPosition(.new(-0.25, -0.25)),
+                                        arrow_center.applyToLocalPosition(.new(0, 0)),
+                                        arrow_center.applyToLocalPosition(.new(-0.25, 0.25)),
+                                    }, 0.05 * center.scale, .black);
+                                },
+                                .piece_center => {
+                                    const center: Point = lego.absolute_point;
+                                    drawer.canvas.line(camera, &.{
+                                        center.applyToLocalPosition(.new(-0.5, 0)),
+                                        center.applyToLocalPosition(.new(-0.2, 0)),
+                                    }, 0.05 * center.scale, .black);
+                                    drawer.canvas.line(camera, &.{
+                                        center.applyToLocalPosition(.new(0.2, 0)),
+                                        center.applyToLocalPosition(.new(0.5, 0)),
+                                    }, 0.05 * center.scale, .black);
+                                    drawer.canvas.strokeCircle(128, camera, center.pos, center.scale * 0.2, 0.05 * center.scale, .black);
+                                    const arc: [32]Vec2 = comptime funk.map(
+                                        Vec2.fromTurns,
+                                        &funk.linspace(-0.15, 0.15, 32, true),
+                                    );
+                                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(-1.5, 0) }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(1.5, 0), .turns = 0.5 }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                                },
+                            }
+                        },
+                        .button => |button| {
+                            switch (button.action) {
+                                .launch_testcase => {
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.4));
+                                    const rect = button.local_rect.move(Vec2.new(-1, -1).scale((1 - lego.hot_t) * 0.05 + (1 - @min(lego.active_t, lego.hot_t)) * 0.1));
+                                    drawer.canvas.fillRect(camera_relative, rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, rect, 0.05, .inner, .black);
+                                    drawer.canvas.line(camera_relative, &.{
+                                        rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
+                                        rect.getCenter().add(.new(0, 0)).addX(0.15),
+                                        rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
+                                    }, 0.05, .black);
+                                },
+                                .see_failing_testcase => {
+                                    if (button.enabled) {
+                                        drawer.canvas.rectGradient(
+                                            camera_relative,
+                                            button.local_rect,
+                                            .gray(0.75 + lego.hot_t * 0.2 - lego.active_t * 0.1),
+                                            .gray(0.95 - lego.hot_t * 0.2 - lego.active_t * 0.1),
+                                        );
+                                        try drawer.canvas.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                    } else {
+                                        drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.7));
+                                        try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
                                     }
                                 },
-                                .fnkviewer_handle => |h| {
-                                    const e = &workspace.fnkviewers(.main_area).items[h];
-                                    e.handle.point = g.old_data.point;
-                                },
-                                .fnkbox_handle => |h| {
-                                    const e = &workspace.fnkboxes(.main_area).items[h];
-                                    e.handle.point = g.old_data.point;
-                                },
-                                .postit => |k| {
-                                    const postit = &workspace.postits(.main_area).items[k];
-                                    postit.button.rect.top_left = g.old_data.point.pos;
-                                },
-                                .lens_handle => |h| {
-                                    const lens = &workspace.lenses(.main_area).items[h.index];
-                                    lens.setHandlePos(h.part, g.old_data.point.pos);
-                                    assert(workspace.focus.grabbing.kind.lens_handle.part == h.part);
-                                    assert(workspace.focus.grabbing.kind.lens_handle.index == h.index);
-                                },
-                                .garland_handle => {
-                                    var garland = workspace.hand.garlands.pop().?;
-                                    garland.handle.point = g.old_data.point;
-                                    try workspace.unpopAt(g.from, .{ .garland = garland }, mem);
-                                },
-                                .case_handle => {
-                                    var case = workspace.hand.cases.pop().?;
-                                    if (g.from.area == .toolbar) case.changeCoordinateSpace(Rect.transformBetweenRects(
-                                        workspace.camera,
-                                        workspace.leftToolbarCamera(),
-                                    ));
-                                    case.handle.point = g.old_data.point;
-                                    try workspace.unpopAt(g.from, .{ .case = case }, mem);
-                                },
-                                .sexpr => {
-                                    var old = workspace.hand.sexprs.pop().?;
-                                    old.hovered.value = 10;
-                                    old.point = g.old_data.point;
-                                    old.is_pattern = g.old_data.is_pattern;
-                                    try workspace.unpopAt(g.from, .{ .sexpr = old }, mem);
+                                .scroll_up, .scroll_down => {
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
                             }
-                        }
-                        workspace.focus.grabbing = .nothing;
+                        },
+                        .scrollbar => |scrollbar| {
+                            drawer.canvas.fillRect(camera_relative, scrollbar.handleRectVisual(), COLORS.bg);
+                            drawer.canvas.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                        },
+                        .fnkbox_testcases => {
+                            const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
+                            try drawer.canvas.drawText(0, camera_relative, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
+                            try drawer.canvas.drawText(0, camera_relative, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
+                            try drawer.canvas.drawText(0, camera_relative, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
+                            try drawer.canvas.drawText(0, camera_relative, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
+                            drawer.canvas.clipper.push(.{
+                                .camera = camera_relative,
+                                .shape = .{
+                                    .rect = Lego.Specific.FnkboxBox.testcases_box,
+                                },
+                            }) catch @panic("TOO DEEP");
+                            drawer.canvas.clipper.use(drawer.canvas);
+                        },
+                        .newcase => |newcase| {
+                            // TODO(design): camera_relative fails due to rotation
+                            drawer.canvas.line(camera, &.{
+                                lego.absolute_point.pos,
+                                lego.absolute_point.applyToLocalPosition(.new(0, newcase.length())),
+                            }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                        },
+                        .fnkbox_description => |fnkbox_description| {
+                            try drawer.canvas.drawText(
+                                0,
+                                camera_relative,
+                                fnkbox_description.text,
+                                .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
+                                0.8,
+                                .black,
+                            );
+                        },
+                        .fnkslist_element => |fnkslist_element| {
+                            try drawer.canvas.drawText(
+                                0,
+                                camera_relative,
+                                fnkslist_element.text,
+                                .leftCenterAt(.new(2.1, Lego.Specific.FnkslistElement.height / 2.0)),
+                                0.5,
+                                .black,
+                            );
+                        },
+                        .fnkbox_box => {
+                            drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
+                        },
+                        .executor_brake => |brake| {
+                            drawer.canvas.line(camera_relative, &kommon.funktional.mapOOP(
+                                brake,
+                                .brakeBody,
+                                &kommon.funktional.linspace01(32, true),
+                            ), 0.2, .gray(0.4));
+                            drawer.canvas.line(camera_relative, &kommon.funktional.mapOOP(
+                                brake,
+                                .brakeHandlePath,
+                                &kommon.funktional.linspace01(32, true),
+                            ), Drawer.pixelWidth(camera_relative), FColor.gray(1));
+                        },
+                        .executor_crank => |crank| {
+                            drawer.canvas.fillShape(camera_relative, .{ .turns = crank.value }, Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
+                        },
+                        .testcase => |testcase| {
+                            // Don't draw testcases that will get clipped outside the testbox
+                            assert(lego.tree.parent.get().specific.tag() == .fnkbox_testcases);
+                            if (lego.local_point.applyToLocalRect(Lego.Specific.Testcase.relative_bounding_box)
+                                .intersect(Lego.Specific.FnkboxBox.testcases_box) == null)
+                            {
+                                it.skipChildren();
+                                _ = it.next();
+                                continue;
+                            }
+
+                            const symbol_pos = lego.absolute_point.applyToLocalPoint(.{ .pos = .new(7, 0.0), .scale = 0.4 });
+                            if (testcase.solved) {
+                                // drawer.canvas.line(camera, &.{
+                                //     symbol_pos.applyToLocalPosition(.new(-1, 0)),
+                                //     symbol_pos.applyToLocalPosition(.new(0, 1)),
+                                //     symbol_pos.applyToLocalPosition(.new(1.5, -1.25)),
+                                // }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            } else {
+                                drawer.canvas.line(camera, &.{
+                                    symbol_pos.applyToLocalPosition(.new(1, -1)),
+                                    symbol_pos.applyToLocalPosition(.new(-1, 1)),
+                                }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
+                                drawer.canvas.line(camera, &.{
+                                    symbol_pos.applyToLocalPosition(.new(-1, -1)),
+                                    symbol_pos.applyToLocalPosition(.new(1, 1)),
+                                }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            }
+                        },
+                        .garland => |garland| {
+                            if (!garland.visible) {
+                                it.skipChildren();
+                                _ = it.next();
+                                continue;
+                            }
+                        },
+                        .fnkslist, .executor_controls, .garland_newcases, .microscope, .executor, .fnkbox, .pill => {},
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
+            std.log.debug("-----", .{});
+            for (toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (lego.exists) {
+                    std.log.debug("{d} \t{s} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d} \t rel: {any} \tabs: {any}", .{
+                        k,
+                        @tagName(lego.specific.tag()),
+                        lego.tree.parent.asI32(),
+                        lego.tree.next.asI32(),
+                        lego.tree.prev.asI32(),
+                        lego.tree.first.asI32(),
+                        lego.local_point,
+                        lego.absolute_point,
+                    });
+                }
+            }
+            std.log.debug("-----", .{});
+            for (workspace.undo_stack.commands.items, 0..) |cmd, k| {
+                std.log.debug("{d} \t{any}", .{ k, cmd });
+            }
+        }
+
+        const delta_seconds = @min(1.0 / 30.0, platform.delta_seconds * @as(f32, (if (platform.keyboard.cur.isDown(.Space)) 0.01 else 1.0)));
+
+        const absolute_camera = Rect
+            .fromCenterAndSize(.zero, .both(2))
+            .withAspectRatio(platform.aspect_ratio, .grow, .center);
+
+        const mouse = platform.getMouse(absolute_camera);
+
+        const undo_stack = &workspace.undo_stack;
+        undo_stack.startFrame();
+
+        if (platform.keyboard.wasPressed(.KeyZ)) {
+            while (undo_stack.pop()) |command| {
+                switch (command) {
+                    .fence => break,
+                    .destroy_floating => |index| {
+                        Toybox.destroyFloating(index, null);
                     },
-                    .dropped => |g| {
-                        switch (g.at.kind) {
-                            .nothing => unreachable,
-                            .executor_crank_handle,
-                            .executor_brake_handle,
-                            => std.log.err("TODO", .{}),
-                            .lens_handle, .executor_handle, .fnkviewer_handle, .fnkbox_handle, .postit => {
-                                workspace.focus.grabbing = g.at;
-                            },
-                            .garland_handle => { // |h| {
-                                const value = try workspace.fetchPut(
-                                    g.at,
-                                    if (g.overwritten_garland) |o|
-                                        .{ .garland = o }
-                                    else
-                                        null,
-                                    mem,
-                                );
-                                try workspace.unpopAt(g.old_grabbed_position, value, mem);
-                                workspace.focus.grabbing = g.old_grabbed_position;
-                            },
-                            .case_handle => { // |h| {
-                                const case = try workspace.popAt(g.at, mem);
-                                try workspace.unpopAt(g.old_grabbed_position, case, mem);
-                                workspace.focus.grabbing = g.old_grabbed_position;
-                            },
-                            .sexpr => {
-                                const value = try workspace.fetchPut(
-                                    g.at,
-                                    if (g.overwritten_sexpr) |o|
-                                        .{ .sexpr = o }
-                                    else
-                                        null,
-                                    mem,
-                                );
-                                try workspace.unpopAt(g.old_grabbed_position, value, mem);
-                                workspace.focus.grabbing = g.old_grabbed_position;
-                            },
-                        }
-                        const next_cmd = workspace.undo_stack.pop().?;
-                        // Commented out since the next command might be 'created_fresh_case_in_toolbar
-                        // assert(std.meta.activeTag(next_cmd.specific) == .grabbed);
-                        continue :again next_cmd.specific;
+                    .recreate_floating => |data| {
+                        Toybox.recreateFloating(data);
+                    },
+                    .insert => |insert| {
+                        Toybox.insert(insert.what, insert.where, null);
+                    },
+                    .set_data_except_tree => |data| {
+                        const original_tree = Toybox.get(data.index).tree;
+                        Toybox.get(data.index).* = data;
+                        Toybox.get(data.index).tree = original_tree;
+                    },
+                    .pop => |index| {
+                        Toybox.pop(index, null);
+                    },
+                    .set_grabbing => |grabbing| {
+                        workspace.grabbing = grabbing;
+                    },
+                    .set_handlayer => |index| {
+                        workspace.hand_layer = index;
+                    },
+                    .change_child => |change| {
+                        Toybox.changeChild(change.original, change.new, null);
                     },
                 }
-                try workspace.canonizeAfterChanges(mem);
             }
-        }
+        } else { // INTERACTION
+            const zone = tracy.initZone(@src(), .{ .name = "interaction" });
+            defer zone.deinit();
 
-        const mouse = platform.getMouse(camera);
-        const mouse_toolbar_pos = platform.getMouse(workspace.leftToolbarCamera()).cur.position;
+            const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
-        const hovered_or_dropzone_thing: Focus.Target = blk: {
-            if (left_toolbar_rect_ideal
-                .contains(mouse_toolbar_pos))
+            if (workspace.grabbing.index == .nothing and
+                hot_and_dropzone.hot != .nothing and
+                (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
             {
-                break :blk try workspace.toolbar.findHoverableOrDropzoneAtPosition(
-                    std.meta.activeTag(workspace.focus.grabbing.kind),
-                    mouse_toolbar_pos,
-                    mem.gpa,
-                    frame_arena,
-                );
+                // Main case A: plucking/grabbing/clicking something
+                undo_stack.append(.fence);
+
+                const hot_index = hot_and_dropzone.hot;
+                const original_hot_data = Toybox.get(hot_index).*;
+                const hot_parent = original_hot_data.tree.parent;
+
+                var grabbed_element_index: Lego.Index = undefined;
+                var plucked: bool = true;
+
+                if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
+                    // Case A.0: duplicating
+                    switch (hot_index.get().canDuplicate()) {
+                        .yes => {
+                            const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, true, undo_stack);
+                            grabbed_element_index = new_element_index;
+                        },
+                        .no => {
+                            grabbed_element_index = .nothing;
+                            plucked = undefined;
+                        },
+                        .fnkbox => {
+                            // TODO(game): handle fnkbox creation better
+                            const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 8);
+                            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+                            const fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = new_name }, true, true, undo_stack);
+
+                            blk: while (true) { // ensure the name is unique
+                                for (toybox.all_legos.items) |*lego| {
+                                    if (!lego.exists) continue;
+                                    if (lego.specific.tag() == .fnkbox) {
+                                        const existing = Lego.Specific.Fnkbox.children(lego.index).fnkname;
+                                        if (Lego.Specific.Sexpr.equalValue(fnkname, existing)) {
+                                            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+                                            fnkname.get().specific.sexpr.atom_name = new_name;
+                                            continue :blk;
+                                        }
+                                    }
+                                } else break;
+                            }
+
+                            const description = try std.fmt.allocPrint(workspace.arena_for_atom_names.allocator(), "Custom machine {s}", .{new_name});
+                            const fnkbox = try Toybox.buildFnkbox(
+                                hot_index.get().local_point,
+                                fnkname,
+                                description,
+                                &.{},
+                                null,
+                                undo_stack,
+                            );
+                            Toybox.addChildLast(workspace.fnkboxes_layer, fnkbox, undo_stack);
+
+                            if (true) { // add to fnkslist
+                                const fnkslist = workspace.toolbar_fnks.get().tree.first;
+                                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                                Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                                    Toybox.childCount(fnkslist),
+                                    &.{ .atom_lit = .{ .value = new_name } },
+                                    description,
+                                    undo_stack,
+                                ), undo_stack);
+                            }
+
+                            grabbed_element_index = fnkbox;
+                            plucked = false;
+                        },
+                    }
+                } else if (hot_index.get().grabsWithoutPlucking()) {
+                    // Case A.3: grabbing rather than plucking, including buttons
+                    undo_stack.storeAllData(hot_index);
+                    grabbed_element_index = hot_index;
+                    plucked = false;
+
+                    if (Toybox.get(hot_index).specific.as(.button)) |b| {
+                        if (b.instant()) {
+                            grabbed_element_index = .nothing;
+                            @panic("unhandled instant button");
+                        }
+                    }
+                } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .area) {
+                    // Case A.1: plucking a top-level thing
+                    undo_stack.storeAllData(hot_index);
+                    Toybox.popWithUndoAndChangingCoords(hot_index, undo_stack);
+                    grabbed_element_index = hot_index;
+                } else if (original_hot_data.specific.tag() == .sexpr) {
+                    // Case A.2: plucking a nested sexpr
+                    undo_stack.storeAllData(hot_index);
+
+                    const new_empty_sexpr = try Toybox.buildSexpr(
+                        original_hot_data.local_point,
+                        .empty,
+                        original_hot_data.specific.sexpr.is_pattern,
+                        original_hot_data.specific.sexpr.is_fnkname,
+                        undo_stack,
+                    );
+
+                    Toybox.changeChild(hot_index, new_empty_sexpr, undo_stack);
+                    Toybox.changeCoordinates(hot_index, hot_parent.get().absolute_point, .{});
+                    Toybox.refreshAbsolutePoints(&.{new_empty_sexpr});
+
+                    grabbed_element_index = hot_index;
+                } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .newcase) {
+                    // Case A.4: plucking a case from a garland
+                    assert(original_hot_data.specific.tag() == .case);
+                    undo_stack.storeAllData(hot_index);
+                    Lego.Specific.Garland.popCase(hot_index, undo_stack);
+                    grabbed_element_index = hot_index;
+                } else if (Toybox.get(hot_index).specific.tag() == .garland) {
+                    // Case A.5: plucking a garland, and replacing it with an empty one
+                    undo_stack.storeAllData(hot_index);
+
+                    const new_garland = try Toybox.buildGarland(original_hot_data.local_point, &.{}, undo_stack);
+                    new_garland.get().specific.garland.computed_height = hot_index.get().specific.garland.computed_height;
+                    Toybox.changeChild(hot_index, new_garland, undo_stack);
+                    Toybox.changeCoordinates(hot_index, hot_parent.get().absolute_point, .{});
+                    Toybox.refreshAbsolutePoints(&.{new_garland});
+
+                    grabbed_element_index = hot_index;
+                } else unreachable;
+
+                assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
+                if (grabbed_element_index != .nothing) {
+                    workspace.setGrabbing(
+                        .{ .index = grabbed_element_index, .offset = grabbed_element_index.get().getGrabbedOffset(mouse.cur.position) },
+                        undo_stack,
+                    );
+                    if (plucked) {
+                        workspace.setHandLayer(grabbed_element_index, undo_stack);
+                        Toybox.refreshAbsolutePoints(&.{grabbed_element_index});
+                    }
+                }
+            } else if (workspace.grabbing.index != .nothing and
+                (!(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) or
+                    workspace.grabbingSomethingIllegal()))
+            {
+                const dropzone_index = hot_and_dropzone.dropzone;
+
+                if (dropzone_index != .nothing) {
+                    assert(Toybox.isFloating(workspace.grabbing.index));
+                    if (Toybox.get(dropzone_index).specific.tag() == .newcase) {
+                        const displaced_newcase = &Toybox.get(dropzone_index).specific.newcase;
+                        assert(Toybox.get(workspace.grabbing.index).specific.tag() == .case);
+                        const newcase = try Toybox.new(.{}, .{ .newcase = .{
+                            .length_before = Toybox.get(dropzone_index).specific.newcase.length_before,
+                            .length_after = 0,
+                        } }, undo_stack);
+                        displaced_newcase.length_before = 0;
+                        const original_tree = Toybox.get(dropzone_index).tree;
+                        Toybox.insert(newcase.index, .{
+                            .parent = original_tree.parent,
+                            .prev = original_tree.prev,
+                            .next = dropzone_index,
+                            .first = .nothing,
+                            .last = .nothing,
+                        }, undo_stack);
+                        Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.parentAbsolutePoint(dropzone_index));
+                        Toybox.addChildLast(newcase.index, workspace.grabbing.index, undo_stack);
+                    } else {
+                        Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.parentAbsolutePoint(dropzone_index));
+                        Toybox.refreshAbsolutePoints(&.{workspace.grabbing.index});
+                        Toybox.changeChild(dropzone_index, workspace.grabbing.index, undo_stack);
+
+                        Toybox.destroyFloating(dropzone_index, undo_stack);
+                    }
+                } else if (!Toybox.isFloating(workspace.grabbing.index)) {
+                    // Case B.2: releasing a grabbed thing, which might be a button
+                    assert(dropzone_index == .nothing);
+                    if (Toybox.get(workspace.grabbing.index).specific.as(.button)) |button| {
+                        switch (button.action) {
+                            .see_failing_testcase => {
+                                const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
+                                try launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved, undo_stack);
+                            },
+                            .launch_testcase => {
+                                const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
+                                try launchTestcase(testcase_index, undo_stack);
+                            },
+                            .scroll_up, .scroll_down => {},
+                        }
+                    }
+                } else {
+                    // Case B.3: dropping a floating thing on fresh space
+                    const target_area = hot_and_dropzone.over_background;
+                    Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.get(target_area).absolute_point);
+                    Toybox.addChildLast(target_area, workspace.grabbing.index, undo_stack);
+                    Toybox.refreshAbsolutePoints(&.{workspace.grabbing.index});
+                }
+
+                workspace.setGrabbing(.{ .index = .nothing, .offset = .zero }, undo_stack);
+                workspace.setHandLayer(.nothing, undo_stack);
             }
-
-            const on_main_area = try workspace.main_area.findHoverableOrDropzoneAtPosition(
-                std.meta.activeTag(workspace.focus.grabbing.kind),
-                mouse.cur.position,
-                mem.gpa,
-                frame_arena,
-            );
-            break :blk on_main_area;
-        };
-
-        const hovering: Focus.Target = switch (workspace.focus.grabbing.kind) {
-            else => .nothing,
-            .nothing => hovered_or_dropzone_thing,
-        };
-        const dropzone: Focus.Target = switch (workspace.focus.grabbing.kind) {
-            else => hovered_or_dropzone_thing,
-            .nothing => .nothing,
-        };
-
-        const ui_hot = try workspace.findUiAtPosition(mouse.cur.position);
-
-        const old_toolbar_left = workspace.toolbar_left;
-        math.lerp_towards(
-            &workspace.toolbar_left,
-            if (left_toolbar_rect_ideal
-                // just in case the mouse is out of the screen on that side
-                .scaleNonUniform(.new(100, 1), .center_right)
-                .contains(mouse_toolbar_pos)) 1 else 0,
-            0.3,
-            platform.delta_seconds,
-        );
-
-        // TODO: only do on open or on close (right now, doing on both just in case)
-        if ((old_toolbar_left > 0.1 and workspace.toolbar_left <= 0.1) or (old_toolbar_left <= 0.1 and workspace.toolbar_left > 0.1)) {
-            const old_case = workspace.toolbar.cases.pop();
-            assert(workspace.toolbar.cases.items.len == 0);
-            try workspace.toolbar.cases.append(mem.gpa, try workspace.freshToolbarCase(mem));
-            try workspace.undo_stack.append(.{ .specific = .{
-                .refreshed_case_in_toolbar = .{ .old_case = old_case },
-            } });
         }
 
-        // TODO: should maybe be a Focus.Target as a dropzone
-        const hovering_toolbar_trash: bool = switch (workspace.focus.grabbing.kind) {
-            .sexpr, .case_handle, .garland_handle => workspace.toolbar_trash.rect.contains(mouse.cur.position),
-            .nothing => false,
-            // TODO: trash should handle everything
-            else => false,
-        };
+        // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
+        // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
+
+        // TODO(optim): avoid computing this twice?
+        const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
 
         // cursor
         platform.setCursor(
-            if (workspace.focus.grabbing.kind != .nothing)
-                .grabbing
-            else if (hovering.kind != .nothing)
-                .could_grab
-            else if (ui_hot.kind != .nothing or workspace.focus.ui_active.kind != .nothing)
-                .pointer
+            if (workspace.grabbing.index != .nothing)
+                .grabbing // or maybe .pointer, if it's UI
+            else if (hot_and_dropzone.hot != .nothing)
+                .could_grab // or maybe .pointer, if it's UI
             else
                 .default,
         );
 
-        // update hover_t for sexprs, garland handles, case handles
-        try workspace.main_area.updateHoverT(
-            hovered_or_dropzone_thing,
-            workspace.focus.grabbing,
-            frame_arena,
-            platform.delta_seconds,
-            workspace,
-        );
-        try workspace.hand.updateHoverT(
-            hovered_or_dropzone_thing,
-            workspace.focus.grabbing,
-            frame_arena,
-            platform.delta_seconds,
-            workspace,
-        );
-        try workspace.toolbar.updateHoverT(
-            hovered_or_dropzone_thing,
-            workspace.focus.grabbing,
-            frame_arena,
-            platform.delta_seconds,
-            workspace,
-        );
+        // Do this here, for .grabbingSomethingIllegal to work correctly
+        dragGrabbing(workspace.grabbing, mouse.cur.position, hot_and_dropzone, delta_seconds);
 
-        // update ui hotness
-        for (workspace.fnkboxes(.main_area).items, 0..) |*fnkbox, fnkbox_index| {
-            fnkbox.updateUiHotness(fnkbox_index, ui_hot, workspace.focus.ui_active, platform.delta_seconds);
-        }
+        // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
+        var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
 
-        for (workspace.postits(.main_area).items, 0..) |*postit, k| {
-            postit.button.updateHot2(switch (hovering.kind) {
-                else => false,
-                .postit => |k2| k == k2,
-            }, switch (workspace.focus.grabbing.kind) {
-                else => false,
-                .postit => |k2| k == k2,
-            }, platform.delta_seconds);
-        }
+        if (true) { // update _t and other simple things that could be done in parallel
+            const zone = tracy.initZone(@src(), .{ .name = "update _t" });
+            defer zone.deinit();
 
-        math.lerp_towards(&workspace.toolbar_trash.hot_t, if (hovering_toolbar_trash) 1 else 0, 0.6, platform.delta_seconds);
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
 
-        // apply dragging
-        const mouse_point: Point = .{ .pos = mouse.cur.position };
-        switch (workspace.focus.grabbing.kind) {
-            .nothing => {},
-            // TODO: would be nice to unify all handle dragging
-            .postit => |k| {
-                workspace.postits(workspace.focus.grabbing.area).items[k].button.rect.top_left = mouse.cur.position.sub(workspace.focus.grabbing_offset);
-            },
-            .lens_handle => |p| {
-                const lens = &workspace.lenses(workspace.focus.grabbing.area).items[p.index];
-                lens.setHandlePos(p.part, mouse.cur.position);
-            },
-            .executor_handle => |h| {
-                workspace.executors(workspace.focus.grabbing.area).items[h.board].handle.point = mouse_point;
-            },
-            .executor_crank_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).crankMovedTo(mouse_point.pos, platform.delta_seconds),
-            .executor_brake_handle => |h| try workspace.executorAt(h, workspace.focus.grabbing.area).brakeMovedTo(mouse_point.pos, platform.delta_seconds),
-            .fnkviewer_handle => |h| {
-                workspace.fnkviewers(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
-            },
-            .fnkbox_handle => |h| {
-                workspace.fnkboxes(workspace.focus.grabbing.area).items[h].handle.point = mouse_point;
-            },
-            .case_handle => |p| workspace.caseHandleRef(p, workspace.focus.grabbing.area).point = mouse_point,
-            .garland_handle => |p| {
-                const target: Point = switch (dropzone.kind) {
-                    .nothing => mouse_point,
-                    .garland_handle => |h| workspace.garlandHandleRef(h, dropzone.area).point,
-                    else => unreachable,
-                };
-                workspace.garlandHandleRef(p, workspace.focus.grabbing.area).point.lerp_towards(target, 0.6, platform.delta_seconds);
-            },
-            .sexpr => |g| {
-                assert(g.local.len == 0);
-                assert(workspace.focus.grabbing.area == .hand);
-                const grabbed = &workspace.hand.sexprs.items[g.base.board];
-                const target: Point = switch (dropzone.kind) {
-                    .sexpr => |s| ViewHelper.sexprChildView(
-                        grabbed.is_pattern,
+                var done = true;
 
-                        Rect.transformBetweenRects(
-                            workspace.areaCamera(dropzone.area),
-                            workspace.camera,
-                        ).applyToLocalPoint(
-                            dropzone.lens_transform.actOn(workspace.sexprAtPlace(s.base, dropzone.area).point),
-                        ),
-                        s.local,
-                    ),
-                    .nothing => .{ .pos = mouse.cur.position },
-                    else => unreachable,
-                };
-                grabbed.point.lerp_towards(target, 0.6, platform.delta_seconds);
-            },
-        }
+                const eps: f32 = 0.0001;
+                done = math.lerpTowardsWithFinish(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, .fast, delta_seconds, eps) and done;
 
-        // apply ui-like dragging
-        switch (workspace.focus.ui_active.kind) {
-            else => {},
-            .fnkbox_scroll => |t| {
-                switch (t.direction) {
-                    .handle => {
-                        // TODO: grab offset
-                        workspace.fnkboxes(.main_area).items[t.fnkbox].scrollHandleMovedTo(
-                            mouse.cur.position.sub(workspace.focus.grabbing_offset),
-                            platform.delta_seconds,
-                        );
+                switch (lego.specific) {
+                    .sexpr => |*sexpr| {
+                        done = math.lerpTowardsWithFinish(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, .fast, delta_seconds, eps) and done;
+                        done = math.lerpTowardsWithFinish(&sexpr.is_fnkname_t, if (sexpr.is_fnkname) 1 else 0, .fast, delta_seconds, eps) and done;
                     },
-                    inline .up, .down => |x| workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_testcases -= platform.delta_seconds * @as(f32, switch (x) {
-                        .up => 1,
-                        .down => -1,
-                        .handle => unreachable,
-                    }) / 0.2,
+                    .executor => |*executor| {
+                        math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
+                        done = done and (@abs(executor.garland_appearing_t - 1) < eps);
+                    },
+                    .pill,
+                    .area,
+                    .case,
+                    .newcase,
+                    .garland,
+                    .garland_newcases,
+                    .microscope,
+                    .lens,
+                    .fnkbox,
+                    .fnkbox_description,
+                    .fnkbox_box,
+                    .fnkbox_testcases,
+                    .fnkslist,
+                    .fnkslist_element,
+                    .button,
+                    .scrollbar,
+                    .testcase,
+                    .postit,
+                    .postit_text,
+                    .postit_drawing,
+                    .executor_controls,
+                    .executor_brake,
+                    .executor_crank,
+                    => {},
                 }
-            },
-        }
 
-        // update spring positions, and update in general (TODO: maybe separate, or join with hover_t)
-        // TODO: remove duplication
-        workspace.hand.updateSpringsAndStuff(platform.delta_seconds);
-        workspace.toolbar.updateSpringsAndStuff(platform.delta_seconds);
-        workspace.main_area.updateSpringsAndStuff(platform.delta_seconds);
-
-        {
-            var k: usize = 0;
-            while (k < workspace.main_area.traces.items.len) {
-                if (workspace.main_area.traces.items[k].remaining_lifetime <= 0) {
-                    const old = workspace.main_area.traces.swapRemove(k);
-                    // TODO: call this on undo_stack deinit
-                    // old.deinit(mem.gpa);
-                    if (old.last_input) |l| try workspace.main_area.sexprs.append(mem.gpa, l);
-                    try workspace.undo_stack.append(.{ .specific = .{ .despawned_trace = .{
-                        .trace = old,
-                        .spawned_sexpr = old.last_input != null,
-                    } } });
-                } else k += 1;
+                if (!done) {
+                    try things_actually_hot_etc.append(lego.index);
+                }
             }
         }
 
-        // TODO: move these inside updateSpringsAndStuff
-        for (workspace.executors(.main_area).items) |*e| {
-            try e.update(mem, workspace.fnkboxes(.main_area).items, &workspace.hover_pool, platform.delta_seconds);
-        }
-
-        for (workspace.fnkviewers(.main_area).items) |*e| {
-            try e.update(mem, workspace.fnkboxes(.main_area).items, &workspace.hover_pool, platform.delta_seconds);
-        }
-
-        for (workspace.fnkboxes(.main_area).items) |*e| {
-            // TODO: revise
-            const added_trace = try e.update(mem, workspace.fnkboxes(.main_area).items, &workspace.hover_pool, platform.delta_seconds);
-            if (added_trace) |trace| {
-                try workspace.main_area.traces.append(mem.gpa, trace);
-                try workspace.undo_stack.append(.{ .specific = .spawned_trace });
+        // TODO(design): improve/remove
+        for (things_actually_hot_etc.items) |index| {
+            switch (index.get().specific) {
+                else => {},
+                .sexpr => Lego.Specific.Sexpr.updateLocalPositions(index),
             }
         }
 
-        // camera controls
-        {
-            const hovering_fnkbox: ?usize = for (workspace.fnkboxes(.main_area).items, 0..) |f, k| {
-                if (f.box().contains(mouse.cur.position)) break k;
-            } else null;
-
-            if (hovering_fnkbox) |k| {
-                workspace.fnkboxes(.main_area).items[k].scroll_testcases -= mouse.cur.scrolled.toNumber() * platform.delta_seconds / 0.05;
+        if (true) { // pills decay
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                switch (lego.specific) {
+                    .pill => |*pill| {
+                        pill.remaining_lifetime -= delta_seconds;
+                        lego.local_point = lego.local_point.applyToLocalPoint(.{ .pos = pill.velocity.scale(delta_seconds) });
+                        if (pill.remaining_lifetime <= 0) {
+                            Toybox.pop(lego.index, undo_stack);
+                            Toybox.destroyFloating(lego.index, undo_stack);
+                        }
+                    },
+                    else => {},
+                }
             }
-
-            workspace.camera = moveCamera(camera, platform.delta_seconds, platform.keyboard, mouse, hovering_fnkbox == null);
         }
 
-        // drawing
-        // draw right before big state changes, to avoid breaking the lenses cache
+        // TODO(design): a bit hacky
+        if (true) { // set garlands visibility
+            const zone = tracy.initZone(@src(), .{ .name = "set garlands visibility" });
+            defer zone.deinit();
+
+            const grabbing_garland_or_case: bool = if (workspace.grabbing.index == .nothing)
+                false
+            else switch (Toybox.get(workspace.grabbing.index).specific) {
+                .case, .garland => true,
+                else => false,
+            };
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.garland)) |garland| {
+                    garland.visible =
+                        grabbing_garland_or_case or
+                        garland.hasChildCases() or
+                        (if (lego.tree.parent.getSafe()) |p| p.specific.tag() == .executor else false);
+                }
+            }
+        }
+
+        if (true) { // move camera and scroll stuff
+            const zone = tracy.initZone(@src(), .{ .name = "move camera" });
+            defer zone.deinit();
+
+            const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .fnkbox_testcases and Lego.Specific.FnkboxBox.testcases_box.contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
+                if (lego.specific.tag() == .fnkslist and toolbar_fnks_rect.contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
+            } else .nothing;
+
+            const p = &Toybox.get(workspace.main_area).local_point;
+            if (over_scrollable_element == .nothing) {
+                p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
+                    .none => 1.0,
+                    .up => 1.1,
+                    .down => 0.9,
+                });
+            } else {
+                Toybox.get(over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
+            }
+            inline for (KeyboardButton.directional_keys) |kv| {
+                for (kv.keys) |key| {
+                    if (platform.keyboard.cur.isDown(key)) {
+                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
+                    }
+                }
+            }
+
+            for (workspace.roots(.with_main_camera).constSlice()) |root| {
+                if (root != workspace.main_area) {
+                    Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point;
+                }
+            }
+            Toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
+        }
+
+        if (true) { // open/close left toolbar, and regenerate its contents
+            const zone = tracy.initZone(@src(), .{ .name = "toolbar" });
+            defer zone.deinit();
+
+            const old_t = workspace.toolbar_left_unfolded_t;
+            math.lerpTowards(
+                &workspace.toolbar_left_unfolded_t,
+                if (hot_and_dropzone.over_background == workspace.toolbar_left) 1 else 0,
+                .slow,
+                delta_seconds,
+            );
+            const new_t = workspace.toolbar_left_unfolded_t;
+            if (new_t <= 0.01) { // delete all current children
+                var cur = Toybox.get(workspace.toolbar_left).tree.first;
+                while (cur != .nothing) {
+                    const original_tree = Toybox.get(cur).tree;
+                    Toybox.pop(cur, undo_stack);
+                    Toybox.destroyFloating(cur, undo_stack);
+                    cur = original_tree.next;
+                }
+            } else if (old_t <= 0.01) { // regenerate children
+                if (true) { // add a fresh case
+                    const new_name_1 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+                    const new_name_2 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_1);
+                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_2);
+
+                    const index = try Toybox.buildCase(.{ .pos = .new(2.75, 5) }, .{
+                        .pattern = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                            .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_2 }, true, false, undo_stack),
+                            .down = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_1 }, true, false, undo_stack),
+                        } }, true, false, undo_stack),
+                        .template = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                            .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_1 }, false, false, undo_stack),
+                            .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "nil" }, false, false, undo_stack),
+                        } }, false, false, undo_stack),
+                        .fnkname = null,
+                        .next = null,
+                    }, undo_stack);
+
+                    Toybox.addChildLast(workspace.toolbar_left, index, undo_stack);
+                }
+            }
+
+            const rect = toolbar_left_rect;
+            const hot_t = workspace.toolbar_left_unfolded_t;
+            const p = &Toybox.get(workspace.toolbar_left).local_point;
+            p.* = .{
+                .scale = absolute_camera.size.y / rect.size.y,
+                .pos = absolute_camera.top_left,
+            };
+            p.* = p.applyToLocalPoint(.{ .pos = .new(-(rect.size.x - 1) * (1 - hot_t), 0) });
+
+            Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
+        }
+
+        if (true) { // open/close fnks toolbar
+            math.lerpTowards(
+                &workspace.toolbar_fnks_unfolded_t,
+                if (hot_and_dropzone.over_background == workspace.toolbar_fnks) 1 else 0,
+                .slow,
+                delta_seconds,
+            );
+
+            const rect = toolbar_fnks_rect;
+            const hot_t = workspace.toolbar_fnks_unfolded_t;
+            const p = &Toybox.get(workspace.toolbar_fnks).local_point;
+            p.* = .{
+                .scale = absolute_camera.size.y / rect.size.y,
+                .pos = absolute_camera.get(.top_right),
+            };
+            p.* = p.applyToLocalPoint(.{ .pos = .new(-1 - (rect.size.x - 1) * hot_t, 0) });
+
+            Toybox.refreshAbsolutePoints(&.{workspace.toolbar_fnks});
+        }
+
+        if (true) { // start and advance fnkboxes animations
+            const zone = tracy.initZone(@src(), .{ .name = "fnkboxes animations" });
+            defer zone.deinit();
+
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.fnkbox)) |fnkbox| {
+                    if (fnkbox.execution) |*execution| {
+                        const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
+                        switch (execution.source) {
+                            .testcase => |testcase| switch (execution.state) {
+                                .scrolling_towards_case => {
+                                    const offset_from_top: f32 = (Toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
+                                    const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
+                                    if (offset_error == 0) {
+                                        const new_input = try Toybox.dupeIntoFloating(Lego.Specific.Testcase.children(testcase).input, true, undo_stack);
+                                        Toybox.changeCoordinates(new_input, Toybox.get(testcase).absolute_point, Toybox.get(workspace.floating_inputs_layer).absolute_point);
+                                        Toybox.addChildLast(workspace.floating_inputs_layer, new_input, undo_stack);
+                                        undo_stack.storeAllData(lego.index);
+                                        execution.state = .starting;
+                                        execution.state_t = 0;
+                                        execution.original_or_final_input_point = Toybox.get(new_input).local_point;
+                                        execution.floating_input_or_output = new_input;
+                                    } else {
+                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target;
+                                        const target_scroll = scroll.* + offset_error;
+                                        math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
+                                        math.towards(scroll, target_scroll, 0.1 * delta_seconds);
+                                    }
+                                },
+                                .starting => {
+                                    execution.state_t += delta_seconds / 0.8;
+
+                                    const input = execution.floating_input_or_output;
+                                    Toybox.get(input).local_point = .lerp(
+                                        execution.original_or_final_input_point,
+                                        Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
+                                            Toybox.get(Lego.Specific.Executor.children(executor_index).input).absolute_point,
+                                        ),
+                                        execution.state_t,
+                                    );
+                                    if (execution.state_t >= 1) {
+                                        execution.state = .executing;
+                                        execution.state_t = 0;
+                                        Toybox.pop(input, undo_stack);
+                                        Toybox.changeChild(Lego.Specific.Executor.children(executor_index).input, input, undo_stack);
+                                        execution.floating_input_or_output = .nothing;
+                                    }
+                                },
+                                .executing => {
+                                    try advanceExecutorAnimation(executor_index, workspace, undo_stack, delta_seconds);
+                                    if (Toybox.get(executor_index).specific.executor.animation == null) {
+                                        undo_stack.storeAllData(lego.index);
+                                        execution.state = .ending;
+                                        execution.state_t = 0;
+
+                                        const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
+                                        Toybox.changeCoordinates(
+                                            result,
+                                            .{},
+                                            Toybox.get(workspace.floating_inputs_layer).absolute_point,
+                                        );
+                                        Toybox.addChildLast(workspace.floating_inputs_layer, result, undo_stack);
+                                        Toybox.refreshAbsolutePoints(&.{result});
+
+                                        undo_stack.storeAllData(lego.index);
+                                        execution.floating_input_or_output = result;
+                                        execution.original_or_final_input_point = Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
+                                            Toybox.get(result).absolute_point,
+                                        );
+                                    }
+                                },
+                                .ending => {
+                                    execution.state_t += delta_seconds / 0.8;
+
+                                    const final_result = execution.floating_input_or_output;
+                                    Toybox.get(final_result).local_point = .lerp(
+                                        execution.original_or_final_input_point,
+                                        Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
+                                            Toybox.get(
+                                                Lego.Specific.Testcase.children(testcase).actual,
+                                            ).absolute_point,
+                                        ),
+                                        execution.state_t,
+                                    );
+
+                                    if (true) { // focus on the testcase
+                                        const offset_from_top: f32 = (Toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
+                                        const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
+                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target;
+                                        const target_scroll = scroll.* + offset_error;
+                                        math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
+                                        math.towards(scroll, target_scroll, 0.1 * delta_seconds);
+                                    }
+
+                                    if (execution.state_t >= 1) {
+                                        const new_actual = final_result;
+                                        Toybox.changeCoordinates(new_actual, Toybox.parentAbsolutePoint(final_result), Toybox.get(testcase).absolute_point);
+                                        Toybox.pop(new_actual, undo_stack);
+
+                                        const old_actual = Lego.Specific.Testcase.children(testcase).actual;
+                                        assert(Toybox.get(old_actual).specific.sexpr.kind == .empty);
+                                        Toybox.changeChild(old_actual, new_actual, undo_stack);
+                                        undo_stack.storeAllData(lego.index);
+                                        fnkbox.execution = null;
+                                        Toybox.refreshAbsolutePoints(&.{new_actual});
+
+                                        // TODO(optim): call this somewhere else
+                                        try fnkbox.updateStatus(workspace, scratch);
+                                    }
+                                },
+                            },
+                            .input => {
+                                try advanceExecutorAnimation(executor_index, workspace, &workspace.undo_stack, delta_seconds);
+                                if (Toybox.get(executor_index).specific.executor.animation == null) {
+                                    const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
+                                    undo_stack.storeAllData(lego.index);
+                                    fnkbox.execution = null;
+                                    Toybox.addChildLast(workspace.main_area, result, undo_stack);
+                                    Toybox.changeCoordinates(result, .{}, workspace.main_area.get().absolute_point);
+                                }
+                            },
+                        }
+                    } else {
+                        const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
+                        if (Lego.Specific.Executor.shouldStartExecution(executor_index)) {
+                            const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
+                            const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true, undo_stack);
+
+                            undo_stack.storeAllData(lego.index);
+                            fnkbox.execution = .{
+                                .source = .input,
+                                .original_garland = backup_garland_index,
+                                .original_or_final_input_point = undefined,
+                                .state_t = undefined,
+                                .old_testcase_actual_value = undefined,
+                                .state = .executing,
+                            };
+
+                            // TODO(game)
+                            // assert(fnkbox.executor.garland.fnkname == null);
+                            // if (fnkbox.folded) fnkbox.executor.garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
+                            // try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
+                            //     .fnkbox = k,
+                            //     .input = try fnkbox.executor.input.clone(&mem.hover_pool),
+                            // } } });
+                            // try workspace.canonizeAfterChanges(mem);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (true) { // start and advance executors animations
+            const zone = tracy.initZone(@src(), .{ .name = "executors animations" });
+            defer zone.deinit();
+
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.executor)) |executor| {
+                    if (executor.controlled_by_parent_fnkbox) continue;
+
+                    if (executor.animation) |*animation| {
+                        _ = animation;
+                        @panic("TODO(game)");
+                    }
+
+                    if (Lego.Specific.Executor.shouldStartExecution(lego.index)) {
+                        @panic("TODO(game)");
+                    }
+                }
+            }
+        }
+
+        if (true) { // enable/disable buttons and other things
+            const zone = tracy.initZone(@src(), .{ .name = "enable/disable buttons" });
+            defer zone.deinit();
+
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.button)) |button| {
+                    button.enabled = switch (button.action) {
+                        .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
+                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
+                        .scroll_up, .scroll_down => true,
+                    };
+                }
+                if (lego.specific.as(.executor_crank)) |crank| {
+                    crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
+                }
+            }
+        }
+
+        const something_happened = undo_stack.anyChangesThisFrame();
+        if (something_happened) {
+            try workspace.canonizeAfterChanges(scratch);
+        }
+
+        // There should be no further changes
+        undo_stack.startFrame();
+        defer assert(!undo_stack.anyChangesThisFrame());
+
+        if (true) { // reset per-frame variables
+            const zone = tracy.initZone(@src(), .{ .name = "reset per-frame variables" });
+            defer zone.deinit();
+
+            // TODO(optim): there must be better ways to do this
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.case)) |case| {
+                    case.next_point_extra = .{};
+                    case.fnk_name_extra = .{};
+                }
+                if (lego.specific.as(.newcase)) |newcase| {
+                    newcase.offset_ghost = .nothing;
+                }
+            }
+        }
+
+        // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
+        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
+
+        if (true) Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
+
+        if (true) { // set lenses data
+            const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
+            defer zone.deinit();
+
+            _ = workspace.arena_for_lenses_data.reset(.retain_capacity);
+            const allocator = workspace.arena_for_lenses_data.allocator();
+            const microscopes = try Toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
+            for (microscopes, 0..) |microscope, k| {
+                const source, const target = Toybox.getChildrenExact(2, microscope);
+                const source_pos = Toybox.get(source).absolute_point.pos;
+                const target_pos = Toybox.get(target).absolute_point.pos;
+                const source_lens = &Toybox.get(source).specific.lens;
+                const source_radius = source_lens.local_radius * Toybox.get(source).absolute_point.scale;
+                const target_lens = &Toybox.get(target).specific.lens;
+                const target_radius = target_lens.local_radius * Toybox.get(target).absolute_point.scale;
+
+                source_lens.transform = .identity;
+                source_lens.is_target = false;
+                target_lens.transform = .fromLenses(source_pos, source_radius, target_pos, target_radius);
+                target_lens.is_target = true;
+
+                var all_roots: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                try all_roots.appendSlice(allocator, workspace.roots(.{
+                    .include_hand = true,
+                    .include_toolbars = true,
+                    .include_floating_inputs = true,
+                    .include_lenses = false,
+                }).constSlice());
+                try all_roots.appendSlice(allocator, microscopes[0..k]);
+
+                var all_roots_except_hand: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                try all_roots_except_hand.appendSlice(allocator, workspace.roots(.{
+                    .include_hand = false,
+                    .include_toolbars = true,
+                    .include_floating_inputs = true,
+                    .include_lenses = false,
+                }).constSlice());
+                try all_roots_except_hand.appendSlice(allocator, microscopes[0..k]);
+
+                source_lens.roots_to_draw = all_roots.items;
+                source_lens.roots_to_interact = &.{};
+                target_lens.roots_to_draw = all_roots.items;
+                target_lens.roots_to_interact = all_roots_except_hand.items;
+            }
+        }
+
         if (drawer) |d| {
             try workspace.draw(platform, d);
         }
+    }
 
-        // 'var' since the deleted command gets completed at execution
-        var action: UndoableCommand = if (workspace.focus.grabbing.kind == .nothing and (mouse.wasPressed(.left) or mouse.wasPressed(.right)))
-            switch (hovering.kind) {
-                .nothing => switch (ui_hot.kind) {
-                    .fnkbox_toggle_fold => |k| .{ .specific = .{ .fnkbox_toggle_fold = k } },
-                    .fnkbox_scroll => |t| blk: {
-                        if (t.direction == .handle) {
-                            workspace.focus.grabbing_offset = mouse.cur.position.sub(workspace.fnkboxes(.main_area).items[t.fnkbox].scroll_button_handle.rect.top_left);
-                        }
-                        workspace.focus.ui_active = ui_hot;
-                        break :blk .{ .specific = .{ .fnkbox_scroll = .{
-                            .fnkbox = t.fnkbox,
-                            .old_position = workspace.fnkboxes(ui_hot.area).items[t.fnkbox].scroll_testcases,
-                        } } };
-                    },
-                    .nothing, .fnkbox_launch_testcase, .fnkbox_see_failing_case => blk: {
-                        workspace.focus.ui_active = ui_hot;
-                        break :blk .noop;
-                    },
-                },
-                else => .{ .specific = .{
-                    .grabbed = .{
-                        .from = hovering,
-                        .duplicate = mouse.wasPressed(.right) or hovering.immutable(),
-                        .old_data = workspace.getOldData(hovering),
-                    },
-                } },
-            }
-        else if (workspace.focus.grabbing.kind != .nothing and ((!mouse.cur.isDown(.left) and !mouse.cur.isDown(.right)) or workspace.grabbingSomethingIllegal()))
-            if (hovering_toolbar_trash)
-                .{ .specific = .{ .deleted = .{
-                    .old_place = workspace.focus.grabbing,
-                    .value = undefined,
-                } } }
-            else switch (workspace.focus.grabbing.kind) {
-                .nothing => unreachable,
-                .lens_handle,
-                .executor_handle,
-                .fnkviewer_handle,
-                .fnkbox_handle,
-                .postit,
-                .executor_crank_handle,
-                .executor_brake_handle,
-                => .{ .specific = .{
-                    .dropped = .{
-                        .at = workspace.focus.grabbing,
-                        .old_grabbed_position = workspace.focus.grabbing,
-                        .overwritten_sexpr = undefined,
-                        .overwritten_garland = undefined,
-                    },
-                } },
-                .case_handle => switch (dropzone.kind) {
-                    else => unreachable,
-                    .nothing => .{ .specific = .{
-                        .dropped = .{
-                            .at = try workspace.main_area.addOne(.case),
-                            .old_grabbed_position = workspace.focus.grabbing,
-                            .overwritten_sexpr = undefined,
-                            .overwritten_garland = undefined,
-                        },
-                    } },
-                    .case_handle => .{ .specific = .{
-                        .dropped = .{
-                            .at = dropzone,
-                            .old_grabbed_position = workspace.focus.grabbing,
-                            .overwritten_sexpr = undefined,
-                            .overwritten_garland = undefined,
-                        },
-                    } },
-                },
-                .garland_handle => .{ .specific = .{
-                    .dropped = .{
-                        .at = switch (dropzone.kind) {
-                            .nothing => try workspace.main_area.addOne(.garland),
-                            .garland_handle => dropzone,
-                            else => unreachable,
-                        },
-                        .old_grabbed_position = workspace.focus.grabbing,
-                        .overwritten_sexpr = undefined,
-                        .overwritten_garland = switch (dropzone.kind) {
-                            .nothing => null,
-                            .garland_handle => |h| workspace.garlandAt(h, dropzone.area).*,
-                            else => unreachable,
-                        },
-                    },
-                } },
-                .sexpr => .{
-                    .specific = .{
-                        .dropped = switch (dropzone.kind) {
-                            // TODO: both cases could be unified
-                            .nothing => .{
-                                .at = try workspace.main_area.addOne(.sexpr),
-                                .old_grabbed_position = workspace.focus.grabbing,
-                                .overwritten_sexpr = null,
-                                .overwritten_garland = undefined,
-                            },
-                            .sexpr => |s| .{
-                                .at = dropzone,
-                                .old_grabbed_position = workspace.focus.grabbing,
-                                .overwritten_sexpr = workspace.sexprAtPlace(s.base, dropzone.area).getSubValue(s.local),
-                                .overwritten_garland = undefined,
-                            },
-                            else => unreachable,
-                        },
-                    },
-                },
-            }
-        else if (workspace.focus.ui_active.kind != .nothing and !mouse.cur.isDown(.left)) blk: {
-            const ui_active = workspace.focus.ui_active;
-            workspace.focus.ui_active = .nothing;
-            break :blk if (!ui_hot.equals(ui_active))
-                .noop
-            else switch (ui_active.kind) {
-                .nothing => unreachable,
-                .fnkbox_toggle_fold, .fnkbox_scroll => .noop,
-                .fnkbox_see_failing_case => |k| op: {
-                    const fnkbox = &workspace.fnkboxes(.main_area).items[k];
-                    break :op .{
-                        .specific = .{ .fnkbox_launch_testcase = .{
-                            .fnkbox = k,
-                            .testcase = fnkbox.status.unsolved,
-                            .old_actual = try fnkbox.testcases.items[fnkbox.status.unsolved].actual.clone(&workspace.hover_pool),
-                        } },
-                    };
-                },
-                .fnkbox_launch_testcase => |t| .{ .specific = .{ .fnkbox_launch_testcase = .{
-                    .fnkbox = t.fnkbox,
-                    .testcase = t.testcase,
-                    .old_actual = try workspace.fnkboxes(.main_area).items[t.fnkbox].testcases.items[t.testcase].actual.clone(&workspace.hover_pool),
-                } } },
-            };
-        } else .noop;
+    fn setGrabbing(workspace: *Workspace, grabbing: Grabbing, undo_stack: ?*UndoStack) void {
+        if (undo_stack) |s| {
+            s.append(.{ .set_grabbing = workspace.grabbing });
+        }
+        workspace.grabbing = grabbing;
+    }
 
-        // actually perform the action
-        switch (action.specific) {
-            .noop => {},
-            .started_execution,
-            .started_execution_fnkbox_from_input,
-            .spawned_trace,
-            .despawned_trace,
-            .refreshed_case_in_toolbar,
-            => unreachable,
-            .fnkbox_launch_testcase => |t| {
-                const fnkbox = &workspace.fnkboxes(.main_area).items[t.fnkbox];
-                const testcase = &fnkbox.testcases.items[t.testcase];
-                assert(fnkbox.execution == null);
-                const old_actual = testcase.actual.value;
-                testcase.actual = try .empty(testcase.actual.point, &workspace.hover_pool, false);
-                fnkbox.execution = .{
-                    .source = .{ .testcase = t.testcase },
-                    .old_testcase_actual_value = old_actual,
-                    .original_garland = try fnkbox.executor.garland.clone(mem.gpa, &mem.hover_pool),
-                    .state_t = undefined,
-                    .state = .scrolling_towards_case,
-                };
-            },
-            .fnkbox_toggle_fold => |k| {
-                const fnkbox = &workspace.fnkboxes(.main_area).items[k];
-                fnkbox.folded = !fnkbox.folded;
-            },
-            .fnkbox_scroll => {
-                // handled in the 'apply ui-like draggin' section
-            },
-            .deleted => |*d| {
-                workspace.focus.grabbing = .nothing;
-                d.value = try workspace.popAt(d.old_place, mem);
-            },
-            .grabbed => |g| {
-                switch (g.from.kind) {
-                    .nothing => unreachable,
-                    inline .lens_handle,
-                    .executor_handle,
-                    .fnkviewer_handle,
-                    .fnkbox_handle,
-                    .postit,
-                    .executor_crank_handle,
-                    .executor_brake_handle,
-                    => |h, t| {
-                        workspace.focus.grabbing_offset = switch (t) {
-                            else => .zero,
-                            .postit => mouse.cur.position.sub(g.old_data.point.pos),
-                        };
-                        if (g.duplicate) {
-                            switch (t) {
-                                else => std.log.err("TODO", .{}),
-                                .fnkbox_handle => {
-                                    const original = workspace.fnkboxes(.main_area).items[h];
+    fn setHandLayer(workspace: *Workspace, index: Lego.Index, undo_stack: ?*UndoStack) void {
+        if (undo_stack) |s| {
+            s.append(.{ .set_handlayer = workspace.hand_layer });
+        }
+        workspace.hand_layer = index;
+    }
 
-                                    const S = struct {
-                                        var random_instance: std.Random.DefaultPrng = std.Random.DefaultPrng.init(1);
-                                    };
-                                    const new_name = try mem.gpa.alloc(u8, 10);
-                                    math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
-                                    while (for (workspace.fnkboxes(.main_area).items) |fnkbox| {
-                                        if (fnkbox.fnkname.value.equals(&Sexpr.doLit(new_name))) break true;
-                                    } else false) {
-                                        math.Random.init(S.random_instance.random()).alphanumeric_bytes(new_name);
+    fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, undo_stack: *UndoStack, delta_seconds: f32) !void {
+        const floating_inputs_layer = workspace.floating_inputs_layer;
+        const Executor = Lego.Specific.Executor;
+        const executor = &Toybox.get(executor_index).specific.executor;
+        if (executor.animation) |*animation| {
+            undo_stack.storeAllData(executor_index);
+            animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
+            if (animation.t >= 1) {
+                Toybox.popWithUndoAndChangingCoords(animation.garland_fnkname, undo_stack);
+                if (animation.matching) {
+                    if (true) { // fill variables
+                        var cur = animation.active_case;
+                        while (cur != .nothing) {
+                            const next = Toybox.next_preordered(cur, animation.active_case).next;
+                            defer cur = next;
+                            if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
+                                if (sexpr.emerging_value != .nothing) {
+                                    if (sexpr.is_pattern) {
+                                        sexpr.emerging_value_ignore_updates_to_t = true;
+                                    } else {
+                                        Toybox.changeChildWithUndoAndAlsoCoords(cur, sexpr.emerging_value, &workspace.undo_stack);
                                     }
-
-                                    try workspace.fnkboxes(.main_area).append(mem.gpa, try original.cloneAsEmpty(try mem.storeSexpr(.doLit(new_name)), mem));
-                                    workspace.focus.grabbing = .{ .kind = .{
-                                        .fnkbox_handle = workspace.fnkboxes(.main_area).items.len - 1,
-                                    }, .area = .main_area };
-                                },
-                                .lens_handle => {
-                                    var lens_pair = workspace.lenses(.main_area).items[h.index].clone();
-                                    lens_pair.source.addInPlace(.one);
-                                    lens_pair.target.addInPlace(.one);
-                                    try workspace.lenses(.main_area).append(mem.gpa, lens_pair);
-                                    // TODO: lens transform?
-                                    workspace.focus.grabbing = .{ .kind = .{
-                                        .lens_handle = .{
-                                            .index = workspace.lenses(.main_area).items.len - 1,
-                                            .part = h.part,
-                                        },
-                                    }, .area = .main_area };
-                                },
+                                }
                             }
-                        } else workspace.focus.grabbing = g.from;
-                    },
-                    .garland_handle => {
-                        const original = if (g.duplicate)
-                            try workspace.dupeAt(g.from, mem)
-                        else
-                            try workspace.popAt(g.from, mem);
+                        }
+                    }
 
-                        try workspace.hand.garlands.append(mem.gpa, original.garland);
-                        workspace.focus.grabbing = .{ .kind = .{ .garland_handle = .{
-                            .local = &.{},
-                            .parent = .{
-                                .garland = workspace.hand.garlands.items.len - 1,
-                            },
-                        } }, .area = .hand };
-                    },
-                    .case_handle => |h| {
-                        assert(h.exists());
-                        var original = if (g.duplicate)
-                            try workspace.dupeAt(g.from, mem)
-                        else
-                            try workspace.popAt(g.from, mem);
+                    const old_case_parts = Lego.Specific.Case.destroyForParts(animation.active_case, undo_stack);
+                    const old_input = Executor.children(executor_index).input;
+                    const old_garland = Executor.children(executor_index).garland;
+                    const next_garland = old_case_parts.next;
 
-                        if (g.from.area == .toolbar) original.case.changeCoordinateSpace(Rect.transformBetweenRects(
-                            workspace.leftToolbarCamera(),
-                            workspace.camera,
-                        ));
-                        try workspace.hand.cases.append(mem.gpa, original.case);
-                        workspace.focus.grabbing = .{ .kind = .{ .case_handle = .{
-                            .board = workspace.hand.cases.items.len - 1,
-                        } }, .area = .hand };
-                    },
-                    .sexpr => {
-                        var original = if (g.duplicate)
-                            try workspace.dupeAt(g.from, mem)
-                        else
-                            try workspace.popAt(g.from, mem);
+                    Toybox.changeChildWithUndoAndAlsoCoords(
+                        old_input,
+                        old_case_parts.template,
+                        undo_stack,
+                    );
 
-                        original.sexpr.point = hovering.lens_transform.actOn(original.sexpr.point);
-                        if (g.from.area == .toolbar) original.sexpr.changeCoordinateSpace(Rect.transformBetweenRects(
-                            workspace.leftToolbarCamera(),
-                            workspace.camera,
-                        ));
-                        try workspace.hand.sexprs.append(mem.gpa, original.sexpr);
-                        workspace.focus.grabbing = .{ .kind = .{ .sexpr = .{
-                            .base = .{ .board = workspace.hand.sexprs.items.len - 1 },
-                            .local = &.{},
-                        } }, .area = .hand };
-                    },
+                    const new_garland = blk: {
+                        if (animation.invoked_fnk != .nothing) {
+                            Toybox.pop(animation.invoked_fnk, undo_stack);
+                            if (next_garland != .nothing) {
+                                // TODO(game)
+                                // Toybox.get(next_garland).specific.garland.enqueued_parent_pill_index = ??;
+                                undo_stack.storeAllData(next_garland);
+                                Toybox.get(next_garland).specific.garland.next_enqueued = executor.first_enqueued;
+                                undo_stack.storeAllData(executor_index);
+                                executor.first_enqueued = next_garland;
+                                Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, next_garland, undo_stack);
+                            }
+                            break :blk animation.invoked_fnk;
+                        } else if (next_garland.garland().hasChildCases()) {
+                            // TODO(game)
+                            // parent_pill_index = executor.prev_pills.items.len - 1;
+                            break :blk next_garland;
+                        } else if (executor.first_enqueued != .nothing) {
+                            const asdf = executor.first_enqueued;
+                            undo_stack.storeAllData(executor_index);
+                            executor.first_enqueued = Toybox.get(asdf).specific.garland.next_enqueued;
+                            // TODO(game)
+                            // parent_pill_index = Toybox.get(asdf).specific.garland.enqueued_parent_pill_index;
+                            Toybox.pop(asdf, undo_stack);
+                            break :blk asdf;
+                        } else {
+                            break :blk try Toybox.buildGarland(.{}, &.{}, undo_stack);
+                        }
+                    };
+
+                    Toybox.changeChildWithUndo(old_garland, new_garland, undo_stack);
+
+                    const fnkname = Lego.Specific.Garland.children(old_garland).fnkname;
+                    Toybox.popWithUndoAndChangingCoords(fnkname, undo_stack);
+                    Toybox.destroyFloating(old_garland, undo_stack);
+
+                    undo_stack.storeAllData(executor_index);
+                    executor.first_pill = try Lego.Specific.Pill.build(old_case_parts.pattern.get().absolute_point, executor.first_pill, .{
+                        .pattern = old_case_parts.pattern,
+                        .input = old_input,
+                        .fnkname_call = old_case_parts.fnkname,
+                        .fnkname_response = animation.garland_fnkname,
+                        // TODO(game)
+                        // They don't include previous bindings, since they have now been merged
+                        // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
+                    }, undo_stack);
+                    Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill, undo_stack);
+                } else {
+                    assert(animation.new_bindings.len == 0);
+                    Toybox.destroyFloating(try Lego.Specific.Garland.stealFnkname(
+                        Lego.Specific.Executor.children(executor_index).garland,
+                        animation.garland_fnkname,
+                        undo_stack,
+                    ), undo_stack);
                 }
-            },
-            .dropped => |g| {
-                workspace.focus.grabbing = .nothing;
-                switch (g.at.kind) {
-                    .nothing => unreachable,
-                    .lens_handle,
-                    .executor_handle,
-                    .fnkviewer_handle,
-                    .fnkbox_handle,
-                    .postit,
-                    .executor_crank_handle,
-                    .executor_brake_handle,
-                    => {},
-                    // .garland_handle => |h| {
-                    //     if (true) @panic("TODO");
-                    //     if (h.local.len == 0 and std.meta.activeTag(h.parent) == .garland) {} else {
-                    //         const place = workspace.garlandAt(h, g.at.area);
-                    //         const k = g.old_grabbed_position.kind.garland_handle.parent.garland;
-                    //         assert(g.old_grabbed_position.kind.garland_handle.local.len == 0);
-                    //         const garland = workspace.garlands.items[k];
-                    //         place.* = garland;
-                    //         _ = workspace.garlands.orderedRemove(k);
-                    //     }
-                    // },
-                    .sexpr, .case_handle, .garland_handle => {
-                        assert(g.old_grabbed_position.area == .hand);
-                        // assert(std.meta.activeTag(g.old_grabbed_position.kind.sexpr.base) == .board);
-                        // assert(g.old_grabbed_position.kind.sexpr.local.len == 0);
-                        assert(g.at.area != .hand);
-                        const grabbed = try workspace.popAt(g.old_grabbed_position, mem);
-                        try workspace.setAt(g.at, grabbed, mem);
-                    },
-                }
-            },
-        }
-        if (action.specific != .noop) {
-            try workspace.undo_stack.append(action);
-            try workspace.canonizeAfterChanges(mem);
-        }
-
-        for (workspace.fnkboxes(.main_area).items, 0..) |*fnkbox, k| {
-            if (fnkbox.execution == null and fnkbox.executor.startedExecution()) {
-                fnkbox.execution = .{
-                    .original_garland = try fnkbox.executor.garland.clone(mem.gpa, &workspace.hover_pool),
-                    .source = .input,
-                    .state = .executing,
-                    .state_t = undefined,
-                    .old_testcase_actual_value = undefined,
-                };
-                assert(fnkbox.executor.garland.fnkname == null);
-                if (fnkbox.folded) fnkbox.executor.garland.fnkname = try fnkbox.fnkname.clone(&workspace.hover_pool);
-                try workspace.undo_stack.append(.{ .specific = .{ .started_execution_fnkbox_from_input = .{
-                    .fnkbox = k,
-                    .input = try fnkbox.executor.input.clone(&mem.hover_pool),
-                } } });
-                try workspace.canonizeAfterChanges(mem);
+                undo_stack.storeAllData(executor_index);
+                executor.animation = null;
             }
         }
-        for (workspace.executors(.main_area).items, 0..) |e, k| {
-            if (e.startedExecution()) {
-                assert(e.enqueued_stack.items.len == 0);
-                try workspace.undo_stack.append(.{ .specific = .{ .started_execution = .{
-                    .executor = k,
-                    .input = e.input,
-                    .garland = try e.garland.clone(mem.gpa, &workspace.hover_pool),
-                    .prev_pills = (try e.prev_pills.clone(mem.gpa)).items,
-                    .prev_point = e.handle.point,
-                } } });
-                try workspace.canonizeAfterChanges(mem);
+
+        if (Executor.shouldStartExecution(executor_index)) {
+            const value = Lego.Specific.Executor.children(executor_index).input;
+
+            // pop first case for execution
+            const garland_index = Executor.children(executor_index).garland;
+            const first_segment = Lego.Specific.Garland.children(garland_index).cases.get().tree.first;
+            assert(first_segment.hasTag(.newcase));
+            const first_case = Toybox.get(first_segment).tree.first;
+            Lego.Specific.Garland.popCase(first_case, undo_stack);
+            Toybox.addChildLast(workspace.floating_inputs_layer, first_case, undo_stack);
+
+            const pattern = Lego.Specific.Case.children(first_case).pattern;
+
+            // TODO(optim): memory management
+            var new_bindings: std.ArrayList(Binding) = .init(workspace.gpa_for_bindings);
+            const matching = try Lego.Specific.Sexpr.generateBindings(value, pattern, &new_bindings);
+            const invoked_fnk: Lego.Index = if (!matching)
+                .nothing
+            else if (first_case.case().hasIdentityFnkname())
+                .nothing
+            else blk: {
+                const offset = 3.0;
+                const function_point = Lego.Specific.Executor.relative_garland_point
+                    .applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
+                if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point)) |garland| {
+                    Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
+                    break :blk garland;
+                } else @panic("TODO(game): handle this");
+            };
+            const garland_fnkname = try Lego.Specific.Garland.stealFnkname(garland_index, null, undo_stack);
+            Toybox.addChildLast(floating_inputs_layer, garland_fnkname, undo_stack);
+            const new_bindings_slice = try new_bindings.toOwnedSlice();
+            undo_stack.storeAllData(executor_index);
+            executor.animation = .{
+                .matching = matching,
+                .active_case = first_case,
+                .invoked_fnk = invoked_fnk,
+                .new_bindings = new_bindings_slice,
+                .garland_fnkname = garland_fnkname,
+            };
+
+            if (matching) {
+                var cur = first_case;
+                while (cur != .nothing) : (cur = Toybox.next_preordered(cur, first_case).next) {
+                    if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
+                        sexpr.executor_with_bindings = executor_index;
+                        if (sexpr.kind == .atom_var and !sexpr.is_pattern) {
+                            for (new_bindings_slice) |binding| {
+                                if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                    undo_stack.storeAllData(cur);
+                                    sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, true, undo_stack);
+                                    Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
+                                    Toybox.refreshAbsolutePoints(&.{sexpr.emerging_value});
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const new_pattern = Lego.Specific.Case.children(first_case).pattern;
+                cur = new_pattern;
+                while (cur != .nothing) : (cur = Toybox.next_preordered(cur, new_pattern).next) {
+                    const sexpr = &cur.get().specific.sexpr;
+                    assert(sexpr.is_pattern);
+                    if (sexpr.kind == .atom_var) {
+                        for (new_bindings_slice) |binding| {
+                            if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                undo_stack.storeAllData(cur);
+                                sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, true, undo_stack);
+                                Lego.Specific.Sexpr.setIsPattern(sexpr.emerging_value, true);
+                                sexpr.emerging_value.get().specific.sexpr.is_pattern_t = 1;
+                                Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
+                                Lego.Specific.Sexpr.updateLocalPositions(sexpr.emerging_value);
+                                Toybox.refreshAbsolutePoints(&.{sexpr.emerging_value});
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        if (executor.animation == null) {
+            var cur = executor.first_pill;
+            executor.first_pill = .nothing;
+            while (cur != .nothing) : (cur = cur.get().specific.pill.next_pill) {
+                undo_stack.storeAllData(cur);
+                cur.get().specific.pill.remaining_lifetime = 1;
+                cur.get().specific.pill.velocity = .new(-4, 0);
+            }
+        }
+
+        undo_stack.storeAllData(Executor.children(executor_index).controls.get().specific.executor_controls.crank());
+        Executor.children(executor_index).controls.get().specific.executor_controls
+            .crank().get().specific.executor_crank.value = if (executor.animation) |anim| anim.t else 0;
+    }
+
+    fn resetExecutorAndExtractResult(workspace: *Workspace, executor_index: Lego.Index, original_garland: Lego.Index) !Lego.Index {
+        const result = Lego.Specific.Executor.children(executor_index).input;
+        const undo_stack = &workspace.undo_stack;
+
+        Toybox.changeChildWithUndoAndAlsoCoords(
+            result,
+            try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack),
+            undo_stack,
+        );
+
+        const children = Lego.Specific.Executor.children(executor_index);
+        // const executor = &Toybox.get(executor_index).specific.executor;
+        Toybox.changeChildWithUndo(children.garland, original_garland, undo_stack);
+        Toybox.changeChildWithUndoAndAlsoCoords(
+            children.input,
+            try Toybox.buildSexpr(
+                Lego.Specific.Executor.relative_input_point,
+                .empty,
+                false,
+                false,
+                undo_stack,
+            ),
+            undo_stack,
+        );
+        undo_stack.storeAllData(executor_index);
+        Toybox.get(executor_index).specific.executor.garland_appearing_t = -1;
+        // TODO(game)
+        // fnkbox.executor.prev_pills.clearRetainingCapacity();
+        // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
+
+        return result;
+    }
+
+    fn getGarlandForFnk(
+        workspace: *Workspace,
+        fnkname: Lego.Index,
+        new_point: Point,
+    ) !?Lego.Index {
+        _ = new_point;
+        const undo_stack = &workspace.undo_stack;
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.as(.fnkbox)) |fnkbox| {
+                if (Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname)) {
+                    const garland = try Toybox.dupeIntoFloating(if (fnkbox.execution) |e|
+                        e.original_garland
+                    else
+                        fnkbox.executor().garland().index, true, undo_stack);
+                    const original_fnkname = try Lego.Specific.Garland.stealFnkname(
+                        garland,
+                        try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
+                        undo_stack,
+                    );
+                    assert(original_fnkname.get().specific.sexpr.kind == .empty);
+                    Toybox.destroyFloating(original_fnkname, undo_stack);
+                    return garland;
+                }
+            }
+        } else return null;
+    }
+
+    fn launchTestcase(testcase_index: Lego.Index, undo_stack: *UndoStack) !void {
+        assert(Toybox.get(testcase_index).specific.tag() == .testcase);
+        const fnkbox_index = Toybox.findAncestor(testcase_index, .fnkbox);
+        const fnkbox = &Toybox.get(fnkbox_index).specific.fnkbox;
+        assert(fnkbox.execution == null);
+        const executor_index = Lego.Specific.Fnkbox.children(fnkbox_index).executor;
+
+        const old_actual = Lego.Specific.Testcase.children(testcase_index).actual;
+        const new_actual = try Toybox.buildSexpr(Toybox.get(old_actual).local_point, .empty, false, false, undo_stack);
+        Toybox.changeChild(old_actual, new_actual, undo_stack);
+
+        const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
+        const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true, undo_stack);
+
+        undo_stack.storeAllData(fnkbox_index);
+        fnkbox.execution = .{
+            .source = .{ .testcase = testcase_index },
+            .old_testcase_actual_value = old_actual,
+            .original_garland = backup_garland_index,
+            .original_or_final_input_point = undefined,
+            .state_t = undefined,
+            .state = .scrolling_towards_case,
+        };
     }
 
     fn grabbingSomethingIllegal(workspace: *const Workspace) bool {
-        switch (workspace.focus.grabbing.kind) {
-            else => return false,
-            .executor_crank_handle => |h| switch (h) {
-                .board => return false,
-                .fnkbox => |k| {
-                    const fnkbox = workspace.main_area.fnkboxes.items[k];
-                    return fnkbox.execution == null or
-                        fnkbox.executor.animation == null;
-                },
-            },
+        return switch (workspace.grabbing.index.get().specific) {
+            else => false,
+            .executor_crank => |crank| !crank.enabled,
+        };
+    }
+
+    // /// saves each lego
+    // pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+    //     const version: u32 = 0;
+    //     try out.writeInt(u32, version, ENDIANNESS);
+
+    //     writeLen(out, toybox.all_legos.items.len);
+    //     for (toybox.)
+    // }
+
+    // pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
+    //     const version = try in.readInt(u32, .little);
+    //     if (version != 0) @panic("Unsupported file version");
+    // }
+
+    /// only saves fnkboxes
+    pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
+        const version: u32 = 0;
+        try out.writeInt(u32, version, ENDIANNESS);
+
+        const core = @import("core.zig");
+        const Fnkbox = Lego.Specific.Fnkbox;
+        const Executor = Lego.Specific.Executor;
+        if (true) {
+            var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
+            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                // const fnkbox = &Toybox.get(cur).specific.fnkbox;
+                const fnkname_value = try Toybox.get(Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                const definition = try Toybox.get(Executor.children(Fnkbox.children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
+                // try all_fnks.putNoClobber(fnkname_value, definition);
+
+                try out.writeStructEndian(cur.get().local_point.pos, ENDIANNESS);
+                var tmp_out: std.ArrayList(u8) = .init(scratch);
+                defer tmp_out.deinit();
+                const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
+                try tmp_out.writer().print("{any}\n", .{fnk});
+                try writeString(out, tmp_out.items);
+            }
         }
     }
 
-    fn pointOf(workspace: *Workspace, thing: Focus.Target) Point {
-        return switch (thing.kind) {
-            .nothing => unreachable,
-            .postit => |k| .{ .pos = workspace.postits(thing.area).items[k].button.rect.top_left, .scale = undefined },
-            .lens_handle => |h| .{ .pos = workspace.lenses(thing.area).items[h.index].handlePos(h.part) },
-            .executor_handle => |h| workspace.executors(thing.area).items[h.board].handle.point,
-            .executor_crank_handle => undefined,
-            .executor_brake_handle => undefined,
-            .fnkviewer_handle => |h| workspace.fnkviewers(thing.area).items[h].handle.point,
-            .fnkbox_handle => |h| workspace.fnkboxes(thing.area).items[h].handle.point,
-            .case_handle => |h| workspace.caseHandleRef(h, thing.area).point,
-            .garland_handle => |k| workspace.garlandHandleRef(k, thing.area).point,
-            .sexpr => |s| workspace.sexprAtPlace(s.base, thing.area).point,
-        };
+    pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
+        const version = try in.readInt(u32, .little);
+        if (version != 0) @panic("Unsupported file version");
+
+        dst.deinit();
+        toybox.deinit();
+        try toybox.init(toybox.all_legos_arena.child_allocator);
+        try dst.init(dst.arena_for_atom_names.child_allocator, dst.random_instance.next());
+
+        const core = @import("core.zig");
+
+        var fnks_indices: std.ArrayHashMap(*const core.Sexpr, Lego.Index, core.SexprContext, true) = .init(scratch);
+        if (true) {
+            var cur = Toybox.get(dst.fnkboxes_layer).tree.first;
+            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                const fnkname_value = try Toybox.get(Lego.Specific.Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                try fnks_indices.putNoClobber(fnkname_value, cur);
+            }
+        }
+
+        while (true) {
+            const pos = in.readStructEndian(Vec2, ENDIANNESS) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
+            const ascii = try readString(in, dst.arena_for_atom_names.allocator());
+            var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+            const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
+
+            if (fnks_indices.get(fnk.name)) |fnkbox_index| {
+                const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
+                Toybox.changeChild(Lego.Specific.Executor.children(
+                    Lego.Specific.Fnkbox.children(fnkbox_index).executor,
+                ).garland, garland, null);
+                fnkbox_index.get().local_point.pos = pos;
+            } else {
+                const description = try std.fmt.allocPrint(dst.arena_for_atom_names.allocator(), "Custom machine {any}", .{fnk.name});
+                const fnkbox = try Toybox.buildFnkbox(
+                    .{ .pos = pos },
+                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                    description,
+                    &.{},
+                    null,
+                    null,
+                );
+                Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
+
+                if (true) { // add to fnkslist
+                    const fnkslist = dst.toolbar_fnks.get().tree.first;
+                    fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                    Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                        Toybox.childCount(fnkslist),
+                        fnk.name,
+                        description,
+                        null,
+                    ), null);
+                }
+            }
+        }
+
+        try dst.canonizeAfterChanges(scratch);
     }
 
-    // TODO: add brake_t and executor.anim.t
-    fn getOldData(workspace: *Workspace, hovering: Focus.Target) UndoableCommand.Grabbed.OldData {
-        return .{
-            .point = workspace.pointOf(hovering),
-            .is_pattern = switch (hovering.kind) {
-                else => undefined,
-                .sexpr => |s| workspace.sexprAtPlace(s.base, hovering.area).is_pattern,
-            },
-        };
-    }
-
-    // fn getTransformBetweenAreas(workspace: *const Workspace, old_area: Focus.Target.Area, new_area: Focus.Target)
-    fn areaCamera(workspace: *const Workspace, area: Focus.Target.Area) Rect {
-        return switch (area) {
-            .nowhere => unreachable,
-            .hand, .main_area => workspace.camera,
-            .toolbar => workspace.leftToolbarCamera(),
-        };
+    pub fn canAutosaveNow(workspace: *const Workspace) bool {
+        if (workspace.grabbing.index != .nothing) return false;
+        // find any active animations at fnkboxes/executors
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.as(.fnkbox)) |fnkbox| {
+                if (fnkbox.execution != null) return false;
+            }
+            if (lego.specific.as(.executor)) |executor| {
+                if (executor.animation != null) return false;
+            }
+        }
+        return true;
     }
 };
 
@@ -5535,6 +5285,8 @@ pub fn init(
     // },
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
+    try dst.toybox_instance.init(gpa);
+    toybox = &dst.toybox_instance;
 
     dst.usual.init(
         gpa,
@@ -5545,29 +5297,27 @@ pub fn init(
     // tweakable.fcolor("bg", &COLORS.bg);
 
     dst.drawer = try .init(&dst.usual);
-    dst.core_mem = .init(gpa);
-    try dst.workspace.init(&dst.core_mem, random_seed);
+    try dst.workspace.init(gpa, random_seed);
 }
 
-// TODO: take gl parameter
+// TODO(platform): take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.usual.deinit(undefined);
-    self.core_mem.deinit();
-    self.workspace.deinit(gpa);
+    self.workspace.deinit();
+    _ = gpa;
+    toybox.deinit();
 }
 
-pub fn beforeHotReload(self: *GameState) !void {
-    _ = self;
-}
+pub fn beforeHotReload(_: *GameState) !void {}
 
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     // try self.workspace.init(&self.core_mem, 0);
+    toybox = &self.toybox_instance;
 }
 
 var first_frame_done = false;
-
 var seconds_since_last_save: f32 = 0;
 
 /// returns true if should quit
@@ -5581,28 +5331,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 // TODO: debug why we can't directly use reader
                 // try self.workspace.load(reader, &self.core_mem);
 
-                const data = try reader.readAllAlloc(self.core_mem.scratch.allocator(), std.math.maxInt(usize));
+                std.log.debug("got reader: {any}", .{reader});
+                const data = try reader.readAllAlloc(self.usual.mem.frame.allocator(), std.math.maxInt(usize));
+                std.log.debug("data len: {d}", .{data.len});
                 var fbs = std.io.fixedBufferStream(data);
-                try self.workspace.load(fbs.reader().any(), &self.core_mem);
+                try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
             }
         }
     }
 
-    if (false and platform.keyboard.wasPressed(.KeyT)) {
-        const original = try platform.gpa.alloc(u8, 173380);
-        var random: std.Random.DefaultPrng = .init(0);
-        random.random().bytes(original);
-        platform.setItem("testing", original);
-
-        if (platform.getItem("testing")) |reader| {
-            const actual = try reader.readAllAlloc(platform.gpa, std.math.maxInt(usize));
-            if (!std.mem.eql(u8, original, actual)) @panic("bad");
-            std.log.debug("yay", .{});
-        } else @panic("nope");
+    if (false and platform.keyboard.wasPressed(.KeyQ)) {
+        var asdf: std.ArrayList(u8) = .init(platform.gpa);
+        defer asdf.deinit();
+        try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
+        // std.log.debug("save size in bytes: {d}", .{asdf.items.len});
+        // std.log.debug("{s}", .{asdf.items});
+        var fbs = std.io.fixedBufferStream(asdf.items);
+        try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
     }
 
     if (SAVING_ENABLED and seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
-        var asdf: std.ArrayList(u8) = .init(platform.gpa);
+        var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
         platform.setItem("vaulogy_save", asdf.items);
@@ -5612,7 +5361,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     seconds_since_last_save += platform.delta_seconds;
 
     platform.gl.clear(COLORS.bg);
-    try self.workspace.update(platform, &self.drawer, &self.core_mem, self.drawer.canvas.frame_arena.allocator());
+    try self.workspace.update(platform, &self.drawer, self.usual.mem.frame.allocator());
 
     return false;
 }
@@ -5644,6 +5393,11 @@ fn moveCamera(camera: Rect, delta_seconds: f32, keyboard: Keyboard, mouse: Mouse
     return result;
 }
 
+pub const ENDIANNESS: std.builtin.Endian = .little;
+comptime {
+    assert(@import("builtin").target.cpu.arch.endian() == ENDIANNESS);
+}
+
 pub fn writeEnum(out: std.io.AnyWriter, T: type, value: T, endian: std.builtin.Endian) !void {
     const type_info = @typeInfo(T).@"enum";
     try out.writeInt(type_info.tag_type, @intFromEnum(value), endian);
@@ -5671,13 +5425,21 @@ pub fn readBool(in: std.io.AnyReader) !bool {
     };
 }
 
+pub fn writeLen(out: std.io.AnyWriter, len: usize) !void {
+    try out.writeInt(u32, @intCast(len), ENDIANNESS);
+}
+
+pub fn readLen(in: std.io.AnyReader) !usize {
+    return @intCast(try in.readInt(u32, ENDIANNESS));
+}
+
 pub fn writeString(out: std.io.AnyWriter, value: []const u8) !void {
-    try out.writeInt(u32, @intCast(value.len), .little);
+    try writeLen(out, value.len);
     try out.writeAll(value);
 }
 
 pub fn readString(in: std.io.AnyReader, allocator: std.mem.Allocator) ![]u8 {
-    const len: usize = @intCast(try in.readInt(u32, .little));
+    const len = try readLen(in);
     const result = try allocator.alloc(u8, len);
     const actual_len = try in.readAll(result);
     if (actual_len != len) @panic("bad string");
@@ -5695,6 +5457,7 @@ const tof32 = math.tof32;
 const Color = math.UColor;
 const FColor = math.FColor;
 const Rect = math.Rect;
+const Bounds = math.Bounds;
 const Point = math.Point;
 const Vec2 = math.Vec2;
 const UVec2 = math.UVec2;
@@ -5717,18 +5480,10 @@ pub const LazyState = kommon.LazyState;
 pub const EdgePos = kommon.grid2D.EdgePos;
 // pub const LocalDecisions = @import("../chesstory/GameState.zig").LocalDecisions;
 
-const Atom = core.Atom;
-// const Pair = core.Pair;
-const Sexpr = core.Sexpr;
-const Fnk = core.Fnk;
-const FnkBody = core.FnkBody;
-const FnkCollection = core.FnkCollection;
-const VeryPermamentGameStuff = core.VeryPermamentGameStuff;
 const parsing = @import("parsing.zig");
 
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
-const BindingsState = @import("physical.zig").BindingsState;
 const Sample = @import("levels_new.zig").Sample;
 
 /// Inserts the element at the specified index, and moves the element there to the end of the list.
@@ -5745,5 +5500,70 @@ pub fn swapInsertAssumeCapacity(T: type, array: *std.ArrayListUnmanaged(T), i: u
         const old_last = array.items[i];
         array.items[i] = element;
         array.items[array.items.len - 1] = old_last;
+    }
+}
+
+// TODO(design): rethink
+pub const Binding = struct {
+    name: []const u8,
+    value: Lego.Index,
+};
+pub const Bindings = std.ArrayList(Binding);
+
+pub const BindingsState = struct {
+    new: []const Binding,
+    old: []const Binding,
+    anim_t: ?f32,
+    pub const none: BindingsState = .{ .anim_t = null, .new = &.{}, .old = &.{} };
+};
+
+pub fn drawTemplateWildcardLinesNonRecursiveV2(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names_raw: [][]const u8,
+    right_names_raw: [][]const u8,
+    point: Point,
+    bindings: BindingsState,
+    alpha: f32,
+) !void {
+    var left_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(left_names_raw);
+    var right_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(right_names_raw);
+
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNamesV10(&left_names, bindings.new);
+    };
+    try removeBoundNamesV10(&left_names, bindings.old);
+
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNamesV10(&right_names, bindings.new);
+    };
+    try removeBoundNamesV10(&right_names, bindings.old);
+
+    {
+        // TODO(game): these numbers are not exact, issues when zooming in
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 + 0.25 / 2.0, 0.75, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, 0.25)));
+            }
+        }.anon, point)), left_names.items, alpha);
+
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 - 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, -0.25)));
+            }
+        }.anon, point)), right_names.items, alpha);
+    }
+}
+
+fn removeBoundNamesV10(list: *std.ArrayListUnmanaged([]const u8), bindings: []const Binding) !void {
+    for (bindings) |binding| {
+        const name_to_remove = binding.name;
+        while (funk.indexOfString(list.items, name_to_remove)) |i| {
+            std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
+        }
     }
 }

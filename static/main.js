@@ -201,6 +201,7 @@ function base64FromUint8Array(uint8Array) {
 
   return btoa(binary);
 }
+
 function uint8ArrayFromBase64(base64) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -390,8 +391,10 @@ async function getWasm() {
       drawElementsInstanced: (mode, count, type, offset, instanceCount) => gl.drawElementsInstanced(mode, count, type, offset, instanceCount),
       deleteBuffer: (buffer) => gl.deleteBuffer(gl_objects[buffer]),
       getUniformLocation: (program, name_ptr, name_len) => storeGlObject(gl.getUniformLocation(gl_objects[program], getString(name_ptr, name_len))),
-      uniform4f: (location, v0, v1, v2, v3) => gl.uniform4f(gl_objects[location], v0, v1, v2, v3),
       uniform1f: (location, v0) => gl.uniform1f(gl_objects[location], v0),
+      uniform2f: (location, v0, v1) => gl.uniform2f(gl_objects[location], v0, v1),
+      uniform3f: (location, v0, v1, v2) => gl.uniform3f(gl_objects[location], v0, v1, v2),
+      uniform4f: (location, v0, v1, v2, v3) => gl.uniform4f(gl_objects[location], v0, v1, v2, v3),
       createTexture: () => storeGlObject(gl.createTexture()),
       deleteTexture: (texture) => gl.deleteTexture(gl_objects[texture]),
       bindTexture: (target, texture) => gl.bindTexture(target, gl_objects[texture]),

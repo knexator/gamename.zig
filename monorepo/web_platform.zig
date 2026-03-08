@@ -17,8 +17,10 @@ const JsReader = struct {
         return bytes_readed;
     }
 
-    pub fn reader(self: *JsReader) std.io.Reader(*JsReader, Error, read) {
-        log_for_load_save_bug.debug("getting reader for self with index {d}", .{self.file_index});
+    pub const Reader = std.io.Reader(*JsReader, Error, read);
+
+    pub fn reader(self: *JsReader) Reader {
+        log_for_load_save_bug.info("getting reader for self with index {d}", .{self.file_index});
         return .{ .context = self };
     }
 };
@@ -125,8 +127,10 @@ const js = struct {
         extern fn drawArrays(mode: DrawMode, first: GLint, count: GLsizei) void;
         extern fn drawElements(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr) void;
         extern fn drawElementsInstanced(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr, instanceCount: GLsizei) void;
-        extern fn uniform4f(location: UniformLocation, v0: f32, v1: f32, v2: f32, v3: f32) void;
         extern fn uniform1f(location: UniformLocation, v0: f32) void;
+        extern fn uniform2f(location: UniformLocation, v0: f32, v1: f32) void;
+        extern fn uniform3f(location: UniformLocation, v0: f32, v1: f32, v2: f32) void;
+        extern fn uniform4f(location: UniformLocation, v0: f32, v1: f32, v2: f32, v3: f32) void;
         // uniform1i
         // TODO: uniform[1234][uif][v]
         extern fn createTexture() Texture;
@@ -510,11 +514,14 @@ var my_game: GameState = undefined;
 
 const gpa = std.heap.wasm_allocator;
 
+var frame_arena: std.heap.ArenaAllocator = .init(gpa);
+
 // TODO: remove this
 var global_gpa_BAD: std.mem.Allocator = gpa;
 
 var web_platform: PlatformGives = .{
     .gpa = gpa,
+    .frame_arena = frame_arena.allocator(),
     .mouse = undefined,
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,
@@ -575,7 +582,8 @@ var web_platform: PlatformGives = .{
         fn anon(key: []const u8) ?std.io.AnyReader {
             if (js_better.storage.getItem(key)) |reader| {
                 getitem_lastreader = reader;
-                return getitem_lastreader.reader().any();
+                getitem_lastreader_reader = getitem_lastreader.reader();
+                return getitem_lastreader_reader.any();
             } else return null;
         }
     }.anon,
@@ -594,6 +602,7 @@ var web_platform: PlatformGives = .{
 var user_uploaded_file: ?JsReader = null;
 // TODO: reconsider
 var getitem_lastreader: JsReader = undefined;
+var getitem_lastreader_reader: JsReader.Reader = undefined;
 
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_ids: std.EnumArray(Sounds, usize) = .initUndefined();
@@ -631,6 +640,9 @@ const web_gl = struct {
         .blackStencil = blackStencil,
         .doneStencil = doneStencil,
         .stopStencil = stopStencil,
+        .stencilFunc = stencilFunc,
+        .stencilOp = stencilOp,
+        .colorMask = colorMask,
     };
 
     fn startStencil() void {
@@ -659,6 +671,25 @@ const web_gl = struct {
 
     fn stopStencil() void {
         js.webgl2.disable(.STENCIL_TEST);
+    }
+
+    fn stencilFunc(func: Gl.StencilFunc, ref: i32) void {
+        js.webgl2.stencilFunc(switch (func) {
+            .ALWAYS => .ALWAYS,
+            .EQUAL => .EQUAL,
+        }, ref, 0xFF);
+    }
+
+    fn stencilOp(fail: Gl.StencilOp, zfail: Gl.StencilOp, zpass: Gl.StencilOp) void {
+        js.webgl2.stencilOp(
+            @enumFromInt(@intFromEnum(fail)),
+            @enumFromInt(@intFromEnum(zfail)),
+            @enumFromInt(@intFromEnum(zpass)),
+        );
+    }
+
+    fn colorMask(red: bool, green: bool, blue: bool, alpha: bool) void {
+        js.webgl2.colorMask(red, green, blue, alpha);
     }
 
     pub fn clear(color: FColor) void {
@@ -840,6 +871,7 @@ const web_gl = struct {
                 .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                 .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                 .f32 => |v| js.webgl2.uniform1f(u, v),
+                .Vec2 => |v| js.webgl2.uniform2f(u, v.x, v.y),
             }
         }
 
@@ -1002,6 +1034,7 @@ const web_gl = struct {
                 .Rect => |v| js.webgl2.uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
                 .Point => |v| js.webgl2.uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
                 .f32 => |v| js.webgl2.uniform1f(u, v),
+                .Vec2 => |v| js.webgl2.uniform2f(u, v.x, v.y),
             }
         }
 
@@ -1107,6 +1140,7 @@ export fn update(delta_seconds: f32) void {
     mouse.prev = mouse.cur;
     mouse.cur.scrolled = .none;
     keyboard.prev = keyboard.cur;
+    _ = frame_arena.reset(.retain_capacity);
 
     // sounds
     if (@typeInfo(Sounds).@"enum".fields.len > 0) {

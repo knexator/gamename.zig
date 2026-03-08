@@ -65,7 +65,7 @@ renderables: struct {
         \\in vec4 v_color;
         \\uniform float u_time;
         \\uniform sampler2D u_texture;
-    ++ @embedFile("perlin_noise.glsl") ++
+    ++ kommon.shaders.perlin_noise ++
         \\void main() {
         \\  float a = smoothstep(0.09, 0.11, perlin_noise(vec3(v_texcoord * 20.0, u_time)));
         \\  out_color = v_color * texture(u_texture, v_texcoord) * vec4(vec3(1.0), a);

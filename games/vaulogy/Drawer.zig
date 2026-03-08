@@ -3,6 +3,8 @@
 pub const Drawer = @This();
 pub const Gl = kommon.Gl;
 
+const DRAW_ATOMS_PLAINLY = true;
+
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 
@@ -17,18 +19,21 @@ pub fn init(usual: *kommon.Usual) !Drawer {
 pub const AtomVisuals = struct {
     profile: []const Vec2,
     color: FColor,
+    noise_z: f32,
     display: ?[]const u8 = null,
     geometry: Geometry,
 
     fn build(mem: std.mem.Allocator, params: struct {
         profile: []const Vec2,
         color: FColor,
+        noise_z: f32,
         display: ?[]const u8 = null,
     }, gl: kommon.Gl) !AtomVisuals {
         const geo: Geometry = try .fromProfile(mem, params.profile, gl);
         return .{
             .profile = params.profile,
             .color = params.color,
+            .noise_z = params.noise_z,
             .display = params.display,
             .geometry = geo,
         };
@@ -47,6 +52,7 @@ pub const AtomVisuals = struct {
 
         // other shapes
         pub var ridged_circle: Canvas.PrecomputedShape = undefined;
+        pub var template_mask: Canvas.PrecomputedShape = undefined;
 
         pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2, gl: kommon.Gl) !Geometry {
             const template: Canvas.PrecomputedShape = blk: {
@@ -142,6 +148,12 @@ pub const AtomVisuals = struct {
                 }
             }.anon)), gl);
 
+            Geometry.template_mask = try .fromPoints(mem, &([1]Vec2{.new(3, -1)} ++ funk.fromCount(32, struct {
+                pub fn anon(k: usize) Vec2 {
+                    return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
+                }
+            }.anon) ++ [1]Vec2{.new(3, 1)}), gl);
+
             Geometry.template_placeholder = try .fromPoints(mem, &([1]Vec2{.new(2, -1)} ++ funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
@@ -169,6 +181,7 @@ const AtomVisualCache = struct {
     const HardcodedAtomVisuals = struct {
         profile: ?[]const Vec2,
         color: ?FColor,
+        noise_z: ?f32 = null,
         display: ?[]const u8 = null,
     };
     const hardcoded_visuals = .{
@@ -413,6 +426,7 @@ const AtomVisualCache = struct {
             const input = @field(hardcoded_visuals, field.name);
             const atom_visuals: AtomVisuals = try .build(arena, .{
                 .color = input.color orelse newAtomColor(atom_name),
+                .noise_z = input.noise_z orelse newAtomNoiseZ(atom_name),
                 .profile = input.profile orelse try res.newAtomProfile(atom_name),
                 .display = input.display,
             }, gl);
@@ -441,8 +455,14 @@ const AtomVisualCache = struct {
         return profile;
     }
 
+    fn newAtomNoiseZ(name: []const u8) f32 {
+        const seed = hash(&.{ "noise_z", name });
+        var rnd_state = std.Random.DefaultPrng.init(seed);
+        return rnd_state.random().float(f32);
+    }
+
     fn newAtomColor(name: []const u8) FColor {
-        const seed = std.array_hash_map.hashString(name);
+        const seed = hash(&.{ "color", name });
         var rnd_state = std.Random.DefaultPrng.init(seed);
         var rnd = Random{ .rnd = rnd_state.random() };
         return rnd.fcolor();
@@ -453,6 +473,7 @@ const AtomVisualCache = struct {
         if (!v.found_existing) {
             v.value_ptr.* = try .build(cache.arena, .{
                 .color = newAtomColor(name),
+                .noise_z = newAtomNoiseZ(name),
                 .profile = try cache.newAtomProfile(name),
             }, gl);
         }
@@ -542,6 +563,38 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
             value,
             fnk_point,
         );
+    }
+}
+
+pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
+    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{name});
+        return;
+    };
+    if (is_pattern) {
+        try drawer.drawPatternAtom(camera, point, visuals, alpha);
+    } else {
+        try drawer.drawTemplateAtom(camera, point, visuals, alpha);
+    }
+}
+
+pub fn drawVariable(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
+    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom variable: {s}", .{name});
+        return;
+    };
+    if (is_pattern) {
+        try drawer.drawPatternVariable(camera, point, visuals, alpha);
+    } else {
+        try drawer.drawTemplateVariable(camera, point, visuals, alpha);
+    }
+}
+
+pub fn drawPairHolder(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, alpha: f32) !void {
+    if (is_pattern) {
+        try drawer.drawPatternPairHolder(camera, point, alpha);
+    } else {
+        try drawer.drawTemplatePairHolder(camera, point, alpha);
     }
 }
 
@@ -635,22 +688,42 @@ fn drawShapeV3(
     }
 }
 
+pub fn drawEatingPatternV2(
+    drawer: *Drawer,
+    camera: Rect,
+    point: Point,
+    var_name: []const u8,
+    t: f32,
+    alpha: f32,
+) !void {
+    assert(in01(t));
+    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(var_name, drawer.canvas.gl);
+    try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
+    // TODO
+    // try drawer.drawSexpr(camera, .{
+    //     .is_pattern = 0,
+    //     .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
+    //     .value = binding.value,
+    // }, alpha);
+}
+
 pub fn drawEatingPattern(
     drawer: *Drawer,
     camera: Rect,
     point: Point,
-    binding: core.Binding,
+    binding: Binding,
     t: f32,
     alpha: f32,
 ) !void {
     assert(in01(t));
     const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name, drawer.canvas.gl);
     try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
-    try drawer.drawSexpr(camera, .{
-        .is_pattern = 0,
-        .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
-        .value = binding.value,
-    }, alpha);
+    // TODO
+    // try drawer.drawSexpr(camera, .{
+    //     .is_pattern = 0,
+    //     .pos = point.applyToLocalPoint(.{ .pos = .new(-3, 0) }),
+    //     .value = binding.value,
+    // }, alpha);
 }
 
 pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha: f32) !void {
@@ -666,7 +739,38 @@ pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha
 }
 
 fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    try drawer.drawShapeV3(camera, point, visuals.geometry.template, .black, visuals.color, alpha);
+    if (DRAW_ATOMS_PLAINLY) {
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.template,
+            .black,
+            visuals.color,
+            alpha,
+        );
+    } else {
+        drawer.canvas.gl.useRenderableWithExistingData(
+            visuals.geometry.template.fill_atom_renderable.?,
+            visuals.geometry.template.triangles.len,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
+                .{ .name = "u_point", .value = .{ .Point = point } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
+            },
+            null,
+        );
+
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.template,
+            .black,
+            null,
+            alpha,
+        );
+    }
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(0.25, 0));
@@ -689,8 +793,73 @@ pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point, 
     );
 }
 
+pub fn drawPatterPairHolderSolidColor(drawer: *Drawer, camera: Rect, point: Point, color_name: []const u8, alpha: f32) !void {
+    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{color_name});
+        return;
+    };
+    try drawer.drawShapeV3(
+        camera,
+        point,
+        AtomVisuals.Geometry.pattern_pair_holder,
+        null,
+        color_visuals.color,
+        alpha,
+    );
+}
+
+pub fn drawPatternAtomSolidColor(drawer: *Drawer, camera: Rect, point: Point, atom_name: []const u8, color_name: []const u8, alpha: f32) !void {
+    const atom_visuals = drawer.atom_visuals_cache.getAtomVisuals(atom_name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{atom_name});
+        return;
+    };
+    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{color_name});
+        return;
+    };
+    try drawer.drawShapeV3(
+        camera,
+        point,
+        atom_visuals.geometry.pattern,
+        null,
+        color_visuals.color,
+        alpha,
+    );
+}
+
 fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    try drawer.drawShapeV3(camera, point, visuals.geometry.pattern, .black, visuals.color, alpha);
+    if (DRAW_ATOMS_PLAINLY) {
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.pattern,
+            .black,
+            visuals.color,
+            alpha,
+        );
+    } else {
+        drawer.canvas.gl.useRenderableWithExistingData(
+            visuals.geometry.pattern.fill_atom_renderable.?,
+            visuals.geometry.pattern.triangles.len,
+            &.{
+                .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
+                .{ .name = "u_point", .value = .{ .Point = point } },
+                .{ .name = "u_camera", .value = .{ .Rect = camera } },
+                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
+            },
+            null,
+        );
+
+        try drawer.drawShapeV3(
+            camera,
+            point,
+            visuals.geometry.pattern,
+            .black,
+            null,
+            alpha,
+        );
+    }
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(-0.25, 0));
@@ -790,17 +959,32 @@ pub fn drawTemplateWildcardLinesNonRecursive(
 ) !void {
     var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try left.getAllVarNames(&left_names);
-    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
-        try removeBoundNames(&left_names, bindings.new);
-    };
-    try removeBoundNames(&left_names, bindings.old);
-
     var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try right.getAllVarNames(&right_names);
+    drawTemplateWildcardLinesNonRecursiveV2(drawer, camera, left_names.items, right_names.items, point, bindings, alpha);
+}
+
+pub fn drawTemplateWildcardLinesNonRecursiveV2(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names_raw: [][]const u8,
+    right_names_raw: [][]const u8,
+    point: Point,
+    bindings: BindingsState,
+    alpha: f32,
+) !void {
+    var left_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(left_names_raw);
+    var right_names: std.ArrayListUnmanaged([]const u8) = .fromOwnedSlice(right_names_raw);
+
     if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
-        try removeBoundNames(&right_names, bindings.new);
+        try removeBoundNamesV10(&left_names, bindings.new);
     };
-    try removeBoundNames(&right_names, bindings.old);
+    try removeBoundNamesV10(&left_names, bindings.old);
+
+    if (bindings.anim_t) |anim_t| if (anim_t >= 0.4) {
+        try removeBoundNamesV10(&right_names, bindings.new);
+    };
+    try removeBoundNamesV10(&right_names, bindings.old);
 
     {
         // TODO: these numbers are not exact, issues when zooming in
@@ -834,7 +1018,17 @@ pub fn drawPatternWildcardLinesNonRecursive(
     try left.getAllVarNames(&left_names);
     var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
     try right.getAllVarNames(&right_names);
+    drawer.drawPatternWildcardLinesNonRecursiveV2(camera, left_names.items, right_names.items, point, alpha);
+}
 
+pub fn drawPatternWildcardLinesNonRecursiveV2(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names: []const []const u8,
+    right_names: []const []const u8,
+    point: Point,
+    alpha: f32,
+) !void {
     const magic_1 = @sqrt(2.0) * 2.0 / 4.0;
     const magic_2 = @sqrt(2.0) * 3.0 / 4.0;
     try drawer.drawWildcardsCable(camera, &(funk.fromCountAndCtx(32, struct {
@@ -845,7 +1039,7 @@ pub fn drawPatternWildcardLinesNonRecursive(
         pub fn anon(k: usize, p: Point) Vec2 {
             return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.25 + 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(magic_2).add(.new(0.5, 0)).addY(-magic_2));
         }
-    }.anon, point)), left_names.items, alpha);
+    }.anon, point)), left_names, alpha);
     try drawer.drawWildcardsCable(camera, &(funk.fromCountAndCtx(32, struct {
         pub fn anon(k: usize, p: Point) Vec2 {
             return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.25, 0.25 / 2.0, math.tof32(k) / 32)).scale(magic_1).add(.new(-0.75, 0.5)).addY(-magic_1));
@@ -854,10 +1048,10 @@ pub fn drawPatternWildcardLinesNonRecursive(
         pub fn anon(k: usize, p: Point) Vec2 {
             return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(-0.25 - 0.25 / 2.0, -0.25, math.tof32(k) / 32)).scale(magic_2).add(.new(0.5, 0)).addY(magic_2));
         }
-    }.anon, point)), right_names.items, alpha);
+    }.anon, point)), right_names, alpha);
 }
 
-fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
+pub fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
     var visuals: std.ArrayList(AtomVisuals) = try .initCapacity(drawer.canvas.frame_arena.allocator(), names.len);
     for (names) |name| {
         visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl));
@@ -891,6 +1085,10 @@ const inRange = math.inRange;
 const funk = kommon.funktional;
 const Canvas = kommon.Canvas;
 
+const Binding = @import("GameState.zig").Binding;
+const Bindings = @import("GameState.zig").Bindings;
+const BindingsState = @import("GameState.zig").BindingsState;
+
 const core = @import("core.zig");
 const Atom = core.Atom;
 const Pair = core.Pair;
@@ -903,7 +1101,6 @@ const parsing = @import("parsing.zig");
 
 const PhysicalSexpr = @import("physical.zig").PhysicalSexpr;
 const ViewHelper = @import("physical.zig").ViewHelper;
-const BindingsState = @import("physical.zig").BindingsState;
 
 const BindingParticle = struct {
     point: Point,
@@ -923,6 +1120,15 @@ fn appendUniqueNames(list: *std.ArrayList([]const u8), names: []const []const u8
 
 fn removeNames(list: *std.ArrayList([]const u8), names: []const []const u8) !void {
     for (names) |name_to_remove| {
+        while (funk.indexOfString(list.items, name_to_remove)) |i| {
+            std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
+        }
+    }
+}
+
+fn removeBoundNamesV10(list: *std.ArrayListUnmanaged([]const u8), bindings: []const Binding) !void {
+    for (bindings) |binding| {
+        const name_to_remove = binding.name;
         while (funk.indexOfString(list.items, name_to_remove)) |i| {
             std.debug.assert(std.mem.eql(u8, name_to_remove, list.swapRemove(i)));
         }
@@ -957,4 +1163,10 @@ fn allTrue(arr: []const bool) bool {
     for (arr) |v| {
         if (!v) return false;
     } else return true;
+}
+
+fn hash(strings: []const []const u8) u64 {
+    var hasher: std.hash.Wyhash = .init(0);
+    for (strings) |s| hasher.update(s);
+    return hasher.final();
 }

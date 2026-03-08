@@ -81,8 +81,52 @@ pub fn lerp_towards_pure(current: f32, goal: f32, halflife: f32, delta_seconds: 
     return goal + (current - goal) * std.math.exp2(-delta_seconds / halflife);
 }
 
+/// in <duration> seconds, the distance will be <precision> times the original distance
+pub const LerpSpeed = struct {
+    duration: f32,
+    precision: f32,
+
+    pub const old: LerpSpeed = .{ .duration = 1.0 / 60.0, .precision = 1.0 - 0.6 };
+    pub const fast: LerpSpeed = old;
+    pub const slow: LerpSpeed = .{ .duration = 0.2, .precision = 0.01 };
+    pub const slug: LerpSpeed = .{ .duration = 1.0, .precision = 0.05 };
+
+    pub fn halflife(speed: LerpSpeed) f32 {
+        return halflife_from_duration_and_precision(speed.duration, speed.precision);
+    }
+};
+
+/// returns `true` when v is less than precision units away from goal
+pub fn lerpTowardsWithFinish(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32, precision: f32) bool {
+    if (@abs(v.* - goal) < precision) {
+        v.* = goal;
+        return true;
+    } else {
+        v.* = lerpTowardsPure(v.*, goal, speed, delta_seconds);
+        return false;
+    }
+}
+
+pub fn lerpTowards(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) void {
+    v.* = lerpTowardsPure(v.*, goal, speed, delta_seconds);
+}
+
+pub fn lerpTowardsPure(current: f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) f32 {
+    assert(delta_seconds >= 0 and speed.halflife() >= 0);
+    return goal + (current - goal) * std.math.exp2(-delta_seconds / speed.halflife());
+}
+
 pub fn halflife_from_duration_and_precision(duration: f32, precision: f32) f32 {
     return -duration / std.math.log2(precision);
+}
+
+pub fn lerpTowardsRange(v: *f32, min: f32, max: f32, speed: LerpSpeed, delta_seconds: f32) void {
+    assert(min <= max);
+    if (v.* < min) {
+        lerpTowards(v, min, speed, delta_seconds);
+    } else if (v.* > max) {
+        lerpTowards(v, max, speed, delta_seconds);
+    }
 }
 
 pub fn lerp_towards_range(v: *f32, min: f32, max: f32, ratio: f32, delta_seconds: f32) void {
@@ -377,7 +421,7 @@ pub const Vec2 = extern struct {
     }
 
     pub fn lerpTowards(v: *Self, goal: Self, ratio: f32, delta_seconds: f32) void {
-        v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+        v.* = Vec2.lerpTowardsPure(v.*, goal, ratio, delta_seconds);
     }
 
     pub fn awayFrom(v: Self, goal: Self, min_dist: f32) Self {
@@ -548,6 +592,13 @@ pub const Vec2 = extern struct {
 
     pub fn magSq(v: Self) Scalar {
         return dot(v, v);
+    }
+
+    pub fn normLInf(v: Self) Scalar {
+        return @max(
+            @abs(v.x),
+            @abs(v.y),
+        );
     }
 
     pub fn distTo(a: Self, b: Self) Scalar {
@@ -1035,11 +1086,129 @@ pub const IBounds = struct {
     }
 };
 
+pub const Bounds = struct {
+    top: f32,
+    bottom: f32,
+    left: f32,
+    right: f32,
+
+    pub const infinite: Bounds = .{
+        .top = -std.math.inf(f32),
+        .left = -std.math.inf(f32),
+        .bottom = std.math.inf(f32),
+        .right = std.math.inf(f32),
+    };
+
+    pub const zero: Bounds = .{
+        .top = 0,
+        .left = 0,
+        .bottom = 0,
+        .right = 0,
+    };
+
+    pub fn valid(bounds: Bounds) bool {
+        return bounds.left <= bounds.right and bounds.top <= bounds.bottom and
+            !std.math.isNan(bounds.left) and
+            !std.math.isNan(bounds.right) and
+            !std.math.isNan(bounds.top) and
+            !std.math.isNan(bounds.bottom);
+    }
+
+    pub fn contains(bounds: Bounds, pos: Vec2) bool {
+        return inRange(pos.x, bounds.left, bounds.right) and
+            inRange(pos.y, bounds.top, bounds.bottom);
+    }
+
+    pub fn fromRect(rect: Rect) Bounds {
+        const result: Bounds = .{
+            .left = rect.top_left.x,
+            .top = rect.top_left.y,
+            .right = rect.top_left.x + rect.size.x,
+            .bottom = rect.top_left.y + rect.size.y,
+        };
+        assert(result.valid());
+        return result;
+    }
+
+    pub fn plusMargin3(self: Bounds, which: enum { left, right, top, bottom }, amount: f32) Bounds {
+        var result = self;
+        switch (which) {
+            inline else => |t| @field(result, @tagName(t)) += amount,
+        }
+        assert(result.valid());
+        return result;
+    }
+
+    fn guardNan(v: f32, comptime sign: enum { pos, neg }) f32 {
+        if (std.math.isNan(v)) {
+            return switch (sign) {
+                .pos => std.math.inf(f32),
+                .neg => -std.math.inf(f32),
+            };
+        } else return v;
+    }
+
+    pub fn boundingPoints(points: []const Vec2) Bounds {
+        assert(points.len > 0);
+        var top = guardNan(points[0].y, .neg);
+        var bottom = guardNan(points[0].y, .pos);
+        var left = guardNan(points[0].x, .neg);
+        var right = guardNan(points[0].x, .pos);
+        for (points[1..]) |p| {
+            top = @min(top, guardNan(p.y, .neg));
+            bottom = @max(bottom, guardNan(p.y, .pos));
+            left = @min(left, guardNan(p.x, .neg));
+            right = @max(right, guardNan(p.x, .pos));
+        }
+        const result: Bounds = .{
+            .top = top,
+            .bottom = bottom,
+            .left = left,
+            .right = right,
+        };
+        assert(result.valid());
+        return result;
+    }
+
+    pub fn size(bounds: Bounds) Vec2 {
+        assert(bounds.valid());
+        return .new(bounds.right - bounds.left, bounds.bottom - bounds.top);
+    }
+
+    pub fn topLeft(bounds: Bounds) Vec2 {
+        return .new(bounds.left, bounds.top);
+    }
+
+    pub fn bottomRight(bounds: Bounds) Vec2 {
+        return .new(bounds.right, bounds.bottom);
+    }
+
+    pub fn intersect(a: Bounds, b: Bounds) ?Bounds {
+        const left = @max(a.left, b.left);
+        const right = @min(a.right, b.right);
+        const top = @max(a.top, b.top);
+        const bottom = @min(a.bottom, b.bottom);
+
+        if (left >= right or top >= bottom) {
+            return null;
+        } else return .{
+            .top = top,
+            .bottom = bottom,
+            .left = left,
+            .right = right,
+        };
+    }
+};
+
 pub const Rect = extern struct {
     top_left: Vec2,
     size: Vec2,
 
     pub const unit: Rect = .{ .top_left = .zero, .size = .one };
+
+    pub fn asBounds(rect: Rect) Bounds {
+        return .fromRect(rect);
+    }
 
     pub fn lerp(a: Rect, b: Rect, t: f32) Rect {
         return .{
@@ -1056,7 +1225,7 @@ pub const Rect = extern struct {
     }
 
     pub fn lerpTowards(v: *Rect, goal: Rect, ratio: f32, delta_seconds: f32) void {
-        v.* = lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+        v.* = Rect.lerpTowardsPure(v.*, goal, ratio, delta_seconds);
     }
 
     /// local_sub is in 0..1 space
@@ -1159,8 +1328,23 @@ pub const Rect = extern struct {
         return self.top_left.add(self.size.scale(0.5));
     }
 
-    pub fn fromCorners(top_left: Vec2, bottom_right: Vec2) Rect {
+    pub fn fromTopLeftAndBottomRight(top_left: Vec2, bottom_right: Vec2) Rect {
+        assert(top_left.x <= bottom_right.x);
+        assert(top_left.y <= bottom_right.y);
         return .{ .top_left = top_left, .size = bottom_right.sub(top_left) };
+    }
+
+    pub fn fromCorners(c1: Vec2, c2: Vec2) Rect {
+        return .fromTopLeftAndBottomRight(
+            .new(
+                @min(c1.x, c2.x),
+                @min(c1.y, c2.y),
+            ),
+            .new(
+                @max(c1.x, c2.x),
+                @max(c1.y, c2.y),
+            ),
+        );
     }
 
     pub fn fromRanges(x_range: [2]f32, y_range: [2]f32) Rect {
@@ -1286,9 +1470,20 @@ pub const Rect = extern struct {
 
     pub fn plusMargin3(self: Rect, which: enum { left, right, top, bottom }, amount: f32) Rect {
         return switch (which) {
-            else => @panic("TODO"),
+            .right => .{
+                .top_left = self.top_left,
+                .size = self.size.addX(amount),
+            },
+            .left => .{
+                .top_left = self.top_left.addX(-amount),
+                .size = self.size.addX(amount),
+            },
             .top => .{
                 .top_left = self.top_left.addY(-amount),
+                .size = self.size.addY(amount),
+            },
+            .bottom => .{
+                .top_left = self.top_left,
                 .size = self.size.addY(amount),
             },
         };
@@ -1598,6 +1793,27 @@ pub const Rect = extern struct {
         std.debug.assert(std.meta.eql(options, .{}));
         try writer.print("Rect(tl: {any}, size: {any})", .{ value.top_left, value.size });
     }
+
+    test "move camera to focus on parent point" {
+        const local_pos: Vec2 = .new(3, 4);
+        const parent: Point = .{ .pos = .new(5, 6), .scale = 2 };
+        const absolute_camera: Rect = .{ .top_left = .new(-2, -4), .size = .new(7, 5) };
+
+        const expected = absolute_camera.localFromWorldPosition(parent.applyToLocalPosition(local_pos));
+
+        const local_camera = absolute_camera.reparentCamera(parent);
+        const actual = local_camera.localFromWorldPosition(local_pos);
+
+        try Vec2.expectApproxEqAbs(expected, actual, 0.001);
+    }
+
+    pub fn reparentCamera(original: Rect, new_parent: Point) Rect {
+        // TODO: what if new_parent.turns != 0?
+        return .fromCorners(
+            new_parent.inverseApplyGetLocalPosition(original.top_left),
+            new_parent.inverseApplyGetLocalPosition(original.get(.bottom_right)),
+        );
+    }
 };
 
 pub const FColor = extern struct {
@@ -1867,6 +2083,10 @@ pub const Point = extern struct {
         };
     }
 
+    pub fn inRange(center: Point, needle_pos: Vec2, local_inclusive_dist: f32) bool {
+        return center.inverseApplyGetLocalPosition(needle_pos).magSq() <= (local_inclusive_dist * local_inclusive_dist);
+    }
+
     pub fn plusTurns(original: Point, extra_turns: f32) Point {
         return .{ .pos = original.pos, .turns = original.turns + extra_turns, .scale = original.scale };
     }
@@ -1913,6 +2133,24 @@ pub const Point = extern struct {
         };
     }
 
+    pub fn applyToLocalRect(parent: Point, local: Rect) Rect {
+        // if (parent.turns != 0) std.log.err("ojo: rotando rect!");
+        assert(parent.turns == 0);
+        return .fromCorners(
+            parent.applyToLocalPosition(local.top_left),
+            parent.applyToLocalPosition(local.get(.bottom_right)),
+        );
+    }
+
+    pub fn applyToLocalBounds(parent: Point, local: Bounds) Bounds {
+        return .boundingPoints(&.{
+            parent.applyToLocalPosition(.new(local.left, local.top)),
+            parent.applyToLocalPosition(.new(local.right, local.top)),
+            parent.applyToLocalPosition(.new(local.left, local.bottom)),
+            parent.applyToLocalPosition(.new(local.right, local.bottom)),
+        });
+    }
+
     pub fn expectApproxEqRel(expected: Point, actual: Point, tolerance: anytype) !void {
         try std.testing.expectApproxEqRel(expected.scale, actual.scale, tolerance);
         try std.testing.expectApproxEqRel(expected.turns, actual.turns, tolerance);
@@ -1923,6 +2161,18 @@ pub const Point = extern struct {
         try std.testing.expectApproxEqAbs(expected.scale, actual.scale, tolerance);
         try std.testing.expectApproxEqAbs(expected.turns, actual.turns, tolerance);
         try Vec2.expectApproxEqAbs(expected.pos, actual.pos, tolerance);
+    }
+
+    pub fn equalsRel(a: Point, b: Point, tolerance: anytype) bool {
+        if (expectApproxEqRel(a, b, tolerance)) {
+            return true;
+        } else |_| return false;
+    }
+
+    pub fn equalsAbs(a: Point, b: Point, tolerance: anytype) bool {
+        if (expectApproxEqAbs(a, b, tolerance)) {
+            return true;
+        } else |_| return false;
     }
 
     // TODO: document these
