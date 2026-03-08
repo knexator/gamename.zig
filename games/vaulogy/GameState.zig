@@ -67,8 +67,6 @@ const FuzzerContext = struct {
                 .downloadAsFile = undefined,
                 .userUploadedFile = undefined,
                 .forgetUserUploadedFile = undefined,
-                .setItem = undefined,
-                .getItem = undefined,
             };
         }
     };
