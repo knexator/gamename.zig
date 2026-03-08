@@ -111,6 +111,7 @@ pub fn lerpTowards(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) voi
     v.* = lerpTowardsPure(v.*, goal, speed, delta_seconds);
 }
 
+const lerpTowardsPureF32 = lerpTowardsPure;
 pub fn lerpTowardsPure(current: f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) f32 {
     assert(delta_seconds >= 0 and speed.halflife() >= 0);
     return goal + (current - goal) * std.math.exp2(-delta_seconds / speed.halflife());
@@ -572,6 +573,33 @@ pub const Vec2 = extern struct {
         try std.testing.expectApproxEqAbs(0.25, Vec2.ypos.getTurns(), 0.001);
         try std.testing.expectApproxEqAbs(0.5, Vec2.xneg.getTurns(), 0.001);
         try std.testing.expectApproxEqAbs(0.75, Vec2.yneg.getTurns(), 0.001);
+    }
+
+    pub fn getTurnsBetween(center: Vec2, first: Vec2, second: Vec2) f32 {
+        return second.sub(center).getTurns() - first.sub(center).getTurns();
+    }
+
+    test "getTurnsBetween" {
+        try std.testing.expectApproxEqAbs(0.25, getTurnsBetween(
+            .zero,
+            .xpos,
+            .ypos,
+        ), 0.001);
+        try std.testing.expectApproxEqAbs(-0.25, getTurnsBetween(
+            .zero,
+            .ypos,
+            .xpos,
+        ), 0.001);
+        try std.testing.expect(getTurnsBetween(
+            .zero,
+            .new(-10, 1),
+            .new(-10, -1),
+        ) > 0);
+        try std.testing.expect(getTurnsBetween(
+            .zero,
+            .new(-10, -1),
+            .new(-10, 1),
+        ) < 0);
     }
 
     pub fn fromPolar(length: f32, turns: f32) Self {
@@ -2106,6 +2134,15 @@ pub const Point = extern struct {
         lerp_towards_float(&self.pos.y, goal.pos.y, ratio, delta_seconds);
         lerp_towards_float(&self.turns, goal.turns, ratio, delta_seconds);
         lerp_towards_float(&self.scale, goal.scale, ratio, delta_seconds);
+    }
+
+    pub fn lerpTowardsPure(current: Point, goal: Point, speed: LerpSpeed, delta_seconds: f32) Point {
+        return .{
+            lerpTowardsPureF32(current.pos.x, goal.pos.x, speed, delta_seconds),
+            lerpTowardsPureF32(current.pos.y, goal.pos.y, speed, delta_seconds),
+            lerpTowardsPureF32(current.turns, goal.turns, speed, delta_seconds),
+            lerpTowardsPureF32(current.scale, goal.scale, speed, delta_seconds),
+        };
     }
 
     pub fn rotateAroundLocalPosition(point: Point, local_center: Vec2, turns: f32) Point {

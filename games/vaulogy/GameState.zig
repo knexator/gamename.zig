@@ -3236,8 +3236,23 @@ const Workspace = struct {
                             .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
                             .applyToLocalPoint(.{ .pos = grabbing.offset.neg() });
 
-                    lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
-                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
+                    const local_target = Toybox.parentAbsolutePoint(cur).inverseApplyGetLocal(target);
+                    // const new_local = lego.local_point.lerpTowardsPure(local_target, .old, delta_seconds);
+
+                    // TODO(game): improve and simplify
+                    const gravity_center: Vec2 = .xpos;
+                    const turns = Vec2.getTurnsBetween(
+                        lego.local_point.applyToLocalPoint(lego.visual_offset).applyToLocalPosition(gravity_center),
+                        lego.local_point.pos,
+                        local_target.pos,
+                    );
+
+                    // _ = turns;
+                    // lego.local_point.lerp_towards(local_target, 0.6, delta_seconds);
+                    lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(math.maybeMirror(turns, sexpr.is_pattern), -0.1, 0.1)), 0.6, delta_seconds);
+                    // lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(turns, -0.1, 0.1)), 0.6, delta_seconds);
+                    // lego.local_point = local_target.plusTurns(turns);
+                    // lego.local_point = local_target;
 
                     if (Toybox.safeGet(interaction.dropzone)) |dropzone| {
                         const dropzone_is_pattern = dropzone.specific.sexpr.is_pattern;
@@ -3272,6 +3287,8 @@ const Workspace = struct {
 
                     lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
                         .inverseApplyGetLocal(target), 0.6, delta_seconds);
+                    // lego.local_point = Toybox.parentAbsolutePoint(cur)
+                    //     .inverseApplyGetLocal(target);
                 },
                 .button => |button| switch (button.action) {
                     else => {},
