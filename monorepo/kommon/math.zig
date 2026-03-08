@@ -111,6 +111,7 @@ pub fn lerpTowards(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) voi
 }
 
 pub fn lerpTowardsPure(current: f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) f32 {
+    assert(delta_seconds >= 0 and speed.halflife() >= 0);
     return goal + (current - goal) * std.math.exp2(-delta_seconds / speed.halflife());
 }
 

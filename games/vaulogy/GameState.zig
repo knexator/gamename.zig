@@ -54,6 +54,8 @@ const FuzzerContext = struct {
                     fn anon(_: Mouse.Cursor) void {}
                 }.anon,
 
+                .setItem = undefined,
+                .getItem = undefined,
                 .askUserForFile = undefined,
                 .setKeyChanged = undefined,
                 .setButtonChanged = undefined,
@@ -5346,7 +5348,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
     }
 
-    if (seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
+    if (SAVING_ENABLED and seconds_since_last_save > 30 and self.workspace.canAutosaveNow()) {
         var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
