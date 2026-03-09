@@ -2986,11 +2986,11 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(35, 0));
             postit_pos.addInPlace(.new(35, 0));
             postit_pos.addInPlace(.new(31, 0));
-            postit.addFromText(postit_pos.addY(-7), &.{ "a \"list\" is an", "ordered collection", "of many values,", "compressed into", "a single one." });
-            postit.addFromText(postit_pos.addY(-7).addX(7), &.{ "The top half", "is the first", "element; the", "bottom half", "is the rest", "of the list." });
-            postit.addFromText(postit_pos.addY(-7).addX(14), &.{ "We use a special", "gray atom", "to mean", "an empty list." });
-            postit.addFromText(postit_pos.addX(4), &.{ "The second", "element is just", "the first element", "of the rest", "of the list" });
-            postit.addFromText(postit_pos.addX(11), &.{ "In other words,", "the top half", "of the", "bottom half" });
+            postit.addFromText(postit_pos, &.{ "a \"list\" is an", "ordered collection", "of many values,", "compressed into", "a single one." });
+            postit.addFromText(postit_pos.addX(7), &.{ "The top half", "is the first", "element; the", "bottom half", "is the rest", "of the list." });
+            postit.addFromText(postit_pos.addX(14), &.{ "We use a special", "gray atom", "to mean", "an empty list." });
+            postit.addFromText(postit_pos.addY(Lego.Specific.FnkboxBox.box_height + 18).addX(4), &.{ "hint: the second", "element is just", "the first element", "of the rest", "of the list" });
+            postit.addFromText(postit_pos.addY(Lego.Specific.FnkboxBox.box_height + 18).addX(11), &.{ "In other words,", "the top half", "of the", "bottom half" });
 
             // TODO(game): make these correct
             // postit_pos.addInPlace(.new(35, 0));
