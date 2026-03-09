@@ -16,7 +16,7 @@ const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
 
-const FuzzerContext = struct {
+pub const FuzzerContext = struct {
     var toybox_instance: Toybox = undefined;
 
     const TestPlatform = struct {
@@ -70,10 +70,12 @@ const FuzzerContext = struct {
         }
     };
 
-    const FakeInput = extern struct {
+    pub const FakeInput = extern struct {
         z_down: bool,
         mouse_left_down: bool,
+        mouse_right_down: bool,
         mouse_pos: Vec2,
+        delta_seconds: f32 = 1.0 / 60.0,
     };
 
     const Player = struct {
@@ -97,8 +99,9 @@ const FuzzerContext = struct {
         pub fn advance(player: *Player, input: FakeInput) !void {
             player.test_platform.keyboard.cur.keys.KeyZ = input.z_down;
             player.test_platform.mouse.cur.buttons.left = input.mouse_left_down;
+            player.test_platform.mouse.cur.buttons.right = input.mouse_right_down;
             player.test_platform.mouse.cur.position = input.mouse_pos;
-            try player.workspace.update(player.test_platform.getGives(1.0 / 60.0), null, player.test_platform.frame_arena.allocator());
+            try player.workspace.update(player.test_platform.getGives(input.delta_seconds), null, player.test_platform.frame_arena.allocator());
             player.test_platform.after();
         }
     };
@@ -125,9 +128,7 @@ test "custom replay" {
     var player: FuzzerContext.Player = try .init();
     defer player.deinit();
 
-    const inputs: []const FuzzerContext.FakeInput = &.{
-        .{ .z_down = false, .mouse_left_down = false, .mouse_pos = .new(0, 0) },
-    };
+    const inputs = @import("buggy_recording.zig").inputs;
     for (inputs) |input| try player.advance(input);
 }
 
@@ -4136,24 +4137,26 @@ const Workspace = struct {
         const mouse = platform.getMouse(absolute_camera);
 
         if (platform.recording_log) |log| {
-            const S = struct {
-                var prev_input: FuzzerContext.FakeInput = .{
-                    .mouse_left_down = false,
-                    .z_down = false,
-                    .mouse_pos = .zero,
-                };
-            };
-            // TODO: actually use this
+            // const S = struct {
+            //     var prev_input: FuzzerContext.FakeInput = .{
+            //         .mouse_left_down = false,
+            //         .mouse_right_down = false,
+            //         .z_down = false,
+            //         .mouse_pos = .zero,
+            //     };
+            // };
             const cur_input: FuzzerContext.FakeInput = .{
                 .mouse_left_down = mouse.cur.isDown(.left),
-                .z_down = platform.keyboard.cur.isDown(.KeyZ),
+                .mouse_right_down = mouse.cur.isDown(.right),
                 .mouse_pos = platform.getMouse(.unit).cur.position,
+                .z_down = platform.keyboard.cur.isDown(.KeyZ),
+                .delta_seconds = platform.delta_seconds,
             };
-            if (!std.meta.eql(cur_input, S.prev_input)) {
-                try log.print("{any},\n", .{cur_input});
-                // try log.writeStruct(cur_input);
-                S.prev_input = cur_input;
-            }
+            // if (true or !std.meta.eql(cur_input, S.prev_input)) {
+            try log.print("{any},\n", .{cur_input});
+            // try log.writeStruct(cur_input);
+            // S.prev_input = cur_input;
+            // }
         }
 
         const undo_stack = &workspace.undo_stack;
