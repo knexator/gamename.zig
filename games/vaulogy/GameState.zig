@@ -2992,25 +2992,24 @@ const Workspace = struct {
             postit.addFromText(postit_pos.addY(Lego.Specific.FnkboxBox.box_height + 18).addX(4), &.{ "hint: the second", "element is just", "the first element", "of the rest", "of the list" });
             postit.addFromText(postit_pos.addY(Lego.Specific.FnkboxBox.box_height + 18).addX(11), &.{ "In other words,", "the top half", "of the", "bottom half" });
 
-            // TODO(game): make these correct
-            // postit_pos.addInPlace(.new(35, 0));
-            // postit.addFromText(postit_pos.addX(4), &.{ "The first example", "is a list with", "two elements,", "['a', 'b']" });
-            // postit.addFromText(postit_pos.addX(11), &.{ "The second example", "is a list with", "three elements,", "['a', 'b', 'c']" });
-
-            postit_pos.addInPlace(.new(35 * 6, 0));
+            postit_pos.addInPlace(.new(35, 0));
             postit_pos.addInPlace(.new(-7, -7));
             postit.addFromText(postit_pos.addX(7), &.{ "The first example", "is an empty list." });
             postit_pos.addInPlace(.new(7, 0));
             postit.addFromText(postit_pos.addX(7), &.{ "The second one", "is a list with only", "one element, 'a'." });
-            postit_pos.addInPlace(.new(-7, 7));
-            postit.addFromText(postit_pos.addX(7), &.{ "The third example", "is the list ['a', 'b']" });
             postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "The third example", "is the list ['a', 'b']" });
+            postit_pos.addInPlace(.new(-14, 7));
             postit.addFromText(postit_pos.addX(7), &.{ "The next one", "is ['a', 'b', 'c']" });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "Careful!", "The first element", "of the", "next example", "is a pair of 2 Bs,", "not a B." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos.addX(7), &.{ "The list does", "not have a", "B element." });
 
-            postit_pos.addInPlace(.new(35 * 2, 0));
-            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
-            postit_pos.addInPlace(.new(35, 0));
-            postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            // postit_pos.addInPlace(.new(35 * 2, 0));
+            // postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            // postit_pos.addInPlace(.new(35, 0));
+            // postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
         }
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
