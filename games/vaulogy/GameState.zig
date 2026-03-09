@@ -434,6 +434,7 @@ pub const Lego = struct {
             is_fnkname_t: f32,
             atom_name: []const u8,
             immutable: bool,
+            jiggling_t: f32 = 0,
 
             // TODO(design): rethink
             executor_with_bindings: Lego.Index = .nothing,
@@ -532,7 +533,7 @@ pub const Lego = struct {
                     sexpr.is_pattern_t,
                 ), lego.hot_t + lego.dropping_t * 2));
 
-                lego.visual_offset = hovered_point;
+                lego.visual_offset = hovered_point.plusTurns(sexpr.jiggling_t);
 
                 if (sexpr.kind == .pair) {
                     const child_up, const child_down = Toybox.getChildrenExact(2, index);
@@ -3230,7 +3231,7 @@ const Workspace = struct {
         const lego = Toybox.get(cur);
         if (lego.draggable()) {
             switch (lego.specific) {
-                .sexpr => |sexpr| {
+                .sexpr => |*sexpr| {
                     const target: Point = if (Toybox.safeGet(interaction.dropzone)) |dropzone|
                         dropzone.absolute_point.applyToLocalPoint(.{ .pos = dropzone.handleLocalOffset() })
                     else
@@ -3253,10 +3254,11 @@ const Workspace = struct {
                         lego.local_point.pos,
                         local_target.pos,
                     );
+                    sexpr.jiggling_t = math.clamp(math.maybeMirror(turns, sexpr.is_pattern), -0.1, 0.1);
 
                     // _ = turns;
-                    // lego.local_point.lerp_towards(local_target, 0.6, delta_seconds);
-                    lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(math.maybeMirror(turns, sexpr.is_pattern), -0.1, 0.1)), 0.6, delta_seconds);
+                    lego.local_point.lerp_towards(local_target, 0.6, delta_seconds);
+                    // lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(math.maybeMirror(turns, sexpr.is_pattern), -0.1, 0.1)), 0.6, delta_seconds);
                     // lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(turns, -0.1, 0.1)), 0.6, delta_seconds);
                     // lego.local_point = local_target.plusTurns(turns);
                     // lego.local_point = local_target;
@@ -4411,6 +4413,7 @@ const Workspace = struct {
                     .sexpr => |*sexpr| {
                         done = math.lerpTowardsWithFinish(&sexpr.is_pattern_t, if (sexpr.is_pattern) 1 else 0, .fast, delta_seconds, eps) and done;
                         done = math.lerpTowardsWithFinish(&sexpr.is_fnkname_t, if (sexpr.is_fnkname) 1 else 0, .fast, delta_seconds, eps) and done;
+                        done = math.lerpTowardsWithFinish(&sexpr.jiggling_t, 0, .fast, delta_seconds, eps) and done;
                     },
                     .executor => |*executor| {
                         math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
