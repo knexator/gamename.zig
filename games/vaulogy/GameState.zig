@@ -9,8 +9,6 @@ const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
 
-pub const display_fps = true;
-
 // TODO(optim): set to true
 const ENABLE_REUSE = false;
 const SAVING_ENABLED = true;
@@ -2515,6 +2513,8 @@ const Workspace = struct {
     // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
 
+    display_fps: bool = false,
+
     pub const Grabbing = struct {
         index: Lego.Index,
         offset: Vec2,
@@ -3697,7 +3697,7 @@ const Workspace = struct {
         else
             false, camera, drawer);
 
-        if (display_fps) try drawer.canvas.drawText(
+        if (workspace.display_fps) try drawer.canvas.drawText(
             0,
             camera,
             try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
@@ -4087,7 +4087,8 @@ const Workspace = struct {
     }
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
-        if (platform.keyboard.wasPressed(.KeyQ)) {
+        workspace.display_fps = platform.keyboard.cur.isDown(.KeyF);
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
@@ -5233,7 +5234,10 @@ const Workspace = struct {
 
     pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
         const version = try in.readInt(u32, .little);
-        if (version != 0) @panic("Unsupported file version");
+        if (version != 0) {
+            std.log.err("Unsupported file version, ignoring savefile", .{});
+            return;
+        }
 
         dst.deinit();
         toybox.deinit();
