@@ -352,14 +352,14 @@ pub const Lego = struct {
                         .scroll_target = 0,
                     },
                 }, &.{
-                    (try Toybox.new(.{}, .{ .button = .{
+                    try Toybox.new(.{}, .{ .button = .{
                         .local_rect = bounding_rect.withSize(.both(arrows_height), .top_left),
                         .action = .scroll_up,
-                    } }, undo_stack)).index,
-                    (try Toybox.new(.{}, .{ .button = .{
+                    } }, undo_stack),
+                    try Toybox.new(.{}, .{ .button = .{
                         .local_rect = bounding_rect.withSize(.both(arrows_height), .bottom_left),
                         .action = .scroll_down,
-                    } }, undo_stack)).index,
+                    } }, undo_stack),
                 }, undo_stack);
             }
 
@@ -895,12 +895,12 @@ pub const Lego = struct {
                     .pill = .{ .next_pill = old_first },
                 }, undo_stack);
 
-                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.pattern, undo_stack);
-                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.input, undo_stack);
-                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_call, undo_stack);
-                Toybox.addChildLastWithoutChangingAbsPoint(result.index, data.fnkname_response, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result, data.pattern, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result, data.input, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result, data.fnkname_call, undo_stack);
+                Toybox.addChildLastWithoutChangingAbsPoint(result, data.fnkname_response, undo_stack);
 
-                return result.index;
+                return result;
             }
         };
 
@@ -1308,7 +1308,7 @@ pub const Lego = struct {
                             const center = top_left.applyToLocalPoint(part.point);
                             switch (part.part) {
                                 inline else => |_, part_tag| {
-                                    Toybox.addChildLast(postit.index, (try Toybox.new(
+                                    Toybox.addChildLast(postit, try Toybox.new(
                                         center,
                                         .{ .postit_drawing = switch (part_tag) {
                                             .paragraph => comptime unreachable,
@@ -1317,21 +1317,21 @@ pub const Lego = struct {
                                             .launch_testcase_button => .launch_testcase_button,
                                         } },
                                         this.undo_stack,
-                                    )).index, this.undo_stack);
+                                    ), this.undo_stack);
                                 },
                                 .paragraph => |lines| {
                                     for (lines, 0..) |line, k| {
-                                        Toybox.addChildLast(postit.index, (try Toybox.new(
+                                        Toybox.addChildLast(postit, try Toybox.new(
                                             center.applyToLocalPoint(.{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) }),
                                             .{ .postit_text = .{ .text = line } },
                                             this.undo_stack,
-                                        )).index, this.undo_stack);
+                                        ), this.undo_stack);
                                     }
                                 },
                             }
                         }
 
-                        break :blk postit.index;
+                        break :blk postit;
                     }, this.undo_stack);
                 }
 
@@ -1344,14 +1344,14 @@ pub const Lego = struct {
                         );
 
                         for (lines, 0..) |line, k| {
-                            Toybox.addChildLast(postit.index, (try Toybox.new(
+                            Toybox.addChildLast(postit, try Toybox.new(
                                 .{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) },
                                 .{ .postit_text = .{ .text = line } },
                                 this.undo_stack,
-                            )).index, this.undo_stack);
+                            ), this.undo_stack);
                         }
 
-                        break :blk postit.index;
+                        break :blk postit;
                     }, this.undo_stack);
                 }
             };
@@ -1706,12 +1706,12 @@ pub const Toybox = struct {
     pub fn createWithChildren(local_point: Point, specific: Lego.Specific, children: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         const lego = try new(local_point, specific, undo_stack);
         for (children) |child| {
-            addChildLast(lego.index, child, undo_stack);
+            addChildLast(lego, child, undo_stack);
         }
-        return lego.index;
+        return lego;
     }
 
-    pub fn new(local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !*Lego {
+    pub fn new(local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !Lego.Index {
         const result: *Lego, const index: Lego.Index = if (ENABLE_REUSE and toybox.free_head != .nothing) blk: {
             const result_index = toybox.free_head;
             const result = Toybox.getUnsafe(result_index);
@@ -1731,7 +1731,7 @@ pub const Toybox = struct {
             .specific = specific,
         };
         if (undo_stack) |stack| stack.append(.{ .destroy_floating = index });
-        return result;
+        return index;
     }
 
     pub fn get(index: Lego.Index) *Lego {
@@ -1837,8 +1837,8 @@ pub const Toybox = struct {
     }
 
     pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
-        const result = try Toybox.new(undefined, undefined, undo_stack);
-        const result_index = result.index;
+        const result_index = try Toybox.new(undefined, undefined, undo_stack);
+        const result = Toybox.get(result_index);
         result.* = Toybox.get(original).*;
         result.index = result_index;
         result.tree.parent = .nothing;
@@ -2124,33 +2124,33 @@ pub const Toybox = struct {
         const grandchild_2_1 = try Toybox.new(undefined, undefined, undo_stack);
         const grandchild_2_2 = try Toybox.new(undefined, undefined, undo_stack);
 
-        Toybox.addChildLast(root.index, child_1.index, undo_stack);
-        Toybox.addChildLast(root.index, child_2.index, undo_stack);
+        Toybox.addChildLast(root, child_1, undo_stack);
+        Toybox.addChildLast(root, child_2, undo_stack);
 
-        Toybox.addChildLast(child_1.index, grandchild_1_1.index, undo_stack);
-        Toybox.addChildLast(child_1.index, grandchild_1_2.index, undo_stack);
+        Toybox.addChildLast(child_1, grandchild_1_1, undo_stack);
+        Toybox.addChildLast(child_1, grandchild_1_2, undo_stack);
 
-        Toybox.addChildLast(child_2.index, grandchild_2_1.index, undo_stack);
-        Toybox.addChildLast(child_2.index, grandchild_2_2.index, undo_stack);
+        Toybox.addChildLast(child_2, grandchild_2_1, undo_stack);
+        Toybox.addChildLast(child_2, grandchild_2_2, undo_stack);
 
-        try std.testing.expectEqual(child_1.index, Toybox.get(grandchild_1_1.index).tree.parent);
+        try std.testing.expectEqual(child_1, Toybox.get(grandchild_1_1).tree.parent);
 
         if (true) {
             const expected_order: [7]VisitStep = .{
-                .{ .next = root.index },
-                .{ .next = child_1.index },
-                .{ .next = grandchild_1_1.index },
-                .{ .next = grandchild_1_2.index },
-                .{ .next = child_2.index },
-                .{ .next = grandchild_2_1.index },
-                .{ .next = grandchild_2_2.index },
+                .{ .next = root },
+                .{ .next = child_1 },
+                .{ .next = grandchild_1_1 },
+                .{ .next = grandchild_1_2 },
+                .{ .next = child_2 },
+                .{ .next = grandchild_2_1 },
+                .{ .next = grandchild_2_2 },
             };
 
             var actual_order: std.ArrayListUnmanaged(VisitStep) = try .initCapacity(std.testing.allocator, expected_order.len);
             defer actual_order.deinit(std.testing.allocator);
 
-            var cur: VisitStep = .{ .next = root.index };
-            while (cur.next != .nothing) : (cur = Toybox.next_preordered(cur.next, root.index)) {
+            var cur: VisitStep = .{ .next = root };
+            while (cur.next != .nothing) : (cur = Toybox.next_preordered(cur.next, root)) {
                 try actual_order.append(std.testing.allocator, cur);
             }
 
@@ -2159,26 +2159,26 @@ pub const Toybox = struct {
 
         if (true) {
             const expected_order: [14]TreeIterator.Step = .{
-                .{ .children_already_visited = false, .index = root.index },
-                .{ .children_already_visited = false, .index = child_1.index },
-                .{ .children_already_visited = false, .index = grandchild_1_1.index },
-                .{ .children_already_visited = true, .index = grandchild_1_1.index },
-                .{ .children_already_visited = false, .index = grandchild_1_2.index },
-                .{ .children_already_visited = true, .index = grandchild_1_2.index },
-                .{ .children_already_visited = true, .index = child_1.index },
-                .{ .children_already_visited = false, .index = child_2.index },
-                .{ .children_already_visited = false, .index = grandchild_2_1.index },
-                .{ .children_already_visited = true, .index = grandchild_2_1.index },
-                .{ .children_already_visited = false, .index = grandchild_2_2.index },
-                .{ .children_already_visited = true, .index = grandchild_2_2.index },
-                .{ .children_already_visited = true, .index = child_2.index },
-                .{ .children_already_visited = true, .index = root.index },
+                .{ .children_already_visited = false, .index = root },
+                .{ .children_already_visited = false, .index = child_1 },
+                .{ .children_already_visited = false, .index = grandchild_1_1 },
+                .{ .children_already_visited = true, .index = grandchild_1_1 },
+                .{ .children_already_visited = false, .index = grandchild_1_2 },
+                .{ .children_already_visited = true, .index = grandchild_1_2 },
+                .{ .children_already_visited = true, .index = child_1 },
+                .{ .children_already_visited = false, .index = child_2 },
+                .{ .children_already_visited = false, .index = grandchild_2_1 },
+                .{ .children_already_visited = true, .index = grandchild_2_1 },
+                .{ .children_already_visited = false, .index = grandchild_2_2 },
+                .{ .children_already_visited = true, .index = grandchild_2_2 },
+                .{ .children_already_visited = true, .index = child_2 },
+                .{ .children_already_visited = true, .index = root },
             };
 
             var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
             defer actual_order.deinit(std.testing.allocator);
 
-            var it = Toybox.treeIterator(root.index, true);
+            var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
                 try actual_order.append(std.testing.allocator, step);
             }
@@ -2188,25 +2188,25 @@ pub const Toybox = struct {
 
         if (true) {
             const expected_order: [10]TreeIterator.Step = .{
-                .{ .children_already_visited = false, .index = root.index },
-                .{ .children_already_visited = false, .index = child_1.index },
-                .{ .children_already_visited = true, .index = child_1.index },
-                .{ .children_already_visited = false, .index = child_2.index },
-                .{ .children_already_visited = false, .index = grandchild_2_1.index },
-                .{ .children_already_visited = true, .index = grandchild_2_1.index },
-                .{ .children_already_visited = false, .index = grandchild_2_2.index },
-                .{ .children_already_visited = true, .index = grandchild_2_2.index },
-                .{ .children_already_visited = true, .index = child_2.index },
-                .{ .children_already_visited = true, .index = root.index },
+                .{ .children_already_visited = false, .index = root },
+                .{ .children_already_visited = false, .index = child_1 },
+                .{ .children_already_visited = true, .index = child_1 },
+                .{ .children_already_visited = false, .index = child_2 },
+                .{ .children_already_visited = false, .index = grandchild_2_1 },
+                .{ .children_already_visited = true, .index = grandchild_2_1 },
+                .{ .children_already_visited = false, .index = grandchild_2_2 },
+                .{ .children_already_visited = true, .index = grandchild_2_2 },
+                .{ .children_already_visited = true, .index = child_2 },
+                .{ .children_already_visited = true, .index = root },
             };
 
             var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
             defer actual_order.deinit(std.testing.allocator);
 
-            var it = Toybox.treeIterator(root.index, true);
+            var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
                 try actual_order.append(std.testing.allocator, step);
-                if (step.index == child_1.index and !step.children_already_visited) {
+                if (step.index == child_1 and !step.children_already_visited) {
                     it.skipChildren();
                 }
             }
@@ -2216,25 +2216,25 @@ pub const Toybox = struct {
 
         if (true) {
             const expected_order: [10]TreeIterator.Step = .{
-                .{ .children_already_visited = false, .index = root.index },
-                .{ .children_already_visited = false, .index = child_2.index },
-                .{ .children_already_visited = false, .index = grandchild_2_2.index },
-                .{ .children_already_visited = true, .index = grandchild_2_2.index },
-                .{ .children_already_visited = false, .index = grandchild_2_1.index },
-                .{ .children_already_visited = true, .index = grandchild_2_1.index },
-                .{ .children_already_visited = true, .index = child_2.index },
-                .{ .children_already_visited = false, .index = child_1.index },
-                .{ .children_already_visited = true, .index = child_1.index },
-                .{ .children_already_visited = true, .index = root.index },
+                .{ .children_already_visited = false, .index = root },
+                .{ .children_already_visited = false, .index = child_2 },
+                .{ .children_already_visited = false, .index = grandchild_2_2 },
+                .{ .children_already_visited = true, .index = grandchild_2_2 },
+                .{ .children_already_visited = false, .index = grandchild_2_1 },
+                .{ .children_already_visited = true, .index = grandchild_2_1 },
+                .{ .children_already_visited = true, .index = child_2 },
+                .{ .children_already_visited = false, .index = child_1 },
+                .{ .children_already_visited = true, .index = child_1 },
+                .{ .children_already_visited = true, .index = root },
             };
 
             var actual_order: std.ArrayListUnmanaged(TreeIterator.Step) = try .initCapacity(std.testing.allocator, expected_order.len);
             defer actual_order.deinit(std.testing.allocator);
 
-            var it = Toybox.treeIterator(root.index, false);
+            var it = Toybox.treeIterator(root, false);
             while (it.next()) |step| {
                 try actual_order.append(std.testing.allocator, step);
-                if (step.index == child_1.index and !step.children_already_visited) {
+                if (step.index == child_1 and !step.children_already_visited) {
                     it.skipChildren();
                 }
             }
@@ -2323,11 +2323,11 @@ pub const Toybox = struct {
         switch (value) {
             else => {},
             .pair => |pair| {
-                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .up), result.index, pair.up, undo_stack);
-                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .down), result.index, pair.down, undo_stack);
+                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .up), result, pair.up, undo_stack);
+                Toybox.addChildLastV2(ViewHelper.offsetFor(is_pattern, .down), result, pair.down, undo_stack);
             },
         }
-        return result.index;
+        return result;
     }
 
     pub fn buildCase(local_point: Point, data: struct {
@@ -2337,18 +2337,18 @@ pub const Toybox = struct {
         next: ?Lego.Index,
     }, undo_stack: ?*UndoStack) !Lego.Index {
         const result = try Toybox.new(local_point, .{ .case = .{} }, undo_stack);
-        Toybox.addChildLastV2(.{ .pos = .xneg }, result.index, data.pattern, undo_stack);
-        Toybox.addChildLastV2(.{ .pos = .xpos }, result.index, data.template, undo_stack);
-        Toybox.addChildLastV2(.{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }, result.index, data.fnkname orelse try Toybox.buildSexpr(.{}, .empty, false, true, undo_stack), undo_stack);
-        Toybox.addChildLastV2(.{ .pos = .new(8, 1) }, result.index, data.next orelse try Toybox.buildGarland(local_point, &.{}, undo_stack), undo_stack);
-        return result.index;
+        Toybox.addChildLastV2(.{ .pos = .xneg }, result, data.pattern, undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .xpos }, result, data.template, undo_stack);
+        Toybox.addChildLastV2(.{ .scale = 0.5, .turns = 0.25, .pos = .new(4, -1) }, result, data.fnkname orelse try Toybox.buildSexpr(.{}, .empty, false, true, undo_stack), undo_stack);
+        Toybox.addChildLastV2(.{ .pos = .new(8, 1) }, result, data.next orelse try Toybox.buildGarland(local_point, &.{}, undo_stack), undo_stack);
+        return result;
     }
 
     /// The garland's children are a linear list of newcase, all except the last one with a child case
     /// the newcase position is the very top of the segment
     pub fn buildGarland(local_point: Point, child_cases: []const Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         const result = try Toybox.new(local_point, .{ .garland = .{} }, undo_stack);
-        Toybox.addChildLast(result.index, try buildSexpr(
+        Toybox.addChildLast(result, try buildSexpr(
             Lego.Specific.Garland.relative_fnkname_point,
             .empty,
             true,
@@ -2359,13 +2359,13 @@ pub const Toybox = struct {
         const cases_holder = try Toybox.new(.{}, .garland_newcases, undo_stack);
         for (child_cases) |case| {
             const new_segment = try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack);
-            Toybox.addChildLast(new_segment.index, case, undo_stack);
-            Toybox.addChildLast(cases_holder.index, new_segment.index, undo_stack);
+            Toybox.addChildLast(new_segment, case, undo_stack);
+            Toybox.addChildLast(cases_holder, new_segment, undo_stack);
         }
-        Toybox.addChildLast(cases_holder.index, (try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack)).index, undo_stack);
+        Toybox.addChildLast(cases_holder, try Toybox.new(.{}, .{ .newcase = .{} }, undo_stack), undo_stack);
 
-        Toybox.addChildLast(result.index, cases_holder.index, undo_stack);
-        return result.index;
+        Toybox.addChildLast(result, cases_holder, undo_stack);
+        return result;
     }
 
     /// Children are:
@@ -2387,24 +2387,24 @@ pub const Toybox = struct {
 
         const scrollbar =
             try createWithChildren(.{}, .{ .scrollbar = .buildForTestcases(testcases.len, 0) }, &.{
-                (try new(.{}, .{ .button = .{
+                try new(.{}, .{ .button = .{
                     .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .top_left).plusMargin(-0.1),
                     .action = .scroll_up,
-                } }, undo_stack)).index,
-                (try new(.{}, .{ .button = .{
+                } }, undo_stack),
+                try new(.{}, .{ .button = .{
                     .local_rect = FnkboxBox.testcases_box.withSize(.new(0.7, 0.7), .bottom_left).plusMargin(-0.1),
                     .action = .scroll_down,
-                } }, undo_stack)).index,
+                } }, undo_stack),
             }, undo_stack);
 
         const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
-            (try new(.{}, .{ .fnkbox_description = .{
+            try new(.{}, .{ .fnkbox_description = .{
                 .text = text,
-            } }, undo_stack)).index,
-            (try new(.{}, .{ .button = .{
+            } }, undo_stack),
+            try new(.{}, .{ .button = .{
                 .local_rect = FnkboxBox.status_bar_goal,
                 .action = .see_failing_testcase,
-            } }, undo_stack)).index,
+            } }, undo_stack),
             scrollbar,
             blk: {
                 const fnkbox_testcases = try Toybox.new(.{}, .{
@@ -2413,16 +2413,16 @@ pub const Toybox = struct {
                 for (testcases) |values| {
                     const Testcase = Lego.Specific.Testcase;
                     const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
-                    Toybox.addChildLastV2(Testcase.relative_input_point, testcase.index, values[0], undo_stack);
-                    Toybox.addChildLastV2(Testcase.relative_expected_point, testcase.index, values[1], undo_stack);
-                    Toybox.addChildLastV2(Testcase.relative_actual_point, testcase.index, try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack), undo_stack);
-                    Toybox.addChildLast(testcase.index, (try Toybox.new(.{}, .{ .button = .{
+                    Toybox.addChildLastV2(Testcase.relative_input_point, testcase, values[0], undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, values[1], undo_stack);
+                    Toybox.addChildLastV2(Testcase.relative_actual_point, testcase, try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack), undo_stack);
+                    Toybox.addChildLast(testcase, try Toybox.new(.{}, .{ .button = .{
                         .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
                         .action = .launch_testcase,
-                    } }, undo_stack)).index, undo_stack);
-                    Toybox.addChildLast(fnkbox_testcases.index, testcase.index, undo_stack);
+                    } }, undo_stack), undo_stack);
+                    Toybox.addChildLast(fnkbox_testcases, testcase, undo_stack);
                 }
-                break :blk fnkbox_testcases.index;
+                break :blk fnkbox_testcases;
             },
         }, undo_stack);
 
@@ -2437,9 +2437,9 @@ pub const Toybox = struct {
             initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, undo_stack),
             blk: {
                 const controls = try Toybox.new(Executor.relative_crank_center, .executor_controls, undo_stack);
-                Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } }, undo_stack)).index, undo_stack);
-                Toybox.addChildLast(controls.index, (try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, undo_stack)).index, undo_stack);
-                break :blk controls.index;
+                Toybox.addChildLast(controls, try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } }, undo_stack), undo_stack);
+                Toybox.addChildLast(controls, try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, undo_stack), undo_stack);
+                break :blk controls;
             },
         }, undo_stack);
 
@@ -2595,24 +2595,24 @@ const Workspace = struct {
 
         const undo_stack: ?*UndoStack = null;
 
-        dst.main_area = (try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, undo_stack)).index;
-        dst.toolbar_left = (try Toybox.new(.{}, .{
+        dst.main_area = try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, undo_stack);
+        dst.toolbar_left = try Toybox.new(.{}, .{
             .area = .{
                 .bg = .{
                     // ensure that "mouse off-screen on the left" also overlaps the toolbar
                     .local_rect = toolbar_left_rect.plusMargin3(.left, 100),
                 },
             },
-        }, undo_stack)).index;
+        }, undo_stack);
         dst.toolbar_fnks, const fnkslist: Lego.Index = blk: {
-            const area = (try Toybox.new(.{}, .{
+            const area = try Toybox.new(.{}, .{
                 .area = .{
                     .bg = .{
                         // ensure that "mouse off-screen on the right" also overlaps the toolbar
                         .local_rect = toolbar_fnks_rect.plusMargin3(.right, 100),
                     },
                 },
-            }, undo_stack)).index;
+            }, undo_stack);
 
             const scrollbar = Lego.Specific.Scrollbar.build(
                 toolbar_fnks_rect
@@ -2626,15 +2626,15 @@ const Workspace = struct {
                 .fnkslist = .{ .scrollbar = scrollbar },
             }, undo_stack);
 
-            Toybox.addChildLast(area, fnkslist.index, undo_stack);
+            Toybox.addChildLast(area, fnkslist, undo_stack);
 
             Toybox.addChildLast(area, scrollbar, undo_stack);
 
-            break :blk .{ area, fnkslist.index };
+            break :blk .{ area, fnkslist };
         };
-        dst.fnkboxes_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
-        dst.lenses_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
-        dst.floating_inputs_layer = (try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack)).index;
+        dst.fnkboxes_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
+        dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
+        dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
 
         if (false) {
             Toybox.addChildLast(
@@ -4327,7 +4327,7 @@ const Workspace = struct {
                         } }, undo_stack);
                         displaced_newcase.length_before = 0;
                         const original_tree = Toybox.get(dropzone_index).tree;
-                        Toybox.insert(newcase.index, .{
+                        Toybox.insert(newcase, .{
                             .parent = original_tree.parent,
                             .prev = original_tree.prev,
                             .next = dropzone_index,
@@ -4335,7 +4335,7 @@ const Workspace = struct {
                             .last = .nothing,
                         }, undo_stack);
                         Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.parentAbsolutePoint(dropzone_index));
-                        Toybox.addChildLast(newcase.index, workspace.grabbing.index, undo_stack);
+                        Toybox.addChildLast(newcase, workspace.grabbing.index, undo_stack);
                     } else {
                         Toybox.changeCoordinates(workspace.grabbing.index, .{}, Toybox.parentAbsolutePoint(dropzone_index));
                         Toybox.refreshAbsolutePoints(&.{workspace.grabbing.index});
