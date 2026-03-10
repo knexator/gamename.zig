@@ -5252,13 +5252,25 @@ const Workspace = struct {
             }
         }
 
-        if (executor.animation == null) {
+        if (executor.animation == null) { // remove pills
             var cur = executor.first_pill;
             executor.first_pill = .nothing;
             while (cur != .nothing) : (cur = cur.get().specific.pill.next_pill) {
                 undo_stack.storeAllData(cur);
                 cur.get().specific.pill.remaining_lifetime = 1;
                 cur.get().specific.pill.velocity = .new(-4, 0);
+            }
+        }
+
+        if (executor.animation == null) { // remove enqueued
+            // TODO(game): smooth anim
+            var cur = executor.first_enqueued;
+            executor.first_enqueued = .nothing;
+            while (cur != .nothing) {
+                const next = cur.get().specific.garland.next_enqueued;
+                Toybox.pop(cur, undo_stack);
+                Toybox.destroyFloating(cur, undo_stack);
+                cur = next;
             }
         }
 
