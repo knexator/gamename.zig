@@ -83,12 +83,28 @@ pub const FuzzerContext = struct {
         }
     };
 
-    pub const FakeInput = extern struct {
+    pub const FakeInput = struct {
         z_down: bool,
         mouse_left_down: bool,
         mouse_right_down: bool,
         mouse_pos: Vec2,
         delta_seconds: f32 = 1.0 / 60.0,
+
+        pub const Extern = extern struct {
+            z_down: bool,
+            mouse_left_down: bool,
+            mouse_right_down: bool,
+            mouse_pos: Vec2,
+
+            pub fn asFull(this: @This()) FakeInput {
+                return .{
+                    .z_down = this.z_down,
+                    .mouse_left_down = this.mouse_left_down,
+                    .mouse_right_down = this.mouse_right_down,
+                    .mouse_pos = this.mouse_pos,
+                };
+            }
+        };
     };
 
     const Player = struct {
@@ -123,11 +139,11 @@ pub const FuzzerContext = struct {
         var player: Player = try .init(std.testing.allocator, std.testing.random_seed);
         defer player.deinit();
 
-        var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
+        var it = std.mem.window(u8, input, @sizeOf(FakeInput.Extern), @sizeOf(FakeInput.Extern));
         while (it.next()) |cur_input_raw| {
-            if (cur_input_raw.len == @sizeOf(FakeInput)) {
-                const cur_input = std.mem.bytesToValue(FakeInput, cur_input_raw);
-                try player.advance(cur_input);
+            if (cur_input_raw.len == @sizeOf(FakeInput.Extern)) {
+                const cur_input = std.mem.bytesToValue(FakeInput.Extern, cur_input_raw);
+                try player.advance(cur_input.asFull());
             }
         }
     }
