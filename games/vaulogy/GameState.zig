@@ -5180,6 +5180,9 @@ const Workspace = struct {
             // TODO(optim): memory management
             var new_bindings: std.ArrayList(Binding) = .init(workspace.gpa_for_bindings);
             const matching = try Lego.Specific.Sexpr.generateBindings(value, pattern, &new_bindings);
+            if (!matching) {
+                new_bindings.clearAndFree();
+            }
             const invoked_fnk: Lego.Index = if (!matching)
                 .nothing
             else if (first_case.case().hasIdentityFnkname())
