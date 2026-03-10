@@ -3432,6 +3432,7 @@ const Workspace = struct {
                         };
 
                         if (sexpr.emerging_value != .nothing and sexpr.executor_with_bindings != .nothing) {
+                            Toybox.refreshAbsolutePoints(&.{cur});
                             const bindings = Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings);
                             const t: f32 = if (bindings.anim_t) |anim_t| math.smoothstep(anim_t, 0, 0.4) else 0;
                             const offset: Point = if (sexpr.is_pattern)
@@ -3591,7 +3592,7 @@ const Workspace = struct {
                                 // const bindings_t: ?f32 = if (anim_t < 0.2) null else math.remapTo01Clamped(anim_t, 0.2, 0.8);
                                 const invoking_t = math.remapClamped(anim_t, 0.0, 0.7, 0, 1);
                                 const enqueueing_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
-                                const discarded_t = anim_t;
+                                const discarded_t = math.remapClamped(anim_t, 0.2, 1, 0, 1);
                                 pill_offset = enqueueing_t;
 
                                 if (!EXECUTOR_MOVES_LEFT) {
