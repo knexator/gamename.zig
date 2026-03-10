@@ -3049,10 +3049,10 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(7, 0));
             postit.addFromText(postit_pos.addX(7), &.{ "The list does", "not have a", "B element." });
 
-            // postit_pos.addInPlace(.new(35 * 2, 0));
-            // postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
-            // postit_pos.addInPlace(.new(35, 0));
-            // postit.addFromText(postit_pos.addX(7), &.{ "DEBUG:", "skip this one" });
+            postit_pos.addInPlace(.new(35 * 3, 0));
+            postit_pos.addInPlace(.new(-4, 0));
+            postit.addFromText(postit_pos, &.{ "You can create", "custom", "assignments", "by duplicating", "an existing one." });
+            postit.addFromText(postit_pos.addX(7), &.{ "Try to invent", "machines that", "will be useful", "for multiple", "assignments." });
         }
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
