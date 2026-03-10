@@ -9,8 +9,9 @@ const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
 
-// TODO(optim): set to true
-const ENABLE_REUSE = false;
+// TODO(optim): launching a fnkbox execution increases the number of existing legos
+
+const ENABLE_REUSE = true;
 const SAVING_ENABLED = true;
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
@@ -24,7 +25,19 @@ pub const FuzzerContext = struct {
         delta_seconds: f32 = 0,
         mouse: Mouse = .{ .cur = .init, .prev = .init, .cur_time = 0 },
         keyboard: Keyboard = .{ .cur = .init, .prev = .init, .cur_time = 0 },
-        frame_arena: std.heap.ArenaAllocator = .init(std.testing.allocator),
+        frame_arena: std.heap.ArenaAllocator,
+        gpa: std.mem.Allocator,
+
+        pub fn init(allocator: std.mem.Allocator) TestPlatform {
+            return .{
+                .frame_arena = .init(allocator),
+                .gpa = allocator,
+            };
+        }
+
+        pub fn deinit(test_platform: *TestPlatform) void {
+            test_platform.frame_arena.deinit();
+        }
 
         pub fn after(self: *TestPlatform) void {
             self.mouse.prev = self.mouse.cur;
@@ -41,7 +54,7 @@ pub const FuzzerContext = struct {
             return .{
                 .mouse = self.mouse,
                 .keyboard = self.keyboard,
-                .gpa = std.testing.allocator,
+                .gpa = self.gpa,
                 .frame_arena = self.frame_arena.allocator(),
 
                 .aspect_ratio = stuff.metadata.desired_aspect_ratio,
@@ -82,17 +95,17 @@ pub const FuzzerContext = struct {
         workspace: Workspace,
         test_platform: TestPlatform,
 
-        pub fn init() !Player {
+        pub fn init(allocator: std.mem.Allocator, random_seed: u64) !Player {
             toybox = &FuzzerContext.toybox_instance;
-            try toybox.init(std.testing.allocator);
+            try toybox.init(allocator);
             var workspace: Workspace = undefined;
-            try workspace.init(std.testing.allocator, std.testing.random_seed);
-            return .{ .workspace = workspace, .test_platform = .{} };
+            try workspace.init(allocator, random_seed);
+            return .{ .workspace = workspace, .test_platform = .init(allocator) };
         }
 
         pub fn deinit(player: *Player) void {
             player.workspace.deinit();
-            player.test_platform.frame_arena.deinit();
+            player.test_platform.deinit();
             toybox.deinit();
         }
 
@@ -107,7 +120,7 @@ pub const FuzzerContext = struct {
     };
 
     fn testOne(_: @This(), input: []const u8) anyerror!void {
-        var player: Player = try .init();
+        var player: Player = try .init(std.testing.allocator, std.testing.random_seed);
         defer player.deinit();
 
         var it = std.mem.window(u8, input, @sizeOf(FakeInput), @sizeOf(FakeInput));
@@ -125,7 +138,7 @@ test "fuzz example" {
 }
 
 test "custom replay" {
-    var player: FuzzerContext.Player = try .init();
+    var player: FuzzerContext.Player = try .init(std.testing.allocator, std.testing.random_seed);
     defer player.deinit();
 
     const inputs = @import("buggy_recording.zig").inputs;
@@ -1805,6 +1818,8 @@ pub const Toybox = struct {
 
     pub fn destroyFloating(index: Lego.Index, undo_stack: ?*UndoStack) void {
         assert(Toybox.isFloating(index));
+        // std.log.debug("destroying {d}", .{index.asI32()});
+        // std.log.debug("old free head: {d}", .{toybox.free_head.asI32()});
 
         // TODO(optim): avoid recursion
         while (index.get().tree.first != .nothing) {
@@ -1829,6 +1844,9 @@ pub const Toybox = struct {
         assert(data.tree.isFloating());
         const lego = Toybox.getUnsafe(data.index);
         assert(!lego.exists);
+        if (toybox.free_head == data.index) {
+            toybox.free_head = lego.free_next;
+        }
         lego.* = data;
     }
 
@@ -1846,6 +1864,7 @@ pub const Toybox = struct {
         result.tree.parent = .nothing;
         result.tree.next = .nothing;
         result.tree.prev = .nothing;
+        result.free_next = .nothing;
 
         if (dupe_children) {
             var cur = result.tree.first;
@@ -3220,7 +3239,9 @@ const Workspace = struct {
         }
 
         if (grabbing != .nothing) {
-            assert(grabbing.get().tree.parent != .nothing);
+            if (grabbing.get().tree.parent == .nothing) {
+                std.debug.panic("grabbing {d} has no parent!", .{grabbing});
+            }
             return .{ .over_background = Toybox.oldestAncestor(grabbing) };
         } else {
             unreachable;
@@ -4089,8 +4110,40 @@ const Workspace = struct {
         }
     }
 
+    pub fn valid(workspace: *const Workspace, scratch: std.mem.Allocator) bool {
+        _ = workspace;
+        if (toybox.free_head != .nothing and Toybox.getUnsafe(toybox.free_head).exists) {
+            std.debug.panic("Free head is {d}, but that element exists!", .{toybox.free_head});
+        }
+        if (true and @import("builtin").mode == .Debug) { // check that free_next pointers are unique
+            var seen_indices: std.AutoHashMap(Lego.Index, void) = .init(scratch);
+            defer seen_indices.deinit();
+            for (toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (lego.exists) {
+                    assert(lego.free_next == .nothing);
+                } else {
+                    seen_indices.putNoClobber(lego.free_next, {}) catch std.debug.panic("OoM", .{});
+                }
+            }
+        }
+        return true;
+    }
+
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
+        assert(workspace.valid(scratch));
         workspace.display_fps = platform.keyboard.cur.isDown(.KeyF);
+        if (true and platform.keyboard.wasPressed(.KeyQ)) {
+            var alive_count: usize = 0;
+            for (toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (lego.exists) {
+                    alive_count += 1;
+                }
+            }
+            std.log.debug("total legos: {d}", .{alive_count});
+        }
+
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
             for (toybox.all_legos.items, 0..) |lego, k| {
@@ -4163,6 +4216,7 @@ const Workspace = struct {
         undo_stack.startFrame();
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
+            // std.log.debug("on undo, undo_stack len was: {d}", .{undo_stack.commands.items.len});
             while (undo_stack.pop()) |command| {
                 switch (command) {
                     .fence => break,
@@ -4219,6 +4273,7 @@ const Workspace = struct {
                     switch (hot_index.get().canDuplicate()) {
                         .yes => {
                             const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, true, undo_stack);
+                            // std.log.debug("duplicated {d} into {d}", .{ hot_index.asI32(), new_element_index.asI32() });
                             grabbed_element_index = new_element_index;
                         },
                         .no => {
@@ -4399,6 +4454,11 @@ const Workspace = struct {
 
         // const hovering: Lego.Index = if (workspace.focus.grabbing == .nothing) hovered_or_dropzone_thing.which else .nothing;
         // const dropzone: Lego.Index = if (workspace.focus.grabbing != .nothing) hovered_or_dropzone_thing.which else .nothing;
+
+        // std.log.debug("--- After interaction ---", .{});
+        // workspace.debugLogState();
+
+        assert(workspace.valid(scratch));
 
         // TODO(optim): avoid computing this twice?
         const hot_and_dropzone = workspace.findHotAndDropzone(mouse.cur.position);
@@ -4841,6 +4901,8 @@ const Workspace = struct {
             try workspace.canonizeAfterChanges(scratch);
         }
 
+        assert(workspace.valid(scratch));
+
         // There should be no further changes
         undo_stack.startFrame();
         defer assert(!undo_stack.anyChangesThisFrame());
@@ -4916,6 +4978,8 @@ const Workspace = struct {
         if (drawer) |d| {
             try workspace.draw(platform, d);
         }
+
+        assert(workspace.valid(scratch));
     }
 
     fn setGrabbing(workspace: *Workspace, grabbing: Grabbing, undo_stack: ?*UndoStack) void {
@@ -5339,6 +5403,38 @@ const Workspace = struct {
         }
         return true;
     }
+
+    pub fn debugLogState(workspace: *const Workspace) void {
+        var alive_count: usize = 0;
+        std.log.debug("free head: {d}", .{toybox.free_head.asI32()});
+        for (toybox.all_legos.items, 0..) |lego, k| {
+            assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+            if (lego.exists) {
+                alive_count += 1;
+                std.log.debug("{d} \t{s} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d}\tfree next: {d}", .{
+                    k,
+                    @tagName(lego.specific.tag()),
+                    lego.tree.parent.asI32(),
+                    lego.tree.next.asI32(),
+                    lego.tree.prev.asI32(),
+                    lego.tree.first.asI32(),
+                    lego.free_next.asI32(),
+                });
+            } else {
+                std.log.debug("{d} \tdead \tfree next: {d}", .{
+                    k,
+                    lego.free_next.asI32(),
+                });
+            }
+        }
+        std.log.debug("-----", .{});
+        for (workspace.undo_stack.commands.items, 0..) |cmd, k| {
+            std.log.debug("{d} \t{any}", .{ k, cmd });
+        }
+        std.log.debug("-----", .{});
+        std.log.debug("{d} alive legos, {d} undo stack len", .{ alive_count, workspace.undo_stack.commands.items.len });
+        std.log.debug("-----", .{});
+    }
 };
 
 pub fn init(
@@ -5366,6 +5462,21 @@ pub fn init(
 
     dst.drawer = try .init(&dst.usual);
     try dst.workspace.init(gpa, random_seed);
+
+    if (false) {
+        var player: FuzzerContext.Player = try .init(gpa, 0);
+        defer player.deinit();
+
+        const inputs = @import("buggy_recording.zig").inputs;
+        for (inputs, 0..) |input, turn_index| {
+            std.log.debug("--- Turn {d}, before ---", .{turn_index});
+            dst.workspace.debugLogState();
+            std.log.debug("Applying input: left {any}, right {any}, z {any}", .{ input.mouse_left_down, input.mouse_right_down, input.z_down });
+            try player.advance(input);
+            std.log.debug("--- Turn {d}, after ---", .{turn_index});
+            dst.workspace.debugLogState();
+        }
+    }
 }
 
 // TODO(platform): take gl parameter
