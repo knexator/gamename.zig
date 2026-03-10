@@ -3765,12 +3765,15 @@ const Workspace = struct {
             while (it.next()) |step| {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
-                const alpha: f32 = if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g|
-                    @max(0, g.specific.executor.garland_appearing_t)
-                else if (Toybox.safeGet(Toybox.findAncestor(cur, .pill))) |p|
-                    p.specific.pill.alpha()
-                else
-                    1;
+                const alpha: f32 = switch (lego.specific) {
+                    .sexpr, .garland, .case, .newcase => if (Toybox.safeGet(Toybox.findAncestor(cur, .executor))) |g|
+                        @max(0, g.specific.executor.garland_appearing_t)
+                    else if (Toybox.safeGet(Toybox.findAncestor(cur, .pill))) |p|
+                        p.specific.pill.alpha()
+                    else
+                        1,
+                    else => 1,
+                };
 
                 // TODO(polish): improve
                 const max_resolution = 2000;
