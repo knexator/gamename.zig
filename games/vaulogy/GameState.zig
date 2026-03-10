@@ -1173,6 +1173,7 @@ pub const Lego = struct {
                             false,
                             &workspace.undo_stack,
                         ), &workspace.undo_stack);
+                        Toybox.destroyFloating(t.actual, &workspace.undo_stack);
                     }
                 }
 
@@ -1713,6 +1714,9 @@ pub const Toybox = struct {
     all_legos_arena: std.heap.ArenaAllocator,
     free_head: Lego.Index = .nothing,
 
+    // TODO(optim-late): remove before release
+    disable_creation: bool = false,
+
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
         dst.* = .{
             .all_legos_arena = .init(gpa),
@@ -1743,6 +1747,7 @@ pub const Toybox = struct {
     }
 
     pub fn new(local_point: Point, specific: Lego.Specific, undo_stack: ?*UndoStack) !Lego.Index {
+        if (toybox.disable_creation) std.debug.panic("nope", .{});
         const result: *Lego, const index: Lego.Index = if (ENABLE_REUSE and toybox.free_head != .nothing) blk: {
             const result_index = toybox.free_head;
             const result = Toybox.getUnsafe(result_index);
@@ -3052,7 +3057,9 @@ const Workspace = struct {
 
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
+        assert(dst.valid(arena.allocator()));
         try dst.canonizeAfterChanges(arena.allocator());
+        assert(dst.valid(arena.allocator()));
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
@@ -4127,7 +4134,6 @@ const Workspace = struct {
     }
 
     pub fn valid(workspace: *const Workspace, scratch: std.mem.Allocator) bool {
-        _ = workspace;
         if (toybox.free_head != .nothing and Toybox.getUnsafe(toybox.free_head).exists) {
             std.debug.panic("Free head is {d}, but that element exists!", .{toybox.free_head});
         }
@@ -4143,6 +4149,24 @@ const Workspace = struct {
                 }
             }
         }
+        // Disabled for now, since execution.old_testcase_actual_value and execution.original_garland are rootless
+        if (false and @import("builtin").mode == .Debug) { // check that there are no unknown roots
+            for (toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (!lego.exists) continue;
+                const root = Toybox.oldestAncestor(lego.index);
+                for (workspace.roots(.all).constSlice()) |known_root| {
+                    if (known_root == root) break;
+                } else {
+                    std.debug.panic("lego {d} with tag {s} and creation trace {any} has unknown root {d}", .{
+                        lego.index.asI32(),
+                        @tagName(lego.specific.tag()),
+                        lego.trace_at_creation,
+                        root.asI32(),
+                    });
+                }
+            }
+        }
         return true;
     }
 
@@ -4150,6 +4174,27 @@ const Workspace = struct {
         assert(workspace.valid(scratch));
         workspace.display_fps = platform.keyboard.cur.isDown(.KeyF);
         if (true and platform.keyboard.wasPressed(.KeyQ)) {
+            for (toybox.all_legos.items, 0..) |lego, k| {
+                assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+                if (!lego.exists) continue;
+                const root = Toybox.oldestAncestor(lego.index);
+                for (workspace.roots(.all).constSlice()) |known_root| {
+                    if (known_root == root) break;
+                } else {
+                    std.log.debug("lego {d} with tag {s} has unknown root {d}", .{
+                        lego.index.asI32(),
+                        @tagName(lego.specific.tag()),
+                        root.asI32(),
+                    });
+                }
+            }
+        }
+
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
+            workspace.debugLogState();
+        }
+
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
             var alive_count: usize = 0;
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
@@ -4230,6 +4275,8 @@ const Workspace = struct {
 
         const undo_stack = &workspace.undo_stack;
         undo_stack.startFrame();
+
+        assert(workspace.valid(scratch));
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
             // std.log.debug("on undo, undo_stack len was: {d}", .{undo_stack.commands.items.len});
@@ -4454,6 +4501,7 @@ const Workspace = struct {
                             },
                             .scroll_up, .scroll_down => {},
                         }
+                        assert(workspace.valid(scratch));
                     }
                 } else {
                     // Case B.3: dropping a floating thing on fresh space
@@ -4723,6 +4771,8 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "fnkboxes animations" });
             defer zone.deinit();
 
+            assert(workspace.valid(scratch));
+
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
@@ -4823,6 +4873,7 @@ const Workspace = struct {
                                         assert(Toybox.get(old_actual).specific.sexpr.kind == .empty);
                                         Toybox.changeChild(old_actual, new_actual, undo_stack);
                                         undo_stack.storeAllData(lego.index);
+                                        if (execution.old_testcase_actual_value != .nothing) Toybox.destroyFloating(execution.old_testcase_actual_value, undo_stack);
                                         fnkbox.execution = null;
                                         Toybox.refreshAbsolutePoints(&.{new_actual});
 
@@ -4836,12 +4887,14 @@ const Workspace = struct {
                                 if (Toybox.get(executor_index).specific.executor.animation == null) {
                                     const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
                                     undo_stack.storeAllData(lego.index);
+                                    if (execution.old_testcase_actual_value != .nothing) Toybox.destroyFloating(execution.old_testcase_actual_value, undo_stack);
                                     fnkbox.execution = null;
                                     Toybox.addChildLast(workspace.main_area, result, undo_stack);
                                     Toybox.changeCoordinates(result, .{}, workspace.main_area.get().absolute_point);
                                 }
                             },
                         }
+                        assert(workspace.valid(scratch));
                     } else {
                         const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
                         if (Lego.Specific.Executor.shouldStartExecution(executor_index)) {
@@ -4854,7 +4907,7 @@ const Workspace = struct {
                                 .original_garland = backup_garland_index,
                                 .original_or_final_input_point = undefined,
                                 .state_t = undefined,
-                                .old_testcase_actual_value = undefined,
+                                .old_testcase_actual_value = .nothing,
                                 .state = .executing,
                             };
 
@@ -4867,6 +4920,7 @@ const Workspace = struct {
                             // } } });
                             // try workspace.canonizeAfterChanges(mem);
                         }
+                        assert(workspace.valid(scratch));
                     }
                 }
             }
@@ -5230,6 +5284,8 @@ const Workspace = struct {
             ),
             undo_stack,
         );
+        Toybox.destroyFloating(children.garland, undo_stack);
+        Toybox.destroyFloating(children.input, undo_stack);
         undo_stack.storeAllData(executor_index);
         Toybox.get(executor_index).specific.executor.garland_appearing_t = -1;
         // TODO(game)
