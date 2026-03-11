@@ -3422,8 +3422,8 @@ const Workspace = struct {
 
                         // TODO(optim): skip children in most cases
 
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
+                        // defer zone.deinit();
 
                         sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
                             else => false,
@@ -3455,8 +3455,8 @@ const Workspace = struct {
                         Lego.Specific.Case.updateLocalPositions(cur);
                     },
                     .garland_newcases => {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
+                        // defer zone.deinit();
 
                         var a = Toybox.get(lego.tree.first);
                         var offset: f32 = 0;
@@ -3471,8 +3471,8 @@ const Workspace = struct {
                         lego.tree.parent.get().specific.garland.computed_height = offset;
                     },
                     .newcase => |*newcase| {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - newcase" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - newcase" });
+                        // defer zone.deinit();
 
                         const Garland = Lego.Specific.Garland;
 
@@ -3546,8 +3546,8 @@ const Workspace = struct {
                     },
                     .fnkbox_box => {},
                     .executor => |executor| {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor" });
+                        // defer zone.deinit();
 
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(cur);
@@ -3680,8 +3680,8 @@ const Workspace = struct {
                     },
                     .executor_controls => {},
                     .executor_brake => |*brake| {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor_brake" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor_brake" });
+                        // defer zone.deinit();
 
                         lego.local_point = .{};
                         brake.handle_pos = Lego.Specific.Executor.Controls.brakeHandlePath(brake.brake_t);
@@ -3691,8 +3691,8 @@ const Workspace = struct {
                         crank.handle_pos = .fromPolar(0.75, crank.value);
                     },
                     .fnkbox_testcases => |fnkbox_testcases| {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
+                        // defer zone.deinit();
 
                         const scroll_visual = fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_visual;
 
@@ -3717,8 +3717,8 @@ const Workspace = struct {
                         }
                     },
                     .scrollbar => |*scrollbar| {
-                        const zone = tracy.initZone(@src(), .{ .name = "updateSprings - scrollbar" });
-                        defer zone.deinit();
+                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - scrollbar" });
+                        // defer zone.deinit();
 
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
