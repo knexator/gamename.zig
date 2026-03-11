@@ -8,11 +8,47 @@ const DRAW_ATOMS_PLAINLY = true;
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 
+renderables: struct {
+    fill_shape: FillShapeDrawable,
+},
+
+pub const FillShapeDrawable = Canvas.DrawableV2(
+    extern struct {
+        a_position: Vec2,
+        a_color: FColor,
+    },
+    struct {
+        u_camera: Rect,
+    },
+    \\precision highp float;
+    \\uniform vec4 u_camera; // as top_left, size
+    \\
+    \\in vec2 a_position;
+    \\in vec4 a_color;
+    \\out vec4 v_color;
+    \\void main() {
+    \\  vec2 camera_position = (a_position - u_camera.xy) / u_camera.zw;
+    \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+    \\  v_color = a_color;
+    \\}
+,
+    \\precision highp float;
+    \\out vec4 out_color;
+    \\in vec4 v_color;
+    \\void main() {
+    \\  out_color = v_color;
+    \\}
+    ,
+);
+
 pub fn init(usual: *kommon.Usual) !Drawer {
     try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator(), usual.canvas.gl);
     return .{
         .canvas = &usual.canvas,
         .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
+        .renderables = .{
+            .fill_shape = try .init(&usual.canvas),
+        },
     };
 }
 
@@ -575,6 +611,19 @@ pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, n
         try drawer.drawPatternAtom(camera, point, visuals, alpha);
     } else {
         try drawer.drawTemplateAtom(camera, point, visuals, alpha);
+    }
+}
+
+// TODO(game): stroke
+pub fn drawAtomV2(drawer: *Drawer, batch: *FillShapeDrawable.Batch, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
+    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
+        std.log.err("error getting visuals for atom literal: {s}", .{name});
+        return;
+    };
+    const geometry = if (is_pattern) visuals.geometry.pattern else visuals.geometry.template;
+    const vertices = try batch.addV2(geometry.local_points.len, geometry.triangles);
+    for (geometry.local_points, vertices) |p, *dst| {
+        dst.* = .{ .a_position = point.applyToLocalPosition(p), .a_color = visuals.color.withAlpha(alpha) };
     }
 }
 

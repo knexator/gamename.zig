@@ -3761,6 +3761,9 @@ const Workspace = struct {
 
     // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
     fn _draw(roots_in_draw_order: []const Lego.Index, holding_a_sexpr: bool, camera: Rect, drawer: *Drawer) !void {
+        var batch = drawer.renderables.fill_shape.batch();
+        batch.setUniforms(.{ .u_camera = camera }, null);
+        defer batch.draw();
         for (roots_in_draw_order) |root| {
             var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
@@ -3871,7 +3874,7 @@ const Workspace = struct {
                                 {
                                     try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha);
                                 },
-                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
+                                .atom_lit => try drawer.drawAtomV2(&batch, point, sexpr.is_pattern, sexpr.atom_name, alpha),
                                 .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
                                 .atom_var => if (!sexpr.emerging_value_ignore_updates_to_t) {
                                     const extra_alpha: f32 = if (maybe_bindings) |bindings| blk: {
@@ -5583,6 +5586,7 @@ pub fn beforeHotReload(_: *GameState) !void {}
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
+    try self.drawer.renderables.fill_shape.reload();
     // try self.workspace.init(&self.core_mem, 0);
     toybox = &self.toybox_instance;
 }
