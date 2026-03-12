@@ -12,23 +12,20 @@ renderables: struct {
     fill_shape: FillShapeDrawable,
 },
 
+fill_shape_batch: FillShapeDrawable.Batch = undefined,
+
 pub const FillShapeDrawable = Canvas.DrawableV2(
     extern struct {
         a_position: Vec2,
         a_color: FColor,
     },
-    struct {
-        u_camera: Rect,
-    },
+    struct {},
     \\precision highp float;
-    \\uniform vec4 u_camera; // as top_left, size
-    \\
     \\in vec2 a_position;
     \\in vec4 a_color;
     \\out vec4 v_color;
     \\void main() {
-    \\  vec2 camera_position = (a_position - u_camera.xy) / u_camera.zw;
-    \\  gl_Position = vec4((camera_position * 2.0 - 1.0) * vec2(1, -1), 0, 1);
+    \\  gl_Position = vec4(a_position, 0, 1);
     \\  v_color = a_color;
     \\}
 ,
@@ -50,6 +47,19 @@ pub fn init(usual: *kommon.Usual) !Drawer {
             .fill_shape = try .init(&usual.canvas),
         },
     };
+}
+
+pub fn onFrameStart(drawer: *Drawer) void {
+    drawer.fill_shape_batch = drawer.renderables.fill_shape.batch();
+    drawer.fill_shape_batch.setUniforms(.{}, null);
+}
+
+pub fn onFrameEnd(drawer: *Drawer) void {
+    drawer.flush();
+}
+
+pub fn flush(drawer: *Drawer) void {
+    drawer.fill_shape_batch.draw();
 }
 
 pub const AtomVisuals = struct {
@@ -614,19 +624,6 @@ pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, n
     }
 }
 
-// TODO(game): stroke
-pub fn drawAtomV2(drawer: *Drawer, batch: *FillShapeDrawable.Batch, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
-    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
-        std.log.err("error getting visuals for atom literal: {s}", .{name});
-        return;
-    };
-    const geometry = if (is_pattern) visuals.geometry.pattern else visuals.geometry.template;
-    const vertices = try batch.addV2(geometry.local_points.len, geometry.triangles);
-    for (geometry.local_points, vertices) |p, *dst| {
-        dst.* = .{ .a_position = point.applyToLocalPosition(p), .a_color = visuals.color.withAlpha(alpha) };
-    }
-}
-
 pub fn drawVariable(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
     const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
         std.log.err("error getting visuals for atom variable: {s}", .{name});
@@ -714,11 +711,7 @@ fn drawShapeV3(
     alpha: f32,
 ) !void {
     if (fill) |col| {
-        // TODO: what if each drawing uses a different camera? what about stencils?
-        // var batch: Canvas.ShapesBatch = .{ .canvas = self.canvas };
-        // try batch.add(parent_world_point, shape, col.timesAlpha(alpha));
-        // batch.draw(camera);
-        self.canvas.fillShape(
+        try self.fillShape(
             camera,
             parent_world_point,
             shape,
@@ -726,15 +719,17 @@ fn drawShapeV3(
         );
     }
 
-    if (stroke) |col| {
-        // TODO: wouldnt be needed if Rect had rotation
-        const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
-        for (shape.local_points, world_points[1..]) |p, *dst| {
-            dst.* = parent_world_point.applyToLocalPosition(p);
-        }
-        world_points[0] = world_points[world_points.len - 1];
-        self.canvas.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
-    }
+    // TODO(game): stroke
+    _ = stroke;
+    // if (stroke) |col| {
+    //     // TODO: wouldnt be needed if Rect had rotation
+    //     const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
+    //     for (shape.local_points, world_points[1..]) |p, *dst| {
+    //         dst.* = parent_world_point.applyToLocalPosition(p);
+    //     }
+    //     world_points[0] = world_points[world_points.len - 1];
+    //     self.canvas.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
+    // }
 }
 
 pub fn drawEatingPatternV2(
@@ -1107,6 +1102,155 @@ pub fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, n
     }
     for (visuals.items) |v| {
         drawer.canvas.line(camera, points, pixelWidth(camera), v.color.timesAlpha(alpha));
+    }
+}
+
+pub fn fillRect(
+    self: *Drawer,
+    camera: Rect,
+    rect: Rect,
+    color: FColor,
+) !void {
+    try self.fillShape(
+        camera,
+        .{ .pos = rect.top_left },
+        .{
+            .local_points = &.{
+                .new(0, 0),
+                .new(rect.size.x, 0),
+                .new(0, rect.size.y),
+                .new(rect.size.x, rect.size.y),
+            },
+            .triangles = self.canvas.DEFAULT_SHAPES.square.triangles,
+            .fill_shape_renderable = null,
+            .fill_atom_renderable = null,
+        },
+        color,
+    );
+}
+
+pub fn fillCircleV2(
+    drawer: *Drawer,
+    camera: Rect,
+    circle: math.Circle,
+    color: FColor,
+) !void {
+    return try drawer.fillCircle(camera, circle.center, circle.radius, color);
+}
+
+pub fn fillCircle(
+    drawer: *Drawer,
+    camera: Rect,
+    center: Vec2,
+    radius: f32,
+    color: FColor,
+) !void {
+    try drawer.fillShape(
+        camera,
+        .{ .pos = center, .scale = radius },
+        drawer.canvas.DEFAULT_SHAPES.circle_128,
+        color,
+    );
+}
+
+pub fn fillShape(
+    drawer: *Drawer,
+    camera: Rect,
+    parent: Point,
+    shape: Canvas.PrecomputedShape,
+    color: FColor,
+) !void {
+    const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
+    for (shape.local_points, vertices) |p, *dst| {
+        dst.* = .{
+            .a_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
+            .a_color = color,
+        };
+    }
+}
+
+pub fn strokeCircle(
+    drawer: *Drawer,
+    comptime resolution: usize,
+    camera: Rect,
+    center: Vec2,
+    radius: f32,
+    width: f32,
+    color: FColor,
+) !void {
+    try drawer.line(
+        camera,
+        &funk.mapWithCtx(
+            struct {
+                pub fn anon(ctx: struct { radius: f32, center: Vec2 }, t: f32) Vec2 {
+                    return ctx.center.add(.fromPolar(ctx.radius, t));
+                }
+            }.anon,
+            &funk.linspace01(resolution, true),
+            .{ .radius = radius, .center = center },
+        ),
+        width,
+        color,
+    );
+}
+
+pub fn line(
+    drawer: *Drawer,
+    camera: Rect,
+    points: []const Vec2,
+    world_width: f32,
+    color: FColor,
+) !void {
+    for (points[0 .. points.len - 1], points[1..]) |a, b| {
+        const basis_x: Vec2 = Vec2.normalized(b.sub(a));
+        const basis_y: Vec2 = basis_x.rotPosQuarter();
+        // TODO(optim): check that the *0 gets optimized out
+        const vertices: []const Vec2 = &.{
+            // basic rect
+            a.add(Vec2.add(basis_x.scale(0), basis_y.scale(-0.5)).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0), basis_y.scale(-0.5)).scale(world_width)),
+            a.add(Vec2.add(basis_x.scale(0), basis_y.scale(0.5)).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0), basis_y.scale(0.5)).scale(world_width)),
+
+            // rounded cap for a
+            a.add(Vec2.add(basis_x.scale(0), basis_y.scale(0)).scale(world_width)),
+            a.add(Vec2.add(basis_x.scale(0), basis_y.scale(-0.5)).scale(world_width)),
+            a.add(Vec2.add(basis_x.scale(-0.5 / @sqrt(2.0)), basis_y.scale(-0.5 / @sqrt(2.0))).scale(world_width)),
+            a.add(Vec2.add(basis_x.scale(-0.5), basis_y.scale(0)).scale(world_width)),
+            a.add(Vec2.add(basis_x.scale(-0.5 / @sqrt(2.0)), basis_y.scale(0.5 / @sqrt(2.0))).scale(world_width)),
+            a.add(Vec2.add(basis_x.scale(0), basis_y.scale(0.5)).scale(world_width)),
+
+            // rounded cap for b
+            b.add(Vec2.add(basis_x.scale(0), basis_y.scale(0)).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0), basis_y.scale(-0.5)).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0.5 / @sqrt(2.0)), basis_y.scale(-0.5 / @sqrt(2.0))).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0.5), basis_y.scale(0)).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0.5 / @sqrt(2.0)), basis_y.scale(0.5 / @sqrt(2.0))).scale(world_width)),
+            b.add(Vec2.add(basis_x.scale(0), basis_y.scale(0.5)).scale(world_width)),
+        };
+
+        try drawer.fillShape(camera, .{}, .{
+            .local_points = vertices,
+            .triangles = &.{
+                // basic rect
+                .{ 0, 1, 2 },
+                .{ 3, 2, 1 },
+
+                // rounded cap for a
+                .{ 4, 5, 6 },
+                .{ 4, 6, 7 },
+                .{ 4, 7, 8 },
+                .{ 4, 8, 9 },
+
+                // rounded cap for b
+                .{ 10, 11, 12 },
+                .{ 10, 12, 13 },
+                .{ 10, 13, 14 },
+                .{ 10, 14, 15 },
+            },
+            .fill_shape_renderable = null,
+            .fill_atom_renderable = null,
+        }, color);
     }
 }
 

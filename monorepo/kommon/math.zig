@@ -1808,6 +1808,11 @@ pub const Rect = extern struct {
         return p.sub(self.top_left).div(self.size);
     }
 
+    pub fn NDCFromWorldPosition(camera: Rect, p: Vec2) Vec2 {
+        const v = camera.localFromWorldPosition(p);
+        return .new(v.x * 2 - 1, -(v.y * 2 - 1));
+    }
+
     pub fn fromSpriteSheet(which: UVec2, count: UVec2, uv_margin: Vec2) Rect {
         const rect: Rect = .{
             .top_left = which.tof32().div(count.tof32()),

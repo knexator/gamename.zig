@@ -1698,7 +1698,7 @@ pub const Handle = struct {
     pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
         if (handle.enabled) {
             const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
-            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
+            try drawer.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
             drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
         }
     }
@@ -3733,10 +3733,14 @@ const Workspace = struct {
         const zone = tracy.initZone(@src(), .{ .name = "draw" });
         defer zone.deinit();
 
+        drawer.onFrameStart();
+        defer drawer.onFrameEnd();
+
         const camera = Rect
             .fromCenterAndSize(.zero, .both(2))
             .withAspectRatio(platform.aspect_ratio, .grow, .center);
 
+        drawer.flush();
         drawer.canvas.clipper.reset();
         drawer.canvas.clipper.use(drawer.canvas);
 
@@ -3761,9 +3765,6 @@ const Workspace = struct {
 
     // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
     fn _draw(roots_in_draw_order: []const Lego.Index, holding_a_sexpr: bool, camera: Rect, drawer: *Drawer) !void {
-        var batch = drawer.renderables.fill_shape.batch();
-        batch.setUniforms(.{ .u_camera = camera }, null);
-        defer batch.draw();
         for (roots_in_draw_order) |root| {
             var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
@@ -3811,6 +3812,7 @@ const Workspace = struct {
                     if (lego.handle()) |handle| try handle.draw(drawer, camera, alpha);
                     switch (lego.specific) {
                         .fnkbox_testcases => {
+                            drawer.flush();
                             drawer.canvas.clipper.pop();
                             drawer.canvas.clipper.use(drawer.canvas);
                         },
@@ -3824,14 +3826,14 @@ const Workspace = struct {
                     switch (lego.specific) {
                         .case => {
                             // TODO(game): draw variables in the cable
-                            drawer.canvas.line(camera, &.{
+                            try drawer.line(camera, &.{
                                 lego.absolute_point.applyToLocalPosition(.xneg),
                                 lego.absolute_point.applyToLocalPosition(.xpos),
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
                             const next_garland = Lego.Specific.Case.children(cur).next;
                             if (next_garland.get().specific.garland.visible) {
                                 // TODO(game): draw variables in the cable
-                                drawer.canvas.line(camera, &.{
+                                try drawer.line(camera, &.{
                                     lego.absolute_point.applyToLocalPosition(.new(1.5, 1)),
                                     next_garland.get().absolute_point.pos,
                                 }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
@@ -3846,11 +3848,13 @@ const Workspace = struct {
                                     // try drawer.drawEatingPatternV2(camera, point, sexpr.atom_name, t, alpha);
                                     // try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
                                 } else {
+                                    drawer.flush();
                                     if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{
                                         .custom = .{ .point = lego.absolute_point, .shape = Drawer.AtomVisuals.Geometry.template_mask },
                                     } })) {
                                         drawer.canvas.clipper.use(drawer.canvas);
                                         defer {
+                                            drawer.flush();
                                             drawer.canvas.clipper.pop();
                                             drawer.canvas.clipper.use(drawer.canvas);
                                         }
@@ -3874,7 +3878,7 @@ const Workspace = struct {
                                 {
                                     try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha);
                                 },
-                                .atom_lit => try drawer.drawAtomV2(&batch, point, sexpr.is_pattern, sexpr.atom_name, alpha),
+                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
                                 .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
                                 .atom_var => if (!sexpr.emerging_value_ignore_updates_to_t) {
                                     const extra_alpha: f32 = if (maybe_bindings) |bindings| blk: {
@@ -3905,13 +3909,15 @@ const Workspace = struct {
 
                             if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
                                 const lens_circle: math.Circle = .{ .center = .zero, .radius = lens.local_radius };
+                                drawer.flush();
                                 if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{ .circle = lens_circle } })) {
                                     drawer.canvas.clipper.use(drawer.canvas);
                                     defer {
+                                        drawer.flush();
                                         drawer.canvas.clipper.pop();
                                         drawer.canvas.clipper.use(drawer.canvas);
                                     }
-                                    drawer.canvas.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
+                                    try drawer.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
 
                                     try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer);
                                 } else |_| {
@@ -3933,20 +3939,20 @@ const Workspace = struct {
                                 // TODO(game): .all background
                                 .all, .none => {},
                                 .local_rect => |rect| {
-                                    drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                                    try drawer.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
                                 },
                             }
                         },
                         .postit => {
                             const t: f32 = 2.0 + lego.hot_t * 0.7 + lego.active_t * 1.2;
-                            drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                            try drawer.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
                                 .new(-1, -1),
                                 .new(1, -1),
                                 .new(1, 1 - t * 0.1),
                                 .new(1 - t * 0.25, 1),
                                 .new(-1, 1),
                             }), .fromHex("#FFEBA1"));
-                            drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                            try drawer.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
                                 .new(1, 1 - t * 0.1),
                                 .new(1 - t * 0.25, 1),
                                 Vec2.new(1, 1).mirrorAroundSegment(
@@ -3962,7 +3968,7 @@ const Workspace = struct {
                             switch (kind) {
                                 .arrow => {
                                     const center: Point = lego.absolute_point;
-                                    drawer.canvas.line(camera, &.{
+                                    try drawer.line(camera, &.{
                                         center.applyToLocalPosition(.new(-0.5, 0)),
                                         center.applyToLocalPosition(.new(0.5, 0)),
                                         center.applyToLocalPosition(.new(0.0, 0.25)),
@@ -3975,7 +3981,7 @@ const Workspace = struct {
                                     const rect: Rect = .fromPoint(center, .center, .one);
                                     drawer.canvas.borderRect(camera, rect, 0.05 * center.scale, .inner, .black);
                                     const arrow_center = center.applyToLocalPoint(.{ .pos = .new(0.15, 0) });
-                                    drawer.canvas.line(camera, &.{
+                                    try drawer.line(camera, &.{
                                         arrow_center.applyToLocalPosition(.new(-0.25, -0.25)),
                                         arrow_center.applyToLocalPosition(.new(0, 0)),
                                         arrow_center.applyToLocalPosition(.new(-0.25, 0.25)),
@@ -3983,11 +3989,11 @@ const Workspace = struct {
                                 },
                                 .piece_center => {
                                     const center: Point = lego.absolute_point;
-                                    drawer.canvas.line(camera, &.{
+                                    try drawer.line(camera, &.{
                                         center.applyToLocalPosition(.new(-0.5, 0)),
                                         center.applyToLocalPosition(.new(-0.2, 0)),
                                     }, 0.05 * center.scale, .black);
-                                    drawer.canvas.line(camera, &.{
+                                    try drawer.line(camera, &.{
                                         center.applyToLocalPosition(.new(0.2, 0)),
                                         center.applyToLocalPosition(.new(0.5, 0)),
                                     }, 0.05 * center.scale, .black);
@@ -3996,19 +4002,19 @@ const Workspace = struct {
                                         Vec2.fromTurns,
                                         &funk.linspace(-0.15, 0.15, 32, true),
                                     );
-                                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(-1.5, 0) }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
-                                    drawer.canvas.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(1.5, 0), .turns = 0.5 }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                                    try drawer.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(-1.5, 0) }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
+                                    try drawer.line(camera, &funk.mapOOP(center.applyToLocalPoint(.{ .pos = .new(1.5, 0), .turns = 0.5 }), .applyToLocalPosition, &arc), 0.05 * center.scale, .black);
                                 },
                             }
                         },
                         .button => |button| {
                             switch (button.action) {
                                 .launch_testcase => {
-                                    drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.4));
+                                    try drawer.fillRect(camera_relative, button.local_rect, .gray(0.4));
                                     const rect = button.local_rect.move(Vec2.new(-1, -1).scale((1 - lego.hot_t) * 0.05 + (1 - @min(lego.active_t, lego.hot_t)) * 0.1));
-                                    drawer.canvas.fillRect(camera_relative, rect, COLORS.bg);
+                                    try drawer.fillRect(camera_relative, rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, rect, 0.05, .inner, .black);
-                                    drawer.canvas.line(camera_relative, &.{
+                                    try drawer.line(camera_relative, &.{
                                         rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
                                         rect.getCenter().add(.new(0, 0)).addX(0.15),
                                         rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
@@ -4024,18 +4030,18 @@ const Workspace = struct {
                                         );
                                         try drawer.canvas.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
                                     } else {
-                                        drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.7));
+                                        try drawer.fillRect(camera_relative, button.local_rect, .gray(0.7));
                                         try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
                                     }
                                 },
                                 .scroll_up, .scroll_down => {
-                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    try drawer.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
                             }
                         },
                         .scrollbar => |scrollbar| {
-                            drawer.canvas.fillRect(camera_relative, scrollbar.handleRectVisual(), COLORS.bg);
+                            try drawer.fillRect(camera_relative, scrollbar.handleRectVisual(), COLORS.bg);
                             drawer.canvas.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                         },
                         .fnkbox_testcases => {
@@ -4044,6 +4050,7 @@ const Workspace = struct {
                             try drawer.canvas.drawText(0, camera_relative, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
                             try drawer.canvas.drawText(0, camera_relative, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
                             try drawer.canvas.drawText(0, camera_relative, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
+                            drawer.flush();
                             drawer.canvas.clipper.push(.{
                                 .camera = camera_relative,
                                 .shape = .{
@@ -4054,7 +4061,7 @@ const Workspace = struct {
                         },
                         .newcase => |newcase| {
                             // TODO(design): camera_relative fails due to rotation
-                            drawer.canvas.line(camera, &.{
+                            try drawer.line(camera, &.{
                                 lego.absolute_point.pos,
                                 lego.absolute_point.applyToLocalPosition(.new(0, newcase.length())),
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
@@ -4080,22 +4087,22 @@ const Workspace = struct {
                             );
                         },
                         .fnkbox_box => {
-                            drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
+                            try drawer.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
                         },
                         .executor_brake => |brake| {
-                            drawer.canvas.line(camera_relative, &kommon.funktional.mapOOP(
+                            try drawer.line(camera_relative, &kommon.funktional.mapOOP(
                                 brake,
                                 .brakeBody,
                                 &kommon.funktional.linspace01(32, true),
                             ), 0.2, .gray(0.4));
-                            drawer.canvas.line(camera_relative, &kommon.funktional.mapOOP(
+                            try drawer.line(camera_relative, &kommon.funktional.mapOOP(
                                 brake,
                                 .brakeHandlePath,
                                 &kommon.funktional.linspace01(32, true),
                             ), Drawer.pixelWidth(camera_relative), FColor.gray(1));
                         },
                         .executor_crank => |crank| {
-                            drawer.canvas.fillShape(camera_relative, .{ .turns = crank.value }, Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
+                            try drawer.fillShape(camera_relative, .{ .turns = crank.value }, Drawer.AtomVisuals.Geometry.ridged_circle, .gray(0.6));
                         },
                         .testcase => |testcase| {
                             // Don't draw testcases that will get clipped outside the testbox
@@ -4110,17 +4117,17 @@ const Workspace = struct {
 
                             const symbol_pos = lego.absolute_point.applyToLocalPoint(.{ .pos = .new(7, 0.0), .scale = 0.4 });
                             if (testcase.solved) {
-                                // drawer.canvas.line(camera, &.{
+                                // try drawer.line(camera, &.{
                                 //     symbol_pos.applyToLocalPosition(.new(-1, 0)),
                                 //     symbol_pos.applyToLocalPosition(.new(0, 1)),
                                 //     symbol_pos.applyToLocalPosition(.new(1.5, -1.25)),
                                 // }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
                             } else {
-                                drawer.canvas.line(camera, &.{
+                                try drawer.line(camera, &.{
                                     symbol_pos.applyToLocalPosition(.new(1, -1)),
                                     symbol_pos.applyToLocalPosition(.new(-1, 1)),
                                 }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
-                                drawer.canvas.line(camera, &.{
+                                try drawer.line(camera, &.{
                                     symbol_pos.applyToLocalPosition(.new(-1, -1)),
                                     symbol_pos.applyToLocalPosition(.new(1, 1)),
                                 }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));

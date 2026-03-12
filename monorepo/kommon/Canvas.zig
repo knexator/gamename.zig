@@ -839,14 +839,16 @@ pub fn DrawableV2(
             pub fn draw(self: *Batch) void {
                 const vertices = self.vertices.items;
                 const triangles = self.triangles.items;
-                self.drawable.canvas.gl.useRenderable(
-                    self.drawable.renderable,
-                    vertices.ptr,
-                    vertices.len * @sizeOf(VertexData),
-                    triangles,
-                    &self.uniforms_gl,
-                    self.texture,
-                );
+                if (triangles.len > 0) {
+                    self.drawable.canvas.gl.useRenderable(
+                        self.drawable.renderable,
+                        vertices.ptr,
+                        vertices.len * @sizeOf(VertexData),
+                        triangles,
+                        &self.uniforms_gl,
+                        self.texture,
+                    );
+                }
                 self.vertices.clearRetainingCapacity();
                 self.triangles.clearRetainingCapacity();
             }
