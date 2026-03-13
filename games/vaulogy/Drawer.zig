@@ -16,16 +16,16 @@ fill_shape_batch: FillShapeDrawable.Batch = undefined,
 
 pub const FillShapeDrawable = Canvas.DrawableV2(
     extern struct {
-        a_position: Vec2,
+        a_ndc_position: Vec2,
         a_color: FColor,
     },
     struct {},
     \\precision highp float;
-    \\in vec2 a_position;
+    \\in vec2 a_ndc_position;
     \\in vec4 a_color;
     \\out vec4 v_color;
     \\void main() {
-    \\  gl_Position = vec4(a_position, 0, 1);
+    \\  gl_Position = vec4(a_ndc_position, 0, 1);
     \\  v_color = a_color;
     \\}
 ,
@@ -1163,7 +1163,7 @@ pub fn fillShape(
     const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices) |p, *dst| {
         dst.* = .{
-            .a_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
+            .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
         };
     }
