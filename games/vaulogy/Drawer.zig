@@ -10,9 +10,15 @@ atom_visuals_cache: AtomVisualCache,
 
 renderables: struct {
     fill_shape: FillShapeDrawable,
+    text: TextDrawable,
 },
 
 fill_shape_batch: FillShapeDrawable.Batch = undefined,
+text_batch: TextDrawable.Batch = undefined,
+
+active_renderable: ActiveRenderable = .fill_shape,
+
+pub const ActiveRenderable = enum { fill_shape, text_batch };
 
 pub const FillShapeDrawable = Canvas.DrawableV2(
     extern struct {
@@ -38,6 +44,67 @@ pub const FillShapeDrawable = Canvas.DrawableV2(
     ,
 );
 
+pub const TextDrawable = Canvas.DrawableV2(
+    extern struct {
+        a_ndc_position: Vec2,
+        a_texcoord: Vec2,
+        a_color: FColor,
+    },
+    struct {},
+    \\precision highp float;
+    \\in vec2 a_ndc_position;
+    \\in vec2 a_texcoord;
+    \\in vec4 a_color;
+    \\out vec2 v_texcoord;
+    \\out vec4 v_color;
+    \\void main() {
+    \\  gl_Position = vec4(a_ndc_position, 0, 1);
+    \\  v_texcoord = a_texcoord;
+    \\  v_color = a_color;
+    \\}
+,
+    \\precision highp float;
+    \\out vec4 out_color;
+    \\in vec2 v_texcoord;
+    \\in vec4 v_color;
+    \\uniform sampler2D u_texture;
+    \\
+    \\// for some reason, on desktop, the fwidth value is half of what it should.
+    \\#ifdef GL_ES // WebGL2
+    \\  #define FWIDTH(x) (fwidth(x))
+    \\#else // Desktop
+    \\  #define FWIDTH(x) (2.0 * fwidth(x))
+    \\#endif
+    \\
+    \\float median(float r, float g, float b) {
+    \\  return max(min(r, g), min(max(r, g), b));
+    \\}
+    \\
+    \\float inverseLerp(float a, float b, float t) {
+    \\  return (t - a) / (b - a);
+    \\}
+    \\
+    \\void main() {
+    \\  // assume square texture
+    \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
+    \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
+    // TODO: get sdf_pxrange from the font data
+    \\  float sdf_pxrange = 2.0;
+    \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
+    \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
+    \\  // density of the texture on screen; assume uniform scaling.
+    // TODO: find out why we need that "* 0.5" to avoid graying background
+    \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size * 0.5;
+    \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
+    \\  // over how many screen pixels do the transition
+    \\  float transition_pixels = 1.0;
+    \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
+    \\  // TODO: premultiply alpha?
+    \\  out_color = mix(vec4(v_color.rgb, 0), v_color, alpha);
+    \\}
+    ,
+);
+
 pub fn init(usual: *kommon.Usual) !Drawer {
     try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator(), usual.canvas.gl);
     return .{
@@ -45,6 +112,7 @@ pub fn init(usual: *kommon.Usual) !Drawer {
         .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
         .renderables = .{
             .fill_shape = try .init(&usual.canvas),
+            .text = try .init(&usual.canvas),
         },
     };
 }
@@ -52,6 +120,8 @@ pub fn init(usual: *kommon.Usual) !Drawer {
 pub fn onFrameStart(drawer: *Drawer) void {
     drawer.fill_shape_batch = drawer.renderables.fill_shape.batch();
     drawer.fill_shape_batch.setUniforms(.{}, null);
+    drawer.text_batch = drawer.renderables.text.batch();
+    drawer.text_batch.setUniforms(.{}, drawer.canvas.text_renderers[0].atlas_texture);
 }
 
 pub fn onFrameEnd(drawer: *Drawer) void {
@@ -60,6 +130,7 @@ pub fn onFrameEnd(drawer: *Drawer) void {
 
 pub fn flush(drawer: *Drawer) void {
     drawer.fill_shape_batch.draw();
+    drawer.text_batch.draw();
 }
 
 pub const AtomVisuals = struct {
@@ -719,17 +790,15 @@ fn drawShapeV3(
         );
     }
 
-    // TODO(game): stroke
-    _ = stroke;
-    // if (stroke) |col| {
-    //     // TODO: wouldnt be needed if Rect had rotation
-    //     const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
-    //     for (shape.local_points, world_points[1..]) |p, *dst| {
-    //         dst.* = parent_world_point.applyToLocalPosition(p);
-    //     }
-    //     world_points[0] = world_points[world_points.len - 1];
-    //     self.canvas.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
-    // }
+    if (stroke) |col| {
+        // TODO: wouldnt be needed if Rect had rotation
+        const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
+        for (shape.local_points, world_points[1..]) |p, *dst| {
+            dst.* = parent_world_point.applyToLocalPosition(p);
+        }
+        world_points[0] = world_points[world_points.len - 1];
+        try self.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
+    }
 }
 
 pub fn drawEatingPatternV2(
@@ -818,7 +887,7 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(0.25, 0));
-        try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .blackAlpha(alpha));
+        try drawer.drawText(0, camera, d, .centeredAt(p), point.scale, .blackAlpha(alpha));
     }
 }
 
@@ -907,7 +976,7 @@ fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVis
 
     if (visuals.display) |d| {
         const p = point.applyToLocalPosition(.new(-0.25, 0));
-        try drawer.canvas.drawText(0, camera, d, .centeredAt(p), point.scale, .blackAlpha(alpha));
+        try drawer.drawText(0, camera, d, .centeredAt(p), point.scale, .blackAlpha(alpha));
     }
 }
 
@@ -920,7 +989,7 @@ pub fn drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point:
     try _drawTemplateSexprWithBindings(drawer, camera, world_point, sexpr, bindings, &out_particles);
     for (out_particles.items) |particle| {
         const visuals = try drawer.atom_visuals_cache.getAtomVisuals(particle.name);
-        drawer.canvas.strokeRect(
+        drawer.strokeRect(
             camera,
             .fromCenterAndSize(
                 particle.point.applyToLocalPosition(.new(1, 0)),
@@ -1101,8 +1170,29 @@ pub fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, n
         visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl));
     }
     for (visuals.items) |v| {
-        drawer.canvas.line(camera, points, pixelWidth(camera), v.color.timesAlpha(alpha));
+        try drawer.line(camera, points, pixelWidth(camera), v.color.timesAlpha(alpha));
     }
+}
+
+pub fn strokeRect(
+    drawer: *Drawer,
+    camera: Rect,
+    rect: Rect,
+    width: f32,
+    color: FColor,
+) void {
+    drawer.line(
+        camera,
+        &.{
+            rect.top_left,
+            rect.get(.top_right),
+            rect.get(.bottom_right),
+            rect.get(.bottom_left),
+            rect.top_left,
+        },
+        width,
+        color,
+    );
 }
 
 pub fn fillRect(
@@ -1166,6 +1256,37 @@ pub fn fillShape(
             .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
         };
+    }
+}
+
+pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const u8, pos: Canvas.TextRenderer.TextPosition, em: f32, color: FColor) !void {
+    if (font_index != 0) @panic("TODO(platform): only font_index==0 is supported now (since we call setUniforms only once)");
+    if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
+    const text_renderer = &drawer.canvas.text_renderers[font_index];
+    const info = try text_renderer.quadsForLineV2(text, em, color, drawer.canvas.frame_arena.allocator());
+    const quads = info.quads;
+    defer drawer.canvas.frame_arena.allocator().free(quads);
+    if (quads.len == 0) return;
+    // const delta = bounds.deltaToAchieve(pos);
+    const delta = text_renderer.deltaToAchieve(pos, info.total_advance, em);
+    // try self.quads.ensureUnusedCapacity(quads.len);
+    // for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
+
+    for (quads) |raw_q| {
+        const q = raw_q.translate(delta);
+        try drawer.text_batch.add(&.{
+            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
+            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
+            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
+            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
+        }, drawer.canvas.DEFAULT_SHAPES.square.triangles);
+
+        // const asdf = camera.NDCFromWorldPosition(q.pos.get(.top_left));
+        // const asdf2 = camera.NDCFromWorldPosition(q.pos.get(.bottom_right));
+        // const rect123: Rect = .fromCenterAndSize(.zero, .both(2));
+        // if (rect123.contains(asdf) and rect123.contains(asdf2)) {
+        //     std.log.debug("top left ndc: {any},\tbl: {any}", .{ asdf, asdf2 });
+        // }
     }
 }
 
@@ -1252,6 +1373,12 @@ pub fn line(
             .fill_atom_renderable = null,
         }, color);
     }
+}
+
+pub fn setRenderable(drawer: *Drawer, new: ActiveRenderable) void {
+    if (new == drawer.active_renderable) return;
+    drawer.active_renderable = new;
+    drawer.flush();
 }
 
 const std = @import("std");

@@ -3749,7 +3749,7 @@ const Workspace = struct {
         else
             false, camera, drawer);
 
-        if (workspace.display_fps) try drawer.canvas.drawText(
+        if (workspace.display_fps) try drawer.drawText(
             0,
             camera,
             try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
@@ -3800,7 +3800,7 @@ const Workspace = struct {
                 const camera_relative = camera.reparentCamera(lego.absolute_point);
                 if (step.children_already_visited) {
                     if (false and lego.specific.tag() == .sexpr) { // draw numbers
-                        try drawer.canvas.drawText(
+                        try drawer.drawText(
                             0,
                             camera,
                             try std.fmt.allocPrint(std.heap.page_allocator, "{d}", .{@intFromEnum(cur)}),
@@ -3962,7 +3962,7 @@ const Workspace = struct {
                             }), .fromHex("#d4bd68"));
                         },
                         .postit_text => |postit_text| {
-                            try drawer.canvas.drawText(0, camera_relative, postit_text.text, .centeredAt(.zero), 0.8, .black);
+                            try drawer.drawText(0, camera_relative, postit_text.text, .centeredAt(.zero), 0.8, .black);
                         },
                         .postit_drawing => |kind| {
                             switch (kind) {
@@ -4028,10 +4028,10 @@ const Workspace = struct {
                                             .gray(0.75 + lego.hot_t * 0.2 - lego.active_t * 0.1),
                                             .gray(0.95 - lego.hot_t * 0.2 - lego.active_t * 0.1),
                                         );
-                                        try drawer.canvas.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                        try drawer.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
                                     } else {
                                         try drawer.fillRect(camera_relative, button.local_rect, .gray(0.7));
-                                        try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
+                                        try drawer.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
                                     }
                                 },
                                 .scroll_up, .scroll_down => {
@@ -4046,10 +4046,10 @@ const Workspace = struct {
                         },
                         .fnkbox_testcases => {
                             const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
-                            try drawer.canvas.drawText(0, camera_relative, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
-                            try drawer.canvas.drawText(0, camera_relative, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
-                            try drawer.canvas.drawText(0, camera_relative, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
-                            try drawer.canvas.drawText(0, camera_relative, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
+                            try drawer.drawText(0, camera_relative, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
+                            try drawer.drawText(0, camera_relative, "Input", .centeredAt(testcases_labels_center.addX(-4)), 0.65, .black);
+                            try drawer.drawText(0, camera_relative, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
+                            try drawer.drawText(0, camera_relative, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
                             drawer.flush();
                             drawer.canvas.clipper.push(.{
                                 .camera = camera_relative,
@@ -4067,7 +4067,7 @@ const Workspace = struct {
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
                         },
                         .fnkbox_description => |fnkbox_description| {
-                            try drawer.canvas.drawText(
+                            try drawer.drawText(
                                 0,
                                 camera_relative,
                                 fnkbox_description.text,
@@ -4077,7 +4077,7 @@ const Workspace = struct {
                             );
                         },
                         .fnkslist_element => |fnkslist_element| {
-                            try drawer.canvas.drawText(
+                            try drawer.drawText(
                                 0,
                                 camera_relative,
                                 fnkslist_element.text,
