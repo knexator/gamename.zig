@@ -18,7 +18,7 @@ text_batch: TextDrawable.Batch = undefined,
 
 active_renderable: ActiveRenderable = .fill_shape,
 
-pub const ActiveRenderable = enum { fill_shape, text_batch };
+pub const ActiveRenderable = enum { fill_shape, text };
 
 pub const FillShapeDrawable = Canvas.DrawableV2(
     extern struct {
@@ -1195,6 +1195,58 @@ pub fn strokeRect(
     );
 }
 
+pub fn rectGradient(
+    self: *Drawer,
+    camera: Rect,
+    rect: Rect,
+    bottom: FColor,
+    top: FColor,
+) !void {
+    try self.fillShapeWithVertexColors(
+        camera,
+        .{ .pos = rect.top_left },
+        .{
+            .local_points = &.{
+                .new(0, 0),
+                .new(rect.size.x, 0),
+                .new(0, rect.size.y),
+                .new(rect.size.x, rect.size.y),
+            },
+            .triangles = self.canvas.DEFAULT_SHAPES.square.triangles,
+            .fill_shape_renderable = null,
+            .fill_atom_renderable = null,
+        },
+        &.{ top, top, bottom, bottom },
+    );
+}
+
+pub fn borderRect(
+    self: *Drawer,
+    camera: Rect,
+    rect: Rect,
+    width: f32,
+    mode: enum { inner, middle, outer },
+    color: FColor,
+) !void {
+    const t: f32 = switch (mode) {
+        .inner => 0,
+        .middle => 0.5,
+        .outer => 1,
+    };
+
+    inline for (
+        [4]Vec2{ .new(-1, -1), .new(1, -1), .new(1, 1), .new(-1, 1) },
+        0..,
+        .{ rect.size.x, rect.size.y, rect.size.x, rect.size.y },
+    ) |corner_dir, k, longitud| {
+        const top_left = rect.worldFromCenterLocal(corner_dir).add(corner_dir.scale(t * width));
+        const long_dim = longitud + width * std.math.lerp(-1, 1, t);
+        const short_dim = width;
+
+        try self.fillRect(camera, .{ .top_left = top_left, .size = Vec2.new(long_dim, short_dim).rotQuarters(@intCast(k)) }, color);
+    }
+}
+
 pub fn fillRect(
     self: *Drawer,
     camera: Rect,
@@ -1250,8 +1302,27 @@ pub fn fillShape(
     shape: Canvas.PrecomputedShape,
     color: FColor,
 ) !void {
+    drawer.setRenderable(.fill_shape);
     const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices) |p, *dst| {
+        dst.* = .{
+            .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
+            .a_color = color,
+        };
+    }
+}
+
+pub fn fillShapeWithVertexColors(
+    drawer: *Drawer,
+    camera: Rect,
+    parent: Point,
+    shape: Canvas.PrecomputedShape,
+    colors: []const FColor,
+) !void {
+    assert(colors.len == shape.local_points.len);
+    drawer.setRenderable(.fill_shape);
+    const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
+    for (shape.local_points, vertices, colors) |p, *dst, color| {
         dst.* = .{
             .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
@@ -1262,6 +1333,7 @@ pub fn fillShape(
 pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const u8, pos: Canvas.TextRenderer.TextPosition, em: f32, color: FColor) !void {
     if (font_index != 0) @panic("TODO(platform): only font_index==0 is supported now (since we call setUniforms only once)");
     if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
+    drawer.setRenderable(.text);
     const text_renderer = &drawer.canvas.text_renderers[font_index];
     const info = try text_renderer.quadsForLineV2(text, em, color, drawer.canvas.frame_arena.allocator());
     const quads = info.quads;

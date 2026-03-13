@@ -1699,7 +1699,7 @@ pub const Handle = struct {
         if (handle.enabled) {
             const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
             try drawer.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
-            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
+            try drawer.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
         }
     }
 
@@ -3817,7 +3817,7 @@ const Workspace = struct {
                             drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .fnkbox_box => {
-                            drawer.canvas.borderRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
+                            try drawer.borderRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
                         },
                         else => {},
                     }
@@ -3925,7 +3925,7 @@ const Workspace = struct {
                                 }
                             }
 
-                            drawer.canvas.strokeCircle(
+                            try drawer.strokeCircle(
                                 128,
                                 camera,
                                 lego.absolute_point.pos,
@@ -3979,7 +3979,7 @@ const Workspace = struct {
                                 .launch_testcase_button => {
                                     const center: Point = lego.absolute_point;
                                     const rect: Rect = .fromPoint(center, .center, .one);
-                                    drawer.canvas.borderRect(camera, rect, 0.05 * center.scale, .inner, .black);
+                                    try drawer.borderRect(camera, rect, 0.05 * center.scale, .inner, .black);
                                     const arrow_center = center.applyToLocalPoint(.{ .pos = .new(0.15, 0) });
                                     try drawer.line(camera, &.{
                                         arrow_center.applyToLocalPosition(.new(-0.25, -0.25)),
@@ -3997,7 +3997,7 @@ const Workspace = struct {
                                         center.applyToLocalPosition(.new(0.2, 0)),
                                         center.applyToLocalPosition(.new(0.5, 0)),
                                     }, 0.05 * center.scale, .black);
-                                    drawer.canvas.strokeCircle(128, camera, center.pos, center.scale * 0.2, 0.05 * center.scale, .black);
+                                    try drawer.strokeCircle(128, camera, center.pos, center.scale * 0.2, 0.05 * center.scale, .black);
                                     const arc: [32]Vec2 = comptime funk.map(
                                         Vec2.fromTurns,
                                         &funk.linspace(-0.15, 0.15, 32, true),
@@ -4013,7 +4013,7 @@ const Workspace = struct {
                                     try drawer.fillRect(camera_relative, button.local_rect, .gray(0.4));
                                     const rect = button.local_rect.move(Vec2.new(-1, -1).scale((1 - lego.hot_t) * 0.05 + (1 - @min(lego.active_t, lego.hot_t)) * 0.1));
                                     try drawer.fillRect(camera_relative, rect, COLORS.bg);
-                                    drawer.canvas.borderRect(camera_relative, rect, 0.05, .inner, .black);
+                                    try drawer.borderRect(camera_relative, rect, 0.05, .inner, .black);
                                     try drawer.line(camera_relative, &.{
                                         rect.getCenter().add(.new(-0.25, -0.25)).addX(0.15),
                                         rect.getCenter().add(.new(0, 0)).addX(0.15),
@@ -4022,7 +4022,7 @@ const Workspace = struct {
                                 },
                                 .see_failing_testcase => {
                                     if (button.enabled) {
-                                        drawer.canvas.rectGradient(
+                                        try drawer.rectGradient(
                                             camera_relative,
                                             button.local_rect,
                                             .gray(0.75 + lego.hot_t * 0.2 - lego.active_t * 0.1),
@@ -4036,13 +4036,13 @@ const Workspace = struct {
                                 },
                                 .scroll_up, .scroll_down => {
                                     try drawer.fillRect(camera_relative, button.local_rect, COLORS.bg);
-                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                    try drawer.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
                             }
                         },
                         .scrollbar => |scrollbar| {
                             try drawer.fillRect(camera_relative, scrollbar.handleRectVisual(), COLORS.bg);
-                            drawer.canvas.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                            try drawer.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                         },
                         .fnkbox_testcases => {
                             const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
