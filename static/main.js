@@ -372,7 +372,6 @@ async function getWasm() {
       disable: (capability) => gl.disable(capability),
       blendFunc: (sfactor, dfactor) => gl.blendFunc(sfactor, dfactor),
       blendFuncSeparate: (srcRGB, dstRGB, srcAlpha, dstAlpha) => gl.blendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha),
-      depthFunc: (func) => gl.depthFunc(func),
       colorMask: (red, green, blue, alpha) => gl.colorMask(red, green, blue, alpha),
       clear: (mask) => gl.clear(mask),
       clearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),

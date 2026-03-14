@@ -821,7 +821,6 @@ pub fn DrawableV2(
             }
 
             fn maybeFlush(self: *Batch, new_vertices: usize, new_triangles: usize) void {
-                if (true) return;
                 if (self.vertices.items.len + new_vertices > MAX_VERTICES or
                     self.triangles.items.len + new_triangles > MAX_TRIANGLES)
                 {

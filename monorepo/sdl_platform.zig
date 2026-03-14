@@ -183,7 +183,6 @@ pub fn main() !void {
     }
 
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_STENCIL_SIZE, 8));
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_DEPTH_SIZE, 24));
 
     const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
         stuff.metadata.name,
@@ -210,8 +209,6 @@ pub fn main() !void {
     gl.Viewport(0, 0, @intCast(window_size.x), @intCast(window_size.y));
     gl.Enable(gl.BLEND);
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.Enable(gl.DEPTH_TEST);
-    gl.DepthFunc(gl.LEQUAL);
 
     // TODO: defer unloading
     inline for (comptime std.enums.values(Sounds)) |sound| {
@@ -280,7 +277,6 @@ pub fn main() !void {
         fn startStencil() void {
             gl.ClearStencil(0);
             gl.Clear(gl.STENCIL_BUFFER_BIT);
-            gl.Disable(gl.DEPTH_TEST);
             gl.Enable(gl.STENCIL_TEST);
             gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
             whiteStencil();
@@ -304,7 +300,6 @@ pub fn main() !void {
 
         fn stopStencil() void {
             gl.Disable(gl.STENCIL_TEST);
-            gl.Enable(gl.DEPTH_TEST);
         }
 
         fn stencilFunc(func: Gl.StencilFunc, ref: i32) void {
@@ -332,7 +327,6 @@ pub fn main() !void {
         }
 
         pub fn clear(color: FColor) void {
-            gl.Clear(gl.DEPTH_BUFFER_BIT);
             gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
         }
 

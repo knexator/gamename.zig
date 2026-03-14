@@ -78,7 +78,6 @@ const js = struct {
         extern fn disable(capability: Capability) void;
         extern fn blendFunc(sfactor: BlendFactor, dfactor: BlendFactor) void;
         extern fn blendFuncSeparate(srcRGB: BlendFactor, dstRGB: BlendFactor, srcAlpha: BlendFactor, dstAlpha: BlendFactor) void;
-        extern fn depthFunc(func: DepthFunc) void;
         extern fn createShader(@"type": ShaderType) Shader;
         extern fn shaderSource(shader: Shader, source_ptr: [*]const u8, source_len: usize) void;
         extern fn compileShader(shader: Shader) void;
@@ -277,17 +276,6 @@ const js = struct {
             ONE_MINUS_CONSTANT_COLOR = 0x8002,
             CONSTANT_ALPHA = 0x8003,
             ONE_MINUS_CONSTANT_ALPHA = 0x8004,
-        };
-
-        pub const DepthFunc = enum(GLenum) {
-            NEVER = 0x0200,
-            LESS = 0x0201,
-            EQUAL = 0x0202,
-            LEQUAL = 0x0203,
-            GREATER = 0x0204,
-            NOTEQUAL = 0x0205,
-            GEQUAL = 0x0206,
-            ALWAYS = 0x0207,
         };
 
         pub const ShaderType = enum(GLenum) {
@@ -661,7 +649,6 @@ const web_gl = struct {
     fn startStencil() void {
         js.webgl2.clearStencil(0);
         js.webgl2.clear(.{ .STENCIL_BUFFER_BIT = true });
-        js.webgl2.disable(.DEPTH_TEST);
         js.webgl2.enable(.STENCIL_TEST);
         js.webgl2.colorMask(false, false, false, false);
         whiteStencil();
@@ -685,7 +672,6 @@ const web_gl = struct {
 
     fn stopStencil() void {
         js.webgl2.disable(.STENCIL_TEST);
-        js.webgl2.enable(.DEPTH_TEST);
     }
 
     fn stencilFunc(func: Gl.StencilFunc, ref: i32) void {
@@ -1098,8 +1084,6 @@ export fn getTitle() [*:0]const u8 {
 export fn init(random_seed: u32) void {
     js.webgl2.enable(.BLEND);
     js.webgl2.blendFunc(.SRC_ALPHA, .ONE_MINUS_SRC_ALPHA);
-    js.webgl2.enable(.DEPTH_TEST);
-    js.webgl2.depthFunc(.LEQUAL);
 
     tweakable_fcolors = .init(web_platform.gpa);
     tweakable_floats = .init(web_platform.gpa);
