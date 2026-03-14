@@ -367,7 +367,8 @@ fn _build_for_web(
     {
         wasm.entry = .disabled;
         wasm.import_memory = true;
-        wasm.stack_size = std.wasm.page_size;
+        // TODO(platform): had to comment this out to avoid unexplained "index out of bounds"
+        // wasm.stack_size = std.wasm.page_size;
         // without this, the .js can't see the exported symbols
         wasm.rdynamic = true;
     }

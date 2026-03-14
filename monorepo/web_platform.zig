@@ -766,15 +766,20 @@ const web_gl = struct {
         for (attributes.attribs, 0..) |attribute, k| {
             const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
             js.webgl2.enableVertexAttribArray(index);
-            js.webgl2.vertexAttribPointer(
-                index,
-                @intFromEnum(attribute.kind.count()),
-                @enumFromInt(@intFromEnum(attribute.kind.type())),
-                attribute.kind.normalized(),
-                // TODO: check in debugger if this is computed once
-                @intCast(attributes.getStride()),
-                @intCast(attributes.getOffset(k)),
-            );
+            if (attribute.integer) {
+                @panic("TODO(now)");
+                // gl.VertexAttribI1i(index: uint, x: int)
+            } else {
+                js.webgl2.vertexAttribPointer(
+                    index,
+                    attribute.count,
+                    @enumFromInt(@intFromEnum(attribute.data_type)),
+                    attribute.normalized,
+                    // TODO: check in debugger if this is computed once
+                    @intCast(attributes.getStride()),
+                    @intCast(attributes.getOffset(k)),
+                );
+            }
         }
 
         var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
@@ -912,15 +917,20 @@ const web_gl = struct {
             for (attributes.attribs, 0..) |attribute, k| {
                 const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
                 js.webgl2.enableVertexAttribArray(index);
-                js.webgl2.vertexAttribPointer(
-                    index,
-                    @intFromEnum(attribute.kind.count()),
-                    @enumFromInt(@intFromEnum(attribute.kind.type())),
-                    attribute.kind.normalized(),
-                    // TODO: check in debugger if this is computed once
-                    @intCast(attributes.getStride()),
-                    @intCast(attributes.getOffset(k)),
-                );
+                if (attribute.integer) {
+                    @panic("TODO(now)");
+                    // gl.VertexAttribI1i(index: uint, x: int)
+                } else {
+                    js.webgl2.vertexAttribPointer(
+                        index,
+                        attribute.count,
+                        @enumFromInt(@intFromEnum(attribute.data_type)),
+                        attribute.normalized,
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        @intCast(attributes.getOffset(k)),
+                    );
+                }
             }
         }
 
@@ -931,15 +941,20 @@ const web_gl = struct {
             for (attributes.attribs, 0..) |attribute, k| {
                 const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
                 js.webgl2.enableVertexAttribArray(index);
-                js.webgl2.vertexAttribPointer(
-                    index,
-                    @intFromEnum(attribute.kind.count()),
-                    @enumFromInt(@intFromEnum(attribute.kind.type())),
-                    attribute.kind.normalized(),
-                    // TODO: check in debugger if this is computed once
-                    @intCast(attributes.getStride()),
-                    @intCast(attributes.getOffset(k)),
-                );
+                if (attribute.integer) {
+                    @panic("TODO(now)");
+                    // gl.VertexAttribI1i(index: uint, x: int)
+                } else {
+                    js.webgl2.vertexAttribPointer(
+                        index,
+                        attribute.count,
+                        @enumFromInt(@intFromEnum(attribute.data_type)),
+                        attribute.normalized,
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        @intCast(attributes.getOffset(k)),
+                    );
+                }
                 js.webgl2.vertexAttribDivisor(index, 1);
             }
         }

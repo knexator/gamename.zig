@@ -81,7 +81,7 @@ pub const PrecomputedShape = struct {
                     Canvas.fill_shape_info.vertex,
                     Canvas.fill_shape_info.fragment,
                     .{ .attribs = &.{
-                        .{ .name = "a_position", .kind = .Vec2 },
+                        .fromType(Vec2, "a_position"),
                     } },
                     &.{
                         .{ .name = "u_camera", .kind = .Rect },
@@ -104,7 +104,7 @@ pub const PrecomputedShape = struct {
                     fill_atom_info.vertex,
                     fill_atom_info.fragment,
                     .{ .attribs = &.{
-                        .{ .name = "a_position", .kind = .Vec2 },
+                        .fromType(Vec2, "a_position"),
                     } },
                     &.{
                         .{ .name = "u_camera", .kind = .Rect },
@@ -138,7 +138,7 @@ pub const PrecomputedShape = struct {
                     Canvas.fill_shape_info.vertex,
                     Canvas.fill_shape_info.fragment,
                     .{ .attribs = &.{
-                        .{ .name = "a_position", .kind = .Vec2 },
+                        .fromType(Vec2, "a_position"),
                     } },
                     &.{
                         .{ .name = "u_camera", .kind = .Rect },
@@ -160,7 +160,7 @@ pub const PrecomputedShape = struct {
                     fill_atom_info.vertex,
                     fill_atom_info.fragment,
                     .{ .attribs = &.{
-                        .{ .name = "a_position", .kind = .Vec2 },
+                        .fromType(Vec2, "a_position"),
                     } },
                     &.{
                         .{ .name = "u_camera", .kind = .Rect },

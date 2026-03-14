@@ -144,9 +144,9 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             sprite_renderable_vertex_src,
             sprite_renderable_frag_src,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_texcoord", .kind = .Vec2 },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Vec2, "a_position"),
+                .fromType(Vec2, "a_texcoord"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -178,8 +178,8 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Vec2, "a_position"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -190,7 +190,7 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             fill_shape_info.vertex,
             fill_shape_info.fragment,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
+                .fromType(Vec2, "a_position"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -223,11 +223,11 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
+                .fromType(Vec2, "a_vertex_position"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_point", .kind = .Point },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Point, "a_point"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -252,10 +252,10 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
+                .fromType(Vec2, "a_vertex_position"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_center", .kind = .Vec2 },
+                .fromType(Vec2, "a_center"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -285,12 +285,12 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
-                .{ .name = "a_vertex_is_b_side", .kind = .f32 },
+                .fromType(Vec2, "a_vertex_position"),
+                .fromType(f32, "a_vertex_is_b_side"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_line_a", .kind = .Vec2 },
-                .{ .name = "a_line_b", .kind = .Vec2 },
+                .fromType(Vec2, "a_line_a"),
+                .fromType(Vec2, "a_line_b"),
             }, .stride = @sizeOf(Vec2) },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -325,13 +325,13 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
-                .{ .name = "a_vertex_is_b_side", .kind = .f32 },
+                .fromType(Vec2, "a_vertex_position"),
+                .fromType(f32, "a_vertex_is_b_side"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_line_a", .kind = .Vec2 },
-                .{ .name = "a_line_b", .kind = .Vec2 },
-                .{ .name = "a_line_color", .kind = .FColor },
+                .fromType(Vec2, "a_line_a"),
+                .fromType(Vec2, "a_line_b"),
+                .fromType(FColor, "a_line_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -360,8 +360,8 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Vec2, "a_position"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -789,6 +789,126 @@ pub const sprite_triangulation: DrawableTriangulation = .{
         .{ 3, 2, 1 },
     },
 };
+
+pub fn DrawableV2(
+    VertexData: type,
+    UniformData: type,
+    vertex_src: [:0]const u8,
+    fragment_src: [:0]const u8,
+) type {
+    return struct {
+        const Self = @This();
+        pub const IndexType = Gl.IndexType;
+
+        pub const Batch = struct {
+            drawable: *const Self,
+            vertices: std.ArrayList(VertexData),
+            triangles: std.ArrayList([3]IndexType),
+            uniforms_gl: [uniform_info.fields.len]Gl.UniformInfo.Runtime = undefined,
+            texture: ?Gl.Texture = null,
+
+            const uniform_info = @typeInfo(UniformData).@"struct";
+
+            // TODO(optim): tweak these numbers
+            const MAX_VERTICES = 0x4000;
+            const MAX_TRIANGLES = 0x4000;
+
+            pub fn setUniforms(self: *Batch, uniforms: UniformData, texture: ?Gl.Texture) void {
+                inline for (&self.uniforms_gl, uniform_info.fields) |*dst, info| {
+                    dst.* = .{ .name = info.name, .value = .fromValue(@field(uniforms, info.name)) };
+                }
+                self.texture = texture;
+            }
+
+            fn maybeFlush(self: *Batch, new_vertices: usize, new_triangles: usize) void {
+                if (self.vertices.items.len + new_vertices > MAX_VERTICES or
+                    self.triangles.items.len + new_triangles > MAX_TRIANGLES)
+                {
+                    self.draw();
+                }
+            }
+
+            pub fn addV2(self: *Batch, vertices_len: usize, triangles: []const [3]IndexType) ![]VertexData {
+                self.maybeFlush(vertices_len, triangles.len);
+                const base: Gl.IndexType = @intCast(self.vertices.items.len);
+                try self.vertices.ensureUnusedCapacity(vertices_len);
+                const result = try self.vertices.addManyAsSlice(vertices_len);
+                try self.triangles.ensureUnusedCapacity(triangles.len);
+                for (triangles) |tri| {
+                    self.triangles.appendAssumeCapacity(.{ base + tri[0], base + tri[1], base + tri[2] });
+                }
+                return result;
+            }
+
+            pub fn add(self: *Batch, vertices: []const VertexData, triangles: []const [3]IndexType) !void {
+                self.maybeFlush(vertices.len, triangles.len);
+                const base: Gl.IndexType = @intCast(self.vertices.items.len);
+                try self.vertices.appendSlice(vertices);
+                try self.triangles.ensureUnusedCapacity(triangles.len);
+                for (triangles) |tri| {
+                    self.triangles.appendAssumeCapacity(.{ base + tri[0], base + tri[1], base + tri[2] });
+                }
+            }
+
+            pub fn draw(self: *Batch) void {
+                const vertices = self.vertices.items;
+                const triangles = self.triangles.items;
+                if (triangles.len > 0) {
+                    self.drawable.canvas.gl.useRenderable(
+                        self.drawable.renderable,
+                        vertices.ptr,
+                        vertices.len * @sizeOf(VertexData),
+                        triangles,
+                        &self.uniforms_gl,
+                        self.texture,
+                    );
+                }
+                self.vertices.clearRetainingCapacity();
+                self.triangles.clearRetainingCapacity();
+            }
+        };
+
+        canvas: *Canvas,
+        renderable: Gl.Renderable,
+
+        pub fn batch(self: *const Self) !Batch {
+            return .{
+                .drawable = self,
+                .vertices = try .initCapacity(self.canvas.frame_arena.allocator(), Batch.MAX_VERTICES),
+                .triangles = try .initCapacity(self.canvas.frame_arena.allocator(), Batch.MAX_TRIANGLES),
+            };
+        }
+
+        pub fn reload(self: *Self) !void {
+            self.* = try .init(self.canvas);
+        }
+
+        pub fn init(canvas: *Canvas) !Self {
+            const vertex_info = @typeInfo(VertexData).@"struct";
+            assert(vertex_info.layout == .@"extern");
+            var attributes: [vertex_info.fields.len]Gl.VertexInfo.In = undefined;
+            inline for (&attributes, vertex_info.fields) |*dst, info| {
+                dst.* = .fromType(info.type, info.name);
+            }
+
+            const uniform_info = @typeInfo(UniformData).@"struct";
+            var uniforms: [uniform_info.fields.len]Gl.UniformInfo.In = undefined;
+            inline for (&uniforms, uniform_info.fields) |*dst, info| {
+                dst.* = .{ .name = info.name, .kind = .fromType(info.type) };
+            }
+
+            return .{
+                .canvas = canvas,
+                .renderable = try canvas.gl.buildRenderable(
+                    vertex_src,
+                    fragment_src,
+                    .{ .attribs = &attributes },
+                    &uniforms,
+                ),
+            };
+        }
+    };
+}
 
 pub fn Drawable(
     VertexData: type,
@@ -1527,9 +1647,9 @@ pub const TextRenderer = struct {
                 \\}
             ,
                 .{ .attribs = &.{
-                    .{ .name = "a_position", .kind = .Vec2 },
-                    .{ .name = "a_texcoord", .kind = .Vec2 },
-                    .{ .name = "a_color", .kind = .FColor },
+                    .fromType(Vec2, "a_position"),
+                    .fromType(Vec2, "a_texcoord"),
+                    .fromType(FColor, "a_color"),
                 } },
                 &.{
                     .{ .name = "u_camera", .kind = .Rect },

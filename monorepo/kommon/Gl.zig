@@ -117,8 +117,41 @@ pub const VertexInfo = struct {
     // TODO: kind
     pub const In = struct {
         name: [:0]const u8,
-        kind: Kind,
+        byte_count: usize,
+        data_type: VertexDataType,
+        count: c_int,
+        normalized: bool,
+        integer: bool,
         offset: ?usize = null,
+
+        pub fn fromType(t: type, comptime name: [:0]const u8) In {
+            return .{
+                .name = name,
+                .byte_count = switch (t) {
+                    Vec2, FColor, Point, f32 => @sizeOf(t),
+                    else => @compileError(std.fmt.comptimePrint("unsupported type: {any}", .{t})),
+                },
+                .data_type = switch (t) {
+                    Vec2, FColor, Point, f32 => .FLOAT,
+                    else => @compileError("TODO"),
+                },
+                .count = switch (t) {
+                    f32 => 1,
+                    Vec2 => 2,
+                    FColor => 4,
+                    Point => 4,
+                    else => @compileError("TODO"),
+                },
+                .normalized = switch (t) {
+                    Vec2, FColor, Point, f32 => false,
+                    else => @compileError("TODO"),
+                },
+                .integer = switch (t) {
+                    Vec2, FColor, Point, f32 => false,
+                    else => @compileError("TODO"),
+                },
+            };
+        }
     };
 
     pub const Collection = struct {
@@ -130,7 +163,7 @@ pub const VertexInfo = struct {
             if (collection.stride) |s| return s;
             var result: usize = 0;
             for (collection.attribs) |attr| {
-                result += attr.kind.byteCount();
+                result += attr.byte_count;
             }
             return result;
         }
@@ -140,71 +173,13 @@ pub const VertexInfo = struct {
             if (collection.attribs[k].offset) |o| return o;
             var result: usize = 0;
             for (0..k) |i| {
-                result += collection.attribs[i].kind.byteCount();
+                result += collection.attribs[i].byte_count;
             }
             return result;
         }
 
         // TODO
         // pub fn fromType(attribs: type) Collection {}
-    };
-
-    pub const Kind = enum {
-        Vec2,
-        FColor,
-        Point,
-        f32,
-
-        pub fn fromType(t: type) Kind {
-            return switch (t) {
-                Vec2 => .Vec2,
-                FColor => .FColor,
-                Point => .Point,
-                f32 => .f32,
-                else => @compileError("TODO"),
-            };
-        }
-
-        pub fn byteCount(kind: Kind) usize {
-            return switch (kind) {
-                .Vec2 => @sizeOf(Vec2),
-                .FColor => @sizeOf(FColor),
-                .Point => @sizeOf(Point),
-                .f32 => @sizeOf(f32),
-            };
-        }
-
-        pub fn @"type"(kind: Kind) VertexDataType {
-            return switch (kind) {
-                .Vec2 => .FLOAT,
-                .FColor => .FLOAT,
-                .Point => .FLOAT,
-                .f32 => .FLOAT,
-            };
-        }
-
-        pub fn count(kind: Kind) enum(c_int) {
-            @"1" = 1,
-            @"2" = 2,
-            @"3" = 3,
-            @"4" = 4,
-        } {
-            return switch (kind) {
-                .f32 => .@"1",
-                .Vec2 => .@"2",
-                .FColor => .@"4",
-                .Point => .@"4",
-            };
-        }
-
-        pub fn normalized(kind: Kind) bool {
-            return switch (kind) {
-                .f32 => false,
-                .Vec2 => false,
-                .FColor => false,
-                .Point => false,
-            };
-        }
     };
 };
 

@@ -421,15 +421,20 @@ pub fn main() !void {
                 }
                 const index: gl.uint = @intCast(maybe_index);
                 gl.EnableVertexAttribArray(index);
-                gl.VertexAttribPointer(
-                    index,
-                    @intFromEnum(attribute.kind.count()),
-                    @intFromEnum(attribute.kind.type()),
-                    if (attribute.kind.normalized()) gl.TRUE else gl.FALSE,
-                    // TODO: check in debugger if this is computed once
-                    @intCast(attributes.getStride()),
-                    attributes.getOffset(k),
-                );
+                if (attribute.integer) {
+                    @panic("TODO(now)");
+                    // gl.VertexAttribI1i(index: uint, x: int)
+                } else {
+                    gl.VertexAttribPointer(
+                        index,
+                        attribute.count,
+                        @intFromEnum(attribute.data_type),
+                        if (attribute.normalized) gl.TRUE else gl.FALSE,
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        attributes.getOffset(k),
+                    );
+                }
             }
 
             var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
@@ -580,15 +585,20 @@ pub fn main() !void {
                     const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
                     if (index == -1) return error.AttributeLocationError;
                     gl.EnableVertexAttribArray(index);
-                    gl.VertexAttribPointer(
-                        index,
-                        @intFromEnum(attribute.kind.count()),
-                        @intFromEnum(attribute.kind.type()),
-                        if (attribute.kind.normalized()) gl.TRUE else gl.FALSE,
-                        // TODO: check in debugger if this is computed once
-                        @intCast(attributes.getStride()),
-                        attributes.getOffset(k),
-                    );
+                    if (attribute.integer) {
+                        @panic("TODO(now)");
+                        // gl.VertexAttribI1i(index: uint, x: int)
+                    } else {
+                        gl.VertexAttribPointer(
+                            index,
+                            attribute.count,
+                            @intFromEnum(attribute.data_type),
+                            if (attribute.normalized) gl.TRUE else gl.FALSE,
+                            // TODO: check in debugger if this is computed once
+                            @intCast(attributes.getStride()),
+                            attributes.getOffset(k),
+                        );
+                    }
                 }
             }
 
@@ -601,15 +611,20 @@ pub fn main() !void {
                     const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
                     if (index == -1) return error.AttributeLocationError;
                     gl.EnableVertexAttribArray(index);
-                    gl.VertexAttribPointer(
-                        index,
-                        @intFromEnum(attribute.kind.count()),
-                        @intFromEnum(attribute.kind.type()),
-                        if (attribute.kind.normalized()) gl.TRUE else gl.FALSE,
-                        // TODO: check in debugger if this is computed once
-                        @intCast(attributes.getStride()),
-                        attributes.getOffset(k),
-                    );
+                    if (attribute.integer) {
+                        @panic("TODO(now)");
+                        // gl.VertexAttribI1i(index: uint, x: int)
+                    } else {
+                        gl.VertexAttribPointer(
+                            index,
+                            attribute.count,
+                            @intFromEnum(attribute.data_type),
+                            if (attribute.normalized) gl.TRUE else gl.FALSE,
+                            // TODO: check in debugger if this is computed once
+                            @intCast(attributes.getStride()),
+                            attributes.getOffset(k),
+                        );
+                    }
                     gl.VertexAttribDivisor(index, 1);
                 }
             }
