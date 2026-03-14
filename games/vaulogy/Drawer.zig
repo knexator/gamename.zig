@@ -117,10 +117,10 @@ pub fn init(usual: *kommon.Usual) !Drawer {
     };
 }
 
-pub fn onFrameStart(drawer: *Drawer) void {
-    drawer.fill_shape_batch = drawer.renderables.fill_shape.batch();
+pub fn onFrameStart(drawer: *Drawer) !void {
+    drawer.fill_shape_batch = try drawer.renderables.fill_shape.batch();
     drawer.fill_shape_batch.setUniforms(.{}, null);
-    drawer.text_batch = drawer.renderables.text.batch();
+    drawer.text_batch = try drawer.renderables.text.batch();
     drawer.text_batch.setUniforms(.{}, drawer.canvas.text_renderers[0].atlas_texture);
 }
 

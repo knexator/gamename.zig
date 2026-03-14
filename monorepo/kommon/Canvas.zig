@@ -809,6 +809,10 @@ pub fn DrawableV2(
 
             const uniform_info = @typeInfo(UniformData).@"struct";
 
+            // TODO(optim): tweak these numbers
+            const MAX_VERTICES = 0x4000;
+            const MAX_TRIANGLES = 0x4000;
+
             pub fn setUniforms(self: *Batch, uniforms: UniformData, texture: ?Gl.Texture) void {
                 inline for (&self.uniforms_gl, uniform_info.fields) |*dst, info| {
                     dst.* = .{ .name = info.name, .value = .fromValue(@field(uniforms, info.name)) };
@@ -816,7 +820,16 @@ pub fn DrawableV2(
                 self.texture = texture;
             }
 
+            fn maybeFlush(self: *Batch, new_vertices: usize, new_triangles: usize) void {
+                if (self.vertices.items.len + new_vertices > MAX_VERTICES or
+                    self.triangles.items.len + new_triangles > MAX_TRIANGLES)
+                {
+                    self.draw();
+                }
+            }
+
             pub fn addV2(self: *Batch, vertices_len: usize, triangles: []const [3]IndexType) ![]VertexData {
+                self.maybeFlush(vertices_len, triangles.len);
                 const base: Gl.IndexType = @intCast(self.vertices.items.len);
                 try self.vertices.ensureUnusedCapacity(vertices_len);
                 const result = try self.vertices.addManyAsSlice(vertices_len);
@@ -828,6 +841,7 @@ pub fn DrawableV2(
             }
 
             pub fn add(self: *Batch, vertices: []const VertexData, triangles: []const [3]IndexType) !void {
+                self.maybeFlush(vertices.len, triangles.len);
                 const base: Gl.IndexType = @intCast(self.vertices.items.len);
                 try self.vertices.appendSlice(vertices);
                 try self.triangles.ensureUnusedCapacity(triangles.len);
@@ -857,12 +871,11 @@ pub fn DrawableV2(
         canvas: *Canvas,
         renderable: Gl.Renderable,
 
-        pub fn batch(self: *const Self) Batch {
+        pub fn batch(self: *const Self) !Batch {
             return .{
                 .drawable = self,
-                // TODO(optim): avoid arena clashes
-                .vertices = .init(self.canvas.frame_arena.allocator()),
-                .triangles = .init(self.canvas.frame_arena.allocator()),
+                .vertices = try .initCapacity(self.canvas.frame_arena.allocator(), Batch.MAX_VERTICES),
+                .triangles = try .initCapacity(self.canvas.frame_arena.allocator(), Batch.MAX_TRIANGLES),
             };
         }
 

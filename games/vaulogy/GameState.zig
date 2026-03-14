@@ -3733,7 +3733,7 @@ const Workspace = struct {
         const zone = tracy.initZone(@src(), .{ .name = "draw" });
         defer zone.deinit();
 
-        drawer.onFrameStart();
+        try drawer.onFrameStart();
         defer drawer.onFrameEnd();
 
         const camera = Rect
