@@ -144,9 +144,9 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             sprite_renderable_vertex_src,
             sprite_renderable_frag_src,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_texcoord", .kind = .Vec2 },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Vec2, "a_position"),
+                .fromType(Vec2, "a_texcoord"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -178,8 +178,8 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Vec2, "a_position"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -190,7 +190,7 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             fill_shape_info.vertex,
             fill_shape_info.fragment,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
+                .fromType(Vec2, "a_position"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -223,11 +223,11 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
+                .fromType(Vec2, "a_vertex_position"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_point", .kind = .Point },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Point, "a_point"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -252,10 +252,10 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
+                .fromType(Vec2, "a_vertex_position"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_center", .kind = .Vec2 },
+                .fromType(Vec2, "a_center"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -285,12 +285,12 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
-                .{ .name = "a_vertex_is_b_side", .kind = .f32 },
+                .fromType(Vec2, "a_vertex_position"),
+                .fromType(f32, "a_vertex_is_b_side"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_line_a", .kind = .Vec2 },
-                .{ .name = "a_line_b", .kind = .Vec2 },
+                .fromType(Vec2, "a_line_a"),
+                .fromType(Vec2, "a_line_b"),
             }, .stride = @sizeOf(Vec2) },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -325,13 +325,13 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_vertex_position", .kind = .Vec2 },
-                .{ .name = "a_vertex_is_b_side", .kind = .f32 },
+                .fromType(Vec2, "a_vertex_position"),
+                .fromType(f32, "a_vertex_is_b_side"),
             } },
             .{ .attribs = &.{
-                .{ .name = "a_line_a", .kind = .Vec2 },
-                .{ .name = "a_line_b", .kind = .Vec2 },
-                .{ .name = "a_line_color", .kind = .FColor },
+                .fromType(Vec2, "a_line_a"),
+                .fromType(Vec2, "a_line_b"),
+                .fromType(FColor, "a_line_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -360,8 +360,8 @@ pub fn init(gl: Gl, gpa: std.mem.Allocator, comptime font_jsons: []const []const
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_color", .kind = .FColor },
+                .fromType(Vec2, "a_position"),
+                .fromType(FColor, "a_color"),
             } },
             &.{
                 .{ .name = "u_camera", .kind = .Rect },
@@ -888,7 +888,7 @@ pub fn DrawableV2(
             assert(vertex_info.layout == .@"extern");
             var attributes: [vertex_info.fields.len]Gl.VertexInfo.In = undefined;
             inline for (&attributes, vertex_info.fields) |*dst, info| {
-                dst.* = .{ .name = info.name, .kind = .fromType(info.type) };
+                dst.* = .fromType(info.type, info.name);
             }
 
             const uniform_info = @typeInfo(UniformData).@"struct";
@@ -1647,9 +1647,9 @@ pub const TextRenderer = struct {
                 \\}
             ,
                 .{ .attribs = &.{
-                    .{ .name = "a_position", .kind = .Vec2 },
-                    .{ .name = "a_texcoord", .kind = .Vec2 },
-                    .{ .name = "a_color", .kind = .FColor },
+                    .fromType(Vec2, "a_position"),
+                    .fromType(Vec2, "a_texcoord"),
+                    .fromType(FColor, "a_color"),
                 } },
                 &.{
                     .{ .name = "u_camera", .kind = .Rect },
