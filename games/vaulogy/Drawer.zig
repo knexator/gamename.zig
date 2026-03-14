@@ -17,21 +17,24 @@ fill_shape_batch: FillShapeDrawable.Batch = undefined,
 text_batch: TextDrawable.Batch = undefined,
 
 active_renderable: ActiveRenderable = .fill_shape,
+depth_index: u24 = 0,
 
 pub const ActiveRenderable = enum { fill_shape, text };
 
 pub const FillShapeDrawable = Canvas.DrawableV2(
     extern struct {
-        a_ndc_position: Vec2,
         a_color: FColor,
+        a_ndc_position: Vec2,
+        a_ndc_depth: f32,
     },
     struct {},
     \\precision highp float;
+    \\in float a_ndc_depth;
     \\in vec2 a_ndc_position;
     \\in vec4 a_color;
     \\out vec4 v_color;
     \\void main() {
-    \\  gl_Position = vec4(a_ndc_position, 0, 1);
+    \\  gl_Position = vec4(a_ndc_position, a_ndc_depth, 1);
     \\  v_color = a_color;
     \\}
 ,
@@ -46,19 +49,21 @@ pub const FillShapeDrawable = Canvas.DrawableV2(
 
 pub const TextDrawable = Canvas.DrawableV2(
     extern struct {
+        a_color: FColor,
         a_ndc_position: Vec2,
         a_texcoord: Vec2,
-        a_color: FColor,
+        a_ndc_depth: f32,
     },
     struct {},
     \\precision highp float;
+    \\in float a_ndc_depth;
     \\in vec2 a_ndc_position;
     \\in vec2 a_texcoord;
     \\in vec4 a_color;
     \\out vec2 v_texcoord;
     \\out vec4 v_color;
     \\void main() {
-    \\  gl_Position = vec4(a_ndc_position, 0, 1);
+    \\  gl_Position = vec4(a_ndc_position, a_ndc_depth, 1);
     \\  v_texcoord = a_texcoord;
     \\  v_color = a_color;
     \\}
@@ -117,7 +122,21 @@ pub fn init(usual: *kommon.Usual) !Drawer {
     };
 }
 
+fn depthIndexToNdc(index: u24) f32 {
+    const max: f32 = 100_000;
+    const d = @as(f32, @floatFromInt(index)) / max;
+    if (d >= 1) @panic("TOO MUCH");
+    return -2.0 * d + 1.0;
+}
+
+fn getDepth(drawer: *Drawer) f32 {
+    const result = depthIndexToNdc(drawer.depth_index);
+    drawer.depth_index += 1;
+    return result;
+}
+
 pub fn onFrameStart(drawer: *Drawer) !void {
+    drawer.depth_index = 0;
     drawer.fill_shape_batch = try drawer.renderables.fill_shape.batch();
     drawer.fill_shape_batch.setUniforms(.{}, null);
     drawer.text_batch = try drawer.renderables.text.batch();
@@ -1303,11 +1322,13 @@ pub fn fillShape(
     color: FColor,
 ) !void {
     drawer.setRenderable(.fill_shape);
+    const depth = drawer.getDepth();
     const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices) |p, *dst| {
         dst.* = .{
             .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
+            .a_ndc_depth = depth,
         };
     }
 }
@@ -1321,9 +1342,11 @@ pub fn fillShapeWithVertexColors(
 ) !void {
     assert(colors.len == shape.local_points.len);
     drawer.setRenderable(.fill_shape);
+    const depth = drawer.getDepth();
     const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices, colors) |p, *dst, color| {
         dst.* = .{
+            .a_ndc_depth = depth,
             .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
         };
@@ -1344,13 +1367,14 @@ pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const 
     // try self.quads.ensureUnusedCapacity(quads.len);
     // for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
 
+    const depth = drawer.getDepth();
     for (quads) |raw_q| {
         const q = raw_q.translate(delta);
         try drawer.text_batch.add(&.{
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
+            .{ .a_ndc_depth = depth, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
+            .{ .a_ndc_depth = depth, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
+            .{ .a_ndc_depth = depth, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
+            .{ .a_ndc_depth = depth, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
         }, drawer.canvas.DEFAULT_SHAPES.square.triangles);
 
         // const asdf = camera.NDCFromWorldPosition(q.pos.get(.top_left));
@@ -1448,7 +1472,7 @@ pub fn line(
 }
 
 pub fn setRenderable(drawer: *Drawer, new: ActiveRenderable) void {
-    if (new == drawer.active_renderable) return;
+    if (true or new == drawer.active_renderable) return;
     drawer.active_renderable = new;
     drawer.flush();
 }
