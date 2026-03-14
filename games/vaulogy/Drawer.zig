@@ -9,64 +9,51 @@ canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 
 renderables: struct {
-    fill_shape: FillShapeDrawable,
-    text: TextDrawable,
+    uber: UberDrawable,
 },
 
-fill_shape_batch: FillShapeDrawable.Batch = undefined,
-text_batch: TextDrawable.Batch = undefined,
+uber_batch: UberDrawable.Batch = undefined,
 
-active_renderable: ActiveRenderable = .fill_shape,
-
-pub const ActiveRenderable = enum { fill_shape, text };
-
-pub const FillShapeDrawable = Canvas.DrawableV2(
-    extern struct {
-        a_ndc_position: Vec2,
-        a_color: FColor,
-    },
-    struct {},
-    \\precision highp float;
-    \\in vec2 a_ndc_position;
-    \\in vec4 a_color;
-    \\out vec4 v_color;
-    \\void main() {
-    \\  gl_Position = vec4(a_ndc_position, 0, 1);
-    \\  v_color = a_color;
-    \\}
-,
-    \\precision highp float;
-    \\out vec4 out_color;
-    \\in vec4 v_color;
-    \\void main() {
-    \\  out_color = v_color;
-    \\}
-    ,
-);
-
-pub const TextDrawable = Canvas.DrawableV2(
+pub const UberDrawable = Canvas.DrawableV2(
     extern struct {
         a_ndc_position: Vec2,
         a_texcoord: Vec2,
         a_color: FColor,
+        a_mode: enum(u32) {
+            fill = 0,
+            text = 1,
+        },
+
+        pub const custom_a_mode: Gl.VertexInfo.In = .{
+            .name = "a_mode",
+            .byte_count = 4,
+            .count = 1,
+            .normalized = false,
+            .integer = true,
+            .data_type = .INT,
+        };
     },
     struct {},
     \\precision highp float;
     \\in vec2 a_ndc_position;
     \\in vec2 a_texcoord;
     \\in vec4 a_color;
+    \\in int a_mode;
     \\out vec2 v_texcoord;
     \\out vec4 v_color;
+    \\flat out int v_mode;
     \\void main() {
     \\  gl_Position = vec4(a_ndc_position, 0, 1);
     \\  v_texcoord = a_texcoord;
     \\  v_color = a_color;
+    \\  v_mode = a_mode;
     \\}
 ,
     \\precision highp float;
     \\out vec4 out_color;
     \\in vec2 v_texcoord;
     \\in vec4 v_color;
+    \\flat in int v_mode;
     \\uniform sampler2D u_texture;
     \\
     \\// for some reason, on desktop, the fwidth value is half of what it should.
@@ -84,7 +71,7 @@ pub const TextDrawable = Canvas.DrawableV2(
     \\  return (t - a) / (b - a);
     \\}
     \\
-    \\void main() {
+    \\vec4 text() {
     \\  // assume square texture
     \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
     \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
@@ -100,7 +87,15 @@ pub const TextDrawable = Canvas.DrawableV2(
     \\  float transition_pixels = 1.0;
     \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
     \\  // TODO: premultiply alpha?
-    \\  out_color = mix(vec4(v_color.rgb, 0), v_color, alpha);
+    \\  return mix(vec4(v_color.rgb, 0), v_color, alpha);
+    \\}
+    \\
+    \\void main() {
+    \\  if (v_mode == 0) {
+    \\      out_color = v_color;
+    \\  } else if (v_mode == 1) {
+    \\      out_color = text();
+    \\  }
     \\}
     ,
 );
@@ -111,17 +106,14 @@ pub fn init(usual: *kommon.Usual) !Drawer {
         .canvas = &usual.canvas,
         .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
         .renderables = .{
-            .fill_shape = try .init(&usual.canvas),
-            .text = try .init(&usual.canvas),
+            .uber = try .init(&usual.canvas),
         },
     };
 }
 
 pub fn onFrameStart(drawer: *Drawer) !void {
-    drawer.fill_shape_batch = try drawer.renderables.fill_shape.batch();
-    drawer.fill_shape_batch.setUniforms(.{}, null);
-    drawer.text_batch = try drawer.renderables.text.batch();
-    drawer.text_batch.setUniforms(.{}, drawer.canvas.text_renderers[0].atlas_texture);
+    drawer.uber_batch = try drawer.renderables.uber.batch();
+    drawer.uber_batch.setUniforms(.{}, drawer.canvas.text_renderers[0].atlas_texture);
 }
 
 pub fn onFrameEnd(drawer: *Drawer) void {
@@ -129,8 +121,7 @@ pub fn onFrameEnd(drawer: *Drawer) void {
 }
 
 pub fn flush(drawer: *Drawer) void {
-    drawer.fill_shape_batch.draw();
-    drawer.text_batch.draw();
+    drawer.uber_batch.draw();
 }
 
 pub const AtomVisuals = struct {
@@ -1302,10 +1293,11 @@ pub fn fillShape(
     shape: Canvas.PrecomputedShape,
     color: FColor,
 ) !void {
-    drawer.setRenderable(.fill_shape);
-    const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
+    const vertices = try drawer.uber_batch.addV2(shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices) |p, *dst| {
         dst.* = .{
+            .a_mode = .fill,
+            .a_texcoord = .zero,
             .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
         };
@@ -1320,10 +1312,11 @@ pub fn fillShapeWithVertexColors(
     colors: []const FColor,
 ) !void {
     assert(colors.len == shape.local_points.len);
-    drawer.setRenderable(.fill_shape);
-    const vertices = try drawer.fill_shape_batch.addV2(shape.local_points.len, shape.triangles);
+    const vertices = try drawer.uber_batch.addV2(shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices, colors) |p, *dst, color| {
         dst.* = .{
+            .a_texcoord = .zero,
+            .a_mode = .fill,
             .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
             .a_color = color,
         };
@@ -1333,7 +1326,6 @@ pub fn fillShapeWithVertexColors(
 pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const u8, pos: Canvas.TextRenderer.TextPosition, em: f32, color: FColor) !void {
     if (font_index != 0) @panic("TODO(platform): only font_index==0 is supported now (since we call setUniforms only once)");
     if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
-    drawer.setRenderable(.text);
     const text_renderer = &drawer.canvas.text_renderers[font_index];
     const info = try text_renderer.quadsForLineV2(text, em, color, drawer.canvas.frame_arena.allocator());
     const quads = info.quads;
@@ -1346,11 +1338,11 @@ pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const 
 
     for (quads) |raw_q| {
         const q = raw_q.translate(delta);
-        try drawer.text_batch.add(&.{
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
-            .{ .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
+        try drawer.uber_batch.add(&.{
+            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
+            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
+            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
+            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
         }, drawer.canvas.DEFAULT_SHAPES.square.triangles);
 
         // const asdf = camera.NDCFromWorldPosition(q.pos.get(.top_left));
@@ -1445,12 +1437,6 @@ pub fn line(
             .fill_atom_renderable = null,
         }, color);
     }
-}
-
-pub fn setRenderable(drawer: *Drawer, new: ActiveRenderable) void {
-    if (new == drawer.active_renderable) return;
-    drawer.active_renderable = new;
-    drawer.flush();
 }
 
 const std = @import("std");

@@ -383,6 +383,7 @@ async function getWasm() {
       bindBuffer: (target, buffer) => gl.bindBuffer(target, gl_objects[buffer]),
       enableVertexAttribArray: (index) => gl.enableVertexAttribArray(index),
       vertexAttribPointer: (index, size, type, normalized, stride, offset) => gl.vertexAttribPointer(index, size, type, normalized, stride, offset),
+      vertexAttribIPointer: (index, size, type, stride, offset) => gl.vertexAttribIPointer(index, size, type, stride, offset),
       vertexAttribDivisor: (index, divisor) => gl.vertexAttribDivisor(index, divisor),
       createVertexArray: () => storeGlObject(gl.createVertexArray()),
       bindVertexArray: (vao) => gl.bindVertexArray(gl_objects[vao]),

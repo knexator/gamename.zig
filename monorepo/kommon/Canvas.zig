@@ -888,7 +888,11 @@ pub fn DrawableV2(
             assert(vertex_info.layout == .@"extern");
             var attributes: [vertex_info.fields.len]Gl.VertexInfo.In = undefined;
             inline for (&attributes, vertex_info.fields) |*dst, info| {
-                dst.* = .fromType(info.type, info.name);
+                if (@hasDecl(VertexData, "custom_" ++ info.name)) {
+                    dst.* = @field(VertexData, "custom_" ++ info.name);
+                } else {
+                    dst.* = .fromType(info.type, info.name);
+                }
             }
 
             const uniform_info = @typeInfo(UniformData).@"struct";

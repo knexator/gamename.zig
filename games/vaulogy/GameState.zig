@@ -5593,7 +5593,7 @@ pub fn beforeHotReload(_: *GameState) !void {}
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    try self.drawer.renderables.fill_shape.reload();
+    try self.drawer.renderables.uber.reload();
     // try self.workspace.init(&self.core_mem, 0);
     toybox = &self.toybox_instance;
 }

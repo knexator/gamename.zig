@@ -123,6 +123,14 @@ const js = struct {
             stride: GLsizei,
             offset: GLintptr,
         ) void;
+        extern fn vertexAttribIPointer(
+            index: GLuint,
+            /// 1, 2, 3, or 4
+            size: GLint,
+            @"type": VertexDataType,
+            stride: GLsizei,
+            offset: GLintptr,
+        ) void;
         extern fn vertexAttribDivisor(index: GLuint, divisor: GLuint) void;
         extern fn drawArrays(mode: DrawMode, first: GLint, count: GLsizei) void;
         extern fn drawElements(mode: DrawMode, count: GLsizei, @"type": IndexDataType, offset: GLintptr) void;
@@ -767,8 +775,14 @@ const web_gl = struct {
             const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
             js.webgl2.enableVertexAttribArray(index);
             if (attribute.integer) {
-                @panic("TODO(now)");
-                // gl.VertexAttribI1i(index: uint, x: int)
+                js.webgl2.vertexAttribIPointer(
+                    index,
+                    attribute.count,
+                    @enumFromInt(@intFromEnum(attribute.data_type)),
+                    // TODO: check in debugger if this is computed once
+                    @intCast(attributes.getStride()),
+                    @intCast(attributes.getOffset(k)),
+                );
             } else {
                 js.webgl2.vertexAttribPointer(
                     index,
@@ -918,8 +932,14 @@ const web_gl = struct {
                 const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
                 js.webgl2.enableVertexAttribArray(index);
                 if (attribute.integer) {
-                    @panic("TODO(now)");
-                    // gl.VertexAttribI1i(index: uint, x: int)
+                    js.webgl2.vertexAttribIPointer(
+                        index,
+                        attribute.count,
+                        @enumFromInt(@intFromEnum(attribute.data_type)),
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        @intCast(attributes.getOffset(k)),
+                    );
                 } else {
                     js.webgl2.vertexAttribPointer(
                         index,
@@ -942,8 +962,14 @@ const web_gl = struct {
                 const index = try js.webgl2.better.getAttribLocation(program, attribute.name);
                 js.webgl2.enableVertexAttribArray(index);
                 if (attribute.integer) {
-                    @panic("TODO(now)");
-                    // gl.VertexAttribI1i(index: uint, x: int)
+                    js.webgl2.vertexAttribIPointer(
+                        index,
+                        attribute.count,
+                        @enumFromInt(@intFromEnum(attribute.data_type)),
+                        // TODO: check in debugger if this is computed once
+                        @intCast(attributes.getStride()),
+                        @intCast(attributes.getOffset(k)),
+                    );
                 } else {
                     js.webgl2.vertexAttribPointer(
                         index,

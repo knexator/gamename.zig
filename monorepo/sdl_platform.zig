@@ -422,8 +422,13 @@ pub fn main() !void {
                 const index: gl.uint = @intCast(maybe_index);
                 gl.EnableVertexAttribArray(index);
                 if (attribute.integer) {
-                    @panic("TODO(now)");
-                    // gl.VertexAttribI1i(index: uint, x: int)
+                    gl.VertexAttribIPointer(
+                        index,
+                        attribute.count,
+                        @intFromEnum(attribute.data_type),
+                        @intCast(attributes.getStride()),
+                        attributes.getOffset(k),
+                    );
                 } else {
                     gl.VertexAttribPointer(
                         index,
@@ -586,8 +591,13 @@ pub fn main() !void {
                     if (index == -1) return error.AttributeLocationError;
                     gl.EnableVertexAttribArray(index);
                     if (attribute.integer) {
-                        @panic("TODO(now)");
-                        // gl.VertexAttribI1i(index: uint, x: int)
+                        gl.VertexAttribIPointer(
+                            index,
+                            attribute.count,
+                            @intFromEnum(attribute.data_type),
+                            @intCast(attributes.getStride()),
+                            attributes.getOffset(k),
+                        );
                     } else {
                         gl.VertexAttribPointer(
                             index,
@@ -612,8 +622,13 @@ pub fn main() !void {
                     if (index == -1) return error.AttributeLocationError;
                     gl.EnableVertexAttribArray(index);
                     if (attribute.integer) {
-                        @panic("TODO(now)");
-                        // gl.VertexAttribI1i(index: uint, x: int)
+                        gl.VertexAttribIPointer(
+                            index,
+                            attribute.count,
+                            @intFromEnum(attribute.data_type),
+                            @intCast(attributes.getStride()),
+                            attributes.getOffset(k),
+                        );
                     } else {
                         gl.VertexAttribPointer(
                             index,
