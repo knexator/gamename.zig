@@ -52,6 +52,8 @@ const js = struct {
         extern fn imageHeight(image_id: usize) usize;
     };
 
+    extern fn doSoftwareRendering(pixels_ptr: [*]const u8, pixels_len: usize) void;
+
     // current direction: closely matching the webgl2 API
     pub const webgl2 = struct {
         extern fn colorMask(red: GLboolean, green: GLboolean, blue: GLboolean, alpha: GLboolean) void;
@@ -606,6 +608,18 @@ var web_platform: PlatformGives = .{
         }
     }.anon,
     .recording_log = null,
+    .softwareRender = struct {
+        fn anon(pixels: []const UColor) void {
+            comptime assert(@sizeOf(UColor) == 4);
+            const bytes = std.mem.sliceAsBytes(pixels);
+            js.doSoftwareRendering(bytes.ptr, bytes.len);
+        }
+    }.anon,
+    .screenResolution = struct {
+        fn anon() UVec2 {
+            return js_better.canvas.getSize();
+        }
+    }.anon,
 };
 
 var user_uploaded_file: ?JsReader = null;
@@ -1162,6 +1176,32 @@ export fn init(random_seed: u32) void {
                 }
             },
         ) catch unreachable,
+        7 => my_game.init(
+            gpa,
+            web_platform.gl,
+            images_pointers,
+            @intCast(random_seed),
+            struct {
+                pub fn fcolor(name: []const u8, ptr: *FColor) void {
+                    const index = tweakable_fcolors.items.len;
+                    tweakable_fcolors.append(ptr) catch std.debug.panic("OoM", .{});
+                    js.tweak.addTweakableFColor(index, name.ptr, name.len, ptr.r, ptr.g, ptr.b);
+                }
+
+                pub fn float(name: []const u8, ptr: *f32, min: f32, max: f32) void {
+                    const index = tweakable_floats.items.len;
+                    tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
+                    js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
+                }
+
+                pub fn texture(name: []const u8, ptr: *Gl.Texture) void {
+                    const index = tweakable_textures.items.len;
+                    tweakable_textures.append(ptr) catch std.debug.panic("OoM", .{});
+                    js.tweak.addTweakableTexture(index, name.ptr, name.len);
+                }
+            },
+            js_better.canvas.getSize(),
+        ) catch unreachable,
         else => comptime unreachable,
     }
 }
@@ -1331,6 +1371,7 @@ const math = kommon.math;
 const Vec2 = math.Vec2;
 const UVec2 = math.UVec2;
 const Color = math.Color;
+const UColor = math.UColor;
 const FColor = math.FColor;
 const Camera = math.Camera;
 const Point = math.Point;

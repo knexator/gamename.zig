@@ -5,123 +5,32 @@ pub const Gl = kommon.Gl;
 
 const DRAW_ATOMS_PLAINLY = true;
 
-canvas: *Canvas,
+frame_arena: std.heap.ArenaAllocator,
 atom_visuals_cache: AtomVisualCache,
 
-renderables: struct {
-    uber: UberDrawable,
-},
+resolution: UVec2,
+screen: []UColor,
 
-uber_batch: UberDrawable.Batch = undefined,
-
-pub const UberDrawable = Canvas.DrawableV2(
-    extern struct {
-        a_ndc_position: Vec2,
-        a_texcoord: Vec2,
-        a_color: FColor,
-        a_mode: enum(u32) {
-            fill = 0,
-            text = 1,
-        },
-
-        pub const custom_a_mode: Gl.VertexInfo.In = .{
-            .name = "a_mode",
-            .byte_count = 4,
-            .count = 1,
-            .normalized = false,
-            .integer = true,
-            .data_type = .INT,
-        };
-    },
-    struct {},
-    \\precision highp float;
-    \\in vec2 a_ndc_position;
-    \\in vec2 a_texcoord;
-    \\in vec4 a_color;
-    \\in int a_mode;
-    \\out vec2 v_texcoord;
-    \\out vec4 v_color;
-    \\flat out int v_mode;
-    \\void main() {
-    \\  gl_Position = vec4(a_ndc_position, 0, 1);
-    \\  v_texcoord = a_texcoord;
-    \\  v_color = a_color;
-    \\  v_mode = a_mode;
-    \\}
-,
-    \\precision highp float;
-    \\out vec4 out_color;
-    \\in vec2 v_texcoord;
-    \\in vec4 v_color;
-    \\flat in int v_mode;
-    \\uniform sampler2D u_texture;
-    \\
-    \\// for some reason, on desktop, the fwidth value is half of what it should.
-    \\#ifdef GL_ES // WebGL2
-    \\  #define FWIDTH(x) (fwidth(x))
-    \\#else // Desktop
-    \\  #define FWIDTH(x) (2.0 * fwidth(x))
-    \\#endif
-    \\
-    \\float median(float r, float g, float b) {
-    \\  return max(min(r, g), min(max(r, g), b));
-    \\}
-    \\
-    \\float inverseLerp(float a, float b, float t) {
-    \\  return (t - a) / (b - a);
-    \\}
-    \\
-    \\vec4 text() {
-    \\  // assume square texture
-    \\  float sdf_texture_size = float(textureSize(u_texture, 0).x);
-    \\  // the values in the sdf texture should be remapped to (-sdf_pxrange/2, +sdf_pxrange/2)
-    // TODO: get sdf_pxrange from the font data
-    \\  float sdf_pxrange = 2.0;
-    \\  vec3 raw = texture(u_texture, v_texcoord).rgb;
-    \\  float distance_in_texels = (median(raw.r, raw.g, raw.b) - 0.5) * sdf_pxrange;
-    \\  // density of the texture on screen; assume uniform scaling.
-    // TODO: find out why we need that "* 0.5" to avoid graying background
-    \\  float texels_per_pixel = FWIDTH(v_texcoord.x) * sdf_texture_size * 0.5;
-    \\  float distance_in_pixels = distance_in_texels / texels_per_pixel;
-    \\  // over how many screen pixels do the transition
-    \\  float transition_pixels = 1.0;
-    \\  float alpha = clamp(inverseLerp(-transition_pixels / 2.0, transition_pixels / 2.0, distance_in_pixels), 0.0, 1.0);
-    \\  // TODO: premultiply alpha?
-    \\  return mix(vec4(v_color.rgb, 0), v_color, alpha);
-    \\}
-    \\
-    \\void main() {
-    \\  if (v_mode == 0) {
-    \\      out_color = v_color;
-    \\  } else if (v_mode == 1) {
-    \\      out_color = text();
-    \\  }
-    \\}
-    ,
-);
-
-pub fn init(usual: *kommon.Usual) !Drawer {
-    try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator(), usual.canvas.gl);
+pub fn init(usual: *kommon.Usual, resolution: UVec2) !Drawer {
+    try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator());
     return .{
-        .canvas = &usual.canvas,
-        .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
-        .renderables = .{
-            .uber = try .init(&usual.canvas),
-        },
+        .atom_visuals_cache = try .init(usual.mem.forever.allocator()),
+        .resolution = resolution,
+        .screen = try usual.mem.forever.allocator().alloc(UColor, resolution.x * resolution.y),
+        .frame_arena = .init(usual.mem.gpa),
     };
 }
 
 pub fn onFrameStart(drawer: *Drawer) !void {
-    drawer.uber_batch = try drawer.renderables.uber.batch();
-    drawer.uber_batch.setUniforms(.{}, drawer.canvas.text_renderers[0].atlas_texture);
+    _ = drawer.frame_arena.reset(.retain_capacity);
 }
 
 pub fn onFrameEnd(drawer: *Drawer) void {
-    drawer.flush();
+    _ = drawer;
 }
 
 pub fn flush(drawer: *Drawer) void {
-    drawer.uber_batch.draw();
+    _ = drawer;
 }
 
 pub const AtomVisuals = struct {
@@ -136,8 +45,8 @@ pub const AtomVisuals = struct {
         color: FColor,
         noise_z: f32,
         display: ?[]const u8 = null,
-    }, gl: kommon.Gl) !AtomVisuals {
-        const geo: Geometry = try .fromProfile(mem, params.profile, gl);
+    }) !AtomVisuals {
+        const geo: Geometry = try .fromProfile(mem, params.profile);
         return .{
             .profile = params.profile,
             .color = params.color,
@@ -162,7 +71,8 @@ pub const AtomVisuals = struct {
         pub var ridged_circle: Canvas.PrecomputedShape = undefined;
         pub var template_mask: Canvas.PrecomputedShape = undefined;
 
-        pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2, gl: kommon.Gl) !Geometry {
+        pub fn fromProfile(mem: std.mem.Allocator, profile: []const Vec2) !Geometry {
+            const gl = null;
             const template: Canvas.PrecomputedShape = blk: {
                 const skeleton_positions = [1]Vec2{.new(2, -1)} ++
                     funk.fromCount(32, struct {
@@ -207,7 +117,8 @@ pub const AtomVisuals = struct {
             };
         }
 
-        pub fn initFixed(mem: std.mem.Allocator, gl: kommon.Gl) !void {
+        pub fn initFixed(mem: std.mem.Allocator) !void {
+            const gl = null;
             Geometry.template_variable = try .fromPoints(mem, &(funk.fromCount(32, struct {
                 pub fn anon(k: usize) Vec2 {
                     return Vec2.fromTurns(math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(0.5);
@@ -523,7 +434,7 @@ const AtomVisualCache = struct {
         },
     };
 
-    pub fn init(arena: std.mem.Allocator, gl: Gl) !AtomVisualCache {
+    pub fn init(arena: std.mem.Allocator) !AtomVisualCache {
         var res: AtomVisualCache = .{
             .visuals_cache = .init(arena),
             .arena = arena,
@@ -537,7 +448,7 @@ const AtomVisualCache = struct {
                 .noise_z = input.noise_z orelse newAtomNoiseZ(atom_name),
                 .profile = input.profile orelse try res.newAtomProfile(atom_name),
                 .display = input.display,
-            }, gl);
+            });
             try res.visuals_cache.put(atom_name, atom_visuals);
         }
 
@@ -576,14 +487,14 @@ const AtomVisualCache = struct {
         return rnd.fcolor();
     }
 
-    pub fn getAtomVisuals(cache: *AtomVisualCache, name: []const u8, gl: Gl) !AtomVisuals {
+    pub fn getAtomVisuals(cache: *AtomVisualCache, name: []const u8) !AtomVisuals {
         const v = try cache.visuals_cache.getOrPut(name);
         if (!v.found_existing) {
             v.value_ptr.* = try .build(cache.arena, .{
                 .color = newAtomColor(name),
                 .noise_z = newAtomNoiseZ(name),
                 .profile = try cache.newAtomProfile(name),
-            }, gl);
+            });
         }
         return v.value_ptr.*;
     }
@@ -675,7 +586,7 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
 }
 
 pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
-    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
+    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name) catch {
         std.log.err("error getting visuals for atom literal: {s}", .{name});
         return;
     };
@@ -687,7 +598,7 @@ pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, n
 }
 
 pub fn drawVariable(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
-    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
+    const visuals = drawer.atom_visuals_cache.getAtomVisuals(name) catch {
         std.log.err("error getting visuals for atom variable: {s}", .{name});
         return;
     };
@@ -711,14 +622,14 @@ pub fn drawTemplateSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poi
         .empty => {},
         .atom_lit => |lit| {
             // const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
-            const visuals = drawer.atom_visuals_cache.getAtomVisuals(lit.value, drawer.canvas.gl) catch {
+            const visuals = drawer.atom_visuals_cache.getAtomVisuals(lit.value) catch {
                 std.log.err("error getting visuals for atom literal: {s}", .{lit.value});
                 return;
             };
             try drawer.drawTemplateAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value, drawer.canvas.gl);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
             try drawer.drawTemplateVariable(camera, point, visuals, alpha);
         },
         .pair => |pair| {
@@ -734,11 +645,11 @@ pub fn drawPatternSexpr(drawer: *Drawer, camera: Rect, sexpr: *const Sexpr, poin
     switch (sexpr.*) {
         .empty => {},
         .atom_lit => |lit| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value, drawer.canvas.gl);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(lit.value);
             try drawer.drawPatternAtom(camera, point, visuals, alpha);
         },
         .atom_var => |v| {
-            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value, drawer.canvas.gl);
+            const visuals = try drawer.atom_visuals_cache.getAtomVisuals(v.value);
             try drawer.drawPatternVariable(camera, point, visuals, alpha);
         },
         .pair => |pair| {
@@ -781,15 +692,16 @@ fn drawShapeV3(
         );
     }
 
-    if (stroke) |col| {
-        // TODO: wouldnt be needed if Rect had rotation
-        const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
-        for (shape.local_points, world_points[1..]) |p, *dst| {
-            dst.* = parent_world_point.applyToLocalPosition(p);
-        }
-        world_points[0] = world_points[world_points.len - 1];
-        try self.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
-    }
+    _ = stroke;
+    // if (stroke) |col| {
+    //     // TODO: wouldnt be needed if Rect had rotation
+    //     const world_points = try self.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
+    //     for (shape.local_points, world_points[1..]) |p, *dst| {
+    //         dst.* = parent_world_point.applyToLocalPosition(p);
+    //     }
+    //     world_points[0] = world_points[world_points.len - 1];
+    //     try self.line(camera, world_points, pixelWidth(camera), col.timesAlpha(alpha));
+    // }
 }
 
 pub fn drawEatingPatternV2(
@@ -801,7 +713,7 @@ pub fn drawEatingPatternV2(
     alpha: f32,
 ) !void {
     assert(in01(t));
-    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(var_name, drawer.canvas.gl);
+    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(var_name);
     try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
     // TODO
     // try drawer.drawSexpr(camera, .{
@@ -820,7 +732,7 @@ pub fn drawEatingPattern(
     alpha: f32,
 ) !void {
     assert(in01(t));
-    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name, drawer.canvas.gl);
+    const visuals = try drawer.atom_visuals_cache.getAtomVisuals(binding.name);
     try drawer.drawShapeV3(camera, point.applyToLocalPoint(.{ .turns = 0.5 }), AtomVisuals.Geometry.template_placeholder, null, visuals.color, alpha * t);
     // TODO
     // try drawer.drawSexpr(camera, .{
@@ -898,7 +810,7 @@ pub fn drawPatternPairHolder(drawer: *Drawer, camera: Rect, world_point: Point, 
 }
 
 pub fn drawPatterPairHolderSolidColor(drawer: *Drawer, camera: Rect, point: Point, color_name: []const u8, alpha: f32) !void {
-    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name, drawer.canvas.gl) catch {
+    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name) catch {
         std.log.err("error getting visuals for atom literal: {s}", .{color_name});
         return;
     };
@@ -913,11 +825,11 @@ pub fn drawPatterPairHolderSolidColor(drawer: *Drawer, camera: Rect, point: Poin
 }
 
 pub fn drawPatternAtomSolidColor(drawer: *Drawer, camera: Rect, point: Point, atom_name: []const u8, color_name: []const u8, alpha: f32) !void {
-    const atom_visuals = drawer.atom_visuals_cache.getAtomVisuals(atom_name, drawer.canvas.gl) catch {
+    const atom_visuals = drawer.atom_visuals_cache.getAtomVisuals(atom_name) catch {
         std.log.err("error getting visuals for atom literal: {s}", .{atom_name});
         return;
     };
-    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name, drawer.canvas.gl) catch {
+    const color_visuals = drawer.atom_visuals_cache.getAtomVisuals(color_name) catch {
         std.log.err("error getting visuals for atom literal: {s}", .{color_name});
         return;
     };
@@ -976,7 +888,7 @@ fn drawPatternVariable(drawer: *Drawer, camera: Rect, point: Point, visuals: Ato
 }
 
 pub fn drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Point, sexpr: *const Sexpr, bindings: BindingsState) !void {
-    var out_particles: std.ArrayList(BindingParticle) = .init(drawer.canvas.frame_arena.allocator());
+    var out_particles: std.ArrayList(BindingParticle) = .init(drawer.frame_arena.allocator());
     try _drawTemplateSexprWithBindings(drawer, camera, world_point, sexpr, bindings, &out_particles);
     for (out_particles.items) |particle| {
         const visuals = try drawer.atom_visuals_cache.getAtomVisuals(particle.name);
@@ -1042,6 +954,14 @@ fn _drawTemplateSexprWithBindings(drawer: *Drawer, camera: Rect, world_point: Po
     }
 }
 
+/// Performs triangulation; consider caching the result.
+pub fn tmpShape(
+    self: *Drawer,
+    local_points: []const Vec2,
+) !Canvas.PrecomputedShape {
+    return try .fromPoints(self.frame_arena.allocator(), local_points, null);
+}
+
 pub fn clipAtomRegion(drawer: *Drawer, camera: Rect, world_point: Point) !void {
     drawer.canvas.gl.startStencil();
     try drawer.drawShapeV3(camera, world_point, AtomVisuals.Geometry.template_placeholder, .white, .white, 1);
@@ -1061,9 +981,9 @@ pub fn drawTemplateWildcardLinesNonRecursive(
     bindings: BindingsState,
     alpha: f32,
 ) !void {
-    var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    var left_names: std.ArrayList([]const u8) = .init(drawer.frame_arena.allocator());
     try left.getAllVarNames(&left_names);
-    var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    var right_names: std.ArrayList([]const u8) = .init(drawer.frame_arena.allocator());
     try right.getAllVarNames(&right_names);
     drawTemplateWildcardLinesNonRecursiveV2(drawer, camera, left_names.items, right_names.items, point, bindings, alpha);
 }
@@ -1118,9 +1038,9 @@ pub fn drawPatternWildcardLinesNonRecursive(
     point: Point,
     alpha: f32,
 ) !void {
-    var left_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    var left_names: std.ArrayList([]const u8) = .init(drawer.frame_arena.allocator());
     try left.getAllVarNames(&left_names);
-    var right_names: std.ArrayList([]const u8) = .init(drawer.canvas.frame_arena.allocator());
+    var right_names: std.ArrayList([]const u8) = .init(drawer.frame_arena.allocator());
     try right.getAllVarNames(&right_names);
     drawer.drawPatternWildcardLinesNonRecursiveV2(camera, left_names.items, right_names.items, point, alpha);
 }
@@ -1156,9 +1076,9 @@ pub fn drawPatternWildcardLinesNonRecursiveV2(
 }
 
 pub fn drawWildcardsCable(drawer: *Drawer, camera: Rect, points: []const Vec2, names: []const []const u8, alpha: f32) !void {
-    var visuals: std.ArrayList(AtomVisuals) = try .initCapacity(drawer.canvas.frame_arena.allocator(), names.len);
+    var visuals: std.ArrayList(AtomVisuals) = try .initCapacity(drawer.frame_arena.allocator(), names.len);
     for (names) |name| {
-        visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl));
+        visuals.appendAssumeCapacity(try drawer.atom_visuals_cache.getAtomVisuals(name));
     }
     for (visuals.items) |v| {
         try drawer.line(camera, points, pixelWidth(camera), v.color.timesAlpha(alpha));
@@ -1193,6 +1113,7 @@ pub fn rectGradient(
     bottom: FColor,
     top: FColor,
 ) !void {
+    if (true) return;
     try self.fillShapeWithVertexColors(
         camera,
         .{ .pos = rect.top_left },
@@ -1239,27 +1160,26 @@ pub fn borderRect(
 }
 
 pub fn fillRect(
-    self: *Drawer,
+    drawer: *Drawer,
     camera: Rect,
     rect: Rect,
     color: FColor,
 ) !void {
-    try self.fillShape(
-        camera,
-        .{ .pos = rect.top_left },
-        .{
-            .local_points = &.{
-                .new(0, 0),
-                .new(rect.size.x, 0),
-                .new(0, rect.size.y),
-                .new(rect.size.x, rect.size.y),
-            },
-            .triangles = self.canvas.DEFAULT_SHAPES.square.triangles,
-            .fill_shape_renderable = null,
-            .fill_atom_renderable = null,
-        },
-        color,
-    );
+    if (true) return;
+    const top_left = drawer.ijFromXy(camera.localFromWorldPosition(rect.top_left));
+    const bottom_right = drawer.ijFromXy(camera.localFromWorldPosition(rect.get(.bottom_right)));
+    // TODO: optimize
+    var j = top_left.y;
+    while (j <= bottom_right.y) : (j += 1) {
+        if (math.inRange(j, 0, drawer.resolution.y)) {
+            var i = top_left.x;
+            while (i <= bottom_right.x) : (i += 1) {
+                if (math.inRange(i, 0, drawer.resolution.x)) {
+                    drawer.setPixelRawUnsafe(.new(i, j), color.toUColor());
+                }
+            }
+        }
+    }
 }
 
 pub fn fillCircleV2(
@@ -1278,6 +1198,10 @@ pub fn fillCircle(
     radius: f32,
     color: FColor,
 ) !void {
+    if (true) {
+        // std.log.err("TODO", .{});
+        return;
+    }
     try drawer.fillShape(
         camera,
         .{ .pos = center, .scale = radius },
@@ -1293,15 +1217,52 @@ pub fn fillShape(
     shape: Canvas.PrecomputedShape,
     color: FColor,
 ) !void {
-    const vertices = try drawer.uber_batch.addV2(shape.local_points.len, shape.triangles);
-    for (shape.local_points, vertices) |p, *dst| {
-        dst.* = .{
-            .a_mode = .fill,
-            .a_texcoord = .zero,
-            .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
-            .a_color = color,
-        };
+    // TODO
+    // const vertices = try drawer.uber_batch.addV2(shape.local_points.len, shape.triangles);
+    // for (shape.local_points, vertices) |p, *dst| {
+    //     dst.* = .{
+    //         .a_mode = .fill,
+    //         .a_texcoord = .zero,
+    //         .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
+    //         .a_color = color,
+    //     };
+    // }
+    for (shape.local_points) |p| {
+        const local = camera.localFromWorldPosition(parent.applyToLocalPosition(p));
+        drawer.setPixel(local, color);
     }
+}
+
+fn setPixelRawUnsafe(drawer: *Drawer, ij: IVec2, color: UColor) void {
+    assert(ij.x >= 0);
+    assert(ij.y >= 0);
+    const i: usize = @intCast(ij.x);
+    const j: usize = @intCast(ij.y);
+    assert(math.inRange(i, 0, drawer.resolution.x));
+    assert(math.inRange(j, 0, drawer.resolution.y));
+    drawer.screen[i + j * drawer.resolution.x] = color;
+}
+
+// TODO
+fn setPixel(drawer: *Drawer, local_pos: Vec2, color: FColor) void {
+    if (!Rect.unit.contains(local_pos)) return;
+    const x: f32 = @round(local_pos.x * @as(f32, @floatFromInt(drawer.resolution.x)));
+    const y: f32 = @round(local_pos.y * @as(f32, @floatFromInt(drawer.resolution.y)));
+    if (math.inRange(x, 0, @as(f32, @floatFromInt(drawer.resolution.x))) and
+        math.inRange(y, 0, @as(f32, @floatFromInt(drawer.resolution.y))))
+    {
+        const i: usize = @intFromFloat(x);
+        const j: usize = @intFromFloat(y);
+        drawer.screen[i + j * drawer.resolution.x] = color.toUColor();
+    }
+}
+
+fn ijFromXy(drawer: *const Drawer, screen_pos: Vec2) IVec2 {
+    const x: f32 = @round(screen_pos.x * @as(f32, @floatFromInt(drawer.resolution.x)));
+    const y: f32 = @round(screen_pos.y * @as(f32, @floatFromInt(drawer.resolution.y)));
+    const i: isize = @intFromFloat(x);
+    const j: isize = @intFromFloat(y);
+    return .new(i, j);
 }
 
 pub fn fillShapeWithVertexColors(
@@ -1324,12 +1285,13 @@ pub fn fillShapeWithVertexColors(
 }
 
 pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const u8, pos: Canvas.TextRenderer.TextPosition, em: f32, color: FColor) !void {
+    if (true) return;
     if (font_index != 0) @panic("TODO(platform): only font_index==0 is supported now (since we call setUniforms only once)");
     if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
     const text_renderer = &drawer.canvas.text_renderers[font_index];
-    const info = try text_renderer.quadsForLineV2(text, em, color, drawer.canvas.frame_arena.allocator());
+    const info = try text_renderer.quadsForLineV2(text, em, color, drawer.frame_arena.allocator());
     const quads = info.quads;
-    defer drawer.canvas.frame_arena.allocator().free(quads);
+    defer drawer.frame_arena.allocator().free(quads);
     if (quads.len == 0) return;
     // const delta = bounds.deltaToAchieve(pos);
     const delta = text_renderer.deltaToAchieve(pos, info.total_advance, em);
@@ -1449,8 +1411,11 @@ pub const KeyboardButton = enum { left, right, up, down, space };
 pub const Keyboard = kommon.input.CustomKeyboard(KeyboardButton);
 const math = kommon.math;
 pub const Vec2 = math.Vec2;
+pub const UVec2 = math.UVec2;
+pub const IVec2 = math.IVec2;
 pub const Rect = math.Rect;
 pub const FColor = math.FColor;
+pub const UColor = math.UColor;
 pub const Point = math.Point;
 const Random = math.Random;
 const tof32 = math.tof32;

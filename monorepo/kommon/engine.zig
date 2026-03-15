@@ -48,6 +48,8 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         setItem: *const fn (key: []const u8, value: []const u8) void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
         recording_log: ?std.io.AnyWriter,
+        softwareRender: *const fn (pixels: []const UColor) void,
+        screenResolution: *const fn () UVec2,
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
             var result = self.mouse;
@@ -87,3 +89,5 @@ const Mouse = kommon.input.Mouse;
 const Keyboard = kommon.input.Keyboard;
 const KeyboardButton = kommon.input.KeyboardButton;
 const Gl = kommon.Gl;
+const UColor = kommon.math.UColor;
+const UVec2 = kommon.math.UVec2;

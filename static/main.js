@@ -45,6 +45,7 @@ function resizeCanvas() {
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
+var software_rendering_texture = null;
 
 var readers = [null];
 
@@ -404,6 +405,68 @@ async function getWasm() {
       generateMipmap: (target) => gl.generateMipmap(target),
       stencilFunc: (func, ref, mask) => gl.stencilFunc(func, ref, mask),
       stencilOp: (fail, zfail, zpass) => gl.stencilOp(fail, zfail, zpass),
+      
+      // software rendering
+      doSoftwareRendering: (pixels_ptr, pixels_len) => {
+        const W = canvas.width;
+        const H = canvas.height;
+        const pixels = getBytes(pixels_ptr, pixels_len);
+        if (software_rendering_texture == null) {
+          software_rendering_texture = gl.createTexture();
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+
+          // simple shader
+          const vs = `
+          attribute vec2 p;
+          varying vec2 uv;
+          void main(){
+            uv=(p*vec2(1,-1)+1.0)/2.0;
+            gl_Position=vec4(p,0,1);
+          }`
+          const fs = `
+          precision mediump float;
+          uniform sampler2D t;
+          varying vec2 uv;
+          void main(){
+            gl_FragColor=texture2D(t,uv);
+          }`
+
+          function shader(type, src){
+            const s=gl.createShader(type)
+            gl.shaderSource(s,src)
+            gl.compileShader(s)
+            return s
+          }
+
+          const prog = gl.createProgram()
+          gl.attachShader(prog, shader(gl.VERTEX_SHADER,vs))
+          gl.attachShader(prog, shader(gl.FRAGMENT_SHADER,fs))
+          gl.linkProgram(prog)
+          gl.useProgram(prog)
+
+          // fullscreen quad
+          const buf = gl.createBuffer()
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+          gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([
+          -1,-1, 1,-1, -1,1,
+          1,-1, 1,1, -1,1
+          ]),gl.STATIC_DRAW)
+
+          const loc = gl.getAttribLocation(prog,"p")
+          gl.enableVertexAttribArray(loc)
+          gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0)
+
+          gl.texImage2D(
+            gl.TEXTURE_2D,0,gl.RGBA,
+            W,H,0,gl.RGBA,
+            gl.UNSIGNED_BYTE,pixels
+          )
+        } else {
+          gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,W,H,gl.RGBA,gl.UNSIGNED_BYTE,pixels)
+        }
+        gl.drawArrays(gl.TRIANGLES,0,6)
+      },
 
       // storage
       downloadAsFile: async (filename_ptr, filename_len, mime_ptr, mime_len, contents_ptr, contents_len) => {

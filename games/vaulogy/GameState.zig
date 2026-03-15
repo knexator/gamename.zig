@@ -3740,27 +3740,34 @@ const Workspace = struct {
             .fromCenterAndSize(.zero, .both(2))
             .withAspectRatio(platform.aspect_ratio, .grow, .center);
 
-        drawer.flush();
-        drawer.canvas.clipper.reset();
-        drawer.canvas.clipper.use(drawer.canvas);
+        // TODO
+        // drawer.flush();
+        // drawer.canvas.clipper.reset();
+        // drawer.canvas.clipper.use(drawer.canvas);
+        @memset(drawer.screen, .{ .r = 0, .g = 0, .b = 0, .a = 0 });
 
         try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
             lego.specific.tag() == .sexpr
         else
             false, camera, drawer);
 
-        if (workspace.display_fps) try drawer.drawText(
-            0,
-            camera,
-            try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
-            .{
-                .pos = camera.top_left,
-                .hor = .left,
-                .ver = .ascender,
-            },
-            camera.size.y * 0.05,
-            .black,
-        );
+        platform.softwareRender(drawer.screen);
+
+        // TODO
+        // if (workspace.display_fps) try drawer.drawText(
+        //     0,
+        //     camera,
+        //     try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "fps: {d:.5}", .{1.0 / platform.delta_seconds}),
+        //     .{
+        //         .pos = camera.top_left,
+        //         .hor = .left,
+        //         .ver = .ascender,
+        //     },
+        //     camera.size.y * 0.05,
+        //     .black,
+        // );
+
+        if (workspace.display_fps) std.log.debug("fps: {d}", .{1.0 / platform.delta_seconds});
     }
 
     // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
@@ -3812,9 +3819,10 @@ const Workspace = struct {
                     if (lego.handle()) |handle| try handle.draw(drawer, camera, alpha);
                     switch (lego.specific) {
                         .fnkbox_testcases => {
-                            drawer.flush();
-                            drawer.canvas.clipper.pop();
-                            drawer.canvas.clipper.use(drawer.canvas);
+                            // TODO
+                            // drawer.flush();
+                            // drawer.canvas.clipper.pop();
+                            // drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .fnkbox_box => {
                             try drawer.borderRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
@@ -3849,18 +3857,19 @@ const Workspace = struct {
                                     // try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
                                 } else {
                                     drawer.flush();
-                                    if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{
-                                        .custom = .{ .point = lego.absolute_point, .shape = Drawer.AtomVisuals.Geometry.template_mask },
-                                    } })) {
-                                        drawer.canvas.clipper.use(drawer.canvas);
+                                    // if (drawer.canvas.clipper.push(.{ .camera = camera, .shape = .{
+                                    //     .custom = .{ .point = lego.absolute_point, .shape = Drawer.AtomVisuals.Geometry.template_mask },
+                                    // } })) {
+                                    if (true) {
+                                        // drawer.canvas.clipper.use(drawer.canvas);
                                         defer {
-                                            drawer.flush();
-                                            drawer.canvas.clipper.pop();
-                                            drawer.canvas.clipper.use(drawer.canvas);
+                                            // drawer.flush();
+                                            // drawer.canvas.clipper.pop();
+                                            // drawer.canvas.clipper.use(drawer.canvas);
                                         }
                                         try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
-                                    } else |_| {
-                                        std.log.err("reached max lens depth, TODO(polish): improve", .{});
+                                        // } else |_| {
+                                        //     std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                     }
                                 }
                             }
@@ -3893,7 +3902,7 @@ const Workspace = struct {
                             }
 
                             if (sexpr.kind == .pair) {
-                                const names = try Lego.Specific.Sexpr.getAllVarNamesHelper(lego.index, drawer.canvas.frame_arena.allocator());
+                                const names = try Lego.Specific.Sexpr.getAllVarNamesHelper(lego.index, drawer.frame_arena.allocator());
                                 try if (sexpr.is_pattern)
                                     drawer.drawPatternWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, alpha)
                                 else
@@ -3910,18 +3919,19 @@ const Workspace = struct {
                             if (lens.is_target and camera.plusMargin(lego.absolute_point.scale * (lens.local_radius + 1)).contains(lego.absolute_point.pos)) {
                                 const lens_circle: math.Circle = .{ .center = .zero, .radius = lens.local_radius };
                                 drawer.flush();
-                                if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{ .circle = lens_circle } })) {
-                                    drawer.canvas.clipper.use(drawer.canvas);
+                                // if (drawer.canvas.clipper.push(.{ .camera = camera_relative, .shape = .{ .circle = lens_circle } })) {
+                                if (true) {
+                                    // drawer.canvas.clipper.use(drawer.canvas);
                                     defer {
-                                        drawer.flush();
-                                        drawer.canvas.clipper.pop();
-                                        drawer.canvas.clipper.use(drawer.canvas);
+                                        // drawer.flush();
+                                        // drawer.canvas.clipper.pop();
+                                        // drawer.canvas.clipper.use(drawer.canvas);
                                     }
                                     try drawer.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
 
                                     try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer);
-                                } else |_| {
-                                    std.log.err("reached max lens depth, TODO(polish): improve", .{});
+                                    // } else |_| {
+                                    //     std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                 }
                             }
 
@@ -3945,14 +3955,14 @@ const Workspace = struct {
                         },
                         .postit => {
                             const t: f32 = 2.0 + lego.hot_t * 0.7 + lego.active_t * 1.2;
-                            try drawer.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                            try drawer.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.tmpShape(&.{
                                 .new(-1, -1),
                                 .new(1, -1),
                                 .new(1, 1 - t * 0.1),
                                 .new(1 - t * 0.25, 1),
                                 .new(-1, 1),
                             }), .fromHex("#FFEBA1"));
-                            try drawer.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
+                            try drawer.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.tmpShape(&.{
                                 .new(1, 1 - t * 0.1),
                                 .new(1 - t * 0.25, 1),
                                 Vec2.new(1, 1).mirrorAroundSegment(
@@ -4051,13 +4061,13 @@ const Workspace = struct {
                             try drawer.drawText(0, camera_relative, "Target", .centeredAt(testcases_labels_center.addX(0)), 0.65, .black);
                             try drawer.drawText(0, camera_relative, "Actual", .centeredAt(testcases_labels_center.addX(4)), 0.65, .black);
                             drawer.flush();
-                            drawer.canvas.clipper.push(.{
-                                .camera = camera_relative,
-                                .shape = .{
-                                    .rect = Lego.Specific.FnkboxBox.testcases_box,
-                                },
-                            }) catch @panic("TOO DEEP");
-                            drawer.canvas.clipper.use(drawer.canvas);
+                            // drawer.canvas.clipper.push(.{
+                            //     .camera = camera_relative,
+                            //     .shape = .{
+                            //         .rect = Lego.Specific.FnkboxBox.testcases_box,
+                            //     },
+                            // }) catch @panic("TOO DEEP");
+                            // drawer.canvas.clipper.use(drawer.canvas);
                         },
                         .newcase => |newcase| {
                             // TODO(design): camera_relative fails due to rotation
@@ -5544,11 +5554,11 @@ pub fn init(
     gl: Gl,
     loaded_images: std.EnumArray(Images, *const anyopaque),
     random_seed: u64,
-    // tweakable: type,
-    // tweakable: struct {
-    //     fcolor: fn (name: []const u8, value: *FColor) void,
-    // },
+    tweakable: type,
+    resolution: UVec2,
 ) !void {
+    _ = tweakable;
+
     dst.* = kommon.meta.initDefaultFields(GameState);
     try dst.toybox_instance.init(gpa);
     toybox = &dst.toybox_instance;
@@ -5561,7 +5571,7 @@ pub fn init(
 
     // tweakable.fcolor("bg", &COLORS.bg);
 
-    dst.drawer = try .init(&dst.usual);
+    dst.drawer = try .init(&dst.usual, resolution);
     try dst.workspace.init(gpa, random_seed);
 
     if (false) {
@@ -5591,9 +5601,8 @@ pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
 pub fn beforeHotReload(_: *GameState) !void {}
 
 pub fn afterHotReload(self: *GameState) !void {
-    try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    try self.drawer.renderables.uber.reload();
+    try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator());
+    self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator());
     // try self.workspace.init(&self.core_mem, 0);
     toybox = &self.toybox_instance;
 }
@@ -5735,7 +5744,7 @@ const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
 const math = kommon.math;
 const tof32 = math.tof32;
-const Color = math.UColor;
+const UColor = math.UColor;
 const FColor = math.FColor;
 const Rect = math.Rect;
 const Bounds = math.Bounds;
