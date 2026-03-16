@@ -7,12 +7,14 @@ const DRAW_ATOMS_PLAINLY = true;
 
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
+atom_testing: Gl.Texture,
 
-pub fn init(usual: *kommon.Usual) !Drawer {
+pub fn init(usual: *kommon.Usual, atom_testing: *const anyopaque) !Drawer {
     try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator(), usual.canvas.gl);
     return .{
         .canvas = &usual.canvas,
         .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
+        .atom_testing = usual.canvas.gl.buildTexture2D(atom_testing, false),
     };
 }
 
@@ -759,7 +761,7 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
                 .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
                 .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
             },
-            null,
+            drawer.atom_testing,
         );
 
         try drawer.drawShapeV3(
@@ -848,7 +850,7 @@ fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVis
                 .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
                 .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
             },
-            null,
+            drawer.atom_testing,
         );
 
         try drawer.drawShapeV3(

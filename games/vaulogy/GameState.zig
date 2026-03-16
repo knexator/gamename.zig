@@ -192,6 +192,7 @@ pub const stuff = .{
     .preloaded_images = .{
         // TODO(platform): don't require this here
         .arial_atlas = "fonts/Arial.png",
+        .atom_testing = "assets/images/atom_testing.png",
     },
 };
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
@@ -5551,7 +5552,7 @@ pub fn init(
 
     // tweakable.fcolor("bg", &COLORS.bg);
 
-    dst.drawer = try .init(&dst.usual);
+    dst.drawer = try .init(&dst.usual, loaded_images.get(.atom_testing));
     try dst.workspace.init(gpa, random_seed);
 
     if (false) {
