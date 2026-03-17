@@ -5112,7 +5112,7 @@ const Workspace = struct {
                     const new_garland = blk: {
                         if (animation.invoked_fnk != .nothing) {
                             Toybox.pop(animation.invoked_fnk, undo_stack);
-                            if (next_garland != .nothing) {
+                            if (next_garland.garland().hasChildCases()) {
                                 // TODO(game)
                                 // Toybox.get(next_garland).specific.garland.enqueued_parent_pill_index = ??;
                                 undo_stack.storeAllData(next_garland);
