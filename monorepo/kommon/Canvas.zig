@@ -955,7 +955,7 @@ pub fn Drawable(
             assert(vertex_info.layout == .@"extern");
             var attributes: [vertex_info.fields.len]Gl.VertexInfo.In = undefined;
             inline for (&attributes, vertex_info.fields) |*dst, info| {
-                dst.* = .{ .name = info.name, .kind = .fromType(info.type) };
+                dst.* = .fromType(info.type, info.name);
             }
 
             const uniform_info = @typeInfo(UniformData).@"struct";

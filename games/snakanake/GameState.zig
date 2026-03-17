@@ -119,8 +119,8 @@ pub fn init(
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_texcoord", .kind = .Vec2 },
+                .fromType(Vec2, "a_position"),
+                .fromType(Vec2, "a_texcoord"),
             } },
             &.{},
         ),
