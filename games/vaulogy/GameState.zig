@@ -3877,9 +3877,10 @@ const Workspace = struct {
                                 .atom_var => if (!sexpr.emerging_value_ignore_updates_to_t) {
                                     const extra_alpha: f32 = if (maybe_bindings) |bindings| blk: {
                                         if (bindings.anim_t) |t| {
+                                            if (sexpr.emerging_value == .nothing) break :blk 1.0;
                                             break :blk for (bindings.new) |binding| {
                                                 if (std.mem.eql(u8, binding.name, sexpr.atom_name)) break :blk (1.0 - t);
-                                            } else 1;
+                                            } else unreachable;
                                         } else break :blk 1;
                                     } else 1;
                                     try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha * extra_alpha);
