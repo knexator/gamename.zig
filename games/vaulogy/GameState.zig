@@ -5092,7 +5092,8 @@ const Workspace = struct {
                                     if (sexpr.is_pattern) {
                                         sexpr.emerging_value_ignore_updates_to_t = true;
                                     } else {
-                                        Toybox.changeChildWithUndoAndAlsoCoords(cur, sexpr.emerging_value, &workspace.undo_stack);
+                                        sexpr.emerging_value.get().local_point = cur.get().local_point;
+                                        Toybox.changeChild(cur, sexpr.emerging_value, &workspace.undo_stack);
                                     }
                                 }
                             }
