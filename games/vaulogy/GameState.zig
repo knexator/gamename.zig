@@ -5238,7 +5238,10 @@ const Workspace = struct {
                 if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point)) |garland| {
                     Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
                     break :blk garland;
-                } else @panic("TODO(game): handle this");
+                } else {
+                    std.log.err("TODO(game): handle this better", .{});
+                    break :blk .nothing;
+                }
             };
             const garland_fnkname = try Lego.Specific.Garland.stealFnkname(garland_index, null, undo_stack);
             Toybox.addChildLast(floating_inputs_layer, garland_fnkname, undo_stack);

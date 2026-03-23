@@ -568,7 +568,7 @@ pub const ScoringRun = struct {
             return fnk;
         } else switch (name.*) {
             .atom_lit, .atom_var, .empty => {
-                std.log.err("Fnk not found: {any}", .{name});
+                // std.log.err("Fnk not found: {any}", .{name});
                 return error.FnkNotFound;
             },
             .pair => |p| {
