@@ -831,11 +831,11 @@ pub const future_levels: []const Level = &.{
                 ));
                 return .{
                     .input = try store(pool, Sexpr.doPair(
-                        input,
                         try store(pool, Sexpr.doPair(
                             fnk_name,
-                            try toList(pool, &.{fnk_def_sexpr}),
+                            input,
                         )),
+                        try toList(pool, &.{fnk_def_sexpr}),
                     )),
                     .expected = output,
                 };

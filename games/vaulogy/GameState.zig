@@ -176,8 +176,45 @@ test "No leaks on Workspace and Drawer" {
         try Canvas.init(Gl.stub, std.testing.allocator, &.{}, &.{}),
     );
     defer usual.deinit(undefined);
-    const drawer: Drawer = try .init(&usual);
+    const drawer: Drawer = try .init(&usual, undefined);
     _ = drawer;
+}
+
+test "solutions" {
+    const gpa = std.testing.allocator;
+    const core = @import("core.zig");
+    const levels = @import("levels_new.zig").levels;
+    var mem: core.VeryPermamentGameStuff = .init(gpa);
+    defer mem.deinit();
+
+    var scratch: std.heap.ArenaAllocator = .init(gpa);
+    defer scratch.deinit();
+    var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
+    defer pool.deinit();
+
+    var scoring: core.ScoringRun = try .init(@embedFile("./solutions.txt"), &mem);
+    defer scoring.deinit(true);
+
+    for (levels) |level| {
+        defer _ = scratch.reset(.retain_capacity);
+        var samples_it = level.samplesIterator();
+        while (try samples_it.next(&pool, scratch.allocator())) |item| {
+            defer _ = pool.reset(.retain_capacity);
+
+            var exec: core.ExecutionThread = try .init(item.input, level.fnk_name, &scoring);
+            defer exec.deinit();
+            const actual = try exec.getFinalResultBoundedV2(&scoring, 10_000, true, true);
+            if (!actual.equals(item.expected)) {
+                if (std.testing.backend_can_print) {
+                    std.debug.print(
+                        "failed on fnk {any} with input {any}: expected {any}, got {any}\n",
+                        .{ level.fnk_name, item.input, item.expected, actual },
+                    );
+                }
+                try std.testing.expect(false);
+            }
+        }
+    }
 }
 
 // TODO(platform): type

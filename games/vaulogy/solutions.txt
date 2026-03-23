@@ -1,0 +1,148 @@
+uppercase {
+    a -> A;
+    b -> B;
+    c -> C;
+    d -> D;
+    e -> E;
+    f -> F;
+}
+
+lowercase {
+    A -> a;
+    B -> b;
+    C -> c;
+    D -> d;
+    E -> e;
+    F -> f;
+}
+
+isVowel {
+    A -> true;
+    E -> true;
+    a -> true;
+    e -> true;
+    @ -> false;
+}
+
+swap {
+    (@a . @b) -> (@b . @a);
+}
+
+firstAsUppercase {
+    (@a . @b) -> uppercase: @a;
+}
+
+startWithB {
+    (@a . @any) -> @a {
+        b -> true;
+        B -> true;
+        @else -> false;
+    }
+}
+
+uppercaseIfVowel {
+    @x -> isVowel: @x {
+        true -> uppercase: @x;
+        false -> @x;
+    }
+}
+
+withBottomUppercased {
+    (@a . @b) -> uppercase: @b {
+        @B -> (@a . @B);
+    }
+}
+
+pairToUppercase {
+    (@a . @b) -> uppercase: @a {
+        @A -> uppercase: @b {
+            @B -> (@A . @B);
+        }
+    }
+}
+
+hasSomeB {
+    (@x . @y) -> hasSomeB: @x {
+        false -> hasSomeB: @y;
+    }
+    b -> true;
+    @other -> false;
+}
+
+second {
+    (@a . (@b . @rest)) -> @b;
+}
+
+listHasSomeB {
+    nil -> false;
+    (b . @any) -> true;
+    (@other . @rest) -> listHasSomeB: @rest;
+}
+
+uppercaseEachElement {
+    nil -> nil;
+    (@a . @rest) -> uppercaseEachElement: @rest {
+        @REST -> uppercase: @a {
+            @A -> (@A . @REST);
+        }
+    }
+}
+
+hasAnyVowel {
+    nil -> false;
+    (@x . @rest) -> isVowel: @x {
+        false -> hasAnyVowel: @rest;
+    }
+}
+
+// custom
+isUppercase {
+    A -> true;
+    B -> true;
+    C -> true;
+    D -> true;
+    E -> true;
+    F -> true;
+    @else -> false;
+}
+
+changeCase {
+    @x -> isUppercase: @x {
+        true -> lowercase: @x;
+        false -> uppercase: @x;
+    }
+}
+
+letterToBothCases {
+    @x -> isUppercase: @x {
+        true -> lowercase: @x {
+            @y -> (@y . @x);
+        }
+        false -> uppercase: @x {
+            @y -> (@x . @y);
+        }
+    }
+}
+
+// custom
+reverse_stackless {
+    (nil . @acc) -> @acc;
+    ((@a . @rest) . @acc) -> reverse_stackless: (@rest . (@a . @acc));
+}
+
+reverse {
+    @x -> reverse_stackless: (@x . nil);
+}
+
+// custom
+mostCommonBoolean_helper {
+    (nil . ( (true . @rest1) . (true . @rest2) )) -> mostCommonBoolean_helper: (nil . (@rest1 . @rest2));
+    (nil . ( (true . @rest1) . nil )) -> true;
+    (nil . ( nil . (true . @rest2) )) -> false;
+    ((true . @rest) . ( @r1 . @r2 )) -> mostCommonBoolean_helper: (@rest . ((true . @r1) . @r2));
+    ((false . @rest) . ( @r1 . @r2 )) -> mostCommonBoolean_helper: (@rest . (@r1 . (true . @r2)));
+}
+
+mostCommonBoolean {
+    @x -> mostCommonBoolean_helper: (@x . (nil . nil));
+}
