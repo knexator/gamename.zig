@@ -5840,3 +5840,12 @@ fn removeBoundNamesV10(list: *std.ArrayListUnmanaged([]const u8), bindings: []co
         }
     }
 }
+
+fn printNextGarlands(first: Lego.Index) void {
+    std.log.debug("printing garlands", .{});
+    var cur = first;
+    while (cur != .nothing) : (cur = Toybox.get(cur).specific.garland.next_enqueued) {
+        std.log.debug("index: {d}", .{cur.asI32()});
+    }
+    std.log.debug("done", .{});
+}
