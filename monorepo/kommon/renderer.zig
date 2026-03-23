@@ -46,14 +46,14 @@ pub const fill_atom_info: RenderableInfo = .{
     \\
     \\uniform sampler2D u_texture;
     \\uniform vec4 u_color;
-    \\uniform float u_noise_z;
+    // \\uniform float u_noise_z;
     \\in vec2 v_local_pos;
     \\void main() {
-    \\  float t1 = perlin_noise(vec3(v_local_pos * 2.0, 0.0 + u_noise_z * 20.0));
+    // \\  float t1 = perlin_noise(vec3(v_local_pos * 2.0, 0.0 + u_noise_z * 20.0));
     // \\  float t2 = perlin_noise(vec3(v_local_pos * 6.0, 10.0 + u_noise_z * 20.0)) - 0.5;
     // \\  float t3 = perlin_noise(vec3(v_local_pos * 10.0, 20.0 + u_noise_z * 20.0)) - 0.5;
     // \\  float t = mix(0.8, 1.0, smoothstep(-0.75, -0.25, t1 * 0.75 + t2 * 0.25 + t3 * 0.125));
-    \\  float t = mix(1.0, 0.5, smoothstep(0.35, 0.45, t1));
+    // \\  float t = mix(1.0, 0.5, smoothstep(0.35, 0.45, t1));
     // \\  float t = mix(0.5, 1.0, smoothstep(-0.50, -0.45, t1));
     // \\  float t = mix(0.8, 1.0, smoothstep(-0.25, 0.0, t1));
     // \\  out_color = u_color * vec4(vec3(t), 1.0);
@@ -61,7 +61,8 @@ pub const fill_atom_info: RenderableInfo = .{
     \\ // -1..1 in both axis
     \\  vec2 from_center = v_local_pos * vec2(0.5, 1) + vec2(-0.75, 0);
     \\  vec2 uv = (from_center * 0.9 + vec2(1.0)) * 0.5;
-    \\  out_color = (texture(u_texture, uv) + vec4(vec3(0.25), 0)) * mix(u_color.gbra, u_color, t);
+    \\  out_color = (texture(u_texture, uv) + vec4(vec3(0.25), 0)) * u_color;
+    // \\  out_color = (texture(u_texture, uv) + vec4(vec3(0.25), 0)) * mix(u_color.gbra, u_color, t);
     \\}
     ,
 };
@@ -115,7 +116,7 @@ pub const PrecomputedShape = struct {
                         .{ .name = "u_camera", .kind = .Rect },
                         .{ .name = "u_point", .kind = .Point },
                         .{ .name = "u_color", .kind = .FColor },
-                        .{ .name = "u_noise_z", .kind = .f32 },
+                        // .{ .name = "u_noise_z", .kind = .f32 },
                         .{ .name = "u_pos_offset", .kind = .Vec2 },
                     },
                 );

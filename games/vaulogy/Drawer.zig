@@ -3,7 +3,7 @@
 pub const Drawer = @This();
 pub const Gl = kommon.Gl;
 
-const DRAW_ATOMS_PLAINLY = true;
+const DRAW_ATOMS_PLAINLY = false;
 
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
@@ -758,7 +758,7 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
                 .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
                 .{ .name = "u_point", .value = .{ .Point = point } },
                 .{ .name = "u_camera", .value = .{ .Rect = camera } },
-                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                // .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
                 .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
             },
             drawer.atom_testing,
@@ -847,7 +847,7 @@ fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVis
                 .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
                 .{ .name = "u_point", .value = .{ .Point = point } },
                 .{ .name = "u_camera", .value = .{ .Rect = camera } },
-                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                // .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
                 .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
             },
             drawer.atom_testing,
