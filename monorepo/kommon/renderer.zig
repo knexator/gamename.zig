@@ -61,7 +61,7 @@ pub const fill_atom_info: RenderableInfo = .{
     \\ // -1..1 in both axis
     \\  vec2 from_center = v_local_pos * vec2(0.5, 1) + vec2(-0.75, 0);
     \\  vec2 uv = (from_center * 0.9 + vec2(1.0)) * 0.5;
-    \\  out_color = texture(u_texture, uv) * mix(u_color.gbra, u_color, t);
+    \\  out_color = (texture(u_texture, uv) + vec4(vec3(0.25), 0)) * mix(u_color.gbra, u_color, t);
     \\}
     ,
 };
