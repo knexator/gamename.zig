@@ -1272,6 +1272,8 @@ pub const Lego = struct {
         };
 
         pub const Microscope = struct {
+            in_toolbar: bool,
+
             /// To understand this, think of the fixed point of the lenses zoom
             pub const Transform = struct {
                 center: Vec2,
@@ -1612,7 +1614,7 @@ pub const Lego = struct {
 
     pub fn getGrabbedOffset(lego: *const Lego, absolute_needle: Vec2) Vec2 {
         return switch (lego.specific) {
-            .postit => lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle),
+            .postit, .microscope => lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle),
             .scrollbar => |scrollbar| lego.absolute_point.applyToLocalPoint(.{ .pos = scrollbar.handleRectVisual().top_left }).inverseApplyGetLocalPosition(absolute_needle),
             else => .zero,
         };
@@ -2530,13 +2532,13 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
-    pub fn buildMicroscope(source: Vec2, target: Vec2, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildMicroscope(source: Vec2, target: Vec2, in_toolbar: bool, undo_stack: ?*UndoStack) !Lego.Index {
         const lens_source = try Toybox.new(.{ .pos = source }, .{ .lens = .source }, undo_stack);
         const lens_target = try Toybox.new(.{ .pos = target }, .{ .lens = .target }, undo_stack);
-        const result = try Toybox.new(.{}, .microscope, undo_stack);
-        Toybox.addChildLast(result.index, lens_source.index, undo_stack);
-        Toybox.addChildLast(result.index, lens_target.index, undo_stack);
-        return result.index;
+        const result = try Toybox.new(.{}, .{ .microscope = .{ .in_toolbar = in_toolbar } }, undo_stack);
+        Toybox.addChildLast(result, lens_source, undo_stack);
+        Toybox.addChildLast(result, lens_target, undo_stack);
+        return result;
     }
 };
 
@@ -3236,9 +3238,26 @@ const Workspace = struct {
                             it.skipChildren();
                         }
                     },
+                    .microscope => |microscope| {
+                        if (microscope.in_toolbar) {
+                            if (grabbing == .nothing) {
+                                const lenses = Toybox.getChildrenExact(2, cur);
+                                for (lenses) |lens_index| {
+                                    const lens = lens_index.get().specific.lens;
+                                    const parent_point = lens_index.get().absolute_point;
+                                    if (parent_point.inRange(absolute_needle_pos, lens.local_radius)) {
+                                        return .{ .hot = cur, .over_background = root };
+                                    }
+                                }
+                            }
+
+                            if (!step.children_already_visited) {
+                                it.skipChildren();
+                            }
+                        }
+                    },
                     .case,
                     .newcase,
-                    .microscope,
                     .garland,
                     .garland_newcases,
                     .executor,
@@ -3964,6 +3983,16 @@ const Workspace = struct {
                                 .black,
                             );
                         },
+                        .microscope => {
+                            const t: f32 = lego.hot_t * 0.2;
+                            // TODO(optim-late): check if this is more performant when hidden behind an "if (t > 0)"
+                            const lenses = Toybox.getChildrenExact(2, cur);
+                            for (lenses) |lens_index| {
+                                const lens = lens_index.get().specific.lens;
+                                const parent_point = lens_index.get().absolute_point;
+                                drawer.canvas.fillCircle(camera, parent_point.pos, lens.local_radius * parent_point.scale, .whiteAlpha(t));
+                            }
+                        },
                         .area => |area| {
                             switch (area.bg) {
                                 // TODO(game): .all background
@@ -4169,7 +4198,7 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .fnkslist, .executor_controls, .garland_newcases, .microscope, .executor, .fnkbox, .pill => {},
+                        .fnkslist, .executor_controls, .garland_newcases, .executor, .fnkbox, .pill => {},
                     }
                 }
             }
@@ -4432,6 +4461,19 @@ const Workspace = struct {
                             plucked = false;
                         },
                     }
+                } else if (hot_index.hasTag(.microscope)) {
+                    // Special case: reparent toolbar microscope
+                    assert(hot_index.get().specific.microscope.in_toolbar);
+                    undo_stack.storeAllData(hot_index);
+                    hot_index.get().specific.microscope.in_toolbar = false;
+
+                    Toybox.pop(hot_index, undo_stack);
+                    Toybox.addChildLast(workspace.lenses_layer, hot_index, undo_stack);
+                    Toybox.changeCoordinates(hot_index, workspace.toolbar_left.get().absolute_point, workspace.lenses_layer.get().absolute_point);
+
+                    // continue with Case A.3
+                    grabbed_element_index = hot_index;
+                    plucked = false;
                 } else if (hot_index.get().grabsWithoutPlucking()) {
                     // Case A.3: grabbing rather than plucking, including buttons
                     undo_stack.storeAllData(hot_index);
@@ -4775,6 +4817,15 @@ const Workspace = struct {
                     }, undo_stack);
 
                     Toybox.addChildLast(workspace.toolbar_left, index, undo_stack);
+                }
+
+                if (true) { // add a fresh lens
+                    Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildMicroscope(
+                        .new(1, 13),
+                        .new(2.5, 12.5),
+                        true,
+                        undo_stack,
+                    ), undo_stack);
                 }
             }
 
