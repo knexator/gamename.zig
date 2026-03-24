@@ -2597,6 +2597,7 @@ const Workspace = struct {
     gpa_for_bindings: std.mem.Allocator,
 
     display_fps: bool = false,
+    debug_nodraw: bool = false,
 
     pub const Grabbing = struct {
         index: Lego.Index,
@@ -3797,10 +3798,12 @@ const Workspace = struct {
         drawer.canvas.clipper.reset();
         drawer.canvas.clipper.use(drawer.canvas);
 
-        try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
-            lego.specific.tag() == .sexpr
-        else
-            false, camera, drawer);
+        if (!workspace.debug_nodraw) {
+            try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
+                lego.specific.tag() == .sexpr
+            else
+                false, camera, drawer);
+        }
 
         if (workspace.display_fps) try drawer.canvas.drawText(
             0,
@@ -4245,6 +4248,7 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         assert(workspace.valid(scratch));
         workspace.display_fps = platform.keyboard.cur.isDown(.KeyF);
+        workspace.debug_nodraw = platform.keyboard.cur.isDown(.KeyV);
         if (true and platform.keyboard.wasPressed(.KeyQ)) {
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
