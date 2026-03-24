@@ -146,3 +146,86 @@ mostCommonBoolean_helper {
 mostCommonBoolean {
     @x -> mostCommonBoolean_helper: (@x . (nil . nil));
 }
+
+// custom
+eq? {
+    ((@aa . @ab) . (@ba . @bb)) -> eq?: (@aa . @ba) {
+        true -> eq?: (@ab . @bb);
+    }
+    ((@aa . @ab) . @b) -> false;
+    (@a . (@ba . @bb)) -> false;
+    (@x . @y) -> eqAtoms?: (@x . @y);
+}
+
+// custom
+dictLookupWithDefault {
+    ((@key . @default_value) . nil) -> @default_value;
+    ((@key . @default_value) . ((@k1 . @v1) . @rest)) -> eq?: (@key . @k1) {
+        true -> @v1;
+        false -> dictLookupWithDefault: ((@key . @default_value) . @rest);
+    }
+}
+
+
+// TODO(game): decide on a meta representation (variables with names vs variables are relative offsets)
+// this code assumes variables as relative offsets
+interpreter {
+    ((@fnk_name . @input) . @known_fnks) -> dictLookupWithDefault: ((@fnk_name . nil) . @known_fnks) {
+        @cases -> interpreter_applycases: (@cases . ((@input . nil) . @known_fnks));
+    }
+}
+
+// custom
+interpreter_applycases {
+    (nil                         . ((@input . @older_inputs) . @known_fnks)) -> @input;
+    ((@first_case . @rest_cases) . ((@input . @older_inputs) . @known_fnks)) -> @first_case {
+        (@pattern . (@fnk_name . (@template . @next))) -> interpreter_matches: (@pattern . @input) {
+            false -> interpreter_applycases: (@rest_cases . ((@input . @older_inputs) . @known_fnks));
+            true -> interpreter_fillvariables: (@template . (@input . @older_inputs)) {
+                @filled_template -> interpreter: ( (@fnk_name . @filled_template) . @known_fnks ) {
+                    @new_input -> interpreter_applycases: ( @next . ((@new_input . (@input . @older_inputs)) . @known_fnks) );
+                }
+            }
+        }
+    }
+}
+
+// custom
+interpreter_matches {
+    ((lit . @x) . @input) -> eq?: (@x . @input);
+    ((var . @x) . @input) -> true;
+    ((@pattern_left . @pattern_right) . (@input_left . @input_right)) -> interpreter_matches: (@pattern_left . @input_left) {
+        true -> interpreter_matches: (@pattern_right . @input_right);
+    }
+    ((@pattern_left . @pattern_right) . @input_atom) -> false;
+}
+
+// custom
+interpreter_fillvariables {
+    (@template . @inputs_history) -> @template {
+        (lit . @x) -> @x;
+        (var . (@depth . @address)) -> indexWithDefault: ((@depth . <empty>) . @inputs_history) {
+            @full_input -> addressWithDefault: ((@address . <empty>) . @full_input);
+        }
+        (@left . @right) -> interpreter_fillvariables: (@left . @inputs_history) {
+            @new_left -> interpreter_fillvariables: (@right . @inputs_history) {
+                @new_right -> (@new_left . @new_right);
+            }
+        }
+    }
+}
+
+// custom
+indexWithDefault {
+    ((@depth . @default_value) . nil) -> @default_value;
+    ((nil . @default_value) . (@first . @rest)) -> @first;
+    (((@x . @xs) . @default_value) . (@first . @rest)) -> indexWithDefault: ((@x . @default_value) . @rest);
+}
+
+// custom
+addressWithDefault {
+    ((nil . @default_value) . @value) -> @value;
+    (((left  . @rest) . @default_value) . (@left . @right)) -> @left;
+    (((right . @rest) . @default_value) . (@left . @right)) -> @right;
+    (((@any . @rest) . @default_value) . @atom) -> @default_value;
+}
