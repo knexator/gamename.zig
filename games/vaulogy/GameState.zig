@@ -295,7 +295,7 @@ pub const Lego = struct {
 
             pub fn base(this: @This()) Vec2 {
                 return switch (this.kind) {
-                    .listviewer_sexprs => .new(5, -1.75),
+                    .listviewer_sexprs => .new(5, -1.75 - 0.05),
                     // .listviewer_sexprs => .new(4.5, -1.25 - 0 * 0.125),
                 };
             }
@@ -1526,6 +1526,90 @@ pub const Lego = struct {
                     .scrollable_list = asdf[2],
                     .sentinel = asdf[3],
                 };
+            }
+
+            pub fn canonize(index: Lego.Index, undo_stack: ?*UndoStack) !void {
+                const lego = index.get();
+                const new_main_hash = Lego.Specific.ListViewer.computeMainHash(index);
+                const new_list_hash = Lego.Specific.ListViewer.computeListHash(index);
+
+                const list_viewer = &lego.specific.list_viewer;
+                if (list_viewer.main_hash != new_main_hash) {
+                    list_viewer.main_hash = new_main_hash;
+                    defer list_viewer.list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
+
+                    const lego_children = Lego.Specific.ListViewer.children(lego.index);
+                    const main = lego_children.main;
+                    assert(main.hasTag(.sexpr));
+
+                    if (true) { // destroy all old children
+                        var cur = Toybox.get(lego_children.scrollable_list).tree.first;
+                        while (cur != .nothing) {
+                            const original_tree = Toybox.get(cur).tree;
+                            Toybox.pop(cur, undo_stack);
+                            Toybox.destroyFloating(cur, undo_stack);
+                            cur = original_tree.next;
+                        }
+                    }
+
+                    var count: f32 = 0;
+                    if (true) { // create new children
+                        var cur_parent = main;
+                        while (cur_parent.get().specific.sexpr.kind == .pair) {
+                            const left, cur_parent = Lego.Specific.Sexpr.pairChildren(cur_parent);
+                            count += 1;
+                            Toybox.addChildLast(
+                                lego_children.scrollable_list,
+                                try Toybox.dupeIntoFloating(left, true, undo_stack),
+                                undo_stack,
+                            );
+                        }
+                        const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, true, undo_stack);
+                        new_sentinel.get().local_point = lego_children.sentinel.get().local_point;
+                        Toybox.changeChild(lego_children.sentinel, new_sentinel, undo_stack);
+                    }
+                    lego_children.scrollbar.get().specific.scrollbar.total_length = count;
+                } else if (list_viewer.list_hash != new_list_hash) {
+                    list_viewer.list_hash = new_list_hash;
+
+                    const lego_children = Lego.Specific.ListViewer.children(lego.index);
+                    assert(lego_children.main.hasTag(.sexpr));
+
+                    const new_main = try Toybox.buildSexpr(lego_children.main.get().local_point, .empty, false, false, undo_stack);
+                    var cur_parent = new_main;
+
+                    var cur_item = Toybox.get(lego_children.scrollable_list).tree.first;
+                    var count: f32 = 0;
+                    while (cur_item != .nothing) : (cur_item = cur_item.get().tree.next) {
+                        count += 1;
+                        const next_parent = try Toybox.buildSexpr(undefined, .empty, false, false, undo_stack);
+                        // TODO(optim): avoid this by directly creating either a pair or an empty
+                        if (undo_stack) |s| s.storeAllData(cur_parent);
+                        cur_parent.get().specific.sexpr.kind = .pair;
+                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .up), cur_parent, try Toybox.dupeIntoFloating(cur_item, true, undo_stack), undo_stack);
+                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent, undo_stack);
+                        cur_parent = next_parent;
+                    }
+                    lego_children.scrollbar.get().specific.scrollbar.total_length = count;
+
+                    const sentinel = try Toybox.dupeIntoFloating(lego_children.sentinel, true, undo_stack);
+                    sentinel.get().local_point = cur_parent.get().local_point;
+                    const sentinel_is_wrong = sentinel.get().specific.sexpr.kind == .pair;
+
+                    Toybox.changeChild(lego_children.main, new_main, undo_stack);
+                    Toybox.destroyFloating(lego_children.main, undo_stack);
+
+                    // TODO(optim): avoid this by directly creating either a pair or the sentinel
+                    Toybox.changeChild(cur_parent, sentinel, undo_stack);
+                    Toybox.destroyFloating(cur_parent, undo_stack);
+
+                    if (sentinel_is_wrong) {
+                        list_viewer.main_hash = 0;
+                        try canonize(index, undo_stack);
+                    } else {
+                        list_viewer.main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
+                    }
+                }
             }
         };
     };
@@ -3262,79 +3346,7 @@ const Workspace = struct {
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
-                const new_main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
-                const new_list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
-
-                const list_viewer = &lego.specific.list_viewer;
-                if (list_viewer.main_hash != new_main_hash) {
-                    list_viewer.main_hash = new_main_hash;
-                    defer list_viewer.list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
-
-                    const children = Lego.Specific.ListViewer.children(lego.index);
-                    const main = children.main;
-                    assert(main.hasTag(.sexpr));
-
-                    if (true) { // destroy all old children
-                        var cur = Toybox.get(children.scrollable_list).tree.first;
-                        while (cur != .nothing) {
-                            const original_tree = Toybox.get(cur).tree;
-                            Toybox.pop(cur, undo_stack);
-                            Toybox.destroyFloating(cur, undo_stack);
-                            cur = original_tree.next;
-                        }
-                    }
-
-                    var count: f32 = 0;
-                    if (true) { // create new children
-                        var cur_parent = main;
-                        while (cur_parent.get().specific.sexpr.kind == .pair) {
-                            const left, cur_parent = Lego.Specific.Sexpr.pairChildren(cur_parent);
-                            count += 1;
-                            Toybox.addChildLast(
-                                children.scrollable_list,
-                                try Toybox.dupeIntoFloating(left, true, undo_stack),
-                                undo_stack,
-                            );
-                        }
-                        const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, true, undo_stack);
-                        new_sentinel.get().local_point = children.sentinel.get().local_point;
-                        Toybox.changeChild(children.sentinel, new_sentinel, undo_stack);
-                    }
-                    children.scrollbar.get().specific.scrollbar.total_length = count;
-                } else if (list_viewer.list_hash != new_list_hash) {
-                    list_viewer.list_hash = new_list_hash;
-                    defer list_viewer.main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
-
-                    const children = Lego.Specific.ListViewer.children(lego.index);
-                    assert(children.main.hasTag(.sexpr));
-
-                    const new_main = try Toybox.buildSexpr(children.main.get().local_point, .empty, false, false, undo_stack);
-                    var cur_parent = new_main;
-
-                    var cur_item = Toybox.get(children.scrollable_list).tree.first;
-                    var count: f32 = 0;
-                    while (cur_item != .nothing) : (cur_item = cur_item.get().tree.next) {
-                        count += 1;
-                        const next_parent = try Toybox.buildSexpr(undefined, .empty, false, false, undo_stack);
-                        // TODO(optim): avoid this by directly creating either a pair or an empty
-                        undo_stack.storeAllData(cur_parent);
-                        cur_parent.get().specific.sexpr.kind = .pair;
-                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .up), cur_parent, try Toybox.dupeIntoFloating(cur_item, true, undo_stack), undo_stack);
-                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent, undo_stack);
-                        cur_parent = next_parent;
-                    }
-                    children.scrollbar.get().specific.scrollbar.total_length = count;
-
-                    const sentinel = try Toybox.dupeIntoFloating(children.sentinel, true, undo_stack);
-                    sentinel.get().local_point = cur_parent.get().local_point;
-
-                    Toybox.changeChild(children.main, new_main, undo_stack);
-                    Toybox.destroyFloating(children.main, undo_stack);
-
-                    // TODO(optim): avoid this by directly creating either a pair or the sentinel
-                    Toybox.changeChild(cur_parent, sentinel, undo_stack);
-                    Toybox.destroyFloating(cur_parent, undo_stack);
-                }
+                try Lego.Specific.ListViewer.canonize(lego.index, undo_stack);
             }
         }
     }
