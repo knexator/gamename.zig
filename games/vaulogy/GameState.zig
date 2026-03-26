@@ -1508,6 +1508,7 @@ pub const Lego = struct {
                 while (cur != .nothing) : (cur = cur.get().tree.next) {
                     hasher.update(std.mem.asBytes(&Sexpr.hash(cur)));
                 }
+                hasher.update(std.mem.asBytes(&Sexpr.hash(children(index).sentinel)));
                 return @truncate(hasher.final());
             }
 
@@ -1515,13 +1516,15 @@ pub const Lego = struct {
                 main: Lego.Index,
                 scrollbar: Lego.Index,
                 scrollable_list: Lego.Index,
+                sentinel: Lego.Index,
             } {
                 assert(Toybox.get(index).specific.tag() == .list_viewer);
-                const asdf = Toybox.getChildrenExact(3, index);
+                const asdf = Toybox.getChildrenExact(4, index);
                 return .{
                     .main = asdf[0],
                     .scrollbar = asdf[1],
                     .scrollable_list = asdf[2],
+                    .sentinel = asdf[3],
                 };
             }
         };
@@ -2674,6 +2677,7 @@ pub const Toybox = struct {
                     .kind = .listviewer_sexprs,
                 },
             }, undo_stack),
+            try buildSexpr(.{ .pos = .new(5.5, 3.25), .scale = 0.5 }, .empty, false, false, undo_stack),
         }, undo_stack);
     }
 };
@@ -3257,7 +3261,6 @@ const Workspace = struct {
                 try lego.specific.fnkbox.updateStatus(workspace, scratch);
             }
             // TODO(optim): move this to interaction?
-            // TODO(now): fully work in both directions
             if (lego.specific.tag() == .list_viewer) {
                 const new_main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
                 const new_list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
@@ -3285,8 +3288,7 @@ const Workspace = struct {
                     if (true) { // create new children
                         var cur_parent = main;
                         while (cur_parent.get().specific.sexpr.kind == .pair) {
-                            const left = cur_parent.get().tree.first;
-                            cur_parent = cur_parent.get().tree.last;
+                            const left, cur_parent = Lego.Specific.Sexpr.pairChildren(cur_parent);
                             count += 1;
                             Toybox.addChildLast(
                                 children.scrollable_list,
@@ -3294,13 +3296,9 @@ const Workspace = struct {
                                 undo_stack,
                             );
                         }
-                        // TODO(game): include sentinel
-                        // Toybox.addChildLast(
-                        //     children.scrollable_list,
-                        //     try Toybox.dupeIntoFloating(cur_parent, true, undo_stack),
-                        //     undo_stack,
-                        // );
-                        // count += 1;
+                        const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, true, undo_stack);
+                        new_sentinel.get().local_point = children.sentinel.get().local_point;
+                        Toybox.changeChild(children.sentinel, new_sentinel, undo_stack);
                     }
                     children.scrollbar.get().specific.scrollbar.total_length = count;
                 } else if (list_viewer.list_hash != new_list_hash) {
@@ -3325,16 +3323,17 @@ const Workspace = struct {
                         Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent, undo_stack);
                         cur_parent = next_parent;
                     }
-
-                    // TODO(optim): avoid this by directly creating either a pair or the sentinel
-                    undo_stack.storeAllData(cur_parent);
-                    cur_parent.get().specific.sexpr.kind = .atom_lit;
-                    cur_parent.get().specific.sexpr.atom_name = "nil";
-
                     children.scrollbar.get().specific.scrollbar.total_length = count;
+
+                    const sentinel = try Toybox.dupeIntoFloating(children.sentinel, true, undo_stack);
+                    sentinel.get().local_point = cur_parent.get().local_point;
 
                     Toybox.changeChild(children.main, new_main, undo_stack);
                     Toybox.destroyFloating(children.main, undo_stack);
+
+                    // TODO(optim): avoid this by directly creating either a pair or the sentinel
+                    Toybox.changeChild(cur_parent, sentinel, undo_stack);
+                    Toybox.destroyFloating(cur_parent, undo_stack);
                 }
             }
         }
