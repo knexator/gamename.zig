@@ -287,17 +287,56 @@ pub const Lego = struct {
         microscope: Microscope,
         lens: Lens,
         postit: Postit,
+        list_viewer: ListViewer,
 
-        // TODO(design): try to simplify these
-        garland_newcases: void,
-        fnkbox_description: struct {
-            text: []const u8,
+        scrollable_list: struct {
+            scrollbar: Lego.Index,
+            kind: enum { listviewer_sexprs },
+
+            pub fn base(this: @This()) Vec2 {
+                return switch (this.kind) {
+                    .listviewer_sexprs => .new(5, -1.75),
+                    // .listviewer_sexprs => .new(4.5, -1.25 - 0 * 0.125),
+                };
+            }
+
+            pub fn elementScale(this: @This()) f32 {
+                return switch (this.kind) {
+                    .listviewer_sexprs => 0.5,
+                };
+            }
+
+            pub fn spacing(this: @This()) f32 {
+                return switch (this.kind) {
+                    .listviewer_sexprs => 1.25,
+                };
+            }
+
+            pub fn rect(this: @This()) Rect {
+                return switch (this.kind) {
+                    .listviewer_sexprs => .fromCenterAndSize(.new(5.75 - 0.125, 0), .new(2.25, 5)),
+                };
+            }
+
+            pub fn clip(this: @This()) bool {
+                return switch (this.kind) {
+                    .listviewer_sexprs => true,
+                };
+            }
         },
+
+        // TODO(now): delete these and merge with
         fnkbox_testcases: struct {
             scrollbar: Lego.Index,
         },
         fnkslist: struct {
             scrollbar: Lego.Index,
+        },
+
+        // TODO(design): try to simplify these
+        garland_newcases: void,
+        fnkbox_description: struct {
+            text: []const u8,
         },
         fnkslist_element: FnkslistElement,
         postit_text: struct {
@@ -618,6 +657,30 @@ pub const Lego = struct {
                     std.log.err("Shouldn't happen!", .{});
                     updateLocalPositions(sexpr.emerging_value);
                 }
+            }
+
+            pub fn hash(index: Lego.Index) u32 {
+                const sexpr = index.get().specific.sexpr;
+                return switch (sexpr.kind) {
+                    .empty => 0,
+                    .atom_lit => std.array_hash_map.hashString(sexpr.atom_name),
+                    .atom_var => std.hash.int(std.array_hash_map.hashString(sexpr.atom_name)),
+                    .pair => {
+                        const l, const r = pairChildren(index);
+                        var hasher = std.hash.Wyhash.init(0);
+                        std.hash.autoHash(&hasher, struct {
+                            left: u32,
+                            right: u32,
+                        }{ .left = hash(l), .right = hash(r) });
+                        return @truncate(hasher.final());
+                    },
+                };
+            }
+
+            fn pairChildren(index: Lego.Index) [2]Lego.Index {
+                assert(index.hasTag(.sexpr));
+                assert(index.get().specific.sexpr.kind == .pair);
+                return .{ index.get().tree.first, index.get().tree.last };
             }
 
             fn left(self: *const Sexpr) *const Sexpr {
@@ -1428,6 +1491,40 @@ pub const Lego = struct {
                 }
             };
         };
+
+        pub const ListViewer = struct {
+            main_hash: u32 = 0,
+            list_hash: u32 = 0,
+
+            pub fn computeMainHash(index: Lego.Index) u32 {
+                const main = children(index).main;
+                return Sexpr.hash(main);
+            }
+
+            pub fn computeListHash(index: Lego.Index) u32 {
+                const list = children(index).scrollable_list;
+                var hasher = std.hash.Wyhash.init(0);
+                var cur = list.get().tree.first;
+                while (cur != .nothing) : (cur = cur.get().tree.next) {
+                    hasher.update(std.mem.asBytes(&Sexpr.hash(cur)));
+                }
+                return @truncate(hasher.final());
+            }
+
+            pub fn children(index: Lego.Index) struct {
+                main: Lego.Index,
+                scrollbar: Lego.Index,
+                scrollable_list: Lego.Index,
+            } {
+                assert(Toybox.get(index).specific.tag() == .list_viewer);
+                const asdf = Toybox.getChildrenExact(3, index);
+                return .{
+                    .main = asdf[0],
+                    .scrollbar = asdf[1],
+                    .scrollable_list = asdf[2],
+                };
+            }
+        };
     };
 
     pub const Tree = struct {
@@ -1536,6 +1633,7 @@ pub const Lego = struct {
             .scrollbar,
             .fnkbox_box,
             .fnkbox_description,
+            .scrollable_list,
             .fnkbox_testcases,
             .fnkslist,
             .fnkslist_element,
@@ -1554,6 +1652,7 @@ pub const Lego = struct {
             .newcase => .new_case,
             .garland => .garland,
             .lens => .lens,
+            .list_viewer => Handle.Size.default.scale(2),
             .fnkbox => .default,
         };
         const enabled: bool = switch (lego.specific) {
@@ -1574,6 +1673,7 @@ pub const Lego = struct {
             .newcase => |newcase| .new(0, newcase.length_before),
             .executor_brake => |brake| brake.handle_pos,
             .executor_crank => |crank| crank.handle_pos,
+            .list_viewer => Vec2.new(-1, -1).scale(@sqrt(2.0)),
             else => .zero,
         };
     }
@@ -1609,6 +1709,9 @@ pub const Lego = struct {
             .fnkbox_testcases => |fnkbox_testcases| {
                 fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target += amount;
             },
+            .scrollable_list => |scrollable_list| {
+                scrollable_list.scrollbar.get().specific.scrollbar.scroll_target += amount;
+            },
         }
     }
 
@@ -1627,6 +1730,7 @@ pub const Lego = struct {
             .executor,
             .case,
             .postit,
+            .list_viewer,
             => .yes,
             .scrollbar,
             .button,
@@ -1644,6 +1748,7 @@ pub const Lego = struct {
             .fnkbox_box,
             .fnkbox_description,
             .fnkbox_testcases,
+            .scrollable_list,
             .fnkslist,
             .fnkslist_element,
             .newcase,
@@ -1670,6 +1775,7 @@ pub const Lego = struct {
             .case,
             .postit,
             .executor,
+            .list_viewer,
             => false,
             .garland_newcases,
             .executor_controls,
@@ -1677,6 +1783,7 @@ pub const Lego = struct {
             .fnkbox_box,
             .fnkbox_description,
             .fnkbox_testcases,
+            .scrollable_list,
             .fnkslist,
             .fnkslist_element,
             .newcase,
@@ -1694,6 +1801,7 @@ pub const Lego = struct {
             else => .infinite,
             .sexpr => .fromRect(.fromCenterAndSize(.zero, .new(5, 2.5))),
             .testcase => .fromRect(Specific.Testcase.relative_bounding_box),
+            .scrollable_list => |scrollable_list| if (scrollable_list.clip()) .fromRect(scrollable_list.rect()) else .infinite,
             .fnkbox_testcases => .fromRect(Specific.FnkboxBox.testcases_box),
             .fnkbox => Bounds.fromRect(Specific.FnkboxBox.relative_box)
                 // for the garland
@@ -1733,6 +1841,14 @@ pub const Handle = struct {
         pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 };
         pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 1.0 };
         pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
+
+        pub fn scale(original: Size, a: f32) Size {
+            return .{
+                .base = original.base * a,
+                .hot = original.hot * a,
+                .hitbox = original.hitbox * a,
+            };
+        }
     };
 
     pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
@@ -2540,6 +2656,26 @@ pub const Toybox = struct {
         Toybox.addChildLast(result, lens_target, undo_stack);
         return result;
     }
+
+    pub fn buildListViewer(pos: Vec2, undo_stack: ?*UndoStack) !Lego.Index {
+        const scrollbar = Lego.Specific.Scrollbar.build(
+            .fromCenterAndSize(.new(6.5, 0), .new(0.5, 5)),
+            0,
+            4,
+            undo_stack,
+        );
+
+        return try createWithChildren(.{ .pos = pos }, .{ .list_viewer = .{} }, &.{
+            try buildSexpr(.{ .scale = 2 }, .empty, false, false, undo_stack),
+            scrollbar,
+            try Toybox.new(.{}, .{
+                .scrollable_list = .{
+                    .scrollbar = scrollbar,
+                    .kind = .listviewer_sexprs,
+                },
+            }, undo_stack),
+        }, undo_stack);
+    }
 };
 
 pub const UndoStack = struct {
@@ -2871,6 +3007,13 @@ const Workspace = struct {
             ), undo_stack);
         }
 
+        if (true) {
+            Toybox.addChildLast(dst.main_area, try Toybox.buildListViewer(
+                .new(30, -3),
+                undo_stack,
+            ), undo_stack);
+        }
+
         if (true) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
@@ -3106,11 +3249,93 @@ const Workspace = struct {
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
         const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
         defer zone.deinit();
+        const undo_stack = &workspace.undo_stack;
 
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (lego.specific.tag() == .fnkbox) {
                 try lego.specific.fnkbox.updateStatus(workspace, scratch);
+            }
+            // TODO(optim): move this to interaction?
+            // TODO(now): fully work in both directions
+            if (lego.specific.tag() == .list_viewer) {
+                const new_main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
+                const new_list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
+
+                const list_viewer = &lego.specific.list_viewer;
+                if (list_viewer.main_hash != new_main_hash) {
+                    list_viewer.main_hash = new_main_hash;
+                    defer list_viewer.list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
+
+                    const children = Lego.Specific.ListViewer.children(lego.index);
+                    const main = children.main;
+                    assert(main.hasTag(.sexpr));
+
+                    if (true) { // destroy all old children
+                        var cur = Toybox.get(children.scrollable_list).tree.first;
+                        while (cur != .nothing) {
+                            const original_tree = Toybox.get(cur).tree;
+                            Toybox.pop(cur, undo_stack);
+                            Toybox.destroyFloating(cur, undo_stack);
+                            cur = original_tree.next;
+                        }
+                    }
+
+                    var count: f32 = 0;
+                    if (true) { // create new children
+                        var cur_parent = main;
+                        while (cur_parent.get().specific.sexpr.kind == .pair) {
+                            const left = cur_parent.get().tree.first;
+                            cur_parent = cur_parent.get().tree.last;
+                            count += 1;
+                            Toybox.addChildLast(
+                                children.scrollable_list,
+                                try Toybox.dupeIntoFloating(left, true, undo_stack),
+                                undo_stack,
+                            );
+                        }
+                        // TODO(game): include sentinel
+                        // Toybox.addChildLast(
+                        //     children.scrollable_list,
+                        //     try Toybox.dupeIntoFloating(cur_parent, true, undo_stack),
+                        //     undo_stack,
+                        // );
+                        // count += 1;
+                    }
+                    children.scrollbar.get().specific.scrollbar.total_length = count;
+                } else if (list_viewer.list_hash != new_list_hash) {
+                    list_viewer.list_hash = new_list_hash;
+                    defer list_viewer.main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
+
+                    const children = Lego.Specific.ListViewer.children(lego.index);
+                    assert(children.main.hasTag(.sexpr));
+
+                    const new_main = try Toybox.buildSexpr(children.main.get().local_point, .empty, false, false, undo_stack);
+                    var cur_parent = new_main;
+
+                    var cur_item = Toybox.get(children.scrollable_list).tree.first;
+                    var count: f32 = 0;
+                    while (cur_item != .nothing) : (cur_item = cur_item.get().tree.next) {
+                        count += 1;
+                        const next_parent = try Toybox.buildSexpr(undefined, .empty, false, false, undo_stack);
+                        // TODO(optim): avoid this by directly creating either a pair or an empty
+                        undo_stack.storeAllData(cur_parent);
+                        cur_parent.get().specific.sexpr.kind = .pair;
+                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .up), cur_parent, try Toybox.dupeIntoFloating(cur_item, true, undo_stack), undo_stack);
+                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent, undo_stack);
+                        cur_parent = next_parent;
+                    }
+
+                    // TODO(optim): avoid this by directly creating either a pair or the sentinel
+                    undo_stack.storeAllData(cur_parent);
+                    cur_parent.get().specific.sexpr.kind = .atom_lit;
+                    cur_parent.get().specific.sexpr.atom_name = "nil";
+
+                    children.scrollbar.get().specific.scrollbar.total_length = count;
+
+                    Toybox.changeChild(children.main, new_main, undo_stack);
+                    Toybox.destroyFloating(children.main, undo_stack);
+                }
             }
         }
     }
@@ -3233,6 +3458,7 @@ const Workspace = struct {
                         }
                     },
                     .fnkbox_testcases => {
+                        // TODO(optim): this should already be included in the general case
                         if (!step.children_already_visited and !Lego.Specific.FnkboxBox.testcases_box.contains(
                             lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
                         )) {
@@ -3257,6 +3483,7 @@ const Workspace = struct {
                             }
                         }
                     },
+                    .scrollable_list,
                     .case,
                     .newcase,
                     .garland,
@@ -3274,6 +3501,7 @@ const Workspace = struct {
                     .executor_controls,
                     .executor_brake,
                     .executor_crank,
+                    .list_viewer,
                     => {},
                 }
                 if (step.children_already_visited) {
@@ -3284,6 +3512,7 @@ const Workspace = struct {
                             .microscope,
                             .fnkbox_description,
                             .fnkbox_testcases,
+                            .scrollable_list,
                             .fnkslist,
                             .fnkslist_element,
                             .button,
@@ -3298,7 +3527,7 @@ const Workspace = struct {
                             .executor_controls,
                             .garland_newcases,
                             => unreachable,
-                            .case, .lens, .fnkbox, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
+                            .case, .lens, .fnkbox, .list_viewer, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
                             .garland => if (grabbing == .nothing)
                                 .{ true, .hot }
@@ -3748,6 +3977,18 @@ const Workspace = struct {
                         lego.local_point = .{};
                         crank.handle_pos = .fromPolar(0.75, crank.value);
                     },
+                    .scrollable_list => |scrollable_list| {
+                        const scroll_visual = scrollable_list.scrollbar.get().specific.scrollbar.scroll_visual;
+
+                        var k: usize = 0;
+                        var cur_element: Lego.Index = lego.tree.first;
+                        while (cur_element != .nothing) {
+                            Toybox.get(cur_element).local_point = .{ .pos = scrollable_list.base()
+                                .addY(scrollable_list.spacing() * (tof32(k) - scroll_visual)), .scale = scrollable_list.elementScale() };
+                            k += 1;
+                            cur_element = Toybox.get(cur_element).tree.next;
+                        }
+                    },
                     .fnkbox_testcases => |fnkbox_testcases| {
                         // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
                         // defer zone.deinit();
@@ -3781,7 +4022,7 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .list_viewer, .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -3867,6 +4108,10 @@ const Workspace = struct {
                     }
                     if (lego.handle()) |handle| try handle.draw(drawer, camera, alpha);
                     switch (lego.specific) {
+                        .scrollable_list => |scrollable_list| if (scrollable_list.clip()) {
+                            drawer.canvas.clipper.pop();
+                            drawer.canvas.clipper.use(drawer.canvas);
+                        },
                         .fnkbox_testcases => {
                             drawer.canvas.clipper.pop();
                             drawer.canvas.clipper.use(drawer.canvas);
@@ -4106,6 +4351,17 @@ const Workspace = struct {
                             drawer.canvas.fillRect(camera_relative, scrollbar.handleRectVisual(), COLORS.bg);
                             drawer.canvas.borderRect(camera_relative, scrollbar.handleRectVisual(), math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                         },
+                        .scrollable_list => |scrollable_list| {
+                            if (scrollable_list.clip()) {
+                                drawer.canvas.clipper.push(.{
+                                    .camera = camera_relative,
+                                    .shape = .{
+                                        .rect = scrollable_list.rect(),
+                                    },
+                                }) catch @panic("TOO DEEP");
+                                drawer.canvas.clipper.use(drawer.canvas);
+                            }
+                        },
                         .fnkbox_testcases => {
                             const testcases_labels_center = Lego.Specific.FnkboxBox.testcases_box.get(.top_center).addY(-Lego.Specific.FnkboxBox.testcases_header_height * 0.5).addX(0.85);
                             try drawer.canvas.drawText(0, camera_relative, "Examples:", .centeredAt(testcases_labels_center.addX(-7.15)), 0.65, .black);
@@ -4200,6 +4456,20 @@ const Workspace = struct {
                                 _ = it.next();
                                 continue;
                             }
+                        },
+                        .list_viewer => {
+                            const scale = 2.15;
+                            drawer.canvas.line(
+                                camera_relative,
+                                &([1]Vec2{Vec2.new(2, -1).scale(scale)} ++
+                                    funk.fromCount(32, struct {
+                                        pub fn anon(k: usize) Vec2 {
+                                            return Vec2.fromPolar(scale, math.lerp(0.75, 0.25, math.tof32(k) / 32)).addX(1);
+                                        }
+                                    }.anon) ++ [1]Vec2{Vec2.new(2, 1).scale(scale)}),
+                                0.05,
+                                .blackAlpha(alpha),
+                            );
                         },
                         .fnkslist, .executor_controls, .garland_newcases, .executor, .fnkbox, .pill => {},
                     }
@@ -4657,6 +4927,7 @@ const Workspace = struct {
                         math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
                         done = done and (@abs(executor.garland_appearing_t - 1) < eps);
                     },
+                    .list_viewer,
                     .pill,
                     .area,
                     .case,
@@ -4668,6 +4939,7 @@ const Workspace = struct {
                     .fnkbox,
                     .fnkbox_description,
                     .fnkbox_box,
+                    .scrollable_list,
                     .fnkbox_testcases,
                     .fnkslist,
                     .fnkslist_element,
@@ -4742,6 +5014,11 @@ const Workspace = struct {
 
             const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
                 if (!lego.exists) continue;
+                if (lego.specific.tag() == .scrollable_list and lego.specific.scrollable_list.rect().contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
                 if (lego.specific.tag() == .fnkbox_testcases and Lego.Specific.FnkboxBox.testcases_box.contains(
                     lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
                 )) {
