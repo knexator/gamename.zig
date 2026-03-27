@@ -289,6 +289,9 @@ pub const Lego = struct {
         postit: Postit,
         list_viewer: ListViewer,
 
+        scrollable_list_inbetween: struct {
+            kind: enum { listviewer_sexprs },
+        },
         scrollable_list: struct {
             scrollbar: Lego.Index,
             kind: enum { listviewer_sexprs },
@@ -680,6 +683,9 @@ pub const Lego = struct {
             fn pairChildren(index: Lego.Index) [2]Lego.Index {
                 assert(index.hasTag(.sexpr));
                 assert(index.get().specific.sexpr.kind == .pair);
+                assert(Toybox.childCount(index) == 2);
+                assert(index.get().tree.first.hasTag(.sexpr));
+                assert(index.get().tree.last.hasTag(.sexpr));
                 return .{ index.get().tree.first, index.get().tree.last };
             }
 
@@ -1492,9 +1498,11 @@ pub const Lego = struct {
             };
         };
 
+        // TODO(game): smooth anim when popping a list element
         pub const ListViewer = struct {
-            main_hash: u32 = 0,
-            list_hash: u32 = 0,
+            // (almost) ensures that the hash starts out incorrect
+            main_hash: u32 = 123,
+            list_hash: u32 = 123,
 
             pub fn computeMainHash(index: Lego.Index) u32 {
                 const main = children(index).main;
@@ -1506,6 +1514,7 @@ pub const Lego = struct {
                 var hasher = std.hash.Wyhash.init(0);
                 var cur = list.get().tree.first;
                 while (cur != .nothing) : (cur = cur.get().tree.next) {
+                    if (cur.hasTag(.scrollable_list_inbetween)) continue;
                     hasher.update(std.mem.asBytes(&Sexpr.hash(cur)));
                 }
                 hasher.update(std.mem.asBytes(&Sexpr.hash(children(index).sentinel)));
@@ -1528,6 +1537,7 @@ pub const Lego = struct {
                 };
             }
 
+            // TODO(game): avoid sudden jumps
             pub fn canonize(index: Lego.Index, undo_stack: ?*UndoStack) !void {
                 const lego = index.get();
                 const new_main_hash = Lego.Specific.ListViewer.computeMainHash(index);
@@ -1560,10 +1570,20 @@ pub const Lego = struct {
                             count += 1;
                             Toybox.addChildLast(
                                 lego_children.scrollable_list,
+                                try Toybox.new(.{}, .{ .scrollable_list_inbetween = .{ .kind = .listviewer_sexprs } }, undo_stack),
+                                undo_stack,
+                            );
+                            Toybox.addChildLast(
+                                lego_children.scrollable_list,
                                 try Toybox.dupeIntoFloating(left, true, undo_stack),
                                 undo_stack,
                             );
                         }
+                        Toybox.addChildLast(
+                            lego_children.scrollable_list,
+                            try Toybox.new(.{}, .{ .scrollable_list_inbetween = .{ .kind = .listviewer_sexprs } }, undo_stack),
+                            undo_stack,
+                        );
                         const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, true, undo_stack);
                         new_sentinel.get().local_point = lego_children.sentinel.get().local_point;
                         Toybox.changeChild(lego_children.sentinel, new_sentinel, undo_stack);
@@ -1581,6 +1601,7 @@ pub const Lego = struct {
                     var cur_item = Toybox.get(lego_children.scrollable_list).tree.first;
                     var count: f32 = 0;
                     while (cur_item != .nothing) : (cur_item = cur_item.get().tree.next) {
+                        if (cur_item.hasTag(.scrollable_list_inbetween)) continue;
                         count += 1;
                         const next_parent = try Toybox.buildSexpr(undefined, .empty, false, false, undo_stack);
                         // TODO(optim): avoid this by directly creating either a pair or an empty
@@ -1603,7 +1624,8 @@ pub const Lego = struct {
                     Toybox.changeChild(cur_parent, sentinel, undo_stack);
                     Toybox.destroyFloating(cur_parent, undo_stack);
 
-                    if (sentinel_is_wrong) {
+                    // "if (true)" to ensure that the inbetween elements get created
+                    if (true or sentinel_is_wrong) {
                         list_viewer.main_hash = 0;
                         try canonize(index, undo_stack);
                     } else {
@@ -1737,6 +1759,7 @@ pub const Lego = struct {
             .executor_crank => |crank| if (crank.enabled) .default_extrahitbox else return null,
             .case => .default,
             .newcase => .new_case,
+            .scrollable_list_inbetween => .new_case,
             .garland => .garland,
             .lens => .lens,
             .list_viewer => Handle.Size.default.scale(2),
@@ -1761,6 +1784,9 @@ pub const Lego = struct {
             .executor_brake => |brake| brake.handle_pos,
             .executor_crank => |crank| crank.handle_pos,
             .list_viewer => Vec2.new(-1, -1).scale(@sqrt(2.0)),
+            .scrollable_list_inbetween => |t| switch (t.kind) {
+                .listviewer_sexprs => .new(-0.5, math.lerp(-1, -0.5, lego.dropzone_t)),
+            },
             else => .zero,
         };
     }
@@ -1840,6 +1866,7 @@ pub const Lego = struct {
             .fnkslist_element,
             .newcase,
             .area,
+            .scrollable_list_inbetween,
             .testcase,
             .pill,
             .postit_text,
@@ -1871,6 +1898,7 @@ pub const Lego = struct {
             .fnkbox_description,
             .fnkbox_testcases,
             .scrollable_list,
+            .scrollable_list_inbetween,
             .fnkslist,
             .fnkslist_element,
             .newcase,
@@ -3495,6 +3523,7 @@ const Workspace = struct {
                         }
                     },
                     .scrollable_list,
+                    .scrollable_list_inbetween,
                     .case,
                     .newcase,
                     .garland,
@@ -3540,6 +3569,9 @@ const Workspace = struct {
                             => unreachable,
                             .case, .lens, .fnkbox, .list_viewer, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
+                            .scrollable_list_inbetween => |t| .{ grabbing != .nothing and switch (t.kind) {
+                                .listviewer_sexprs => Toybox.get(grabbing).specific.tag() == .sexpr,
+                            }, .drop },
                             .garland => if (grabbing == .nothing)
                                 .{ true, .hot }
                             else if (Toybox.get(grabbing).specific.tag() == .garland)
@@ -3608,12 +3640,27 @@ const Workspace = struct {
                     // lego.local_point = local_target;
 
                     if (Toybox.safeGet(interaction.dropzone)) |dropzone| {
-                        const dropzone_is_pattern = dropzone.specific.sexpr.is_pattern;
+                        const dropzone_is_pattern = switch (dropzone.specific) {
+                            .sexpr => |s| s.is_pattern,
+                            .scrollable_list_inbetween => |t| switch (t.kind) {
+                                .listviewer_sexprs => false,
+                            },
+                            else => unreachable,
+                        };
                         if (dropzone_is_pattern != sexpr.is_pattern) {
                             Lego.Specific.Sexpr.setIsPattern(cur, dropzone_is_pattern);
                         }
 
-                        const dropzone_is_fnkname = dropzone.specific.sexpr.is_fnkname;
+                        const dropzone_is_fnkname = switch (dropzone.specific) {
+                            .sexpr => |s| s.is_fnkname,
+                            .scrollable_list_inbetween => |t| switch (t.kind) {
+                                .listviewer_sexprs => false,
+                            },
+                            else => unreachable,
+                        };
+                        if (dropzone_is_pattern != sexpr.is_pattern) {
+                            Lego.Specific.Sexpr.setIsPattern(cur, dropzone_is_pattern);
+                        }
                         if (dropzone_is_fnkname != sexpr.is_fnkname) {
                             var cur_sexpr = cur;
                             while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, cur).next) {
@@ -3991,12 +4038,12 @@ const Workspace = struct {
                     .scrollable_list => |scrollable_list| {
                         const scroll_visual = scrollable_list.scrollbar.get().specific.scrollbar.scroll_visual;
 
-                        var k: usize = 0;
                         var cur_element: Lego.Index = lego.tree.first;
+                        var y: f32 = -scroll_visual;
                         while (cur_element != .nothing) {
                             Toybox.get(cur_element).local_point = .{ .pos = scrollable_list.base()
-                                .addY(scrollable_list.spacing() * (tof32(k) - scroll_visual)), .scale = scrollable_list.elementScale() };
-                            k += 1;
+                                .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() };
+                            y += if (cur_element.hasTag(.scrollable_list_inbetween)) 0.5 * cur_element.get().dropzone_t else 1.0;
                             cur_element = Toybox.get(cur_element).tree.next;
                         }
                     },
@@ -4033,7 +4080,7 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .list_viewer, .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .scrollable_list_inbetween, .list_viewer, .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -4482,7 +4529,7 @@ const Workspace = struct {
                                 .blackAlpha(alpha),
                             );
                         },
-                        .fnkslist, .executor_controls, .garland_newcases, .executor, .fnkbox, .pill => {},
+                        .scrollable_list_inbetween, .fnkslist, .executor_controls, .garland_newcases, .executor, .fnkbox, .pill => {},
                     }
                 }
             }
@@ -4771,7 +4818,13 @@ const Workspace = struct {
                             @panic("unhandled instant button");
                         }
                     }
-                } else if (hot_parent != .nothing and Toybox.get(hot_parent).specific.tag() == .area) {
+                } else if (hot_parent != .nothing and switch (hot_parent.get().specific) {
+                    .area => true,
+                    .scrollable_list => |t| switch (t.kind) {
+                        .listviewer_sexprs => true,
+                    },
+                    else => false,
+                }) {
                     // Case A.1: plucking a top-level thing
                     undo_stack.storeAllData(hot_index);
                     Toybox.popWithUndoAndChangingCoords(hot_index, undo_stack);
@@ -4951,6 +5004,7 @@ const Workspace = struct {
                     .fnkbox_description,
                     .fnkbox_box,
                     .scrollable_list,
+                    .scrollable_list_inbetween,
                     .fnkbox_testcases,
                     .fnkslist,
                     .fnkslist_element,
