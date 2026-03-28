@@ -2831,7 +2831,7 @@ pub const Toybox = struct {
         return result;
     }
 
-    pub fn buildListViewer(pos: Vec2, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildListViewer(point: Point, undo_stack: ?*UndoStack) !Lego.Index {
         const scrollbar = Lego.Specific.Scrollbar.build(
             .fromCenterAndSize(.new(6.5, 0), .new(0.5, 5)),
             0,
@@ -2839,7 +2839,7 @@ pub const Toybox = struct {
             undo_stack,
         );
 
-        return try createWithChildren(.{ .pos = pos }, .{ .list_viewer = .{} }, &.{
+        return try createWithChildren(point, .{ .list_viewer = .{} }, &.{
             try buildSexpr(.{ .scale = 2 }, .empty, false, false, undo_stack),
             scrollbar,
             try Toybox.new(.{}, .{
@@ -3182,9 +3182,9 @@ const Workspace = struct {
             ), undo_stack);
         }
 
-        if (true) {
+        if (false) {
             Toybox.addChildLast(dst.main_area, try Toybox.buildListViewer(
-                .new(30, -3),
+                .{ .pos = .new(30, -3) },
                 undo_stack,
             ), undo_stack);
         }
@@ -5230,6 +5230,13 @@ const Workspace = struct {
                         .new(1, 13),
                         .new(2.5, 12.5),
                         true,
+                        undo_stack,
+                    ), undo_stack);
+                }
+
+                if (true) { // add a listviewer
+                    Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildListViewer(
+                        .{ .pos = .new(2, 8), .scale = 0.5 },
                         undo_stack,
                     ), undo_stack);
                 }
