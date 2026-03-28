@@ -292,41 +292,7 @@ pub const Lego = struct {
         scrollable_list_inbetween: struct {
             kind: enum { listviewer_sexprs },
         },
-        scrollable_list: struct {
-            scrollbar: Lego.Index,
-            kind: enum { listviewer_sexprs },
-
-            pub fn base(this: @This()) Vec2 {
-                return switch (this.kind) {
-                    .listviewer_sexprs => .new(5, -1.75 - 0.05),
-                    // .listviewer_sexprs => .new(4.5, -1.25 - 0 * 0.125),
-                };
-            }
-
-            pub fn elementScale(this: @This()) f32 {
-                return switch (this.kind) {
-                    .listviewer_sexprs => 0.5,
-                };
-            }
-
-            pub fn spacing(this: @This()) f32 {
-                return switch (this.kind) {
-                    .listviewer_sexprs => 1.25,
-                };
-            }
-
-            pub fn rect(this: @This()) Rect {
-                return switch (this.kind) {
-                    .listviewer_sexprs => .fromCenterAndSize(.new(5.75 - 0.125, 0), .new(2.25, 5)),
-                };
-            }
-
-            pub fn clip(this: @This()) bool {
-                return switch (this.kind) {
-                    .listviewer_sexprs => true,
-                };
-            }
-        },
+        scrollable_list: ScrollableList,
 
         // TODO(now): delete these and merge with
         fnkbox_testcases: struct {
@@ -1498,6 +1464,87 @@ pub const Lego = struct {
             };
         };
 
+        pub const ScrollableList = struct {
+            scrollbar: Lego.Index,
+            kind: enum { listviewer_sexprs },
+
+            pub fn insertElement(inbetween: Lego.Index, new_element: Lego.Index, undo_stack: ?*UndoStack) !void {
+                assert(Toybox.isFloating(new_element));
+                assert(inbetween.hasTag(.scrollable_list_inbetween));
+
+                Toybox.changeCoordinates(new_element, Toybox.parentAbsolutePoint(new_element), Toybox.parentAbsolutePoint(inbetween));
+                Toybox.insertAfter(new_element, inbetween, undo_stack);
+                Toybox.insertAfter(try Toybox.new(inbetween.get().local_point, inbetween.get().specific, undo_stack), new_element, undo_stack);
+            }
+
+            pub fn popElement(element: Lego.Index, undo_stack: ?*UndoStack) !void {
+                Toybox.refreshAbsolutePoints(&.{element});
+
+                const prev_between = element.get().tree.prev;
+                const next_between = element.get().tree.next;
+                assert(prev_between.hasTag(.scrollable_list_inbetween));
+                assert(next_between.hasTag(.scrollable_list_inbetween));
+                const kind = prev_between.get().specific.scrollable_list_inbetween.kind;
+
+                Toybox.pop(prev_between, undo_stack);
+                Toybox.pop(next_between, undo_stack);
+                Toybox.destroyFloating(prev_between, undo_stack);
+                Toybox.destroyFloating(next_between, undo_stack);
+
+                const new_between = try Toybox.new(element.get().absolute_point, .{ .scrollable_list_inbetween = .{ .kind = kind } }, undo_stack);
+                Toybox.changeChildWithUndoAndAlsoCoords(element, new_between, undo_stack);
+
+                // TODO(now): revise
+                // const l_a = Toybox.get(original_parent_tree.next).specific.newcase.length();
+                // const l_b = Toybox.get(parent).specific.newcase.length();
+                // Toybox.get(original_parent_tree.next).specific.newcase.length_before = l_b;
+                // Toybox.get(original_parent_tree.next).specific.newcase.length_after = l_a;
+                // Toybox.get(original_parent_tree.next).dropzone_t = element.get().hot_t;
+                // Toybox.get(original_parent_tree.next).local_point = parent.get().local_point;
+                // Toybox.pop(parent, undo_stack);
+                // Toybox.destroyFloating(parent, undo_stack);
+
+                Toybox.refreshAbsolutePoints(&.{ element, new_between });
+            }
+
+            pub fn canPluckElements(this: @This()) bool {
+                return switch (this.kind) {
+                    .listviewer_sexprs => true,
+                };
+            }
+
+            pub fn base(this: @This()) Vec2 {
+                return switch (this.kind) {
+                    .listviewer_sexprs => .new(5, -1.75 - 0.05),
+                    // .listviewer_sexprs => .new(4.5, -1.25 - 0 * 0.125),
+                };
+            }
+
+            pub fn elementScale(this: @This()) f32 {
+                return switch (this.kind) {
+                    .listviewer_sexprs => 0.5,
+                };
+            }
+
+            pub fn spacing(this: @This()) f32 {
+                return switch (this.kind) {
+                    .listviewer_sexprs => 1.25,
+                };
+            }
+
+            pub fn rect(this: @This()) Rect {
+                return switch (this.kind) {
+                    .listviewer_sexprs => .fromCenterAndSize(.new(5.75 - 0.125, 0), .new(2.25, 5)),
+                };
+            }
+
+            pub fn clip(this: @This()) bool {
+                return switch (this.kind) {
+                    .listviewer_sexprs => true,
+                };
+            }
+        };
+
         // TODO(game): smooth anim when popping a list element
         pub const ListViewer = struct {
             // (almost) ensures that the hash starts out incorrect
@@ -1624,8 +1671,7 @@ pub const Lego = struct {
                     Toybox.changeChild(cur_parent, sentinel, undo_stack);
                     Toybox.destroyFloating(cur_parent, undo_stack);
 
-                    // "if (true)" to ensure that the inbetween elements get created
-                    if (true or sentinel_is_wrong) {
+                    if (sentinel_is_wrong) {
                         list_viewer.main_hash = 0;
                         try canonize(index, undo_stack);
                     } else {
@@ -2224,6 +2270,19 @@ pub const Toybox = struct {
         Toybox.changeCoordinates(child, old_parent_abs_point, .{});
     }
 
+    pub fn insertAfter(to_be_inserted: Lego.Index, reference_sibling: Lego.Index, undo_stack: ?*UndoStack) void {
+        const sibling_tree = reference_sibling.get().tree;
+        const element_tree = to_be_inserted.get().tree;
+        return insert(to_be_inserted, .{
+            .first = element_tree.first,
+            .last = element_tree.last,
+            .parent = sibling_tree.parent,
+            .prev = reference_sibling,
+            .next = sibling_tree.next,
+        }, undo_stack);
+    }
+
+    // TODO(code): change this to just take parent/siblings, not children
     pub fn insert(child: Lego.Index, where: Lego.Tree, undo_stack: ?*UndoStack) void {
         assert(Toybox.isFloating(child));
         assert(!where.isFloating());
@@ -2253,7 +2312,7 @@ pub const Toybox = struct {
     }
 
     // TODO(design): remove
-    pub fn changeChildWithUndoAndAlsoCoords(original_child: Lego.Index, new_child: Lego.Index, undo_stack: *UndoStack) void {
+    pub fn changeChildWithUndoAndAlsoCoords(original_child: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
         const old_parent_abs_point = Toybox.parentAbsolutePoint(original_child);
         Toybox.changeChild(original_child, new_child, undo_stack);
         Toybox.changeCoordinates(original_child, old_parent_abs_point, .{});
@@ -4041,8 +4100,8 @@ const Workspace = struct {
                         var cur_element: Lego.Index = lego.tree.first;
                         var y: f32 = -scroll_visual;
                         while (cur_element != .nothing) {
-                            Toybox.get(cur_element).local_point = .{ .pos = scrollable_list.base()
-                                .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() };
+                            Toybox.get(cur_element).local_point.lerpTowards(.{ .pos = scrollable_list.base()
+                                .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() }, .slow, delta_seconds);
                             y += if (cur_element.hasTag(.scrollable_list_inbetween)) 0.5 * cur_element.get().dropzone_t else 1.0;
                             cur_element = Toybox.get(cur_element).tree.next;
                         }
@@ -4818,16 +4877,15 @@ const Workspace = struct {
                             @panic("unhandled instant button");
                         }
                     }
-                } else if (hot_parent != .nothing and switch (hot_parent.get().specific) {
-                    .area => true,
-                    .scrollable_list => |t| switch (t.kind) {
-                        .listviewer_sexprs => true,
-                    },
-                    else => false,
-                }) {
+                } else if (hot_parent != .nothing and hot_parent.hasTag(.area)) {
                     // Case A.1: plucking a top-level thing
                     undo_stack.storeAllData(hot_index);
                     Toybox.popWithUndoAndChangingCoords(hot_index, undo_stack);
+                    grabbed_element_index = hot_index;
+                } else if (hot_parent != .nothing and hot_parent.hasTag(.scrollable_list) and hot_parent.get().specific.scrollable_list.canPluckElements()) {
+                    // Case A.6: plucking from a list, similar to A.4
+                    undo_stack.storeAllData(hot_index);
+                    try Lego.Specific.ScrollableList.popElement(hot_index, undo_stack);
                     grabbed_element_index = hot_index;
                 } else if (original_hot_data.specific.tag() == .sexpr) {
                     // Case A.2: plucking a nested sexpr
@@ -4884,7 +4942,9 @@ const Workspace = struct {
 
                 if (dropzone_index != .nothing) {
                     assert(Toybox.isFloating(workspace.grabbing.index));
-                    if (Toybox.get(dropzone_index).specific.tag() == .newcase) {
+                    if (dropzone_index.hasTag(.scrollable_list_inbetween)) {
+                        try Lego.Specific.ScrollableList.insertElement(dropzone_index, workspace.grabbing.index, undo_stack);
+                    } else if (Toybox.get(dropzone_index).specific.tag() == .newcase) {
                         const displaced_newcase = &Toybox.get(dropzone_index).specific.newcase;
                         assert(Toybox.get(workspace.grabbing.index).specific.tag() == .case);
                         const newcase = try Toybox.new(.{}, .{ .newcase = .{

@@ -2128,7 +2128,6 @@ pub const Point = extern struct {
         };
     }
 
-    // TODO: rename camelcase
     pub fn lerp_towards(self: *Point, goal: Point, ratio: f32, delta_seconds: f32) void {
         lerp_towards_float(&self.pos.x, goal.pos.x, ratio, delta_seconds);
         lerp_towards_float(&self.pos.y, goal.pos.y, ratio, delta_seconds);
@@ -2136,12 +2135,18 @@ pub const Point = extern struct {
         lerp_towards_float(&self.scale, goal.scale, ratio, delta_seconds);
     }
 
+    pub fn lerpTowards(self: *Point, goal: Point, speed: LerpSpeed, delta_seconds: f32) void {
+        self.* = self.lerpTowardsPure(goal, speed, delta_seconds);
+    }
+
     pub fn lerpTowardsPure(current: Point, goal: Point, speed: LerpSpeed, delta_seconds: f32) Point {
         return .{
-            lerpTowardsPureF32(current.pos.x, goal.pos.x, speed, delta_seconds),
-            lerpTowardsPureF32(current.pos.y, goal.pos.y, speed, delta_seconds),
-            lerpTowardsPureF32(current.turns, goal.turns, speed, delta_seconds),
-            lerpTowardsPureF32(current.scale, goal.scale, speed, delta_seconds),
+            .pos = .new(
+                lerpTowardsPureF32(current.pos.x, goal.pos.x, speed, delta_seconds),
+                lerpTowardsPureF32(current.pos.y, goal.pos.y, speed, delta_seconds),
+            ),
+            .turns = lerpTowardsPureF32(current.turns, goal.turns, speed, delta_seconds),
+            .scale = lerpTowardsPureF32(current.scale, goal.scale, speed, delta_seconds),
         };
     }
 
