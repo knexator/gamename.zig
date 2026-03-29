@@ -3251,7 +3251,7 @@ const Workspace = struct {
 
         if (true) { // tutorial postits
             var postit_pos: Vec2 = .new(40, -3);
-            dst.main_area.get().local_point = Point.inverseApplyGetLocal(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, .{});
+            dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 });
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
 
@@ -4739,6 +4739,11 @@ const Workspace = struct {
         const undo_stack = &workspace.undo_stack;
         undo_stack.startFrame();
 
+        if (platform.keyboard.wasPressed(.KeyF)) {
+            std.log.debug("camera point: {any}", .{workspace.main_area.get().absolute_point});
+            std.log.debug("camera center: {any}", .{workspace.cameraCenter()});
+        }
+
         assert(workspace.valid(scratch));
 
         if (platform.keyboard.wasPressed(.KeyZ)) {
@@ -4794,7 +4799,20 @@ const Workspace = struct {
                 var grabbed_element_index: Lego.Index = undefined;
                 var plucked: bool = true;
 
-                if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
+                if (platform.keyboard.cur.isControlDown() and hot_index.hasTag(.sexpr)) {
+                    // Special case: control-click to "go to definition"
+                    undo_stack.storeAllData(workspace.main_area);
+                    grabbed_element_index = .nothing;
+                    plucked = false;
+                    if (getFnkboxForFnk(hot_index)) |fnkbox_index| {
+                        workspace.centerCameraAt(fnkbox_index.get().local_point.applyToLocalPoint(.{
+                            .scale = 8,
+                            .pos = .new(0, 6),
+                        }));
+                    } else {
+                        // fnk not found, TODO(now): handle better
+                    }
+                } else if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
                     // Case A.0: duplicating
                     switch (hot_index.get().canDuplicate()) {
                         .yes => {
@@ -5174,12 +5192,7 @@ const Workspace = struct {
                 }
             }
 
-            for (workspace.roots(.with_main_camera).constSlice()) |root| {
-                if (root != workspace.main_area) {
-                    Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point;
-                }
-            }
-            Toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
+            workspace.refreshCamera();
         }
 
         if (true) { // open/close left toolbar, and regenerate its contents
@@ -5559,6 +5572,24 @@ const Workspace = struct {
         assert(workspace.valid(scratch));
     }
 
+    fn cameraCenter(workspace: *Workspace) Point {
+        return workspace.main_area.get().local_point.inverseApplyGetLocal(.{});
+    }
+
+    fn centerCameraAt(workspace: *Workspace, point: Point) void {
+        workspace.main_area.get().local_point = Point.inverseApplyGetLocal(point, .{});
+        workspace.refreshCamera();
+    }
+
+    fn refreshCamera(workspace: *Workspace) void {
+        for (workspace.roots(.with_main_camera).constSlice()) |root| {
+            if (root != workspace.main_area) {
+                Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point;
+            }
+        }
+        Toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
+    }
+
     fn setGrabbing(workspace: *Workspace, grabbing: Grabbing, undo_stack: ?*UndoStack) void {
         if (undo_stack) |s| {
             s.append(.{ .set_grabbing = workspace.grabbing });
@@ -5821,6 +5852,18 @@ const Workspace = struct {
         return result;
     }
 
+    fn getFnkboxForFnk(fnkname: Lego.Index) ?Lego.Index {
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.as(.fnkbox)) |fnkbox| {
+                if (Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname)) {
+                    return lego.index;
+                }
+            }
+        } else return null;
+    }
+
+    /// duplicates the garland and returns it
     fn getGarlandForFnk(
         workspace: *Workspace,
         fnkname: Lego.Index,
@@ -5828,24 +5871,21 @@ const Workspace = struct {
     ) !?Lego.Index {
         _ = new_point;
         const undo_stack = &workspace.undo_stack;
-        for (toybox.all_legos.items) |*lego| {
-            if (!lego.exists) continue;
-            if (lego.specific.as(.fnkbox)) |fnkbox| {
-                if (Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname)) {
-                    const garland = try Toybox.dupeIntoFloating(if (fnkbox.execution) |e|
-                        e.original_garland
-                    else
-                        fnkbox.executor().garland().index, true, undo_stack);
-                    const original_fnkname = try Lego.Specific.Garland.stealFnkname(
-                        garland,
-                        try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
-                        undo_stack,
-                    );
-                    assert(original_fnkname.get().specific.sexpr.kind == .empty);
-                    Toybox.destroyFloating(original_fnkname, undo_stack);
-                    return garland;
-                }
-            }
+        if (getFnkboxForFnk(fnkname)) |fnkbox_index| {
+            const fnkbox = &fnkbox_index.get().specific.fnkbox;
+            assert(Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname));
+            const garland = try Toybox.dupeIntoFloating(if (fnkbox.execution) |e|
+                e.original_garland
+            else
+                fnkbox.executor().garland().index, true, undo_stack);
+            const original_fnkname = try Lego.Specific.Garland.stealFnkname(
+                garland,
+                try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
+                undo_stack,
+            );
+            assert(original_fnkname.get().specific.sexpr.kind == .empty);
+            Toybox.destroyFloating(original_fnkname, undo_stack);
+            return garland;
         } else return null;
     }
 

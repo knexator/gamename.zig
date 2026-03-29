@@ -114,6 +114,10 @@ pub fn CustomKeyboardState(CustomKeyboardButton: type) type {
         pub fn isShiftDown(self: @This()) bool {
             return self.isDown(.ShiftLeft) or self.isDown(.ShiftRight);
         }
+
+        pub fn isControlDown(self: @This()) bool {
+            return self.isDown(.ControlLeft) or self.isDown(.ControlRight);
+        }
     };
 }
 
