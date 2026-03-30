@@ -711,6 +711,16 @@ pub const Vec2 = extern struct {
         );
     }
 
+    pub fn approxEqAbs(a: Vec2, b: Vec2, tolerance: Scalar) bool {
+        return std.math.approxEqAbs(Scalar, a.x, b.x, tolerance) and
+            std.math.approxEqAbs(Scalar, a.y, b.y, tolerance);
+    }
+
+    pub fn approxEqRel(a: Vec2, b: Vec2, tolerance: Scalar) bool {
+        return std.math.approxEqRel(Scalar, a.x, b.x, tolerance) and
+            std.math.approxEqRel(Scalar, a.y, b.y, tolerance);
+    }
+
     pub fn expectApproxEqRel(expected: Vec2, actual: Vec2, tolerance: anytype) !void {
         try std.testing.expectApproxEqRel(expected.x, actual.x, tolerance);
         try std.testing.expectApproxEqRel(expected.y, actual.y, tolerance);
@@ -2206,15 +2216,15 @@ pub const Point = extern struct {
     }
 
     pub fn equalsRel(a: Point, b: Point, tolerance: anytype) bool {
-        if (expectApproxEqRel(a, b, tolerance)) {
-            return true;
-        } else |_| return false;
+        return std.math.approxEqRel(f32, a.scale, b.scale, tolerance) and
+            std.math.approxEqRel(f32, a.turns, b.turns, tolerance) and
+            Vec2.approxEqRel(a.pos, b.pos, tolerance);
     }
 
     pub fn equalsAbs(a: Point, b: Point, tolerance: anytype) bool {
-        if (expectApproxEqAbs(a, b, tolerance)) {
-            return true;
-        } else |_| return false;
+        return std.math.approxEqAbs(f32, a.scale, b.scale, tolerance) and
+            std.math.approxEqAbs(f32, a.turns, b.turns, tolerance) and
+            Vec2.approxEqAbs(a.pos, b.pos, tolerance);
     }
 
     // TODO: document these
@@ -2243,6 +2253,11 @@ pub const Point = extern struct {
         try expectApproxEqAbs(.{ .pos = .new(0, 2), .scale = 2, .turns = 0.25 }, applied, 0.0001);
         try expectApproxEqAbs(parent, applied.inverseApplyToLocalPoint(local), 0.0001);
         try expectApproxEqAbs(local, parent.inverseApplyGetLocal(applied), 0.0001);
+    }
+
+    test "inverse apply with identity local is just the same" {
+        const point: Point = .{ .pos = .zero, .scale = 2, .turns = 0.25 };
+        try expectApproxEqAbs(point, point.inverseApplyToLocalPoint(.{}), 0.0001);
     }
 
     pub fn inverseApplyGetLocalPosition(parent: Point, applied: Vec2) Vec2 {
