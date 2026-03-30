@@ -532,6 +532,14 @@ pub const Lego = struct {
             }
 
             pub fn setIsPattern(parent: Lego.Index, is_pattern: bool) void {
+                // TODO(polish): slow-mo looks better with this, but not the normal flow
+                if (false and parent.get().specific.sexpr.is_pattern != is_pattern) {
+                    if (is_pattern) {
+                        parent.get().local_point.turns += 0.5;
+                    } else {
+                        parent.get().local_point.turns -= 0.5;
+                    }
+                }
                 var cur_sexpr = parent;
                 while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, parent).next) {
                     Toybox.get(cur_sexpr).specific.sexpr.is_pattern = is_pattern;
@@ -540,6 +548,7 @@ pub const Lego = struct {
                         Toybox.get(cur_child).specific.sexpr.is_pattern = is_pattern;
                     }
                 }
+                Lego.Specific.Sexpr.updateLocalPositions(parent);
             }
 
             pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
@@ -599,26 +608,11 @@ pub const Lego = struct {
                 const lego = Toybox.get(index);
                 const sexpr = &lego.specific.sexpr;
 
-                const base_point: Point = if (!sexpr.is_pattern)
-                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
-                else
-                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
-
-                const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
-                    .{ .turns = -0.01, .pos = .new(0.25, 0) },
-                    .{ .turns = 0.01, .pos = .new(-0.25, 0) },
-                    sexpr.is_pattern_t,
-                ), lego.hot_t + lego.dropping_t * 2));
-
-                lego.visual_offset = hovered_point.plusTurns(sexpr.jiggling_t);
-
                 if (sexpr.kind == .pair) {
                     const child_up, const child_down = Toybox.getChildrenExact(2, index);
                     Toybox.get(child_up).local_point = (Point{})
-                        .applyToLocalPoint(lego.visual_offset)
                         .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
                     Toybox.get(child_down).local_point = (Point{})
-                        .applyToLocalPoint(lego.visual_offset)
                         .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
                 }
 
@@ -1970,6 +1964,26 @@ pub const Lego = struct {
                 .plusMargin3(.right, std.math.inf(f32)),
         };
     }
+
+    pub fn visualOffsetGoal(lego: *const Lego) Point {
+        return switch (lego.specific) {
+            .sexpr => |sexpr| blk: {
+                const base_point: Point = if (!sexpr.is_pattern)
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 0, -0.25, 0) }
+                else
+                    .{ .turns = math.remap(sexpr.is_pattern_t, 0.5, 1, 0.25, 0) };
+
+                const hovered_point = base_point.applyToLocalPoint(.lerp(.{}, .lerp(
+                    .{ .turns = -0.01, .pos = .new(0.25, 0) },
+                    .{ .turns = 0.01, .pos = .new(-0.25, 0) },
+                    sexpr.is_pattern_t,
+                ), lego.hot_t + lego.dropping_t * 2));
+
+                break :blk hovered_point.plusTurns(sexpr.jiggling_t);
+            },
+            else => .{},
+        };
+    }
 };
 
 pub const ApiFor = struct {
@@ -2659,7 +2673,8 @@ pub const Toybox = struct {
             var cur: Lego.Index = root;
             while (cur != .nothing) : (cur = next_preordered(cur, root).next) {
                 Toybox.get(cur).absolute_point = parentAbsolutePoint(cur)
-                    .applyToLocalPoint(Toybox.get(cur).local_point);
+                    .applyToLocalPoint(Toybox.get(cur).local_point)
+                    .applyToLocalPoint(Toybox.get(cur).visual_offset);
             }
         }
     }
@@ -2850,6 +2865,14 @@ pub const Toybox = struct {
             }, undo_stack),
             try buildSexpr(.{ .pos = .new(5.5, 3.25), .scale = 0.5 }, .empty, false, false, undo_stack),
         }, undo_stack);
+    }
+
+    pub fn setLocalPointSmooth(index: Lego.Index, new_local_point: Point) void {
+        const current = index.get().local_point.applyToLocalPoint(index.get().visual_offset);
+        const new_visual_offset = Point.inverseApplyGetLocal(new_local_point, current);
+        assert(current.equalsAbs(new_local_point.applyToLocalPoint(new_visual_offset), 0.001));
+        index.get().local_point = new_local_point;
+        index.get().visual_offset = new_visual_offset;
     }
 };
 
@@ -3251,7 +3274,7 @@ const Workspace = struct {
 
         if (true) { // tutorial postits
             var postit_pos: Vec2 = .new(40, -3);
-            dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 });
+            dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
 
@@ -3472,7 +3495,8 @@ const Workspace = struct {
                 const cur = step.index;
                 const lego = Toybox.get(cur);
                 assert(lego.exists);
-                const relative_needle_pos = lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
+                const absolute_point = Point.inverseApplyToLocalPoint(lego.absolute_point, lego.visual_offset); // lego.absolute_point;
+                const relative_needle_pos = absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
                 if (lego.unhoverable and !step.children_already_visited) {
                     it.skipChildren();
                     _ = it.next();
@@ -3482,7 +3506,7 @@ const Workspace = struct {
 
                 // TODO(optim): check that this works
                 const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
-                const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
+                const absolute_bounds = absolute_point.applyToLocalBounds(local_bounds);
                 if (!absolute_bounds.contains(absolute_needle_pos)) {
                     it.skipChildren();
                     _ = it.next();
@@ -3492,7 +3516,7 @@ const Workspace = struct {
                 switch (lego.specific) {
                     .sexpr => |sexpr| {
                         if (!step.children_already_visited and
-                            Lego.Specific.Sexpr.contains(lego.absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos))
+                            Lego.Specific.Sexpr.contains(absolute_point, sexpr.is_pattern, sexpr.kind, absolute_needle_pos))
                         {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root };
@@ -3504,7 +3528,7 @@ const Workspace = struct {
                     .lens => |lens| {
                         if (step.children_already_visited and
                             lens.is_target and
-                            lego.absolute_point.inRange(absolute_needle_pos, lens.local_radius))
+                            absolute_point.inRange(absolute_needle_pos, lens.local_radius))
                         {
                             const interaction_nested = _findHotAndDropzone(
                                 lens.roots_to_interact,
@@ -3521,7 +3545,7 @@ const Workspace = struct {
                     },
                     .area => |area| {
                         if (step.children_already_visited and
-                            area.bg.contains(lego.absolute_point, absolute_needle_pos) and
+                            area.bg.contains(absolute_point, absolute_needle_pos) and
                             (grabbing == .nothing or Toybox.get(grabbing).tree.parent == .nothing or Toybox.isAncestor(cur, grabbing)))
                         {
                             return .{ .over_background = cur };
@@ -3531,7 +3555,7 @@ const Workspace = struct {
                         if (step.children_already_visited and
                             button.enabled and
                             grabbing == .nothing and
-                            button.local_rect.contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
+                            button.local_rect.contains(absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
                             return .{ .hot = cur, .over_background = root };
                         }
@@ -3539,7 +3563,7 @@ const Workspace = struct {
                     .scrollbar => |scrollbar| {
                         if (step.children_already_visited and
                             grabbing == .nothing and
-                            scrollbar.handleRectVisual().contains(lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
+                            scrollbar.handleRectVisual().contains(absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
                             return .{ .hot = cur, .over_background = root };
                         }
@@ -3558,7 +3582,7 @@ const Workspace = struct {
                     .fnkbox_testcases => {
                         // TODO(optim): this should already be included in the general case
                         if (!step.children_already_visited and !Lego.Specific.FnkboxBox.testcases_box.contains(
-                            lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
+                            absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos),
                         )) {
                             it.skipChildren();
                         }
@@ -3692,7 +3716,8 @@ const Workspace = struct {
                     sexpr.jiggling_t = math.clamp(math.maybeMirror(turns, sexpr.is_pattern), -0.1, 0.1);
 
                     // _ = turns;
-                    lego.local_point.lerp_towards(local_target, 0.6, delta_seconds);
+                    Toybox.setLocalPointSmooth(lego.index, local_target);
+                    // lego.local_point.lerp_towards(local_target, 0.2, delta_seconds);
                     // lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(math.maybeMirror(turns, sexpr.is_pattern), -0.1, 0.1)), 0.6, delta_seconds);
                     // lego.local_point.lerp_towards(local_target.plusTurns(math.clamp(turns, -0.1, 0.1)), 0.6, delta_seconds);
                     // lego.local_point = local_target.plusTurns(turns);
@@ -3744,8 +3769,10 @@ const Workspace = struct {
                             .applyToLocalPoint(.{ .pos = lego.handleLocalOffset().neg() })
                             .applyToLocalPoint(.{ .pos = grabbing.offset.neg() });
 
-                    lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
-                        .inverseApplyGetLocal(target), 0.6, delta_seconds);
+                    Toybox.setLocalPointSmooth(lego.index, Toybox.parentAbsolutePoint(cur)
+                        .inverseApplyGetLocal(target));
+                    // lego.local_point.lerp_towards(Toybox.parentAbsolutePoint(cur)
+                    //     .inverseApplyGetLocal(target), 0.6, delta_seconds);
                     // lego.local_point = Toybox.parentAbsolutePoint(cur)
                     //     .inverseApplyGetLocal(target);
                 },
@@ -4100,8 +4127,8 @@ const Workspace = struct {
                         var cur_element: Lego.Index = lego.tree.first;
                         var y: f32 = -scroll_visual;
                         while (cur_element != .nothing) {
-                            Toybox.get(cur_element).local_point.lerpTowards(.{ .pos = scrollable_list.base()
-                                .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() }, .slow, delta_seconds);
+                            Toybox.setLocalPointSmooth(cur_element, .{ .pos = scrollable_list.base()
+                                .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() });
                             y += if (cur_element.hasTag(.scrollable_list_inbetween)) 0.5 * cur_element.get().dropzone_t else 1.0;
                             cur_element = Toybox.get(cur_element).tree.next;
                         }
@@ -4239,7 +4266,7 @@ const Workspace = struct {
                         else => {},
                     }
                 } else {
-                    const point = lego.absolute_point.applyToLocalPoint(lego.visual_offset);
+                    const point = lego.absolute_point;
                     switch (lego.specific) {
                         .case => {
                             // TODO(game): draw variables in the cable
@@ -4808,7 +4835,7 @@ const Workspace = struct {
                         workspace.centerCameraAt(fnkbox_index.get().local_point.applyToLocalPoint(.{
                             .scale = 8,
                             .pos = .new(0, 6),
-                        }));
+                        }), false);
                     } else {
                         // fnk not found, TODO(now): handle better
                     }
@@ -5044,6 +5071,10 @@ const Workspace = struct {
         // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
         var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
 
+        if (workspace.grabbing.index.getSafe()) |g| {
+            std.log.debug("turns of grabbed {d:.3}", .{g.absolute_point.turns});
+        }
+
         if (true) { // update _t and other simple things that could be done in parallel
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
             defer zone.deinit();
@@ -5058,6 +5089,11 @@ const Workspace = struct {
                 done = math.lerpTowardsWithFinish(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, .fast, delta_seconds, eps) and done;
+                if (true) { // reduce visual_offset
+                    const target = lego.visualOffsetGoal();
+                    done = done and Point.equalsAbs(lego.visual_offset, target, 0.001);
+                    lego.visual_offset.lerpTowards(target, .fast, delta_seconds);
+                }
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
@@ -5104,13 +5140,12 @@ const Workspace = struct {
             }
         }
 
-        // TODO(design): improve/remove
-        for (things_actually_hot_etc.items) |index| {
-            switch (index.get().specific) {
-                else => {},
-                .sexpr => Lego.Specific.Sexpr.updateLocalPositions(index),
-            }
-        }
+        // TODO(design): actually use
+        // for (things_actually_hot_etc.items) |index| {
+        //     switch (index.get().specific) {
+        //         else => {},
+        //     }
+        // }
 
         if (true) { // pills decay
             for (toybox.all_legos.items) |*lego| {
@@ -5191,6 +5226,11 @@ const Workspace = struct {
                     }
                 }
             }
+
+            // TODO(now): revise
+            // if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
+            //     p.pos.addInPlace(mouse.deltaPos().neg());
+            // }
 
             workspace.refreshCamera();
         }
@@ -5576,15 +5616,19 @@ const Workspace = struct {
         return workspace.main_area.get().local_point.inverseApplyGetLocal(.{});
     }
 
-    fn centerCameraAt(workspace: *Workspace, point: Point) void {
-        workspace.main_area.get().local_point = Point.inverseApplyGetLocal(point, .{});
+    fn centerCameraAt(workspace: *Workspace, point: Point, instant: bool) void {
+        if (instant) {
+            workspace.main_area.get().local_point = Point.inverseApplyGetLocal(point, .{});
+        } else {
+            Toybox.setLocalPointSmooth(workspace.main_area, Point.inverseApplyGetLocal(point, .{}));
+        }
         workspace.refreshCamera();
     }
 
     fn refreshCamera(workspace: *Workspace) void {
         for (workspace.roots(.with_main_camera).constSlice()) |root| {
             if (root != workspace.main_area) {
-                Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point;
+                Toybox.get(root).local_point = Toybox.get(workspace.main_area).local_point.applyToLocalPoint(Toybox.get(workspace.main_area).visual_offset);
             }
         }
         Toybox.refreshAbsolutePoints(workspace.roots(.with_main_camera).constSlice());
