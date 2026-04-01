@@ -288,6 +288,7 @@ pub const Lego = struct {
         lens: Lens,
         postit: Postit,
         list_viewer: ListViewer,
+        meta_viewer: MetaViewer,
 
         scrollable_list_inbetween: struct {
             kind: enum { listviewer_sexprs },
@@ -623,6 +624,7 @@ pub const Lego = struct {
             }
 
             pub fn hash(index: Lego.Index) u32 {
+                assert(index.hasTag(.sexpr));
                 const sexpr = index.get().specific.sexpr;
                 return switch (sexpr.kind) {
                     .empty => 0,
@@ -801,6 +803,24 @@ pub const Lego = struct {
                     Toybox.get(i).local_point = offset;
                 }
             }
+
+            pub fn hash(index: Lego.Index) u32 {
+                assert(index.hasTag(.case));
+                const c = children(index);
+                var hasher = std.hash.Wyhash.init(0);
+                std.hash.autoHash(&hasher, struct {
+                    pattern: u32,
+                    template: u32,
+                    fnkname: u32,
+                    next: u32,
+                }{
+                    .pattern = Sexpr.hash(c.pattern),
+                    .template = Sexpr.hash(c.template),
+                    .fnkname = Sexpr.hash(c.fnkname),
+                    .next = Garland.hash(c.next),
+                });
+                return @truncate(hasher.final());
+            }
         };
 
         pub const Garland = struct {
@@ -950,6 +970,18 @@ pub const Lego = struct {
                         math.smoothstepEased(enqueueing_t, 0, 0.35, .easeInOutCubic)),
                     .turns = math.lerp(0, -0.1, math.smoothstepEased(enqueueing_t, 0.0, 0.3, .easeInOutCubic)),
                 };
+            }
+
+            pub fn hash(index: Lego.Index) u32 {
+                assert(index.hasTag(.garland));
+                var hasher = std.hash.Wyhash.init(0);
+                var cur_newcase = children(index).cases.get().tree.first;
+                while (cur_newcase != .nothing) : (cur_newcase = cur_newcase.get().tree.next) {
+                    assert(cur_newcase.hasTag(.newcase));
+                    const case = cur_newcase.get().tree.first;
+                    if (case != .nothing) hasher.update(std.mem.asBytes(&Case.hash(case)));
+                }
+                return @truncate(hasher.final());
             }
         };
 
@@ -1674,6 +1706,67 @@ pub const Lego = struct {
                 }
             }
         };
+
+        pub const MetaViewer = struct {
+            // (almost) ensures that the hash starts out incorrect
+            value_hash: u32 = 123,
+            garland_hash: u32 = 123,
+
+            pub fn computeValueHash(meta_viewer: Lego.Index) u32 {
+                return Sexpr.hash(children(meta_viewer).value);
+            }
+
+            pub fn computeGarlandHash(meta_viewer: Lego.Index) u32 {
+                return Garland.hash(children(meta_viewer).garland);
+            }
+
+            pub fn children(meta_viewer: Lego.Index) struct {
+                value: Lego.Index,
+                garland: Lego.Index,
+            } {
+                assert(Toybox.get(meta_viewer).specific.tag() == .meta_viewer);
+                const asdf = Toybox.getChildrenExact(2, meta_viewer);
+                return .{
+                    .value = asdf[0],
+                    .garland = asdf[1],
+                };
+            }
+
+            pub fn canonize(meta_viewer_index: Lego.Index, undo_stack: ?*UndoStack) !void {
+                const lego = meta_viewer_index.get();
+                const new_value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer_index);
+                const new_garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer_index);
+
+                const meta_viewer = &lego.specific.meta_viewer;
+                if (meta_viewer.value_hash != new_value_hash) {
+                    meta_viewer.value_hash = new_value_hash;
+                    defer meta_viewer.garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer_index);
+
+                    const old_garland = children(meta_viewer_index).garland;
+                    const value = children(meta_viewer_index).value;
+
+                    // TODO(now)
+                    _ = value;
+                    const new_garland = try Toybox.buildGarland(old_garland.get().local_point, &.{}, undo_stack);
+
+                    Toybox.changeChild(old_garland, new_garland, undo_stack);
+                    Toybox.destroyFloating(old_garland, undo_stack);
+                } else if (meta_viewer.garland_hash != new_garland_hash) {
+                    meta_viewer.garland_hash = new_garland_hash;
+                    defer meta_viewer.value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer_index);
+
+                    const garland = children(meta_viewer_index).garland;
+                    const old_value = children(meta_viewer_index).value;
+
+                    // TODO(now)
+                    const new_value = try Toybox.buildSexpr(old_value.get().local_point, .empty, false, false, undo_stack);
+                    _ = garland;
+
+                    Toybox.changeChild(old_value, new_value, undo_stack);
+                    Toybox.destroyFloating(old_value, undo_stack);
+                }
+            }
+        };
     };
 
     pub const Tree = struct {
@@ -1803,6 +1896,7 @@ pub const Lego = struct {
             .garland => .garland,
             .lens => .lens,
             .list_viewer => Handle.Size.default.scale(2),
+            .meta_viewer => Handle.Size.default.scale(2),
             .fnkbox => .default,
         };
         const enabled: bool = switch (lego.specific) {
@@ -1824,6 +1918,7 @@ pub const Lego = struct {
             .executor_brake => |brake| brake.handle_pos,
             .executor_crank => |crank| crank.handle_pos,
             .list_viewer => Vec2.new(-1, -1).scale(@sqrt(2.0)),
+            .meta_viewer => Vec2.new(-1, 1).scale(@sqrt(2.0)),
             .scrollable_list_inbetween => |t| switch (t.kind) {
                 .listviewer_sexprs => .new(-0.5, math.lerp(-1, -0.5, lego.dropzone_t)),
             },
@@ -1884,6 +1979,7 @@ pub const Lego = struct {
             .case,
             .postit,
             .list_viewer,
+            .meta_viewer,
             => .yes,
             .scrollbar,
             .button,
@@ -1930,6 +2026,7 @@ pub const Lego = struct {
             .postit,
             .executor,
             .list_viewer,
+            .meta_viewer,
             => false,
             .garland_newcases,
             .executor_controls,
@@ -2867,6 +2964,12 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
+    pub fn buildMetaViewer(point: Point, undo_stack: ?*UndoStack) !Lego.Index {
+        return try createWithChildren(point, .{ .meta_viewer = .{} }, &.{
+            try buildSexpr(.{ .scale = 2 }, .empty, false, false, undo_stack),
+            try buildGarland(.{ .pos = .new(2, 3) }, &.{}, undo_stack),
+        }, undo_stack);
+    }
     pub fn setLocalPointSmooth(index: Lego.Index, new_local_point: Point) void {
         const current = index.get().local_point.applyToLocalPoint(index.get().visual_offset);
         const new_visual_offset = Point.inverseApplyGetLocal(new_local_point, current);
@@ -3212,6 +3315,13 @@ const Workspace = struct {
             ), undo_stack);
         }
 
+        if (false) {
+            Toybox.addChildLast(dst.main_area, try Toybox.buildMetaViewer(
+                .{ .pos = .new(30, -3) },
+                undo_stack,
+            ), undo_stack);
+        }
+
         if (true) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
@@ -3458,6 +3568,9 @@ const Workspace = struct {
             if (lego.specific.tag() == .list_viewer) {
                 try Lego.Specific.ListViewer.canonize(lego.index, undo_stack);
             }
+            if (lego.specific.tag() == .meta_viewer) {
+                try Lego.Specific.MetaViewer.canonize(lego.index, undo_stack);
+            }
         }
     }
 
@@ -3625,6 +3738,7 @@ const Workspace = struct {
                     .executor_brake,
                     .executor_crank,
                     .list_viewer,
+                    .meta_viewer,
                     => {},
                 }
                 if (step.children_already_visited) {
@@ -3650,7 +3764,7 @@ const Workspace = struct {
                             .executor_controls,
                             .garland_newcases,
                             => unreachable,
-                            .case, .lens, .fnkbox, .list_viewer, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
+                            .case, .lens, .fnkbox, .list_viewer, .meta_viewer, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
                             .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
                             .scrollable_list_inbetween => |t| .{ grabbing != .nothing and switch (t.kind) {
                                 .listviewer_sexprs => Toybox.get(grabbing).specific.tag() == .sexpr,
@@ -4166,7 +4280,7 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .scrollable_list_inbetween, .list_viewer, .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .scrollable_list_inbetween, .list_viewer, .meta_viewer, .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -4601,7 +4715,7 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .list_viewer => {
+                        .list_viewer, .meta_viewer => {
                             const scale = 2.15;
                             drawer.canvas.line(
                                 camera_relative,
@@ -5071,10 +5185,6 @@ const Workspace = struct {
         // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
         var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
 
-        if (workspace.grabbing.index.getSafe()) |g| {
-            std.log.debug("turns of grabbed {d:.3}", .{g.absolute_point.turns});
-        }
-
         if (true) { // update _t and other simple things that could be done in parallel
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
             defer zone.deinit();
@@ -5106,6 +5216,7 @@ const Workspace = struct {
                         done = done and (@abs(executor.garland_appearing_t - 1) < eps);
                     },
                     .list_viewer,
+                    .meta_viewer,
                     .pill,
                     .area,
                     .case,
@@ -5181,7 +5292,10 @@ const Workspace = struct {
                     garland.visible =
                         grabbing_garland_or_case or
                         garland.hasChildCases() or
-                        (if (lego.tree.parent.getSafe()) |p| p.specific.tag() == .executor else false);
+                        (if (lego.tree.parent.getSafe()) |p| switch (p.specific) {
+                            else => false,
+                            .executor, .meta_viewer => true,
+                        } else false);
                 }
             }
         }
@@ -5262,7 +5376,7 @@ const Workspace = struct {
                     math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_1);
                     math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_2);
 
-                    const index = try Toybox.buildCase(.{ .pos = .new(2.75, 5) }, .{
+                    const index = try Toybox.buildCase(.{ .pos = .new(2.75, 3) }, .{
                         .pattern = try Toybox.buildSexpr(.{}, .{ .pair = .{
                             .up = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_2 }, true, false, undo_stack),
                             .down = try Toybox.buildSexpr(.{}, .{ .atom_var = new_name_1 }, true, false, undo_stack),
@@ -5289,7 +5403,14 @@ const Workspace = struct {
 
                 if (true) { // add a listviewer
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildListViewer(
-                        .{ .pos = .new(2, 8), .scale = 0.5 },
+                        .{ .pos = .new(2, 6), .scale = 0.5 },
+                        undo_stack,
+                    ), undo_stack);
+                }
+
+                if (true) { // add a metaviewer
+                    Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildMetaViewer(
+                        .{ .pos = .new(1.5, 9), .scale = 0.5 },
                         undo_stack,
                     ), undo_stack);
                 }
