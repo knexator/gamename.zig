@@ -1732,10 +1732,14 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn canonize(meta_viewer_index: Lego.Index, undo_stack: ?*UndoStack) !void {
+            pub fn canonize(meta_viewer_index: Lego.Index, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !void {
                 const lego = meta_viewer_index.get();
                 const new_value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer_index);
                 const new_garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer_index);
+
+                const core = @import("core.zig");
+                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                defer pool.deinit();
 
                 const meta_viewer = &lego.specific.meta_viewer;
                 if (meta_viewer.value_hash != new_value_hash) {
@@ -1745,9 +1749,16 @@ pub const Lego = struct {
                     const old_garland = children(meta_viewer_index).garland;
                     const value = children(meta_viewer_index).value;
 
-                    // TODO(now)
-                    _ = value;
-                    const new_garland = try Toybox.buildGarland(old_garland.get().local_point, &.{}, undo_stack);
+                    const core_value = try Sexpr.toOldCoreValue(&value.get().specific.sexpr, scratch);
+                    const maybe_fnkbody: ?core.FnkBody = core.fnkFromSexpr(core_value, scratch, &pool) catch |err| switch (err) {
+                        error.OutOfMemory => |x| return x,
+                        else => null,
+                    };
+
+                    const new_garland = if (maybe_fnkbody) |fnkbody|
+                        try Garland.buildFromOldCoreValueV0(old_garland.get().local_point, fnkbody, scratch, undo_stack)
+                    else
+                        try Toybox.buildGarland(old_garland.get().local_point, &.{}, undo_stack);
 
                     Toybox.changeChild(old_garland, new_garland, undo_stack);
                     Toybox.destroyFloating(old_garland, undo_stack);
@@ -1758,9 +1769,10 @@ pub const Lego = struct {
                     const garland = children(meta_viewer_index).garland;
                     const old_value = children(meta_viewer_index).value;
 
-                    // TODO(now)
-                    const new_value = try Toybox.buildSexpr(old_value.get().local_point, .empty, false, false, undo_stack);
-                    _ = garland;
+                    const core_garland = try Garland.toOldCoreValue(&garland.get().specific.garland, scratch);
+                    const core_value = try core.sexprFromCases(core_garland.cases.items, &pool);
+
+                    const new_value = try Sexpr.buildFromOldCoreValue(old_value.get().local_point, core_value, false, false, undo_stack);
 
                     Toybox.changeChild(old_value, new_value, undo_stack);
                     Toybox.destroyFloating(old_value, undo_stack);
@@ -3569,7 +3581,7 @@ const Workspace = struct {
                 try Lego.Specific.ListViewer.canonize(lego.index, undo_stack);
             }
             if (lego.specific.tag() == .meta_viewer) {
-                try Lego.Specific.MetaViewer.canonize(lego.index, undo_stack);
+                try Lego.Specific.MetaViewer.canonize(lego.index, scratch, undo_stack);
             }
         }
     }
