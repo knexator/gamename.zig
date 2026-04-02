@@ -1661,7 +1661,8 @@ pub const Lego = struct {
                         new_sentinel.get().local_point = lego_children.sentinel.get().local_point;
                         Toybox.changeChild(lego_children.sentinel, new_sentinel, undo_stack);
                     }
-                    lego_children.scrollbar.get().specific.scrollbar.total_length = count;
+                    // + 0.5 to give a bit of extra for adding at the end
+                    lego_children.scrollbar.get().specific.scrollbar.total_length = count + 0.5;
                 } else if (list_viewer.list_hash != new_list_hash) {
                     list_viewer.list_hash = new_list_hash;
 
@@ -1684,7 +1685,8 @@ pub const Lego = struct {
                         Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent, undo_stack);
                         cur_parent = next_parent;
                     }
-                    lego_children.scrollbar.get().specific.scrollbar.total_length = count;
+                    // + 0.5 to give a bit of extra for adding at the end
+                    lego_children.scrollbar.get().specific.scrollbar.total_length = count + 0.5;
 
                     const sentinel = try Toybox.dupeIntoFloating(lego_children.sentinel, true, undo_stack);
                     sentinel.get().local_point = cur_parent.get().local_point;
