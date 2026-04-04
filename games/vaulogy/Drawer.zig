@@ -186,20 +186,30 @@ const AtomVisualCache = struct {
         noise_z: ?f32 = null,
         display: ?[]const u8 = null,
     };
-    const hardcoded_visuals = .{
-        .identity = HardcodedAtomVisuals{
+    const hardcoded_visuals: []const struct {
+        name: []const u8,
+        visuals: HardcodedAtomVisuals,
+
+        pub fn do(name: []const u8, visuals: HardcodedAtomVisuals) @This() {
+            return .{
+                .name = name,
+                .visuals = visuals,
+            };
+        }
+    } = &.{
+        .do("identity", .{
             .color = .white,
             .profile = &.{},
-        },
-        .nil = HardcodedAtomVisuals{
+        }),
+        .do("nil", .{
             .color = .new(0.45, 0.45, 0.45),
             .profile = &.{.new(0.75, -0.25)},
-        },
-        .input = HardcodedAtomVisuals{
+        }),
+        .do("input", .{
             .color = .new(0.1, 0.6, 0.6),
             .profile = &.{ .new(0.2, 0.2), .new(0.8, 0.2) },
-        },
-        .true = HardcodedAtomVisuals{
+        }),
+        .do("true", .{
             .color = .new(0.5, 0.9, 0.5),
             .profile = &blk: {
                 const N = 10;
@@ -211,12 +221,12 @@ const AtomVisualCache = struct {
                 const res = buffer;
                 break :blk res;
             },
-        },
-        .false = HardcodedAtomVisuals{
+        }),
+        .do("false", .{
             .color = .new(0.9, 0.5, 0.5),
             .profile = &.{ .new(1.0 / 6.0, 0.2), .new(0.5, -0.2), .new(5.0 / 6.0, 0.2) },
-        },
-        .A = HardcodedAtomVisuals{
+        }),
+        .do("A", .{
             .color = .fromHex("#FA00FF"),
             .profile = &.{
                 .new(1.224892e-1, 1.97281936e-1),
@@ -226,8 +236,8 @@ const AtomVisualCache = struct {
                 .new(8.53909e-1, -3.479591e-2),
             },
             .display = "A",
-        },
-        .a = HardcodedAtomVisuals{
+        }),
+        .do("a", .{
             .color = .fromHex("#FF8EEC"),
             .profile = &.{
                 .new(0.10995328, 0.09992044),
@@ -243,8 +253,8 @@ const AtomVisualCache = struct {
                 .new(0.93121342, -0.02669808),
             },
             .display = "a",
-        },
-        .B = HardcodedAtomVisuals{
+        }),
+        .do("B", .{
             .color = .fromHex("#FFB600"),
             .profile = &.{
                 .new(0.1434, 0.1898),
@@ -255,8 +265,8 @@ const AtomVisualCache = struct {
                 .new(0.8648, -0.1829),
             },
             .display = "B",
-        },
-        .b = HardcodedAtomVisuals{
+        }),
+        .do("b", .{
             .color = .fromHex("#FFE18E"),
             .profile = &.{
                 .new(0.7142284e-1, 1.6622247e-1),
@@ -273,8 +283,8 @@ const AtomVisualCache = struct {
                 .new(9.332106e-1, -1.6913065e-1),
             },
             .display = "b",
-        },
-        .C = HardcodedAtomVisuals{
+        }),
+        .do("C", .{
             .color = .fromHex("#00E5FF"),
             .profile = &.{
                 .new(0.2628, -0.0853),
@@ -284,8 +294,8 @@ const AtomVisualCache = struct {
                 .new(0.9278, -0.0660),
             },
             .display = "C",
-        },
-        .c = HardcodedAtomVisuals{
+        }),
+        .do("c", .{
             .color = .fromHex("#9EFFF2"),
             .profile = &.{
                 .new(0.2433, -0.1498),
@@ -297,8 +307,8 @@ const AtomVisualCache = struct {
                 .new(0.9522, -0.1181),
             },
             .display = "c",
-        },
-        .D = HardcodedAtomVisuals{
+        }),
+        .do("D", .{
             .color = .fromHex("#97F200"),
             .profile = &.{
                 .new(0.0477, 0.1012),
@@ -309,8 +319,8 @@ const AtomVisualCache = struct {
                 .new(0.8471, -0.1488),
             },
             .display = "D",
-        },
-        .d = HardcodedAtomVisuals{
+        }),
+        .do("d", .{
             .color = .fromHex("#C8ED8F"),
             .profile = &.{
                 .new(0.0419, -0.0446),
@@ -331,8 +341,8 @@ const AtomVisualCache = struct {
                 .new(0.8992, -0.0767),
             },
             .display = "d",
-        },
-        .E = HardcodedAtomVisuals{
+        }),
+        .do("E", .{
             .color = .fromHex("#AD32FF"),
             .profile = &.{
                 .new(0.17830753, -0.13791077),
@@ -342,8 +352,8 @@ const AtomVisualCache = struct {
                 .new(0.86495407, -0.10338914),
             },
             .display = "E",
-        },
-        .e = HardcodedAtomVisuals{
+        }),
+        .do("e", .{
             .color = .fromHex("#D18EFF"),
             .profile = &.{
                 .new(0.10608470, -0.06664436),
@@ -356,8 +366,8 @@ const AtomVisualCache = struct {
                 .new(0.93807962, -0.09639150),
             },
             .display = "e",
-        },
-        .F = HardcodedAtomVisuals{
+        }),
+        .do("F", .{
             .color = .fromHex("#39af97"),
             .profile = &.{
                 .new(0.18635559, -0.04046786),
@@ -368,8 +378,8 @@ const AtomVisualCache = struct {
                 .new(0.81552447, -0.01316329),
             },
             .display = "F",
-        },
-        .f = HardcodedAtomVisuals{
+        }),
+        .do("f", .{
             .color = .fromHex("#7FB5B0"),
             .profile = &.{
                 .new(0.12697715, -0.02727234),
@@ -385,36 +395,36 @@ const AtomVisualCache = struct {
                 .new(0.79141130, -0.03685517),
             },
             .display = "f",
-        },
-        .firstAsUppercase = HardcodedAtomVisuals{
+        }),
+        .do("firstAsUppercase", .{
             .color = .fromHex("#99BBFF"),
             .profile = null,
-        },
-        .up = HardcodedAtomVisuals{
+        }),
+        .do("up", .{
             .color = .fromHex("#00ffff"),
             .profile = null,
-        },
-        .down = HardcodedAtomVisuals{
+        }),
+        .do("down", .{
             .color = .fromHex("#ff9900"),
             .profile = null,
-        },
-        .left = HardcodedAtomVisuals{
+        }),
+        .do("left", .{
             .color = .fromHex("#99ff00"),
             .profile = null,
-        },
-        .right = HardcodedAtomVisuals{
+        }),
+        .do("right", .{
             .color = .fromHex("#ffff00"),
             .profile = null,
-        },
-        .letter = HardcodedAtomVisuals{
+        }),
+        .do("letter", .{
             .color = .fromHex("#123456"),
             .profile = null,
-        },
+        }),
         // TODO: the debug web build crashes without this!
-        .other = HardcodedAtomVisuals{
+        .do("other", .{
             .color = .fromHex("#9955ff"),
             .profile = null,
-        },
+        }),
     };
 
     pub fn init(arena: std.mem.Allocator, gl: Gl) !AtomVisualCache {
@@ -423,9 +433,9 @@ const AtomVisualCache = struct {
             .arena = arena,
         };
 
-        inline for (std.meta.fields(@TypeOf(hardcoded_visuals))) |field| {
-            const atom_name = field.name;
-            const input = @field(hardcoded_visuals, field.name);
+        for (hardcoded_visuals) |x| {
+            const atom_name = x.name;
+            const input = x.visuals;
             const atom_visuals: AtomVisuals = try .build(arena, .{
                 .color = input.color orelse newAtomColor(atom_name),
                 .noise_z = input.noise_z orelse newAtomNoiseZ(atom_name),
