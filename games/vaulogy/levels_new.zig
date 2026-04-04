@@ -361,7 +361,6 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-
     .{
         .fnk_name = &Sexpr.doLit("hasSomeB"),
         // intro to recursion
@@ -732,6 +731,65 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
+    .{
+        // TODO(game): change to "secondMostCommonValue" to avoid boring solutions, maybe
+        .fnk_name = &Sexpr.doLit("secondMostCommonLetter"),
+        .description = "Return the second most common element of the list.",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const a, const b, const c, _, _, _ = Vals.lowercase;
+                const premade_samples: []const struct { input: []const *const Sexpr, expected: *const Sexpr } = &.{
+                    .{
+                        .input = &.{ a, b, b },
+                        .expected = a,
+                    },
+                    .{
+                        .input = &.{ a, b, a },
+                        .expected = b,
+                    },
+                    .{
+                        .input = &.{ a, b, c, b, a, b },
+                        .expected = a,
+                    },
+                };
+                if (sample_index < premade_samples.len) {
+                    return .{
+                        .input = try toList(pool, premade_samples[sample_index].input),
+                        .expected = premade_samples[sample_index].expected,
+                    };
+                } else if (sample_index < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    const rnd: kommon.math.Random = .init(random);
+                    var max_count = 3 + random.uintLessThan(usize, 20);
+                    // long samples
+                    if (sample_index > 90) max_count += 50;
+                    const MAX_KINDS = Vals.lowercase.len;
+                    const n_kinds = rnd.uintBetween(usize, 2, MAX_KINDS);
+                    max_count = @max(max_count, @divExact(n_kinds * (n_kinds + 1), 2));
+                    var counts_buf: [MAX_KINDS]usize = @splat(1);
+                    const counts = counts_buf[0..n_kinds];
+                    const count = randomCounts(counts, max_count, random);
+                    const all_elements = try arena.alloc(*const Sexpr, count);
+                    var mapping_buf = Vals.lowercase;
+                    random.shuffle(*const Sexpr, &mapping_buf);
+                    const mapping = mapping_buf[0..n_kinds];
+                    var n: usize = 0;
+                    for (counts, 0..) |k_count, k| {
+                        @memset(all_elements[n..][0..k_count], mapping[k]);
+                        n += k_count;
+                    }
+                    assert(n == count);
+                    random.shuffle(*const Sexpr, all_elements);
+                    return .{
+                        .input = try toList(pool, all_elements),
+                        .expected = mapping[1],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
 };
 
 // TODO(game): include these
@@ -902,6 +960,94 @@ fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random
             try randomSexpr(pool, atoms, random, max_depth - 1),
             try randomSexpr(pool, atoms, random, max_depth - 1),
         ));
+    }
+}
+
+/// fills output with a strictly-decreasing list of numbers, returns the actual sum
+fn randomCounts(output: []usize, sum: usize, random: std.Random) usize {
+    const n = output.len;
+    assert(n > 0);
+
+    // Need at least 1+2+...+n = n*(n+1)/2 for strictly decreasing positive integers
+    const min_sum = n * (n + 1) / 2;
+    if (sum < min_sum) {
+        std.debug.panic("Sum {d} is too small to create strictly decreasing positive integers with len {d}", .{ sum, n });
+    }
+
+    // Generate random decreasing sequence using stars and bars with constraints
+    var remaining_sum = sum;
+
+    // Generate values from largest to smallest
+    for (0..n) |i| {
+        const remaining_positions = n - i;
+
+        // Minimum value needed for remaining positions if strictly decreasing
+        // If current position is x, remaining need at least (remaining_positions-1), (remaining_positions-2), ..., 1
+        const min_for_remaining = if (remaining_positions > 1)
+            (remaining_positions - 1) * remaining_positions / 2
+        else
+            0;
+
+        // Maximum possible for current position (keeping remaining_positions-1 strictly decreasing values)
+        // Need to ensure we can fit decreasing numbers after this
+        const max_current = remaining_sum - min_for_remaining;
+
+        // Minimum possible for current position (must be at least remaining_positions to maintain strictly decreasing)
+        // If this is the last position, minimum is 1
+        const min_current = if (i == n - 1) 1 else remaining_positions;
+
+        // If this isn't the first position, must be less than previous value
+        const actual_max = if (i > 0) @min(max_current, output[i - 1] - 1) else max_current;
+
+        // Generate random value within bounds
+        if (actual_max < min_current) {
+            @panic("Failed to generate valid sequence - constraints too tight");
+        }
+
+        const value = if (actual_max == min_current)
+            min_current
+        else
+            random.intRangeLessThan(usize, min_current, actual_max + 1);
+
+        output[i] = value;
+        remaining_sum -= value;
+    }
+
+    // Verify the result
+    var sum_check: usize = 0;
+    for (output) |v| {
+        sum_check += v;
+    }
+    assert(sum_check <= sum);
+    assert(sum_check + remaining_sum == sum);
+
+    // Verify strictly decreasing
+    for (1..n) |i| {
+        assert(output[i - 1] > output[i]);
+    }
+
+    return sum - remaining_sum;
+}
+
+test "randomCounts" {
+    var random_instance: std.Random.DefaultPrng = .init(std.testing.random_seed);
+    const random = random_instance.random();
+    const n_kinds = 1 + random.uintAtMost(usize, 10);
+    const output = try std.testing.allocator.alloc(usize, n_kinds);
+    defer std.testing.allocator.free(output);
+    const count: usize = @divExact(n_kinds * (n_kinds - 1), 2) + random.uintAtMost(usize, 50);
+    const actual_count = randomCounts(output, count, random);
+
+    const total_sum = blk: {
+        var r: usize = 0;
+        for (output) |x| r += x;
+        break :blk r;
+    };
+    try std.testing.expectEqual(actual_count, total_sum);
+    try std.testing.expect(actual_count <= count);
+
+    for (output[0 .. output.len - 1], output[1..]) |a, b| {
+        try std.testing.expect(a > b);
     }
 }
 

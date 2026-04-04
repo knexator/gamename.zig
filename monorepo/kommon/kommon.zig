@@ -74,6 +74,12 @@ pub fn lastExplicit(T: type, arr: []const T) ?T {
     return arr[arr.len - 1];
 }
 
+pub fn sum(T: type, arr: []const T) T {
+    var result: T = 0;
+    for (arr) |x| result += x;
+    return result;
+}
+
 // pub fn last(arr: anytype) ?std.meta.Elem(@TypeOf(arr)) {
 //     const T = @TypeOf(arr);
 //     switch (@typeInfo(T)) {

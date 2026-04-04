@@ -2458,6 +2458,12 @@ pub const Random = struct {
         }
     }
 
+    pub fn uintBetween(this: Random, comptime T: type, at_least: T, less_than: T) T {
+        const result = this.rnd.uintLessThan(T, less_than - at_least) + at_least;
+        assert(at_least <= result and result < less_than);
+        return result;
+    }
+
     pub fn between(this: Random, at_least: f32, less_than: f32) f32 {
         return this.rnd.float(f32) * (less_than - at_least) + at_least;
     }

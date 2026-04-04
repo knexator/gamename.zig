@@ -147,6 +147,57 @@ mostCommonBoolean {
     @x -> mostCommonBoolean_helper: (@x . (nil . nil));
 }
 
+// TODO: use meta to recreate the mostCommonBoolean solution
+secondMostCommonLetter {
+    @x -> countEach: (@x . nil) {
+        @counts -> findTopTwo: (@counts . (nil . nil)) {
+            ((@a . @aa) . (@b . @bb)) -> @b;
+        }
+    }
+}
+
+// custom
+countEach {
+    (nil . @counts) -> @counts;
+    ( (@first . @rest) . @counts ) -> countEach_insert: (@first . @counts) {
+        @new_counts -> countEach: (@rest . @new_counts);
+    }
+}
+
+// custom
+countEach_insert {
+    (@element . nil) -> ((@element . nil) . nil);
+    (@element . ((@v1 . @vcount) . @rest)) -> eq?: (@element . @v1) {
+        true -> ((@v1 . (@v1 . @vcount)) . @rest);
+        false -> countEach_insert: (@element . @rest) {
+            @new_rest -> ((@v1 . @vcount) . @new_rest);
+        }
+    }
+}
+
+// custom
+// Fun! maybe this should be the level itself.
+findTopTwo {
+    (nil . (@1st . @2nd)) -> (@1st . @2nd);
+    ((@x . @rest) . (@1st . @2nd)) -> comparePeano: (@x . @1st) {
+        smaller -> comparePeano: (@x . @2nd) {
+            smaller -> findTopTwo: (@rest . (@1st . @2nd));
+            @greater_or_equal -> findTopTwo: (@rest . (@1st . @x));
+        }
+        @greater_or_equal -> findTopTwo: (@rest . (@x . @1st));
+    }
+}
+
+// custom
+comparePeano {
+    (nil . nil) -> equal;
+    ((@x . @rest) . nil) -> greater;
+    (nil . (@x . @rest)) -> smaller;
+    ((@a . @arest) . (@b . @brest)) -> comparePeano: (@arest . @brest);
+}
+
+// TODO(game): sort
+
 // custom
 eq? {
     ((@aa . @ab) . (@ba . @bb)) -> eq?: (@aa . @ba) {
