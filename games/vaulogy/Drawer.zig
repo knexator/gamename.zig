@@ -181,8 +181,8 @@ const AtomVisualCache = struct {
     visuals_cache: std.StringHashMap(AtomVisuals),
 
     const HardcodedAtomVisuals = struct {
-        profile: ?[]const Vec2,
-        color: ?FColor,
+        profile: ?[]const Vec2 = null,
+        color: ?FColor = null,
         noise_z: ?f32 = null,
         display: ?[]const u8 = null,
     };
@@ -420,6 +420,18 @@ const AtomVisualCache = struct {
             .color = .fromHex("#123456"),
             .profile = null,
         }),
+        .do("1", .{ .display = "1" }),
+        .do("2", .{ .display = "2" }),
+        .do("3", .{ .display = "3" }),
+        .do("4", .{ .display = "4" }),
+        .do("5", .{ .display = "5" }),
+        .do("6", .{ .display = "6" }),
+        .do("7", .{ .display = "7" }),
+        .do("8", .{ .display = "8" }),
+        .do("9", .{ .display = "9" }),
+        .do("+", .{ .display = "+" }),
+        .do("*", .{ .display = "x" }),
+        .do("-", .{ .display = "-" }),
         // TODO: the debug web build crashes without this!
         .do("other", .{
             .color = .fromHex("#9955ff"),

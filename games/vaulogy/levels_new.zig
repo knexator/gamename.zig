@@ -790,6 +790,45 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
+    .{
+        .fnk_name = &Sexpr.doLit("calculator"),
+        .description = "Calculator!",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const premade_samples: []const struct { input: []const u8, expected: []const u8 } = &.{
+                    .{
+                        .input = "(+ 2 . 2)",
+                        .expected = "4",
+                    },
+                    .{
+                        .input = "(- 5 . 3)",
+                        .expected = "2",
+                    },
+                    .{
+                        .input = "(* 2 . 3)",
+                        .expected = "6",
+                    },
+                    .{
+                        .input = "(* (+ 1 . 2) . (+ 1 . 2))",
+                        .expected = "9",
+                    },
+                };
+                if (sample_index < premade_samples.len) {
+                    return .{
+                        .input = try core.parsing.parseSingleSexpr(premade_samples[sample_index].input, pool),
+                        .expected = try core.parsing.parseSingleSexpr(premade_samples[sample_index].expected, pool),
+                    };
+                } else if (sample_index < 100) {
+                    // TODO(game)
+                    _ = arena;
+                    return null;
+                    // var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    // const random = random_instance.random();
+                } else return null;
+            }
+        }.generate_sample,
+    },
 };
 
 // TODO(game): include these
