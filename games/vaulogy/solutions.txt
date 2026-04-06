@@ -355,3 +355,29 @@ addressWithDefault {
     (((right . @rest) . @default_value) . (@left . @right)) -> @right;
     (((@any . @rest) . @default_value) . @atom) -> @default_value;
 }
+
+brainfuck {
+    (@instructions . @stdin) -> brainfuck_helper: (@instructions . ((@stdin . nil) . ((+ . nil) . (nil . nil))));
+}
+
+// custom
+brainfuck_helper {
+    ((@inst_first . @inst_rest) . ((@stdin . @stdout) . (@tape_cur . @tape_rest))) -> @inst_first {
+        in -> @stdin {
+            (@first . @rest) -> calculatorIntoPeano: @first {
+                @in -> brainfuck_helper: (@inst_rest . ((@rest . @stdout) . (@in . @tape_rest)));
+            }
+        }
+        out -> peanoIntoCalculator: @tape_cur {
+            @out -> brainfuck_helper: (@inst_rest . ((@stdin . (@out . @stdout)) . (@tape_cur . @tape_rest)));
+        }
+        inc -> peanoAdd: (@tape_cur . (+ . (S . nil))) {
+            @new_cur -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . (@new_cur . @tape_rest)));
+        }
+        dec -> peanoSub: (@tape_cur . (+ . (S . nil))) {
+            @new_cur -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . (@new_cur . @tape_rest)));
+        }
+    }
+    (nil . ((@stdin . @stdout) . @tape)) -> reverse: @stdout;
+}
+

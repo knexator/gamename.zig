@@ -839,26 +839,19 @@ pub const levels: []const Level = &.{
                     } else return generate_sample(0, pool, undefined);
                     return .{
                         .input = tree,
-                        .expected = switch (result) {
-                            1...9 => |k| Vals.naive_numbers[@intCast(k - 1)],
-                            else => unreachable,
-                        },
+                        .expected = toNaiveNumber(result) catch unreachable,
                     };
                 } else return null;
             }
         }.generate_sample,
     },
-};
-
-// TODO(game): include these
-pub const future_levels: []const Level = &.{
     .{
         .fnk_name = &Sexpr.doLit("brainfuck"),
         .description = "Implement a BrainF*ck interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                // TODO: infinite samples
+                // TODO(game): infinite samples
                 const prev = Vals.BF.prev;
                 const next = Vals.BF.next;
                 const inc = Vals.BF.inc;
@@ -869,8 +862,8 @@ pub const future_levels: []const Level = &.{
                 const end = Vals.BF.end;
                 const premade_samples: []const struct {
                     code: []const *const Sexpr,
-                    stdin: []const usize,
-                    output: []const usize,
+                    stdin: []const i32,
+                    output: []const i32,
                 } = &.{ .{
                     .code = &.{ in, in, out, in, out },
                     .stdin = &.{ 1, 2, 3, 4 },
@@ -903,14 +896,21 @@ pub const future_levels: []const Level = &.{
                     return .{
                         .input = try store(pool, Sexpr.doPair(
                             try toList(pool, sample.code),
-                            try toListOfPeano(pool, sample.stdin),
+                            try kommon.meta.removeErrors(
+                                toListOfNaiveNumbers(pool, sample.stdin),
+                                .{error.UnrepresentableNaiveNumber},
+                            ),
                         )),
-                        .expected = try toListOfPeano(pool, sample.output),
+                        .expected = try kommon.meta.removeErrors(toListOfNaiveNumbers(pool, sample.output), .{error.UnrepresentableNaiveNumber}),
                     };
                 } else return null;
             }
         }.generate_sample,
     },
+};
+
+// TODO(game): include these
+pub const future_levels: []const Level = &.{
     .{
         // TODO
         .fnk_name = &Sexpr.doLit("interpreter"),
@@ -986,11 +986,26 @@ fn toPeano(pool: *SexprPool, n: usize) !*const Sexpr {
     return result;
 }
 
+fn toNaiveNumber(n: i32) error{UnrepresentableNaiveNumber}!*const Sexpr {
+    if (kommon.math.inRangeClosed(n, 1, 9)) {
+        return Vals.naive_numbers[@intCast(n - 1)];
+    } else return error.UnrepresentableNaiveNumber;
+}
+
 fn toListOfPeano(pool: *SexprPool, ns: []const usize) !*const Sexpr {
     var result = Sexpr.builtin.nil;
     for (0..ns.len) |k| {
         const n = ns[ns.len - k - 1];
         result = try store(pool, Sexpr.doPair(try toPeano(pool, n), result));
+    }
+    return result;
+}
+
+fn toListOfNaiveNumbers(pool: *SexprPool, ns: []const i32) !*const Sexpr {
+    var result = Sexpr.builtin.nil;
+    for (0..ns.len) |k| {
+        const n = ns[ns.len - k - 1];
+        result = try store(pool, Sexpr.doPair(try toNaiveNumber(n), result));
     }
     return result;
 }
@@ -1137,7 +1152,7 @@ test "randomCounts" {
     const n_kinds = 1 + random.uintAtMost(usize, 10);
     const output = try std.testing.allocator.alloc(usize, n_kinds);
     defer std.testing.allocator.free(output);
-    const count: usize = @divExact(n_kinds * (n_kinds - 1), 2) + random.uintAtMost(usize, 50);
+    const count: usize = @divExact(n_kinds * (n_kinds + 1), 2) + random.uintAtMost(usize, 50);
     const actual_count = randomCounts(output, count, random);
 
     const total_sum = blk: {
