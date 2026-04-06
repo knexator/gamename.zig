@@ -425,7 +425,13 @@ const builtin_fnks = [_]struct { name: *const Sexpr, fnk: fn (v: *const Sexpr) *
     .{ .name = Sexpr.builtin.empty, .fnk = builtin_fnk_identity },
     .{ .name = Sexpr.builtin.identity, .fnk = builtin_fnk_identity },
     .{ .name = Sexpr.builtin.@"eqAtoms?", .fnk = @"builtin_fnk_eqAtoms?" },
+    .{ .name = &Sexpr.doLit("debug"), .fnk = builtin_fnk_debug },
 };
+
+fn builtin_fnk_debug(v: *const Sexpr) *const Sexpr {
+    std.log.err("{any}", .{v});
+    return v;
+}
 
 fn builtin_fnk_identity(v: *const Sexpr) *const Sexpr {
     return v;

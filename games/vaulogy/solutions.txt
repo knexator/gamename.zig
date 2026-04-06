@@ -357,7 +357,9 @@ addressWithDefault {
 }
 
 brainfuck {
-    (@instructions . @stdin) -> brainfuck_helper: (@instructions . ((@stdin . nil) . ((+ . nil) . (nil . nil))));
+    (@instructions . @stdin) -> brainfuck_helper: (@instructions . ((@stdin . nil) . ((+ . nil) . (nil . nil)))) {
+        ((@stdin . @stdout) . @tape) -> reverse: @stdout;
+    }
 }
 
 // custom
@@ -383,8 +385,16 @@ brainfuck_helper {
         prev -> brainfuck_tape_move: (prev . (@tape_cur . @tape_rest)) {
             @new_tape -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . @new_tape));
         }
+        loop -> brainfuck_extract_loop: (@inst_rest . nil) {
+            (@loop . @remaining) -> brainfuck_helper: (@loop . ((@stdin . @stdout) . (@tape_cur . @tape_rest))) {
+                (@std . @tape) -> @tape {
+                    ((@sign . nil) . @rest) -> brainfuck_helper: (@remaining . (@std . @tape));
+                    @else -> brainfuck_helper: ((loop . @inst_rest) . (@std . @tape));
+                }
+            }
+        }
     }
-    (nil . ((@stdin . @stdout) . @tape)) -> reverse: @stdout;
+    (nil . @state) -> @state;
 }
 
 brainfuck_tape_move {
@@ -401,3 +411,9 @@ brainfuck_tape_extend {
     @else -> @else;
 }
 
+brainfuck_extract_loop {
+    ((end . @rest) . @loop) -> reverse: @loop {
+        @loop_good -> (@loop_good . @rest);
+    }
+    ((@other . @rest) . @loop) -> brainfuck_extract_loop: (@rest . (@other . @loop));
+}
