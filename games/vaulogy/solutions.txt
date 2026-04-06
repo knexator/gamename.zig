@@ -377,7 +377,27 @@ brainfuck_helper {
         dec -> peanoSub: (@tape_cur . (+ . (S . nil))) {
             @new_cur -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . (@new_cur . @tape_rest)));
         }
+        next -> brainfuck_tape_move: (next . (@tape_cur . @tape_rest)) {
+            @new_tape -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . @new_tape));
+        }
+        prev -> brainfuck_tape_move: (prev . (@tape_cur . @tape_rest)) {
+            @new_tape -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . @new_tape));
+        }
     }
     (nil . ((@stdin . @stdout) . @tape)) -> reverse: @stdout;
+}
+
+brainfuck_tape_move {
+    (next . (@cur . (@prev . @next))) -> brainfuck_tape_extend: @next {
+        (@h . @r) -> (@h . ((@cur . @prev) . @r));
+    }
+    (prev . (@cur . (@prev . @next))) -> brainfuck_tape_extend: @prev {
+        (@h . @r) -> (@h . (@r . (@cur . @next)));
+    }
+}
+
+brainfuck_tape_extend {
+    nil -> ((+ . nil) . nil);
+    @else -> @else;
 }
 
