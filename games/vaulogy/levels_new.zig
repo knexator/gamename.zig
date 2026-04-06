@@ -795,7 +795,7 @@ pub const levels: []const Level = &.{
         .description = "Calculator!",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const premade_samples: []const struct { input: []const u8, expected: []const u8 } = &.{
                     .{
                         .input = "(+ 2 . 2)",
@@ -820,11 +820,26 @@ pub const levels: []const Level = &.{
                         .expected = try core.parsing.parseSingleSexpr(premade_samples[sample_index].expected, pool),
                     };
                 } else if (sample_index < 100) {
-                    // TODO(game)
-                    _ = arena;
-                    return null;
-                    // var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
-                    // const random = random_instance.random();
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    var loop_fuel: usize = 10_000;
+                    const tree, const result = while (loop_fuel > 0) : (loop_fuel -= 1) {
+                        const tree = try randomCalculatorTree(pool, &Vals.calculator_ops, &Vals.naive_numbers, random, 1, 5);
+                        const result = evaluateCalculatorTree(tree) catch |err| switch (err) {
+                            error.Overflow => -1,
+                            error.BadCalculatorTree => unreachable,
+                        };
+                        if (kommon.math.inRangeClosed(result, 1, 9)) {
+                            break .{ tree, result };
+                        }
+                    } else return generate_sample(0, pool, undefined);
+                    return .{
+                        .input = tree,
+                        .expected = switch (result) {
+                            1...9 => |k| Vals.naive_numbers[@intCast(k - 1)],
+                            else => unreachable,
+                        },
+                    };
                 } else return null;
             }
         }.generate_sample,
@@ -1002,6 +1017,50 @@ fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random
     }
 }
 
+fn randomCalculatorTree(pool: *SexprPool, ops: []const *const Sexpr, leafs: []const *const Sexpr, random: std.Random, min_depth: usize, max_depth: usize) !*const Sexpr {
+    assert(min_depth <= max_depth);
+    if (max_depth == 0 or (min_depth > 0 and random.float(f32) < 0.3)) {
+        return randomChoice(leafs, random);
+    } else {
+        return try store(pool, Sexpr.doPair(
+            randomChoice(ops, random),
+            try store(pool, Sexpr.doPair(
+                try randomCalculatorTree(pool, ops, leafs, random, min_depth -| 1, max_depth - 1),
+                try randomCalculatorTree(pool, ops, leafs, random, min_depth -| 1, max_depth - 1),
+            )),
+        ));
+    }
+}
+
+fn evaluateCalculatorTree(tree: *const Sexpr) error{ BadCalculatorTree, Overflow }!i32 {
+    const on_error = error.BadCalculatorTree;
+    switch (tree.*) {
+        else => return on_error,
+        .atom_lit => |atom| {
+            const n = std.fmt.parseInt(i32, atom.value, 10) catch return on_error;
+            return n;
+        },
+        .pair => |pair| {
+            const op: enum { plus, minus, multiply } = if (pair.left.isTheLit("+"))
+                .plus
+            else if (pair.left.isTheLit("-"))
+                .minus
+            else if (pair.left.isTheLit("*"))
+                .multiply
+            else
+                return on_error;
+            if (!pair.right.isPair()) return on_error;
+            const a = try evaluateCalculatorTree(pair.right.pair.left);
+            const b = try evaluateCalculatorTree(pair.right.pair.right);
+            return switch (op) {
+                .plus => try std.math.add(i32, a, b),
+                .minus => try std.math.sub(i32, a, b),
+                .multiply => try std.math.mul(i32, a, b),
+            };
+        },
+    }
+}
+
 /// fills output with a strictly-decreasing list of numbers, returns the actual sum
 fn randomCounts(output: []usize, sum: usize, random: std.Random) usize {
     const n = output.len;
@@ -1108,6 +1167,24 @@ const Vals = struct {
         &Sexpr.doLit("D"),
         &Sexpr.doLit("E"),
         &Sexpr.doLit("F"),
+    };
+
+    const naive_numbers: [9]*const Sexpr = .{
+        &Sexpr.doLit("1"),
+        &Sexpr.doLit("2"),
+        &Sexpr.doLit("3"),
+        &Sexpr.doLit("4"),
+        &Sexpr.doLit("5"),
+        &Sexpr.doLit("6"),
+        &Sexpr.doLit("7"),
+        &Sexpr.doLit("8"),
+        &Sexpr.doLit("9"),
+    };
+
+    const calculator_ops: [3]*const Sexpr = .{
+        &Sexpr.doLit("+"),
+        &Sexpr.doLit("-"),
+        &Sexpr.doLit("*"),
     };
 
     const vars: struct {

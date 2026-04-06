@@ -170,6 +170,13 @@ pub const Sexpr = union(enum) {
         };
     }
 
+    pub fn isTheLit(this: *const Sexpr, lit: []const u8) bool {
+        return switch (this.*) {
+            .atom_lit => |atom| std.mem.eql(u8, atom.value, lit),
+            else => false,
+        };
+    }
+
     pub fn isPair(this: *const Sexpr) bool {
         return switch (this.*) {
             .pair => true,
