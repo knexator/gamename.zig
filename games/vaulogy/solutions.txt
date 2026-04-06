@@ -417,3 +417,5 @@ brainfuck_extract_loop {
     }
     ((@other . @rest) . @loop) -> brainfuck_extract_loop: (@rest . (@other . @loop));
 }
+
+// my next goal: justify a map function

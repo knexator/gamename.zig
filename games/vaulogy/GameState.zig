@@ -549,7 +549,7 @@ pub const Lego = struct {
                         Toybox.get(cur_child).specific.sexpr.is_pattern = is_pattern;
                     }
                 }
-                Lego.Specific.Sexpr.updateLocalPositions(parent);
+                Lego.Specific.Sexpr.updateLocalPositionsAndOfChildren(parent);
             }
 
             pub fn contains(sexpr_point: Point, is_pattern: bool, kind: Kind, needle_pos: Vec2) bool {
@@ -605,21 +605,24 @@ pub const Lego = struct {
             }
 
             /// Should be called only when changing any of the _t values
-            pub fn updateLocalPositions(index: Lego.Index) void {
-                const lego = Toybox.get(index);
-                const sexpr = &lego.specific.sexpr;
+            pub fn updateLocalPositionsAndOfChildren(index: Lego.Index) void {
+                var cur = index;
+                while (cur != .nothing) : (cur = Toybox.next_preordered(cur, index).next) {
+                    const lego = Toybox.get(cur);
+                    const sexpr = &lego.specific.sexpr;
 
-                if (sexpr.kind == .pair) {
-                    const child_up, const child_down = Toybox.getChildrenExact(2, index);
-                    Toybox.get(child_up).local_point = (Point{})
-                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
-                    Toybox.get(child_down).local_point = (Point{})
-                        .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
-                }
+                    if (sexpr.kind == .pair) {
+                        const child_up, const child_down = Toybox.getChildrenExact(2, cur);
+                        Toybox.get(child_up).local_point = (Point{})
+                            .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .up));
+                        Toybox.get(child_down).local_point = (Point{})
+                            .applyToLocalPoint(ViewHelper.offsetFor(sexpr.is_pattern, .down));
+                    }
 
-                if (sexpr.emerging_value != .nothing) {
-                    std.log.err("Shouldn't happen!", .{});
-                    updateLocalPositions(sexpr.emerging_value);
+                    if (sexpr.emerging_value != .nothing) {
+                        std.log.err("Shouldn't happen!", .{});
+                        updateLocalPositionsAndOfChildren(sexpr.emerging_value);
+                    }
                 }
             }
 
@@ -1771,6 +1774,7 @@ pub const Lego = struct {
                     const garland = children(meta_viewer_index).garland;
                     const old_value = children(meta_viewer_index).value;
 
+                    // TODO(game): minimize the number of "lit" helpers added; (lit . (x . y)) instead of ((lit . x) . (lit . y))
                     const core_garland = try Garland.toOldCoreValue(&garland.get().specific.garland, scratch);
                     const core_value = try core.sexprFromCases(core_garland.cases.items, &pool);
 
@@ -3383,6 +3387,17 @@ const Workspace = struct {
                     Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_target = 2;
                     Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_visual = 2;
                 }
+
+                if (level.fnk_name.isTheLit("calculator")) {
+                    Toybox.addChildLast(dst.main_area, try Sexpr.buildFromOldCoreValue(
+                        .{ .pos = .new(x, -8) },
+                        try core.parsing.parseSingleSexpr("(1 2 3 4 5 6 7 8 9)", &pool),
+                        false,
+                        false,
+                        undo_stack,
+                    ), undo_stack);
+                }
+
                 x += if (k < 4) 25 else if (k < 6) 30 else 35;
 
                 fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
@@ -5960,7 +5975,7 @@ const Workspace = struct {
                                 Lego.Specific.Sexpr.setIsPattern(sexpr.emerging_value, true);
                                 sexpr.emerging_value.get().specific.sexpr.is_pattern_t = 1;
                                 Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
-                                Lego.Specific.Sexpr.updateLocalPositions(sexpr.emerging_value);
+                                Lego.Specific.Sexpr.updateLocalPositionsAndOfChildren(sexpr.emerging_value);
                                 Toybox.refreshAbsolutePoints(&.{sexpr.emerging_value});
                             }
                         }

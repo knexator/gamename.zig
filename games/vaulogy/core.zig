@@ -1567,7 +1567,8 @@ pub fn sexprFromCase(case: MatchCaseDefinition, pool: *MemoryPool(Sexpr)) error{
     }, if (case.next) |next|
         try sexprFromCases(next.items, pool)
     else
-        Sexpr.builtin.meta.@"return", pool);
+        Sexpr.builtin.nil, pool);
+    // Sexpr.builtin.meta.@"return", pool);
 }
 
 pub fn sexprFromCases(cases: []MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*const Sexpr {
@@ -1599,7 +1600,12 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
     var cases = std.ArrayListUnmanaged(MatchCaseDefinition){};
     switch (s.*) {
         .empty => return error.InvalidMetaFnk,
-        .atom_lit => return if (s.equals(Sexpr.builtin.meta.@"return")) null else error.InvalidMetaFnk,
+        .atom_lit => return if (s.equals(Sexpr.builtin.meta.@"return"))
+            null
+        else if (s.equals(Sexpr.builtin.nil))
+            .empty
+        else
+            error.InvalidMetaFnk,
         .atom_var => return error.BAD_INPUT,
         .pair => |p| {
             var cur_parent = p;
