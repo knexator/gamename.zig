@@ -813,6 +813,10 @@ pub const levels: []const Level = &.{
                         .input = "(* (+ 1 . 2) . (+ 1 . 2))",
                         .expected = "9",
                     },
+                    .{
+                        .input = "(* (- 1 . 3) . (- 2 . 5))",
+                        .expected = "6",
+                    },
                 };
                 if (sample_index < premade_samples.len) {
                     return .{
@@ -1019,7 +1023,7 @@ fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random
 
 fn randomCalculatorTree(pool: *SexprPool, ops: []const *const Sexpr, leafs: []const *const Sexpr, random: std.Random, min_depth: usize, max_depth: usize) !*const Sexpr {
     assert(min_depth <= max_depth);
-    if (max_depth == 0 or (min_depth > 0 and random.float(f32) < 0.3)) {
+    if (max_depth == 0 or (min_depth == 0 and random.float(f32) < 0.3)) {
         return randomChoice(leafs, random);
     } else {
         return try store(pool, Sexpr.doPair(

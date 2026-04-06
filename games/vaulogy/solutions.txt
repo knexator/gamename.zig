@@ -224,28 +224,28 @@ calculator {
 }
 
 peanoIntoCalculator {
-    (S . nil) -> 1;
-    (S . (S . nil)) -> 2;
-    (S . (S . (S . nil))) -> 3;
-    (S . (S .(S . (S . nil)))) -> 4;
-    (S . (S . (S .(S . (S . nil))))) -> 5;
-    (S . (S . (S . (S .(S . (S . nil)))))) -> 6;
-    (S . (S . (S . (S . (S .(S . (S . nil))))))) -> 7;
-    (S . (S . (S . (S . (S . (S .(S . (S . nil)))))))) -> 8;
-    (S . (S . (S . (S . (S . (S . (S .(S . (S . nil))))))))) -> 9;
+    (+ . (S . nil)) -> 1;
+    (+ . (S . (S . nil))) -> 2;
+    (+ . (S . (S . (S . nil)))) -> 3;
+    (+ . (S . (S .(S . (S . nil))))) -> 4;
+    (+ . (S . (S . (S .(S . (S . nil)))))) -> 5;
+    (+ . (S . (S . (S . (S .(S . (S . nil))))))) -> 6;
+    (+ . (S . (S . (S . (S . (S .(S . (S . nil)))))))) -> 7;
+    (+ . (S . (S . (S . (S . (S . (S .(S . (S . nil))))))))) -> 8;
+    (+ . (S . (S . (S . (S . (S . (S . (S .(S . (S . nil)))))))))) -> 9;
     @else -> (ERROR_NumberNotInRange . @else);
 }
 
 calculatorIntoPeano {
-    1 -> (S . nil);
-    2 -> (S . (S . nil));
-    3 -> (S . (S . (S . nil)));
-    4 -> (S . (S .(S . (S . nil))));
-    5 -> (S . (S . (S .(S . (S . nil)))));
-    6 -> (S . (S . (S . (S .(S . (S . nil))))));
-    7 -> (S . (S . (S . (S . (S .(S . (S . nil)))))));
-    8 -> (S . (S . (S . (S . (S . (S .(S . (S . nil))))))));
-    9 -> (S . (S . (S . (S . (S . (S . (S .(S . (S . nil)))))))));
+    1 -> (+ . (S . nil));
+    2 -> (+ . (S . (S . nil)));
+    3 -> (+ . (S . (S . (S . nil))));
+    4 -> (+ . (S . (S . (S . (S . nil)))));
+    5 -> (+ . (S . (S . (S . (S . (S . nil))))));
+    6 -> (+ . (S . (S . (S . (S . (S . (S . nil)))))));
+    7 -> (+ . (S . (S . (S . (S . (S . (S . (S . nil))))))));
+    8 -> (+ . (S . (S . (S . (S . (S . (S . (S . (S . nil)))))))));
+    9 -> (+ . (S . (S . (S . (S . (S . (S . (S . (S . (S . nil))))))))));
     (@op . (@a . @b)) -> calculatorIntoPeano: @a {
         @peanoA -> calculatorIntoPeano: @b {
             @peanoB -> @op {
@@ -258,20 +258,38 @@ calculatorIntoPeano {
 }
 
 peanoAdd {
-    (nil . @y) -> @y;
-    ((@a . @b) . @y) -> peanoAdd: (@b . (@a . @y));
+    ((@sign . nil) . @y) -> @y;
+    ((+ . (@a . @b)) . (+ . @y)) -> peanoAdd: ((+ . @b) . (+ . (@a . @y)));
+    ((- . @x) . (- . @y)) -> peanoAdd: ((+ . @x) . (+ . @y)) {
+        (+ . @r) -> (- . @r);
+    }
+    ((- . @x) . (+ . @y)) -> peanoSub: ((+ . @y) . (+ . @x));
+    ((+ . @x) . (- . @y)) -> peanoSub: ((+ . @x) . (+ . @y));
 }
 
 peanoSub {
-    (@x . nil) -> @x;
-    ((@x . @xs) . (@y . @ys)) -> peanoSub: (@xs . @ys);
-    (nil . @y) -> TODO_negative_numbers;
+    (@x . (@sign . nil)) -> @x;
+    ((@sign . nil) . (+ . @x)) -> (- . @x);
+    ((@sign . nil) . (- . @x)) -> (+ . @x);
+    ((+ . (@x . @xs)) . (+ . (@y . @ys))) -> peanoSub: ((+ . @xs) . (+ . @ys));
+    ((- . @x) . (- . @y)) -> peanoSub: ((+ . @y) . (+ . @x));
+    ((- . @x) . (+ . @y)) -> peanoAdd: ((- . @x) . (- . @y));
+    ((+ . @x) . (- . @y)) -> peanoAdd: ((+ . @x) . (+ . @y));
 }
 
 peanoMul {
-    (nil . @y) -> nil;
-    ((@a . @b) . @y) -> peanoMul: (@b . @y) {
-        @asdf -> peanoAdd: (@y . @asdf);
+    ((@sign . nil) . @y) -> (+ . nil);
+    ((- . @x) . (- . @y)) -> peanoMul: ((+ . @x) . (+ . @y));
+    ((+ . @x) . (- . @y)) -> peanoMul: ((+ . @x) . (+ . @y)) {
+        (+ . @r) -> (- . @r);
+        (- . @r) -> (+ . @r);
+    }
+    ((- . @x) . (+ . @y)) -> peanoMul: ((+ . @x) . (+ . @y)) {
+        (+ . @r) -> (- . @r);
+        (- . @r) -> (+ . @r);
+    }
+    ((+ . (@a . @b)) . (+ . @y)) -> peanoMul: ((+ . @b) . (+ . @y)) {
+        @asdf -> peanoAdd: ((+ . @y) . @asdf);
     }
 }
 

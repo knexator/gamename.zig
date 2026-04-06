@@ -849,7 +849,16 @@ pub fn main() !void {
                         else
                             .up;
                     },
+                    c.SDL_EVENT_TEXT_INPUT => {
+                        std.log.debug("input: {s}", .{event.text.text});
+                    },
                     c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
+                        if (event.type == c.SDL_EVENT_KEY_UP and event.key.scancode == c.SDL_SCANCODE_F1) {
+                            try errify(c.SDL_StartTextInput(sdl_window));
+                        }
+                        if (event.type == c.SDL_EVENT_KEY_UP and event.key.scancode == c.SDL_SCANCODE_F2) {
+                            try errify(c.SDL_StopTextInput(sdl_window));
+                        }
                         if (hot_reloading and event.key.scancode == c.SDL_SCANCODE_F5) {
                             // TODO: complete reload, respawning the window etc
                             // my_game.reset(gpa, sdl_platform.gl);
