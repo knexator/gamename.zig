@@ -6187,8 +6187,8 @@ const Workspace = struct {
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
             const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
 
+            const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
             if (fnks_indices.get(fnk.name)) |fnkbox_index| {
-                const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
                 Toybox.changeChild(Lego.Specific.Executor.children(
                     Lego.Specific.Fnkbox.children(fnkbox_index).executor,
                 ).garland, garland, null);
@@ -6200,7 +6200,7 @@ const Workspace = struct {
                     try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
                     description,
                     &.{},
-                    null,
+                    garland,
                     null,
                 );
                 Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
