@@ -843,7 +843,7 @@ pub const Lego = struct {
                 const original_fnkname = Lego.Specific.Garland.children(garland).fnkname;
                 if (replacement) |r| {
                     r.get().local_point = Lego.Specific.Garland.relative_fnkname_point;
-                    r.get().specific.sexpr.is_pattern = true;
+                    Lego.Specific.Sexpr.setIsPattern(r, true);
                     Toybox.changeChild(original_fnkname, r, undo_stack);
                 } else {
                     const new_fnkname = try Toybox.buildSexpr(undefined, .empty, true, true, undo_stack);
@@ -1232,17 +1232,8 @@ pub const Lego = struct {
             pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator) !void {
                 // TODO(optim): improve somehow
                 const core = @import("core.zig");
+                const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
-                var all_fnks: core.FnkCollection = .init(scratch);
-                if (true) {
-                    var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
-                    while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
-                        // const fnkbox = &Toybox.get(cur).specific.fnkbox;
-                        const fnkname_value = try Toybox.get(children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
-                        const definition = try Toybox.get(Executor.children(children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
-                        try all_fnks.putNoClobber(fnkname_value, definition);
-                    }
-                }
                 const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
                 defer temp_mem.deinit();
@@ -1851,12 +1842,6 @@ pub const Lego = struct {
             template: Lego.Index,
             fnkname: Lego.Index,
             next: Lego.Index,
-
-            pub fn hasIdentityFnkname(this: @This()) bool {
-                const sexpr = Toybox.get(this.fnkname).specific.sexpr;
-                return sexpr.kind == .empty or
-                    (sexpr.kind == .atom_lit and std.mem.eql(u8, sexpr.atom_name, "identity"));
-            }
         } {
             const children = Specific.Case.children(index);
             return .{
@@ -5529,7 +5514,7 @@ const Workspace = struct {
                                     }
                                 },
                                 .executing => {
-                                    try advanceExecutorAnimation(executor_index, workspace, undo_stack, delta_seconds);
+                                    try advanceExecutorAnimation(executor_index, workspace, undo_stack, delta_seconds, scratch);
                                     if (Toybox.get(executor_index).specific.executor.animation == null) {
                                         undo_stack.storeAllData(lego.index);
                                         execution.state = .ending;
@@ -5593,7 +5578,7 @@ const Workspace = struct {
                                 },
                             },
                             .input => {
-                                try advanceExecutorAnimation(executor_index, workspace, &workspace.undo_stack, delta_seconds);
+                                try advanceExecutorAnimation(executor_index, workspace, &workspace.undo_stack, delta_seconds, scratch);
                                 if (Toybox.get(executor_index).specific.executor.animation == null) {
                                     const result = try workspace.resetExecutorAndExtractResult(executor_index, execution.original_garland);
                                     undo_stack.storeAllData(lego.index);
@@ -5798,7 +5783,7 @@ const Workspace = struct {
         workspace.hand_layer = index;
     }
 
-    fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, undo_stack: *UndoStack, delta_seconds: f32) !void {
+    fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, undo_stack: *UndoStack, delta_seconds: f32, scratch: std.mem.Allocator) !void {
         const floating_inputs_layer = workspace.floating_inputs_layer;
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
@@ -5918,17 +5903,14 @@ const Workspace = struct {
             }
             const invoked_fnk: Lego.Index = if (!matching)
                 .nothing
-            else if (first_case.case().hasIdentityFnkname())
-                .nothing
             else blk: {
                 const offset = 3.0;
                 const function_point = Lego.Specific.Executor.relative_garland_point
                     .applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
-                if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point)) |garland| {
+                if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point, scratch)) |garland| {
                     Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
                     break :blk garland;
                 } else {
-                    std.log.err("TODO(game): handle this better", .{});
                     break :blk .nothing;
                 }
             };
@@ -6062,25 +6044,44 @@ const Workspace = struct {
         workspace: *Workspace,
         fnkname: Lego.Index,
         new_point: Point,
+        scratch: std.mem.Allocator,
     ) !?Lego.Index {
-        _ = new_point;
         const undo_stack = &workspace.undo_stack;
-        if (getFnkboxForFnk(fnkname)) |fnkbox_index| {
-            const fnkbox = &fnkbox_index.get().specific.fnkbox;
-            assert(Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname));
-            const garland = try Toybox.dupeIntoFloating(if (fnkbox.execution) |e|
-                e.original_garland
-            else
-                fnkbox.executor().garland().index, true, undo_stack);
-            const original_fnkname = try Lego.Specific.Garland.stealFnkname(
-                garland,
-                try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
-                undo_stack,
-            );
-            assert(original_fnkname.get().specific.sexpr.kind == .empty);
-            Toybox.destroyFloating(original_fnkname, undo_stack);
-            return garland;
-        } else return null;
+
+        const sexpr = Toybox.get(fnkname).specific.sexpr;
+        if (sexpr.kind == .empty or
+            (sexpr.kind == .atom_lit and
+                std.mem.eql(u8, sexpr.atom_name, "identity")))
+        {
+            return null;
+        }
+
+        const core = @import("core.zig");
+        const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
+        const fnkname_value = try fnkname.get().specific.sexpr.toOldCoreValue(scratch);
+        var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
+        defer temp_mem.deinit();
+        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
+        defer scoring_run.deinit(false);
+
+        const fnkbody = scoring_run.findFunktion(fnkname_value) catch |err| switch (err) {
+            error.OutOfMemory => |x| return x,
+            error.BAD_INPUT,
+            error.FnkNotFound,
+            error.NoMatchingCase,
+            error.InvalidMetaFnk,
+            error.UsedUndefinedVariable,
+            => return null,
+        };
+        const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(new_point, fnkbody.*, scratch, undo_stack);
+        const original_fnkname = try Lego.Specific.Garland.stealFnkname(
+            garland,
+            try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
+            undo_stack,
+        );
+        assert(original_fnkname.get().specific.sexpr.kind == .empty);
+        Toybox.destroyFloating(original_fnkname, undo_stack);
+        return garland;
     }
 
     fn launchTestcase(testcase_index: Lego.Index, undo_stack: *UndoStack) !void {
@@ -6266,6 +6267,25 @@ const Workspace = struct {
         std.log.debug("-----", .{});
         std.log.debug("{d} alive legos, {d} undo stack len", .{ alive_count, workspace.undo_stack.commands.items.len });
         std.log.debug("-----", .{});
+    }
+
+    pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !@import("core.zig").FnkCollection {
+        const core = @import("core.zig");
+        var all_fnks: core.FnkCollection = .init(scratch);
+        if (true) {
+            var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
+            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                const fnkbox = &Toybox.get(cur).specific.fnkbox;
+                const fnkname_value = try Toybox.get(Lego.Specific.Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                const garland = if (fnkbox.execution) |e|
+                    e.original_garland
+                else
+                    fnkbox.executor().garland().index;
+                const definition = try garland.get().specific.garland.toOldCoreValue(scratch);
+                try all_fnks.putNoClobber(fnkname_value, definition);
+            }
+        }
+        return all_fnks;
     }
 };
 
