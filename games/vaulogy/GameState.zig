@@ -306,7 +306,7 @@ pub const Lego = struct {
         // TODO(design): try to simplify these
         garland_newcases: void,
         fnkbox_description: struct {
-            text: []const u8,
+            text: std.ArrayListUnmanaged(u8),
         },
         fnkslist_element: FnkslistElement,
         postit_text: struct {
@@ -392,6 +392,8 @@ pub const Lego = struct {
                 scroll_up,
                 /// assumes that the scrollbar is the direct parent
                 scroll_down,
+                /// assumes that the editable text is the direct parent
+                edit_fnkbox_description,
             },
             enabled: bool = true,
 
@@ -399,6 +401,7 @@ pub const Lego = struct {
                 return switch (button.action) {
                     .launch_testcase,
                     .see_failing_testcase,
+                    .edit_fnkbox_description,
                     .scroll_up,
                     .scroll_down,
                     => false,
@@ -1160,6 +1163,7 @@ pub const Lego = struct {
                 Vec2.new(0, 0.75).addY(text_height),
                 .new(16, status_bar_height),
             );
+            const edit_description_button_rect: Rect = relative_box.withSize(.both(1), .top_right);
 
             pub fn children(index: Lego.Index) struct {
                 description: Lego.Index,
@@ -2866,6 +2870,7 @@ pub const Toybox = struct {
         text: []const u8,
         testcases: []const [2]Lego.Index,
         initial_definition: ?Lego.Index,
+        text_allocator: std.mem.Allocator,
         undo_stack: ?*UndoStack,
     ) !Lego.Index {
         const Fnkbox = Lego.Specific.Fnkbox;
@@ -2885,9 +2890,14 @@ pub const Toybox = struct {
             }, undo_stack);
 
         const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
-            try new(.{}, .{ .fnkbox_description = .{
-                .text = text,
-            } }, undo_stack),
+            try Toybox.createWithChildren(.{}, .{ .fnkbox_description = .{
+                .text = .fromOwnedSlice(try text_allocator.dupe(u8, text)),
+            } }, &.{
+                try new(.{}, .{ .button = .{
+                    .local_rect = FnkboxBox.edit_description_button_rect,
+                    .action = .edit_fnkbox_description,
+                } }, undo_stack),
+            }, undo_stack),
             try new(.{}, .{ .button = .{
                 .local_rect = FnkboxBox.status_bar_goal,
                 .action = .see_failing_testcase,
@@ -3027,6 +3037,7 @@ const Workspace = struct {
     hand_layer: Lego.Index = .nothing,
 
     grabbing: Grabbing = .nothing,
+    active_text_input: Lego.Index = .nothing,
 
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
@@ -3035,6 +3046,8 @@ const Workspace = struct {
 
     // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
+    // TODO(design): remove
+    gpa_for_text: std.mem.Allocator,
 
     display_fps: bool = false,
     debug_nodraw: bool = false,
@@ -3115,6 +3128,7 @@ const Workspace = struct {
         dst.arena_for_atom_names = .init(gpa);
         dst.arena_for_lenses_data = .init(gpa);
         dst.gpa_for_bindings = gpa;
+        dst.gpa_for_text = gpa;
 
         const undo_stack: ?*UndoStack = null;
 
@@ -3220,6 +3234,7 @@ const Workspace = struct {
                             .next = null,
                         }, undo_stack),
                     }, undo_stack),
+                    dst.gpa_for_text,
                     undo_stack,
                 ),
                 undo_stack,
@@ -3359,6 +3374,7 @@ const Workspace = struct {
                             try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch.allocator(), undo_stack)
                         else
                             null,
+                        dst.gpa_for_text,
                         undo_stack,
                     );
                 Toybox.addChildLast(
@@ -4614,6 +4630,12 @@ const Workspace = struct {
                                     }
                                 },
                                 .scroll_up, .scroll_down => {
+                                    // TODO(game): draw a better icon
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                },
+                                .edit_fnkbox_description => {
+                                    // TODO(game): draw a better icon
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
@@ -4659,7 +4681,7 @@ const Workspace = struct {
                             try drawer.canvas.drawText(
                                 0,
                                 camera_relative,
-                                fnkbox_description.text,
+                                fnkbox_description.text.items,
                                 .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
                                 0.8,
                                 .black,
@@ -4901,7 +4923,21 @@ const Workspace = struct {
 
         assert(workspace.valid(scratch));
 
-        if (platform.keyboard.wasPressed(.KeyZ)) {
+        const typing: bool = workspace.active_text_input != .nothing;
+
+        if (platform.keyboard.wasPressed(.Escape) and typing) {
+            platform.stopTextInput();
+        }
+
+        while (platform.consumeTextInput()) |input| {
+            try workspace.active_text_input.get().specific.fnkbox_description.text.appendSlice(workspace.gpa_for_bindings, input.constSlice());
+        }
+        if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1) and typing) {
+            const text = &workspace.active_text_input.get().specific.fnkbox_description.text;
+            text.shrinkRetainingCapacity(kommon.unicodeEraseLastCodepoint(text.items));
+        }
+
+        if (platform.keyboard.wasPressed(.KeyZ) and !typing) {
             // std.log.debug("on undo, undo_stack len was: {d}", .{undo_stack.commands.items.len});
             while (undo_stack.pop()) |command| {
                 switch (command) {
@@ -5006,6 +5042,7 @@ const Workspace = struct {
                                 description,
                                 &.{},
                                 null,
+                                workspace.gpa_for_text,
                                 undo_stack,
                             );
                             Toybox.addChildLast(workspace.fnkboxes_layer, fnkbox, undo_stack);
@@ -5156,6 +5193,12 @@ const Workspace = struct {
                                 try launchTestcase(testcase_index, undo_stack);
                             },
                             .scroll_up, .scroll_down => {},
+                            .edit_fnkbox_description => {
+                                const parent = workspace.grabbing.index.get().tree.parent;
+                                assert(parent.hasTag(.fnkbox_description));
+                                platform.startTextInput(null);
+                                workspace.active_text_input = parent;
+                            },
                         }
                         assert(workspace.valid(scratch));
                     }
@@ -5349,7 +5392,7 @@ const Workspace = struct {
             }
             inline for (KeyboardButton.directional_keys) |kv| {
                 for (kv.keys) |key| {
-                    if (platform.keyboard.cur.isDown(key)) {
+                    if (platform.keyboard.cur.isDown(key) and !typing) {
                         p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
                     }
                 }
@@ -5653,6 +5696,8 @@ const Workspace = struct {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                         .scroll_up, .scroll_down => true,
+                        // TODO(game): disallow editing built-in fnks
+                        .edit_fnkbox_description => true,
                     };
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
@@ -6202,6 +6247,7 @@ const Workspace = struct {
                     description,
                     &.{},
                     garland,
+                    dst.gpa_for_text,
                     null,
                 );
                 Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);

@@ -99,4 +99,20 @@ pub fn sum(T: type, arr: []const T) T {
 //     @compileError("Expected pointer, slice, array or vector type, found '" ++ @typeName(T) ++ "'");
 // }
 
+/// Removes the last UTF-8 codepoint from a buffer, returns the new length.
+pub fn unicodeEraseLastCodepoint(buf: []const u8) usize {
+    const len = buf.len;
+    if (len == 0) return 0;
+
+    var i = len;
+    // Walk back over continuation bytes (10xxxxxx)
+    while (i > 0 and (buf[i - 1] & 0xC0) == 0x80) {
+        i -= 1;
+    }
+    // Remove the leading byte too
+    if (i > 0) i -= 1;
+
+    return i;
+}
+
 const std = @import("std");

@@ -9,6 +9,7 @@ pub fn CircularBuffer(comptime T: type, comptime buffer_size: usize) type {
         primer_hueco: usize = 0,
 
         pub const init: Self = .{};
+        pub const empty: Self = .{};
 
         pub fn append(self: *Self, element: T) error{circular_buffer_oom}!void {
             if ((self.primer_hueco + 1) % buffer_size == self.primer_elemento) {

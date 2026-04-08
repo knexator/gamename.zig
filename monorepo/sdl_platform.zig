@@ -78,6 +78,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     }
 } else GameState = undefined;
 
+var sdl_window: *c.SDL_Window = undefined;
+
 var window_size: UVec2 = Vec2.new(stuff.metadata.desired_aspect_ratio, 1).scale(512).toInt(usize);
 fn getWindowRect() Rect {
     return .{
@@ -94,6 +96,24 @@ fn setButtonChanged(button: kommon.input.MouseButton) void {
 var keyboard = Keyboard{ .cur = .init, .prev = .init, .cur_time = 0 };
 fn setKeyChanged(key: KeyboardButton) void {
     keyboard.setChanged(key);
+}
+var pending_text_input: kommon.CircularBuffer(
+    std.BoundedArray(u8, 4),
+    64,
+) = .empty;
+fn startTextInput(textinput_area_in_0101_coords: ?Rect) void {
+    if (textinput_area_in_0101_coords) |rect| {
+        // TODO(now): use the area
+        _ = rect;
+        // c.SDL_SetTextInputArea(sdl_window, .{ .x = ..., }, cursor: c_int ??)
+    }
+    errify(c.SDL_StartTextInput(sdl_window)) catch @panic("bad");
+}
+fn stopTextInput() void {
+    errify(c.SDL_StopTextInput(sdl_window)) catch @panic("bad");
+}
+fn consumeTextInput() ?std.BoundedArray(u8, 4) {
+    return pending_text_input.popFirst();
 }
 
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
@@ -184,7 +204,7 @@ pub fn main() !void {
 
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_STENCIL_SIZE, 8));
 
-    const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
+    sdl_window = try errify(c.SDL_CreateWindow(
         stuff.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
@@ -747,6 +767,9 @@ pub fn main() !void {
         .keyboard = keyboard,
         .setKeyChanged = setKeyChanged,
         .setButtonChanged = setButtonChanged,
+        .startTextInput = startTextInput,
+        .stopTextInput = stopTextInput,
+        .consumeTextInput = consumeTextInput,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
         .global_seconds = 0,
@@ -850,15 +873,10 @@ pub fn main() !void {
                             .up;
                     },
                     c.SDL_EVENT_TEXT_INPUT => {
-                        std.log.debug("input: {s}", .{event.text.text});
+                        const text: []const u8 = std.mem.span(event.text.text);
+                        try pending_text_input.append(try .fromSlice(text));
                     },
                     c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
-                        if (event.type == c.SDL_EVENT_KEY_UP and event.key.scancode == c.SDL_SCANCODE_F1) {
-                            try errify(c.SDL_StartTextInput(sdl_window));
-                        }
-                        if (event.type == c.SDL_EVENT_KEY_UP and event.key.scancode == c.SDL_SCANCODE_F2) {
-                            try errify(c.SDL_StopTextInput(sdl_window));
-                        }
                         if (hot_reloading and event.key.scancode == c.SDL_SCANCODE_F5) {
                             // TODO: complete reload, respawning the window etc
                             // my_game.reset(gpa, sdl_platform.gl);

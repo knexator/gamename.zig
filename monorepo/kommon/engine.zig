@@ -48,6 +48,9 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         setItem: *const fn (key: []const u8, value: []const u8) void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
         recording_log: ?std.io.AnyWriter,
+        startTextInput: *const fn (textinput_area_in_0101_coords: ?Rect) void,
+        stopTextInput: *const fn () void,
+        consumeTextInput: *const fn () ?std.BoundedArray(u8, 4),
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
             var result = self.mouse;
@@ -86,4 +89,5 @@ const Rect = kommon.math.Rect;
 const Mouse = kommon.input.Mouse;
 const Keyboard = kommon.input.Keyboard;
 const KeyboardButton = kommon.input.KeyboardButton;
+const TextInput = kommon.input.TextInput;
 const Gl = kommon.Gl;
