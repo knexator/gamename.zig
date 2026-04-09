@@ -422,6 +422,14 @@ const js = struct {
         /// returns bytes readed
         extern fn readInto(file_index: usize, dst_ptr: [*]u8, dst_len: usize) usize;
     };
+
+    pub const text_input = struct {
+        // TODO(platform): rect
+        extern fn startTextInput() void;
+        extern fn stopTextInput() void;
+        /// returns the amount of bytes filled
+        extern fn consumeTextInput(buf_ptr: [*]u8, buf_len: usize) usize;
+    };
 };
 
 const js_better = struct {
@@ -496,6 +504,25 @@ const js_better = struct {
             js.storage.setItem(key.ptr, key.len, value.ptr, value.len);
         }
     };
+
+    pub const text_input = struct {
+        pub fn startTextInput(rect_in_0101_coords: ?Rect) void {
+            // TODO(platform): use rect
+            _ = rect_in_0101_coords;
+            js.text_input.startTextInput();
+        }
+
+        pub fn stopTextInput() void {
+            js.text_input.stopTextInput();
+        }
+
+        pub fn consumeTextInput() ?std.BoundedArray(u8, 4) {
+            var result: std.BoundedArray(u8, 4) = .{};
+            result.len = js.text_input.consumeTextInput(&result.buffer, result.buffer.len);
+            if (result.len == 0) return null;
+            return result;
+        }
+    };
 };
 
 const GameState = @import("GameState");
@@ -526,6 +553,9 @@ var web_platform: PlatformGives = .{
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,
     .setButtonChanged = setButtonChanged,
+    .startTextInput = js_better.text_input.startTextInput,
+    .stopTextInput = js_better.text_input.stopTextInput,
+    .consumeTextInput = js_better.text_input.consumeTextInput,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,

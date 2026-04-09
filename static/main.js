@@ -45,6 +45,48 @@ function resizeCanvas() {
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
+let text_input_active = false;
+const text_input_element = document.createElement("input");
+let pending_text_input = [];
+if (true) {
+  text_input_element.setAttribute("type", "text");
+  text_input_element.setAttribute("autocomplete", "off");
+  text_input_element.setAttribute("autocorrect", "off");
+  text_input_element.setAttribute("autocapitalize", "off");
+  text_input_element.setAttribute("spellcheck", "false");
+
+  Object.assign(text_input_element.style, {
+    position:    "fixed",
+    width:       "1px",       // must have some size to be focusable
+    height:      "1px",       // — but small enough to be invisible
+    minWidth:    "0",
+    padding:     "0",
+    border:      "none",
+    outline:     "none",
+    background:  "transparent",
+    color:       "transparent",
+    caretColor:  "transparent",
+    fontSize:    "16px",      // ≥16px prevents iOS Safari from auto-zooming
+    opacity:     "0",
+    pointerEvents: "none",
+    zIndex:      "-1",
+    // Default off-screen until SDL_SetTextInputRect is called
+    top:  "-9999px",
+    left: "-9999px",
+  });
+
+  document.body.appendChild(text_input_element);
+
+  text_input_element.addEventListener("input", (e) => {
+    if (!text_input_active || !e.data) return;
+    if (!e.isComposing) {
+      Array.from(e.data).forEach(char => {
+        pending_text_input.push(char);
+      });
+    }
+    text_input_element.value = "";
+  });
+}
 
 var readers = [null];
 
@@ -487,6 +529,23 @@ async function getWasm() {
       isLoaded: (reader_index) => readers[reader_index].loaded,
       isNull: (reader_index) => readers[reader_index].isNull(),
       readInto: (reader_index, buf_ptr, buf_len) => readers[reader_index].readInto(buf_ptr, buf_len),
+
+      // text input
+      startTextInput: () => {
+        text_input_active = true;
+        text_input_element.value = "";
+        text_input_element.focus();
+        // TODO(platform): rect
+      },
+      stopTextInput: () => {
+        text_input_active = false;
+        text_input_element.blur();
+      },
+      consumeTextInput: (buf_ptr, buf_len) => {
+        if (pending_text_input.length == 0) return 0;
+        const char = pending_text_input.shift();
+        return text_encoder.encodeInto(char, getBytes(buf_ptr, buf_len)).written;
+      },
     },
   });
   return wasm_module.instance.exports;
