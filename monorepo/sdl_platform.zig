@@ -295,6 +295,8 @@ pub fn main() !void {
             .useRenderable = useRenderable,
             .useRenderableWithExistingData = useRenderableWithExistingData,
             .buildTexture2D = buildTexture2D,
+            .buildRendertarget = buildRendertarget,
+            .setRendertarget = setRendertarget,
             .buildInstancedRenderable = buildInstancedRenderable,
             .useInstancedRenderable = useInstancedRenderable,
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
@@ -424,6 +426,52 @@ pub fn main() !void {
             }
 
             return .{ .id = texture, .resolution = .new(image.width, image.height) };
+        }
+
+        pub fn buildRendertarget(resolution: UVec2, pixelart: bool) Gl.Texture {
+            const has_alpha = false;
+
+            var framebuffer: c_uint = undefined;
+            gl.GenFramebuffers(1, @ptrCast(&framebuffer));
+            gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+
+            var texture: c_uint = undefined;
+            gl.GenTextures(1, @ptrCast(&texture));
+            gl.BindTexture(gl.TEXTURE_2D, texture);
+            gl.TexImage2D(
+                gl.TEXTURE_2D,
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                @intCast(resolution.x),
+                @intCast(resolution.y),
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                gl.UNSIGNED_BYTE,
+                null,
+            );
+
+            if (pixelart) {
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            } else {
+                gl.GenerateMipmap(gl.TEXTURE_2D);
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                // TODO: let user choose quality
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            }
+
+            gl.FramebufferTexture(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, texture, 0);
+            const asdf: [1]gl.@"enum" = .{gl.COLOR_ATTACHMENT0};
+            gl.DrawBuffers(1, &asdf); // "1" is the size of asdf
+            if (gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) std.debug.panic("failed to create framebuffer", .{});
+
+            return .{ .id = framebuffer, .resolution = resolution };
+        }
+
+        pub fn setRendertarget(rendertarget: ?Gl.Texture) void {
+            gl.BindFramebuffer(gl.FRAMEBUFFER, if (rendertarget) |r| r.id else 0);
+            const resolution: UVec2 = if (rendertarget) |r| r.resolution else window_size;
+            gl.Viewport(0, 0, @intCast(resolution.x), @intCast(resolution.y));
         }
 
         pub fn buildRenderable(

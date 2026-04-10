@@ -1400,6 +1400,28 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
 
+        // screenshot
+        if (self.is_editor) {
+            const button: Rect = top_right_button.move(.new(0, 2)).withSize(.new(2, 1), .top_right).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "screenshot",
+                .text_scale = 0.5,
+                .radio_selected = hot,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    const rt = platform.gl.buildRendertarget(.new(10, 10), false);
+                    platform.gl.setRendertarget(rt);
+                    defer platform.gl.setRendertarget(null);
+                    std.log.err("TODO", .{});
+                }
+            }
+        }
+
         // toggle catalogue
         if (true) {
             const button: Rect = top_right_button.plusMargin(-0.1);

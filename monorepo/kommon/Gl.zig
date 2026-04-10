@@ -27,6 +27,13 @@ buildTexture2D: *const fn (
     pixelart: bool,
 ) Texture,
 
+buildRendertarget: *const fn (
+    resolution: UVec2,
+    pixelart: bool,
+) Texture,
+
+setRendertarget: *const fn (rendertarget: ?Texture) void,
+
 buildRenderable: *const fn (
     /// without preamble!
     vertex_src: [:0]const u8,
