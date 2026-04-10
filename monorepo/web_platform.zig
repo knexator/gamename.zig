@@ -1134,40 +1134,32 @@ export fn init(random_seed: u32) void {
     tweakable_floats = .init(web_platform.gpa);
     tweakable_textures = .init(web_platform.gpa);
 
-    switch (@typeInfo(@TypeOf(GameState.init)).@"fn".params.len) {
-        5 => my_game.init(
-            gpa,
-            web_platform.gl,
-            images_pointers,
-            @intCast(random_seed),
-        ) catch unreachable,
-        6 => my_game.init(
-            gpa,
-            web_platform.gl,
-            images_pointers,
-            @intCast(random_seed),
-            struct {
-                pub fn fcolor(name: []const u8, ptr: *FColor) void {
-                    const index = tweakable_fcolors.items.len;
-                    tweakable_fcolors.append(ptr) catch std.debug.panic("OoM", .{});
-                    js.tweak.addTweakableFColor(index, name.ptr, name.len, ptr.r, ptr.g, ptr.b);
-                }
+    my_game.init(.{
+        .gpa = gpa,
+        .gl = web_platform.gl,
+        .loaded_images = images_pointers,
+        .random_seed = @intCast(random_seed),
+    }, .{
+        .tweakable = struct {
+            pub fn fcolor(name: []const u8, ptr: *FColor) void {
+                const index = tweakable_fcolors.items.len;
+                tweakable_fcolors.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableFColor(index, name.ptr, name.len, ptr.r, ptr.g, ptr.b);
+            }
 
-                pub fn float(name: []const u8, ptr: *f32, min: f32, max: f32) void {
-                    const index = tweakable_floats.items.len;
-                    tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
-                    js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
-                }
+            pub fn float(name: []const u8, ptr: *f32, min: f32, max: f32) void {
+                const index = tweakable_floats.items.len;
+                tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
+            }
 
-                pub fn texture(name: []const u8, ptr: *Gl.Texture) void {
-                    const index = tweakable_textures.items.len;
-                    tweakable_textures.append(ptr) catch std.debug.panic("OoM", .{});
-                    js.tweak.addTweakableTexture(index, name.ptr, name.len);
-                }
-            },
-        ) catch unreachable,
-        else => comptime unreachable,
-    }
+            pub fn texture(name: []const u8, ptr: *Gl.Texture) void {
+                const index = tweakable_textures.items.len;
+                tweakable_textures.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableTexture(index, name.ptr, name.len);
+            }
+        },
+    }) catch std.debug.panic("error during init", .{});
 }
 
 export fn update(delta_seconds: f32) void {

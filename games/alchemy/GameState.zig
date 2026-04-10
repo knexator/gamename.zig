@@ -400,11 +400,13 @@ pub fn textureFor(self: GameState, id: Element) Gl.Texture {
 
 pub fn init(
     dst: *GameState,
-    gpa: std.mem.Allocator,
-    gl: Gl,
-    loaded_images: std.EnumArray(Images, *const anyopaque),
-    _: u64,
+    runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+    comptime _: kommon.engine.InitComptimeParamsFor(GameState),
 ) !void {
+    const gpa = runtime_params.gpa;
+    const gl = runtime_params.gl;
+    const loaded_images = runtime_params.loaded_images;
+
     // dst.* = kommon.meta.initDefaultFields(GameState);
     dst.global_seconds_at_focus = null;
 

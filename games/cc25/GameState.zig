@@ -76,15 +76,14 @@ const ArmSegment = struct {
 
 pub fn init(
     dst: *GameState,
-    gpa: std.mem.Allocator,
-    gl: Gl,
-    loaded_images: std.EnumArray(Images, *const anyopaque),
-    random_seed: u64,
-    // tweakable: type,
-    // tweakable: struct {
-    //     fcolor: fn (name: []const u8, value: *FColor) void,
-    // },
+    runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+    comptime _: kommon.engine.InitComptimeParamsFor(GameState),
 ) !void {
+    const gpa = runtime_params.gpa;
+    const gl = runtime_params.gl;
+    const loaded_images = runtime_params.loaded_images;
+    const random_seed = runtime_params.random_seed;
+
     dst.* = kommon.meta.initDefaultFields(GameState);
 
     dst.usual.init(

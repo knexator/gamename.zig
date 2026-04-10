@@ -18,6 +18,25 @@ pub fn CApiFor(comptime GameState: type) type {
     };
 }
 
+pub fn InitRuntimeParamsFor(comptime GameState: type) type {
+    return struct {
+        gpa: std.mem.Allocator,
+        gl: Gl,
+        loaded_images: std.EnumArray(GameState.Images, *const anyopaque),
+        random_seed: u64,
+    };
+}
+
+pub fn InitComptimeParamsFor(comptime GameState: type) type {
+    _ = GameState;
+    return struct {
+        tweakable: type,
+        // tweakable: struct {
+        //     fcolor: fn (name: []const u8, value: *FColor) void,
+        // },
+    };
+}
+
 pub fn PlatformGivesFor(comptime GameState: type) type {
     const stuff = GameState.stuff;
     const sounds = stuff.sounds;

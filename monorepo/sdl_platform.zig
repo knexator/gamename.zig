@@ -36,7 +36,22 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     }
 
     fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: Gl, loaded_images: std.EnumArray(GameState.Images, *const anyopaque), random_seed: u64) !void {
-        try dst.state.init(gpa, sdl_gl, loaded_images, random_seed);
+        try dst.state.init(
+            .{
+                .gpa = gpa,
+                .gl = sdl_gl,
+                .loaded_images = loaded_images,
+                .random_seed = random_seed,
+            },
+            .{
+                // TODO(platform): tweakable params for sdl backend
+                .tweakable = struct {
+                    pub fn fcolor(_: []const u8, _: *FColor) void {}
+                    pub fn float(_: []const u8, _: *f32, _: f32, _: f32) void {}
+                    pub fn texture(_: []const u8, _: *Gl.Texture) void {}
+                },
+            },
+        );
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -374,7 +389,7 @@ pub fn main() !void {
             const has_alpha = switch (image.num_components) {
                 3 => false,
                 4 => true,
-                else => unreachable,
+                else => std.debug.panic("TODO: support components: {d}", .{image.num_components}),
             };
 
             var texture: c_uint = undefined;

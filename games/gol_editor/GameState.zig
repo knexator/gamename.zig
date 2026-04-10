@@ -2,6 +2,8 @@ pub const GameState = @This();
 pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
+pub const tracy = @import("tracy");
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -1061,16 +1063,16 @@ textures: struct {
 
 pub fn init(
     dst: *GameState,
-    gpa: std.mem.Allocator,
-    gl: Gl,
-    loaded_images: std.EnumArray(Images, *const anyopaque),
-    random_seed: u64,
-    tweakable: type,
-    // tweakable: struct {
-    //     fcolor: fn (name: []const u8, value: *FColor) void,
-    // },
+    runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+    comptime comptime_params: kommon.engine.InitComptimeParamsFor(GameState),
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
+
+    const gpa = runtime_params.gpa;
+    const gl = runtime_params.gl;
+    const loaded_images = runtime_params.loaded_images;
+    const random_seed = runtime_params.random_seed;
+    const tweakable = comptime_params.tweakable;
 
     dst.usual.init(
         gpa,
