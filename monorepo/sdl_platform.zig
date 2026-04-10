@@ -386,9 +386,10 @@ pub fn main() !void {
         pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) Gl.Texture {
             const image: *const zstbi.Image = @alignCast(@ptrCast(data));
 
-            const has_alpha = switch (image.num_components) {
-                3 => false,
-                4 => true,
+            const format: c_uint = switch (image.num_components) {
+                2 => gl.RG,
+                3 => gl.RGB,
+                4 => gl.RGBA,
                 else => std.debug.panic("TODO: support components: {d}", .{image.num_components}),
             };
 
@@ -398,14 +399,20 @@ pub fn main() !void {
             gl.TexImage2D(
                 gl.TEXTURE_2D,
                 0,
-                if (has_alpha) gl.RGBA else gl.RGB,
+                @intCast(format),
                 @intCast(image.width),
                 @intCast(image.height),
                 0,
-                if (has_alpha) gl.RGBA else gl.RGB,
+                format,
                 gl.UNSIGNED_BYTE,
                 image.data.ptr,
             );
+
+            if (image.num_components == 2) {
+                const swizzle: [4]gl.int = .{ gl.RED, gl.RED, gl.RED, gl.GREEN };
+                gl.TexParameteriv(gl.TEXTURE_2D, gl.TEXTURE_SWIZZLE_RGBA, &swizzle);
+            }
+
             if (pixelart) {
                 gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
                 gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
