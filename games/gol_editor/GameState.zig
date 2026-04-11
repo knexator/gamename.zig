@@ -459,16 +459,22 @@ const Toolbar = struct {
         moving: kommon.Grid2D(Cell),
     } = .none,
     rect_tool_moving_include_blank: bool = true,
+    screenshot_rect_inner_corner1: IVec2 = .zero,
+    screenshot_rect_inner_corner2: IVec2 = .zero,
+    screenshot_rect_tool_state: union(enum) {
+        none,
+        selecting,
+    } = .none,
     catalogue_index: usize = 0,
     catalogue_view_offset: f32 = 0,
     zoom: Zoom = .free,
     clock: Clock = .stopped,
 
     active_tool: Tool,
-    /// only defined when active tool is catalogue
+    /// only defined when active tool is catalogue or screenshot_rect
     prev_tool: Tool = undefined,
 
-    const Tool = enum { paint_state, paint_type, rect, catalogue, panning };
+    const Tool = enum { paint_state, paint_type, rect, catalogue, panning, screenshot_rect };
 
     const Clock = struct {
         state: State,
@@ -529,6 +535,10 @@ const Toolbar = struct {
     pub fn moveSelectedRect(self: *Toolbar, delta: IVec2) void {
         self.selected_rect_inner_corner1.addInPlace(delta);
         self.selected_rect_inner_corner2.addInPlace(delta);
+    }
+
+    pub fn screenshotRect(self: Toolbar) math.IBounds {
+        return math.IBounds.empty.bounding(self.screenshot_rect_inner_corner1).bounding(self.screenshot_rect_inner_corner2);
     }
 };
 
@@ -1103,6 +1113,7 @@ pub fn init(
     tweakable.float("slow tick", &CONFIG.time.slow, 0.5, 3.0);
     tweakable.float("fast tick", &CONFIG.time.fast, 0.01, 1.0);
 
+    // TODO: tweakable int
     tweakable.float("screenshot resolution", &CONFIG.screenshot_resolution, 1, 64);
 
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
@@ -1443,7 +1454,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // screenshot
-        if (self.is_editor and toolbar.active_tool == .rect) {
+        if (self.is_editor) {
             const button: Rect = top_right_button.move(.new(0, 2)).withSize(.new(2, 1), .top_right).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
@@ -1456,17 +1467,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (hot) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    const bounds = toolbar.selectedRect();
-                    // TODO: tweakable int
-                    const resolution: UVec2 = bounds.inner_size.scale(@intFromFloat(@round(CONFIG.screenshot_resolution)));
-                    const rt = platform.gl.buildRendertarget(resolution, false);
-                    platform.gl.setRendertarget(rt);
-                    defer platform.gl.setRendertarget(null);
-                    defer platform.downloadActiveFramebuffer(resolution);
-
-                    platform.gl.clear(Cell.State.off.color());
-                    try self.drawCellsAndMotes(bounds.asRect(), cur_level.board, .{ .include_motes = true });
-                    try self.drawBoardLines(bounds.asRect());
+                    toolbar.prev_tool = toolbar.active_tool;
+                    toolbar.active_tool = .screenshot_rect;
+                    toolbar.screenshot_rect_tool_state = .none;
                 }
             }
         }
@@ -1806,6 +1809,41 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         },
                     }
                 },
+                .screenshot_rect => {
+                    platform.setCursor(.could_grab);
+                    switch (toolbar.screenshot_rect_tool_state) {
+                        .none => {
+                            if (mouse.wasPressed(.left)) {
+                                toolbar.screenshot_rect_tool_state = .selecting;
+                                toolbar.screenshot_rect_inner_corner1 = cell_under_mouse;
+                                toolbar.screenshot_rect_inner_corner2 = cell_under_mouse;
+                            }
+                        },
+                        .selecting => {
+                            if (mouse.cur.isDown(.left)) {
+                                toolbar.screenshot_rect_inner_corner2 = cell_under_mouse;
+                            } else {
+                                toolbar.screenshot_rect_tool_state = .none;
+                                toolbar.active_tool = toolbar.prev_tool;
+
+                                const bounds = toolbar.screenshotRect();
+                                const resolution: UVec2 = bounds.inner_size.scale(@intFromFloat(@round(CONFIG.screenshot_resolution)));
+                                const rt = platform.gl.buildRendertarget(resolution, false);
+                                platform.gl.setRendertarget(rt);
+                                defer platform.gl.setRendertarget(null);
+                                defer platform.downloadActiveFramebuffer(resolution);
+
+                                platform.gl.clear(Cell.State.off.color());
+                                try self.drawCellsAndMotes(bounds.asRect(), cur_level.board, .{ .include_motes = true });
+                                try self.drawBoardLines(bounds.asRect());
+                                if (toolbar.active_tool == .rect) {
+                                    const rect = toolbar.selectedRect().asRect();
+                                    canvas.strokeRect(bounds.asRect(), rect, 0.1, COLORS.rect_selection_border);
+                                }
+                            }
+                        },
+                    }
+                },
                 .catalogue => {
                     if (mouse.wasPressed(.left) or mouse.wasPressed(.right)) {
                         toolbar.active_tool = toolbar.prev_tool;
@@ -1865,7 +1903,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     }
                 },
             },
-            .catalogue, .panning => {},
+            .catalogue, .panning, .screenshot_rect => {},
         }
 
         // always available: move camera
@@ -1954,6 +1992,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (toolbar.active_tool == .rect) {
             const rect = toolbar.selectedRect().asRect();
             canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
+        }
+
+        if (toolbar.active_tool == .screenshot_rect) {
+            if (toolbar.prev_tool == .rect) {
+                const rect = toolbar.selectedRect().asRect();
+                canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
+            }
+            if (toolbar.screenshot_rect_tool_state == .selecting) {
+                const rect = toolbar.screenshotRect().asRect();
+                canvas.strokeRect(camera, rect, 0.1, .red);
+            }
         }
 
         // hide non-square part of the board
