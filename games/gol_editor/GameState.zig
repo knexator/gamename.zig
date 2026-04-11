@@ -1462,7 +1462,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .color = null,
                 .text = "screenshot",
                 .text_scale = 0.5,
-                .radio_selected = hot,
+                .radio_selected = hot or toolbar.active_tool == .screenshot_rect,
             });
             if (hot) {
                 mouse_over_ui = true;
