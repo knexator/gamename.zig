@@ -338,6 +338,33 @@ async function getWasm() {
         image_promises.push(imageFromBase64(getString(base64_ptr, base64_len)));
         return image_promises.length - 1;
       },
+      activeFramebufferToImage: (width, height) => {
+        const pixels = new Uint8Array(width * height * 4);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+        const local_canvas = document.createElement('canvas');
+        local_canvas.width = width; local_canvas.height = height;
+        const ctx = local_canvas.getContext('2d');
+        const imageData = ctx.createImageData(width, height);
+        // Y-flip
+        for (let y = 0; y < height; y++) {
+          const src = (height - 1 - y) * width * 4;
+          imageData.data.set(pixels.subarray(src, src + width * 4), y * width * 4);
+        }
+        ctx.putImageData(imageData, 0, 0);
+        images.push(local_canvas);
+        console.log(local_canvas);
+        return images.length - 1;
+      },
+      downloadImage: (image) => {
+        images[image].toBlob((blob) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'texture.png';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+      },
 
       // sound
       loadSound: (url_ptr, url_len) => {

@@ -50,6 +50,8 @@ const js = struct {
         extern fn preloadImageFromBase64Data(base64_ptr: [*]const u8, base64_len: usize) usize;
         extern fn imageWidth(image_id: usize) usize;
         extern fn imageHeight(image_id: usize) usize;
+        extern fn activeFramebufferToImage(width: usize, height: usize) usize;
+        extern fn downloadImage(image_id: usize) void;
     };
 
     // current direction: closely matching the webgl2 API
@@ -512,6 +514,13 @@ const js_better = struct {
                 js.images.imageHeight(image_id),
             );
         }
+
+        pub fn activeFramebufferToImage(res: UVec2) usize {
+            return js.images.activeFramebufferToImage(res.x, res.y);
+        }
+        pub fn downloadImage(image_id: usize) void {
+            return js.images.downloadImage(image_id);
+        }
     };
 
     pub const audio = struct {
@@ -612,6 +621,12 @@ var web_platform: PlatformGives = .{
     .enqueueSamples = js_better.audio.enqueueSamples,
     .queuedSeconds = js_better.audio.queuedSeconds,
     .gl = web_gl.vtable,
+    .downloadActiveFramebuffer = struct {
+        fn anon(resolution: UVec2) void {
+            const image_id = js_better.images.activeFramebufferToImage(resolution);
+            return js_better.images.downloadImage(image_id);
+        }
+    }.anon,
     .downloadAsFile = struct {
         fn anon(filename: []const u8, contents: []const u8) void {
             return js_better.storage.downloadAsFile(filename, .txt, contents);

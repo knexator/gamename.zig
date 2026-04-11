@@ -58,6 +58,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         enqueueSamples: *const fn (src: []const f32) void,
         queuedSeconds: *const fn () f32,
         gl: Gl,
+        downloadActiveFramebuffer: *const fn (resolution: kommon.math.UVec2) void,
         downloadAsFile: *const fn (filename: []const u8, contents: []const u8) void,
         askUserForFile: *const fn () void,
         userUploadedFile: *const fn () ?std.io.AnyReader,

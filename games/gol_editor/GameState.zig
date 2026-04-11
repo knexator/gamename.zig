@@ -38,6 +38,7 @@ var COLORS: struct {
 
 var CONFIG: struct {
     grid_width: f32 = 0.05,
+    screenshot_resolution: f32 = 32,
     use_motes_texture: bool = true,
     quantum_salt: bool = false,
     time: struct {
@@ -1102,6 +1103,8 @@ pub fn init(
     tweakable.float("slow tick", &CONFIG.time.slow, 0.5, 3.0);
     tweakable.float("fast tick", &CONFIG.time.fast, 0.01, 1.0);
 
+    tweakable.float("screenshot resolution", &CONFIG.screenshot_resolution, 1, 64);
+
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
         @field(dst.textures, field.name) = gl.buildTexture2D(
             loaded_images.get(std.enums.nameCast(Images, field.name)),
@@ -1196,6 +1199,45 @@ pub fn beforeHotReload(self: *GameState) !void {
 
 pub fn afterHotReload(self: *GameState) !void {
     _ = self;
+}
+
+pub fn drawCellsAndMotes(self: *GameState, camera: Rect, state: *const BoardState, config: struct {
+    include_motes: bool,
+}) !void {
+    var batch: Cell.Batch = .init(self);
+    defer batch.draw(camera, &self.usual.canvas);
+    const cam_bounds: math.IBounds = .fromRect(camera.plusMargin(1.1));
+
+    var it = state.cells.iterator();
+    while (it.next()) |kv| {
+        const pos = kv.key_ptr.*;
+        const cell = kv.value_ptr.*;
+        if (!cam_bounds.contains(pos)) continue;
+        if (cell.state != .off) {
+            try batch.addBg(cell, pos);
+        }
+        if (config.include_motes) {
+            try batch.addMotes(cell, pos);
+        }
+    }
+}
+
+pub fn drawBoardLines(self: *GameState, camera: Rect) !void {
+    var segments: std.ArrayList(Canvas.Segment) = .init(self.usual.mem.frame.allocator());
+    {
+        var x = @floor(camera.top_left.x);
+        while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
+            try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = COLORS.grid });
+        }
+    }
+    {
+        var y = @floor(camera.top_left.y);
+        while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
+            try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = COLORS.grid });
+        }
+    }
+
+    self.usual.canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
 }
 
 /// returns true if should quit
@@ -1401,7 +1443,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // screenshot
-        if (self.is_editor) {
+        if (self.is_editor and toolbar.active_tool == .rect) {
             const button: Rect = top_right_button.move(.new(0, 2)).withSize(.new(2, 1), .top_right).plusMargin(-0.1);
             const hot = button.contains(ui_mouse.cur.position);
             try ui_buttons.append(.{
@@ -1414,10 +1456,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (hot) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    const rt = platform.gl.buildRendertarget(.new(10, 10), false);
+                    const bounds = toolbar.selectedRect();
+                    // TODO: tweakable int
+                    const resolution: UVec2 = bounds.inner_size.scale(@intFromFloat(@round(CONFIG.screenshot_resolution)));
+                    const rt = platform.gl.buildRendertarget(resolution, false);
                     platform.gl.setRendertarget(rt);
                     defer platform.gl.setRendertarget(null);
-                    std.log.err("TODO", .{});
+                    defer platform.downloadActiveFramebuffer(resolution);
+
+                    platform.gl.clear(Cell.State.off.color());
+                    try self.drawCellsAndMotes(bounds.asRect(), cur_level.board, .{ .include_motes = true });
+                    try self.drawBoardLines(bounds.asRect());
                 }
             }
         }
@@ -1867,24 +1916,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         const visible_board = ghost_board orelse cur_level.board;
 
-        if (true) {
-            var batch: Cell.Batch = .init(self);
-            defer batch.draw(camera, canvas);
-
-            const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
-            var it = visible_board.cells.iterator();
-            while (it.next()) |kv| {
-                const pos = kv.key_ptr.*;
-                const cell = kv.value_ptr.*;
-                if (!cam_bounds.contains(pos)) continue;
-                if (cell.state != .off) {
-                    try batch.addBg(cell, pos);
-                }
-                if (toolbar.zoom != .bounds_lit) {
-                    try batch.addMotes(cell, pos);
-                }
-            }
-        }
+        // cells and motes
+        try self.drawCellsAndMotes(camera, visible_board, .{
+            .include_motes = toolbar.zoom != .bounds_lit,
+        });
 
         if (std.meta.activeTag(toolbar.rect_tool_state) == .moving) {
             const values = toolbar.rect_tool_state.moving;
@@ -1914,23 +1949,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // board lines
-        if (true) {
-            var segments: std.ArrayList(Canvas.Segment) = .init(mem.frame.allocator());
-            {
-                var x = @floor(camera.top_left.x);
-                while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
-                    try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = COLORS.grid });
-                }
-            }
-            {
-                var y = @floor(camera.top_left.y);
-                while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
-                    try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = COLORS.grid });
-                }
-            }
-
-            canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
-        }
+        try self.drawBoardLines(camera);
 
         if (toolbar.active_tool == .rect) {
             const rect = toolbar.selectedRect().asRect();
