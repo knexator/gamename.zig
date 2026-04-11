@@ -365,6 +365,13 @@ async function getWasm() {
           URL.revokeObjectURL(a.href);
         });
       },
+      copyImage: (image) => {
+        images[image].toBlob(async (blob) => {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ]);
+        });
+      },
 
       // sound
       loadSound: (url_ptr, url_len) => {

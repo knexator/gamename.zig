@@ -52,6 +52,7 @@ const js = struct {
         extern fn imageHeight(image_id: usize) usize;
         extern fn activeFramebufferToImage(width: usize, height: usize) usize;
         extern fn downloadImage(image_id: usize) void;
+        extern fn copyImage(image_id: usize) void;
     };
 
     // current direction: closely matching the webgl2 API
@@ -521,6 +522,9 @@ const js_better = struct {
         pub fn downloadImage(image_id: usize) void {
             return js.images.downloadImage(image_id);
         }
+        pub fn copyImage(image_id: usize) void {
+            return js.images.copyImage(image_id);
+        }
     };
 
     pub const audio = struct {
@@ -624,7 +628,8 @@ var web_platform: PlatformGives = .{
     .downloadActiveFramebuffer = struct {
         fn anon(resolution: UVec2) void {
             const image_id = js_better.images.activeFramebufferToImage(resolution);
-            return js_better.images.downloadImage(image_id);
+            js_better.images.downloadImage(image_id);
+            js_better.images.copyImage(image_id);
         }
     }.anon,
     .downloadAsFile = struct {

@@ -863,6 +863,7 @@ pub fn main() !void {
         .gl = sdl_gl.vtable,
         // TODO
         .downloadAsFile = undefined,
+        .downloadActiveFramebuffer = undefined,
         .askUserForFile = undefined,
         .userUploadedFile = struct {
             pub fn anon() ?std.io.AnyReader {
