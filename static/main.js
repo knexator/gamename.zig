@@ -119,7 +119,7 @@ class JsReader {
 }
 
 
-const image_promises = [];
+const image_promises = [new Promise(res => res(null))];
 
 // from https://www.fabiofranchino.com/log/load-an-image-with-javascript-using-await/
 function imageFromUrl(url) {
@@ -397,6 +397,7 @@ async function getWasm() {
       },
 
       // webgl2
+      viewport: (x, y, width, height) => gl.viewport(x, y, width, height),
       createShader: (type) => storeGlObject(gl.createShader(type)),
       shaderSource: (shader, source_ptr, source_len) => gl.shaderSource(gl_objects[shader], "#version 300 es\n\n" + getString(source_ptr, source_len)),
       compileShader: (shader) => gl.compileShader(gl_objects[shader]),
@@ -442,7 +443,11 @@ async function getWasm() {
       bindTexture: (target, texture) => gl.bindTexture(target, gl_objects[texture]),
       texParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
       texImage2D_basic: (target, level, internalformat, format, type, pixels) => gl.texImage2D(target, level, internalformat, format, type, images[pixels]),
+      texImage2D_withSize: (target, level, internalformat, width, height, border, format, type, pixels) => gl.texImage2D(target, level, internalformat, width, height, border, format, type, images[pixels]),
       generateMipmap: (target) => gl.generateMipmap(target),
+      createFramebuffer: () => storeGlObject(gl.createFramebuffer()),
+      bindFramebuffer: (target, framebuffer) => gl.bindFramebuffer(target, gl_objects[framebuffer]),
+      framebufferTexture2D: (target, attachment, texttarget, texture, level) => gl.framebufferTexture2D(target, attachment, texttarget, gl_objects[texture], level),
       stencilFunc: (func, ref, mask) => gl.stencilFunc(func, ref, mask),
       stencilOp: (fail, zfail, zpass) => gl.stencilOp(fail, zfail, zpass),
 

@@ -54,6 +54,7 @@ const js = struct {
 
     // current direction: closely matching the webgl2 API
     pub const webgl2 = struct {
+        extern fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) void;
         extern fn colorMask(red: GLboolean, green: GLboolean, blue: GLboolean, alpha: GLboolean) void;
         extern fn clearColor(r: f32, g: f32, b: f32, a: f32) void;
         extern fn clearStencil(s: GLint) void;
@@ -149,7 +150,24 @@ const js = struct {
             /// index of a ImageData, HTMLImageElement, HTMLCanvasElement, HTMLVideoElement, or ImageBitmap.
             pixels: usize,
         ) void;
+        extern fn texImage2D_withSize(
+            target: TextureBindPointSpecific,
+            level: GLint,
+            // TODO
+            internalformat: enum(GLenum) { RGBA = 0x1908, RGB = 0x1907 },
+            width: GLsizei,
+            height: GLsizei,
+            border: GLint,
+            // TODO
+            format: enum(GLenum) { RGBA = 0x1908, RGB = 0x1907 },
+            type: enum(GLenum) { UNSIGNED_BYTE = 0x1401 },
+            /// index of a ImageData, HTMLImageElement, HTMLCanvasElement, HTMLVideoElement, or ImageBitmap.
+            pixels: usize,
+        ) void;
         extern fn generateMipmap(target: TextureBindPointGeneral) void;
+        extern fn createFramebuffer() Framebuffer;
+        extern fn bindFramebuffer(target: FramebufferBindPoint, framebuffer: Framebuffer) void;
+        extern fn framebufferTexture2D(target: FramebufferBindPoint, attachment: FramebufferTextureAttachmentPoint, texttarget: TextureBindPointSpecific, texture: Texture, level: GLint) void;
         extern fn stencilFunc(
             func: enum(GLenum) {
                 // TODO
@@ -246,6 +264,7 @@ const js = struct {
         const Buffer = enum(GLObject) { null = 0, _ };
         const UniformLocation = enum(GLObject) { _ };
         const Texture = enum(GLObject) { null = 0, _ };
+        const Framebuffer = enum(GLObject) { null = 0, _ };
 
         pub const Capability = enum(GLenum) {
             BLEND = 0x0BE2,
@@ -366,6 +385,34 @@ const js = struct {
             // TEXTURE_CUBE_MAP_NEGATIVE_Y = 0x0000,
             // TEXTURE_CUBE_MAP_POSITIVE_Z = 0x0000,
             // TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x0000,
+        };
+
+        pub const FramebufferBindPoint = enum(GLenum) {
+            FRAMEBUFFER = 0x8D40,
+            READ_FRAMEBUFFER = 0x8CA8,
+            DRAW_FRAMEBUFFER = 0x8CA9,
+        };
+
+        pub const FramebufferTextureAttachmentPoint = enum(GLenum) {
+            COLOR_ATTACHMENT0 = 0x8CE0,
+            DEPTH_ATTACHMENT = 0x8D00,
+            STENCIL_ATTACHMENT = 0x8D20,
+            DEPTH_STENCIL_ATTACHMENT = 0x821A,
+            COLOR_ATTACHMENT1 = 0x8CE1,
+            COLOR_ATTACHMENT2 = 0x8CE2,
+            COLOR_ATTACHMENT3 = 0x8CE3,
+            COLOR_ATTACHMENT4 = 0x8CE4,
+            COLOR_ATTACHMENT5 = 0x8CE5,
+            COLOR_ATTACHMENT6 = 0x8CE6,
+            COLOR_ATTACHMENT7 = 0x8CE7,
+            COLOR_ATTACHMENT8 = 0x8CE8,
+            COLOR_ATTACHMENT9 = 0x8CE9,
+            COLOR_ATTACHMENT10 = 0x8CEA,
+            COLOR_ATTACHMENT11 = 0x8CEB,
+            COLOR_ATTACHMENT12 = 0x8CEC,
+            COLOR_ATTACHMENT13 = 0x8CED,
+            COLOR_ATTACHMENT14 = 0x8CEE,
+            COLOR_ATTACHMENT15 = 0x8CEF,
         };
 
         pub const TexParameter = enum(GLenum) {
@@ -662,6 +709,8 @@ const web_gl = struct {
         .useRenderable = useRenderable,
         .useRenderableWithExistingData = useRenderableWithExistingData,
         .buildTexture2D = buildTexture2D,
+        .buildRendertarget = buildRendertarget,
+        .setRendertarget = setRendertarget,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
@@ -766,6 +815,48 @@ const web_gl = struct {
         }
 
         return .{ .id = @intFromEnum(texture), .resolution = js_better.images.resolution(image_id.*) };
+    }
+
+    pub fn buildRendertarget(resolution: UVec2, pixelart: bool) Gl.Texture {
+        const has_alpha = false;
+
+        const framebuffer = js.webgl2.createFramebuffer();
+        js.webgl2.bindFramebuffer(.FRAMEBUFFER, framebuffer);
+
+        const texture = js.webgl2.createTexture();
+        js.webgl2.bindTexture(.TEXTURE_2D, texture);
+        js.webgl2.texImage2D_withSize(
+            .TEXTURE_2D,
+            0,
+            if (has_alpha) .RGBA else .RGB,
+            @intCast(resolution.x),
+            @intCast(resolution.y),
+            0,
+            if (has_alpha) .RGBA else .RGB,
+            .UNSIGNED_BYTE,
+            0,
+        );
+
+        if (pixelart) {
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .NEAREST);
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST);
+        } else {
+            js.webgl2.generateMipmap(.TEXTURE_2D);
+            // TODO: let user choose quality
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .LINEAR);
+            // js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST_MIPMAP_LINEAR);
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .LINEAR_MIPMAP_LINEAR);
+        }
+
+        js.webgl2.framebufferTexture2D(.FRAMEBUFFER, .COLOR_ATTACHMENT0, .TEXTURE_2D, texture, 0);
+
+        return .{ .id = @intFromEnum(framebuffer), .resolution = resolution };
+    }
+
+    pub fn setRendertarget(rendertarget: ?Gl.Texture) void {
+        js.webgl2.bindFramebuffer(.FRAMEBUFFER, if (rendertarget) |r| @enumFromInt(r.id) else .null);
+        const resolution: UVec2 = if (rendertarget) |r| r.resolution else js_better.canvas.getSize();
+        js.webgl2.viewport(0, 0, @intCast(resolution.x), @intCast(resolution.y));
     }
 
     pub fn buildRenderable(
