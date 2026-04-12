@@ -1183,6 +1183,7 @@ pub const Lego = struct {
         };
 
         pub const Fnkbox = struct {
+            editable: bool,
             execution: ?struct {
                 original_garland: Lego.Index,
                 source: union(enum) {
@@ -2867,6 +2868,7 @@ pub const Toybox = struct {
         local_point: Point,
         // TODO(design): take *const Sepxr
         fnkname: Lego.Index,
+        editable: bool,
         text: []const u8,
         testcases: []const [2]Lego.Index,
         initial_definition: ?Lego.Index,
@@ -2940,7 +2942,7 @@ pub const Toybox = struct {
             },
         }, undo_stack);
 
-        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined } }, &.{
+        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .editable = editable } }, &.{
             box,
             fnkname,
             executor,
@@ -3185,6 +3187,7 @@ const Workspace = struct {
                         true,
                         undo_stack,
                     ),
+                    false,
                     "do lowercase",
                     &.{
                         .{
@@ -3368,6 +3371,7 @@ const Workspace = struct {
                     try Toybox.buildFnkbox(
                         .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
                         try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true, true, undo_stack),
+                        false,
                         level.description,
                         samples,
                         if (level.initial_definition) |definition|
@@ -4634,7 +4638,7 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
-                                .edit_fnkbox_description => {
+                                .edit_fnkbox_description => if (button.enabled) {
                                     // TODO(game): draw a better icon
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
@@ -4927,6 +4931,7 @@ const Workspace = struct {
 
         if (platform.keyboard.wasPressed(.Escape) and typing) {
             platform.stopTextInput();
+            workspace.active_text_input = .nothing;
         }
 
         while (platform.consumeTextInput()) |input| {
@@ -5039,6 +5044,7 @@ const Workspace = struct {
                             const fnkbox = try Toybox.buildFnkbox(
                                 hot_index.get().local_point,
                                 fnkname,
+                                true,
                                 description,
                                 &.{},
                                 null,
@@ -5696,8 +5702,7 @@ const Workspace = struct {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                         .scroll_up, .scroll_down => true,
-                        // TODO(game): disallow editing built-in fnks
-                        .edit_fnkbox_description => true,
+                        .edit_fnkbox_description => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.editable,
                     };
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
@@ -6240,10 +6245,12 @@ const Workspace = struct {
                 ).garland, garland, null);
                 fnkbox_index.get().local_point.pos = pos;
             } else {
+                // TODO: restore description
                 const description = try std.fmt.allocPrint(dst.arena_for_atom_names.allocator(), "Custom machine {any}", .{fnk.name});
                 const fnkbox = try Toybox.buildFnkbox(
                     .{ .pos = pos },
                     try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                    true,
                     description,
                     &.{},
                     garland,
