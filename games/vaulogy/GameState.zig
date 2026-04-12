@@ -5040,7 +5040,7 @@ const Workspace = struct {
                                 } else break;
                             }
 
-                            const description = try std.fmt.allocPrint(workspace.arena_for_atom_names.allocator(), "Custom machine {s}", .{new_name});
+                            const description = "Custom machine";
                             const fnkbox = try Toybox.buildFnkbox(
                                 hot_index.get().local_point,
                                 fnkname,
@@ -6182,11 +6182,12 @@ const Workspace = struct {
 
     /// only saves fnkboxes
     pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 0;
+        const version: u32 = 1;
         try out.writeInt(u32, version, ENDIANNESS);
 
         const core = @import("core.zig");
         const Fnkbox = Lego.Specific.Fnkbox;
+        const FnkboxBox = Lego.Specific.FnkboxBox;
         const Executor = Lego.Specific.Executor;
         if (true) {
             var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
@@ -6197,6 +6198,10 @@ const Workspace = struct {
                 // try all_fnks.putNoClobber(fnkname_value, definition);
 
                 try out.writeStructEndian(cur.get().local_point.pos, ENDIANNESS);
+
+                // write description
+                try writeString(out, FnkboxBox.children(Fnkbox.children(cur).box).description.get().specific.fnkbox_description.text.items);
+
                 var tmp_out: std.ArrayList(u8) = .init(scratch);
                 defer tmp_out.deinit();
                 const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
@@ -6208,10 +6213,17 @@ const Workspace = struct {
 
     pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
         const version = try in.readInt(u32, .little);
-        if (version != 0) {
-            std.log.err("Unsupported file version, ignoring savefile", .{});
-            return;
-        }
+        const Config = struct {
+            has_description: bool,
+        };
+        const config: Config = switch (version) {
+            0 => .{ .has_description = false },
+            1 => .{ .has_description = true },
+            else => {
+                std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
+                return;
+            },
+        };
 
         dst.deinit();
         toybox.deinit();
@@ -6234,6 +6246,10 @@ const Workspace = struct {
                 error.EndOfStream => break,
                 else => return err,
             };
+            const description: []const u8 = if (config.has_description)
+                try readString(in, scratch)
+            else
+                "Custom Machine";
             const ascii = try readString(in, dst.arena_for_atom_names.allocator());
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
             const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
@@ -6245,8 +6261,6 @@ const Workspace = struct {
                 ).garland, garland, null);
                 fnkbox_index.get().local_point.pos = pos;
             } else {
-                // TODO: restore description
-                const description = try std.fmt.allocPrint(dst.arena_for_atom_names.allocator(), "Custom machine {any}", .{fnk.name});
                 const fnkbox = try Toybox.buildFnkbox(
                     .{ .pos = pos },
                     try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
