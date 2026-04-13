@@ -66,6 +66,11 @@ pub const FuzzerContext = struct {
                 }.anon,
                 .recording_log = null,
 
+                .startTextInput = undefined,
+                .stopTextInput = undefined,
+                .consumeTextInput = undefined,
+
+                .downloadActiveFramebuffer = undefined,
                 .setItem = undefined,
                 .getItem = undefined,
                 .askUserForFile = undefined,
