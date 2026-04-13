@@ -348,16 +348,21 @@ const Signal = struct {
     };
 
     pub fn send(signals: *Signals, signal: Signal, source: IVec2, destination: IVec2) !void {
-        const target = try signals.getPtr(destination);
+        var signal_with_offsets: Signal = signal;
+        const delta = destination.sub(source);
+        signal_with_offsets.on_offset = delta.scale(signal.fire + signal.sulfur + signal.earth);
+        signal_with_offsets.off_offset = delta.scale(signal.water);
+        try send_with_offsets(signals, signal_with_offsets, destination);
+    }
 
+    pub fn send_with_offsets(signals: *Signals, signal: Signal, destination: IVec2) !void {
+        const target = try signals.getPtr(destination);
         target.fire += signal.fire;
         target.earth += signal.earth;
         target.sulfur += signal.sulfur;
         target.water += signal.water;
-
-        const delta = destination.sub(source);
-        target.on_offset.addInPlace(delta.scale(signal.fire + signal.sulfur + signal.earth));
-        target.off_offset.addInPlace(delta.scale(signal.water));
+        target.on_offset.addInPlace(signal.on_offset);
+        target.off_offset.addInPlace(signal.off_offset);
         target.push.addInPlace(signal.push);
     }
 
@@ -597,43 +602,29 @@ const BoardState = struct {
                 if (cell.motes.get(.air) == 0) continue;
                 const received = air_received.at(pos);
                 if (cell.state == .off and received.water != 0) {
-                    try Signal.send(&signals, .{
+                    const signal: Signal = .{
                         .fire = 0,
                         .water = received.water * cell.motes.get(.air),
                         .earth = 0,
                         .sulfur = 0,
                         .push = .zero,
                         .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.off_offset), pos.add(received.off_offset));
-                    try Signal.send(&air_sent, .{
-                        .fire = 0,
-                        .water = received.water * cell.motes.get(.air),
-                        .earth = 0,
-                        .sulfur = 0,
-                        .push = .zero,
-                        .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.off_offset), pos.add(received.off_offset));
+                        .off_offset = received.off_offset.scale(cell.motes.get(.air) * (received.water + 1)),
+                    };
+                    try Signal.send_with_offsets(&signals, signal, pos.add(received.off_offset));
+                    try Signal.send_with_offsets(&air_sent, signal, pos.add(received.off_offset));
                 } else if (cell.state != .off and (received.fire != 0 or received.earth != 0 or received.sulfur != 0)) {
-                    try Signal.send(&signals, .{
+                    const signal: Signal = .{
                         .fire = received.fire * cell.motes.get(.air),
                         .water = 0,
                         .earth = received.earth * cell.motes.get(.air),
                         .sulfur = received.sulfur * cell.motes.get(.air),
                         .push = received.push.scale(cell.motes.get(.air)),
-                        .on_offset = .zero,
+                        .on_offset = received.on_offset.scale(cell.motes.get(.air) * (received.fire + received.earth + received.sulfur + 1)),
                         .off_offset = .zero,
-                    }, pos.sub(received.on_offset), pos.add(received.on_offset));
-                    try Signal.send(&air_sent, .{
-                        .fire = received.fire * cell.motes.get(.air),
-                        .water = 0,
-                        .earth = received.earth * cell.motes.get(.air),
-                        .sulfur = received.sulfur * cell.motes.get(.air),
-                        .push = received.push.scale(cell.motes.get(.air)),
-                        .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.on_offset), pos.add(received.on_offset));
+                    };
+                    try Signal.send_with_offsets(&signals, signal, pos.add(received.on_offset));
+                    try Signal.send_with_offsets(&air_sent, signal, pos.add(received.on_offset));
                 }
             }
         }
