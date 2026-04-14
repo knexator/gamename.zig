@@ -311,7 +311,13 @@ pub const Lego = struct {
         // TODO(design): try to simplify these
         garland_newcases: void,
         fnkbox_description: struct {
-            text: std.ArrayListUnmanaged(u8),
+            inner_text: std.ArrayListUnmanaged(u8),
+            pub fn text(this: @This()) []const u8 {
+                return if (this.inner_text.items.len > 0)
+                    this.inner_text.items
+                else
+                    "<empty description>";
+            }
         },
         fnkslist_element: FnkslistElement,
         postit_text: struct {
@@ -401,6 +407,8 @@ pub const Lego = struct {
                 edit_fnkbox_description,
             },
             enabled: bool = true,
+            /// only applies to edit_fnkbox_description
+            latched: bool = true,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
@@ -2898,7 +2906,7 @@ pub const Toybox = struct {
 
         const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
             try Toybox.createWithChildren(.{}, .{ .fnkbox_description = .{
-                .text = .fromOwnedSlice(try text_allocator.dupe(u8, text)),
+                .inner_text = .fromOwnedSlice(try text_allocator.dupe(u8, text)),
             } }, &.{
                 try new(.{}, .{ .button = .{
                     .local_rect = FnkboxBox.edit_description_button_rect,
@@ -4646,7 +4654,11 @@ const Workspace = struct {
                                 .edit_fnkbox_description => if (button.enabled) {
                                     // TODO(game): draw a better icon
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
-                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(
+                                        @as(f32, if (button.latched) 0.15 else 0.05),
+                                        0.15,
+                                        @max(lego.hot_t, lego.active_t),
+                                    ), .inner, .black);
                                 },
                             }
                         },
@@ -4690,7 +4702,7 @@ const Workspace = struct {
                             try drawer.canvas.drawText(
                                 0,
                                 camera_relative,
-                                fnkbox_description.text.items,
+                                fnkbox_description.text(),
                                 .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
                                 0.8,
                                 .black,
@@ -4938,12 +4950,16 @@ const Workspace = struct {
             platform.stopTextInput();
             workspace.active_text_input = .nothing;
         }
+        if ((mouse.wasPressed(.left) or mouse.wasPressed(.right)) and typing) {
+            platform.stopTextInput();
+            workspace.active_text_input = .nothing;
+        }
 
         while (platform.consumeTextInput()) |input| {
-            try workspace.active_text_input.get().specific.fnkbox_description.text.appendSlice(workspace.gpa_for_bindings, input.constSlice());
+            try workspace.active_text_input.get().specific.fnkbox_description.inner_text.appendSlice(workspace.gpa_for_bindings, input.constSlice());
         }
         if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1) and typing) {
-            const text = &workspace.active_text_input.get().specific.fnkbox_description.text;
+            const text = &workspace.active_text_input.get().specific.fnkbox_description.inner_text;
             text.shrinkRetainingCapacity(kommon.unicodeEraseLastCodepoint(text.items));
         }
 
@@ -5709,6 +5725,10 @@ const Workspace = struct {
                         .scroll_up, .scroll_down => true,
                         .edit_fnkbox_description => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.editable,
                     };
+                    button.latched = switch (button.action) {
+                        else => false,
+                        .edit_fnkbox_description => workspace.active_text_input == lego.tree.parent,
+                    };
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
                     crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
@@ -6205,7 +6225,7 @@ const Workspace = struct {
                 try out.writeStructEndian(cur.get().local_point.pos, ENDIANNESS);
 
                 // write description
-                try writeString(out, FnkboxBox.children(Fnkbox.children(cur).box).description.get().specific.fnkbox_description.text.items);
+                try writeString(out, FnkboxBox.children(Fnkbox.children(cur).box).description.get().specific.fnkbox_description.inner_text.items);
 
                 var tmp_out: std.ArrayList(u8) = .init(scratch);
                 defer tmp_out.deinit();

@@ -35,23 +35,12 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         }
     }
 
-    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: Gl, loaded_images: std.EnumArray(GameState.Images, *const anyopaque), random_seed: u64) !void {
-        try dst.state.init(
-            .{
-                .gpa = gpa,
-                .gl = sdl_gl,
-                .loaded_images = loaded_images,
-                .random_seed = random_seed,
-            },
-            .{
-                // TODO(platform): tweakable params for sdl backend
-                .tweakable = struct {
-                    pub fn fcolor(_: []const u8, _: *FColor) void {}
-                    pub fn float(_: []const u8, _: *f32, _: f32, _: f32) void {}
-                    pub fn texture(_: []const u8, _: *Gl.Texture) void {}
-                },
-            },
-        );
+    fn init(
+        dst: *Self,
+        runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+        comptime comptime_params: kommon.engine.InitComptimeParamsFor(GameState),
+    ) !void {
+        try dst.state.init(runtime_params, comptime_params);
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -899,7 +888,22 @@ pub fn main() !void {
 
     var seed: u64 = undefined;
     try std.posix.getrandom(std.mem.asBytes(&seed));
-    try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers, seed);
+    try my_game.init(
+        .{
+            .gpa = sdl_platform.gpa,
+            .gl = sdl_platform.gl,
+            .loaded_images = images_pointers,
+            .random_seed = seed,
+        },
+        .{
+            // TODO(platform): tweakable params for sdl backend
+            .tweakable = struct {
+                pub fn fcolor(_: []const u8, _: *FColor) void {}
+                pub fn float(_: []const u8, _: *f32, _: f32, _: f32) void {}
+                pub fn texture(_: []const u8, _: *Gl.Texture) void {}
+            },
+        },
+    );
     // TODO: gl on deinit
     defer my_game.deinit(sdl_platform.gpa);
 
