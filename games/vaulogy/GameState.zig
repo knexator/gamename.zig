@@ -388,6 +388,7 @@ pub const Lego = struct {
             pub fn build(count: usize, fnkbox: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
                 const fnkname = try Toybox.dupeIntoFloating(Fnkbox.children(fnkbox).fnkname, true, undo_stack);
                 fnkname.get().local_point = .{ .pos = .new(1.5, 0.65), .scale = 0.5, .turns = 0.25 };
+                fnkname.get().specific.sexpr.is_pattern = false;
                 return try Toybox.createWithChildren(.{ .pos = .new(0, tof32(count) * height) }, .{
                     .fnkslist_element = .{ .fnkbox = fnkbox },
                 }, &.{fnkname}, undo_stack);
