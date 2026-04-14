@@ -380,17 +380,21 @@ pub const Lego = struct {
         }
 
         pub const FnkslistElement = struct {
-            text: []const u8,
+            fnkbox: Lego.Index,
 
             pub const height: f32 = 2.0;
 
             const core = @import("core.zig");
-            pub fn build(count: usize, fnkname: *const core.Sexpr, text: []const u8, undo_stack: ?*UndoStack) !Lego.Index {
+            pub fn build(count: usize, fnkbox: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+                const fnkname = try Toybox.dupeIntoFloating(Fnkbox.children(fnkbox).fnkname, true, undo_stack);
+                fnkname.get().local_point = .{ .pos = .new(1.5, 0.65), .scale = 0.5, .turns = 0.25 };
                 return try Toybox.createWithChildren(.{ .pos = .new(0, tof32(count) * height) }, .{
-                    .fnkslist_element = .{ .text = text },
-                }, &.{
-                    try Sexpr.buildFromOldCoreValue(.{ .pos = .new(1.5, 0.65), .scale = 0.5, .turns = 0.25 }, fnkname, false, true, undo_stack),
-                }, undo_stack);
+                    .fnkslist_element = .{ .fnkbox = fnkbox },
+                }, &.{fnkname}, undo_stack);
+            }
+
+            pub fn text(this: @This()) []const u8 {
+                return FnkboxBox.children(Fnkbox.children(this.fnkbox).box).description.get().specific.fnkbox_description.text();
             }
         };
 
@@ -3421,9 +3425,7 @@ const Workspace = struct {
                 fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
                 Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
                     k,
-                    level.fnk_name,
-                    // level.fnk_name.atom_lit.value,
-                    level.description,
+                    fnkbox,
                     undo_stack,
                 ), undo_stack);
             }
@@ -4712,7 +4714,7 @@ const Workspace = struct {
                             try drawer.canvas.drawText(
                                 0,
                                 camera_relative,
-                                fnkslist_element.text,
+                                fnkslist_element.text(),
                                 .leftCenterAt(.new(2.1, Lego.Specific.FnkslistElement.height / 2.0)),
                                 0.5,
                                 .black,
@@ -5061,12 +5063,11 @@ const Workspace = struct {
                                 } else break;
                             }
 
-                            const description = "Custom machine";
                             const fnkbox = try Toybox.buildFnkbox(
                                 hot_index.get().local_point,
                                 fnkname,
                                 true,
-                                description,
+                                "Custom machine",
                                 &.{},
                                 null,
                                 workspace.gpa_for_text,
@@ -5079,8 +5080,7 @@ const Workspace = struct {
                                 fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
                                 Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
                                     Toybox.childCount(fnkslist),
-                                    &.{ .atom_lit = .{ .value = new_name } },
-                                    description,
+                                    fnkbox,
                                     undo_stack,
                                 ), undo_stack);
                             }
@@ -6303,8 +6303,7 @@ const Workspace = struct {
                     fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
                     Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
                         Toybox.childCount(fnkslist),
-                        fnk.name,
-                        description,
+                        fnkbox,
                         null,
                     ), null);
                 }
