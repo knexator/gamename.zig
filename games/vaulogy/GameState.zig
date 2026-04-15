@@ -6239,12 +6239,15 @@ const Workspace = struct {
 
     pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
         const version = try in.readInt(u32, .little);
+        const text_magic: u32 = @bitCast(@as([4]u8, "////".*));
         const Config = struct {
             has_description: bool,
+            is_text_based: bool = false,
         };
         const config: Config = switch (version) {
             0 => .{ .has_description = false },
             1 => .{ .has_description = true },
+            text_magic => .{ .is_text_based = true, .has_description = undefined },
             else => {
                 std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
                 return;
@@ -6267,46 +6270,89 @@ const Workspace = struct {
             }
         }
 
-        while (true) {
-            const pos = in.readStructEndian(Vec2, ENDIANNESS) catch |err| switch (err) {
-                error.EndOfStream => break,
-                else => return err,
-            };
-            const description: []const u8 = if (config.has_description)
-                try readString(in, scratch)
-            else
-                "Custom Machine";
-            const ascii = try readString(in, dst.arena_for_atom_names.allocator());
-            var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
-            const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
+        if (config.is_text_based) {
+            var input: []const u8 = try in.readAllAlloc(dst.gpa_for_text, std.math.maxInt(usize));
+            var x: f32 = 0;
+            while (input.len > 0) {
+                defer x += 40;
+                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                defer pool.deinit();
+                const fnk = try core.parsing.parseFnk(&input, &pool, scratch);
+                const pos: Vec2 = .new(x, 0);
+                const description: []const u8 = try std.fmt.allocPrint(scratch, "{any}", .{fnk.name});
 
-            const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
-            if (fnks_indices.get(fnk.name)) |fnkbox_index| {
-                Toybox.changeChild(Lego.Specific.Executor.children(
-                    Lego.Specific.Fnkbox.children(fnkbox_index).executor,
-                ).garland, garland, null);
-                fnkbox_index.get().local_point.pos = pos;
-            } else {
-                const fnkbox = try Toybox.buildFnkbox(
-                    .{ .pos = pos },
-                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
-                    true,
-                    description,
-                    &.{},
-                    garland,
-                    dst.gpa_for_text,
-                    null,
-                );
-                Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
-
-                if (true) { // add to fnkslist
-                    const fnkslist = dst.toolbar_fnks.get().tree.first;
-                    fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
-                    Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                        Toybox.childCount(fnkslist),
-                        fnkbox,
+                const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
+                if (fnks_indices.get(fnk.name)) |fnkbox_index| {
+                    Toybox.changeChild(Lego.Specific.Executor.children(
+                        Lego.Specific.Fnkbox.children(fnkbox_index).executor,
+                    ).garland, garland, null);
+                    fnkbox_index.get().local_point.pos = pos;
+                } else {
+                    const fnkbox = try Toybox.buildFnkbox(
+                        .{ .pos = pos },
+                        try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                        true,
+                        description,
+                        &.{},
+                        garland,
+                        dst.gpa_for_text,
                         null,
-                    ), null);
+                    );
+                    Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
+
+                    if (true) { // add to fnkslist
+                        const fnkslist = dst.toolbar_fnks.get().tree.first;
+                        fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                            Toybox.childCount(fnkslist),
+                            fnkbox,
+                            null,
+                        ), null);
+                    }
+                }
+            }
+        } else {
+            while (true) {
+                const pos = in.readStructEndian(Vec2, ENDIANNESS) catch |err| switch (err) {
+                    error.EndOfStream => break,
+                    else => return err,
+                };
+                const description: []const u8 = if (config.has_description)
+                    try readString(in, scratch)
+                else
+                    "Custom Machine";
+                const ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
+
+                const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
+                if (fnks_indices.get(fnk.name)) |fnkbox_index| {
+                    Toybox.changeChild(Lego.Specific.Executor.children(
+                        Lego.Specific.Fnkbox.children(fnkbox_index).executor,
+                    ).garland, garland, null);
+                    fnkbox_index.get().local_point.pos = pos;
+                } else {
+                    const fnkbox = try Toybox.buildFnkbox(
+                        .{ .pos = pos },
+                        try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                        true,
+                        description,
+                        &.{},
+                        garland,
+                        dst.gpa_for_text,
+                        null,
+                    );
+                    Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
+
+                    if (true) { // add to fnkslist
+                        const fnkslist = dst.toolbar_fnks.get().tree.first;
+                        fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                            Toybox.childCount(fnkslist),
+                            fnkbox,
+                            null,
+                        ), null);
+                    }
                 }
             }
         }
@@ -6459,6 +6505,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 const data = try reader.readAllAlloc(self.usual.mem.frame.allocator(), std.math.maxInt(usize));
                 std.log.debug("data len: {d}", .{data.len});
                 var fbs = std.io.fixedBufferStream(data);
+                try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
+            } else if (false) {
+                var fbs = std.io.fixedBufferStream(@embedFile("solutions.txt"));
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
             }
         }

@@ -100,6 +100,7 @@ pub fn parseSingleFnk(input: []const u8, pool: *MemoryPool(Sexpr), allocator_for
 }
 
 fn parseFnkTrue(input: []const u8, pool: *MemoryPool(Sexpr), allocator_for_cases: std.mem.Allocator) !struct { fnk: Fnk, rest: []const u8 } {
+    errdefer std.log.err("failed for input {s}", .{input});
     var rest = input;
     skipWhitespace(&rest);
     const name = try parseSexpr(&rest, pool);
