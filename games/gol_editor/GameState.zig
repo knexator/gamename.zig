@@ -1878,6 +1878,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             },
             .rect => switch (toolbar.rect_tool_state) {
                 else => {},
+                .none => {
+                    if (platform.keyboard.wasPressed(.Backspace)) {
+                        try cur_level.board.clearSubrect(toolbar.selectedRect());
+                    }
+                },
                 .moving => |*r| {
                     if (platform.keyboard.wasPressed(.KeyV)) {
                         r.mirrorVertically();
