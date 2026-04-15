@@ -1330,7 +1330,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             if (button.contains(ui_mouse.cur.position)) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    toolbar.active_state = if (c == toolbar.active_state) null else c;
+                    if (c == toolbar.active_state) {
+                        toolbar.active_type = null;
+                    }
+                    toolbar.active_state = c;
                     toolbar.active_tool = .paint;
                     toolbar.painting = false;
                 }
@@ -1351,7 +1354,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (button.contains(ui_mouse.cur.position)) {
                     mouse_over_ui = true;
                     if (mouse.wasPressed(.left)) {
-                        toolbar.active_type = if (t == toolbar.active_type) null else t;
+                        if (t == toolbar.active_type) {
+                            toolbar.active_state = null;
+                        }
+                        toolbar.active_type = t;
                         toolbar.active_tool = .paint;
                         toolbar.painting = false;
                     }
