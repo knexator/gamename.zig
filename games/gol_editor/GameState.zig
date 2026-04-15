@@ -1316,9 +1316,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         var toolbar = &cur_level.toolbar;
         const cell_under_mouse = mouse.cur.position.toInt(isize);
 
+        const top_left_button: Rect = .fromPivotAndSize(ui_cam.get(.top_left), Rect.MeasureKind.top_left.asPivot(), .one);
+
         // paint cell states
         for ([3]Cell.State{ .off, .dim, .bright }, 0..) |c, k| {
-            const button: Rect = (Rect{ .top_left = Vec2.zero.add(.new(0, tof32(k))), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_left_button.move(.new(0, tof32(k))).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = c.color(),
@@ -1338,7 +1340,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // paint cell types
         if (self.is_editor) {
             for (MoteType.all_and_empty, 0..) |t, k| {
-                const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4))), .size = .one }).plusMargin(-0.1);
+                const button: Rect = top_left_button.move(.new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4)))).plusMargin(-0.1);
                 try ui_buttons.append(.{
                     .pos = button,
                     .color = null,
@@ -1359,7 +1361,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // rect select/move mode
         if (self.is_editor) {
-            const button: Rect = (Rect{ .top_left = .new(0, 3), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_left_button.move(.new(0, 3)).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
@@ -1376,7 +1378,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // panning mode
         if (self.is_editor or toolbar.zoom.allowsMove()) {
-            const button: Rect = (Rect{ .top_left = .new(1, 3), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_left_button.move(.new(1, 3)).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
