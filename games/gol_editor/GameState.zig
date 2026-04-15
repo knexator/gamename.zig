@@ -1874,7 +1874,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .rect => switch (toolbar.rect_tool_state) {
                 else => {},
                 .none => {
-                    if (platform.keyboard.wasPressed(.Backspace)) {
+                    if (platform.keyboard.wasPressed(.Backspace) or platform.keyboard.wasPressed(.Delete)) {
                         try cur_level.board.clearSubrect(toolbar.selectedRect());
                     }
                 },

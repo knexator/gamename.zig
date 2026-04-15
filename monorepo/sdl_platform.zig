@@ -1216,6 +1216,7 @@ const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, Ke
     .{ c.SDL_SCANCODE_RETURN, .Enter },
     .{ c.SDL_SCANCODE_ESCAPE, .Escape },
     .{ c.SDL_SCANCODE_BACKSPACE, .Backspace },
+    .{ c.SDL_SCANCODE_DELETE, .Delete },
     .{ c.SDL_SCANCODE_TAB, .Tab },
     .{ c.SDL_SCANCODE_SPACE, .Space },
     .{ c.SDL_SCANCODE_MINUS, .Minus },
