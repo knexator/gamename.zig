@@ -454,8 +454,8 @@ fn lightConnectedSulfur(board: *BoardState, pre_light: BoardState, initial_posit
 
 const Toolbar = struct {
     painting: bool = false,
-    active_state: Cell.State = .bright,
-    active_type: ?MoteType = .fire,
+    active_state: ?Cell.State = .bright,
+    active_type: ??MoteType = .fire,
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
     rect_tool_state: union(enum) {
@@ -479,7 +479,7 @@ const Toolbar = struct {
     /// only defined when active tool is catalogue or screenshot_rect
     prev_tool: Tool = undefined,
 
-    const Tool = enum { paint_state, paint_type, rect, catalogue, panning, screenshot_rect };
+    const Tool = enum { paint, rect, catalogue, panning, screenshot_rect };
 
     const Clock = struct {
         state: State,
@@ -1012,7 +1012,7 @@ const BoardState = struct {
 };
 
 const LevelState = struct {
-    toolbar: Toolbar = .{ .active_tool = .paint_state },
+    toolbar: Toolbar = .{ .active_tool = .paint },
     camera: Rect = .{ .top_left = .both(-6), .size = .both(15) },
     saved_states: std.ArrayList(*const BoardState),
     board: *BoardState,
@@ -1323,13 +1323,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 .pos = button,
                 .color = c.color(),
                 .text = null,
-                .radio_selected = toolbar.active_tool == .paint_state and (c == toolbar.active_state),
+                .radio_selected = toolbar.active_tool == .paint and (c == toolbar.active_state),
             });
             if (button.contains(ui_mouse.cur.position)) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
-                    toolbar.active_state = c;
-                    toolbar.active_tool = .paint_state;
+                    toolbar.active_state = if (c == toolbar.active_state) null else c;
+                    toolbar.active_tool = .paint;
                     toolbar.painting = false;
                 }
             }
@@ -1344,13 +1344,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     .color = null,
                     .text = null,
                     .mote = t,
-                    .radio_selected = toolbar.active_tool == .paint_type and (t == toolbar.active_type),
+                    .radio_selected = toolbar.active_tool == .paint and (t == toolbar.active_type),
                 });
                 if (button.contains(ui_mouse.cur.position)) {
                     mouse_over_ui = true;
                     if (mouse.wasPressed(.left)) {
-                        toolbar.active_type = t;
-                        toolbar.active_tool = .paint_type;
+                        toolbar.active_type = if (t == toolbar.active_type) null else t;
+                        toolbar.active_tool = .paint;
                         toolbar.painting = false;
                     }
                 }
@@ -1710,13 +1710,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (!mouse_over_ui) {
             platform.setCursor(.default);
             switch (toolbar.active_tool) {
-                .paint_state => {
+                .paint => {
                     if (toolbar.painting) {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
                         } else {
-                            if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
-                                try cur_level.board.setStateAt(cell_under_mouse, toolbar.active_state);
+                            if (toolbar.active_state) |active_state| {
+                                if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
+                                    try cur_level.board.setStateAt(cell_under_mouse, active_state);
+                                }
+                            }
+                            if (toolbar.active_type) |active_type| {
+                                if (platform.keyboard.cur.isShiftDown()) {
+                                    if (active_type) |t| {
+                                        (try cur_level.board.cellPtrAt(cell_under_mouse)).motes.getPtr(t).* += 1;
+                                        toolbar.painting = false;
+                                    }
+                                } else {
+                                    try cur_level.board.setSingleMoteAt(cell_under_mouse, active_type);
+                                }
                             }
                         }
                     } else {
@@ -1725,28 +1737,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         }
                         if (mouse.wasPressed(.right)) {
                             toolbar.active_state = cur_level.board.cellAt(cell_under_mouse).state;
-                        }
-                    }
-                },
-                .paint_type => {
-                    if (toolbar.painting) {
-                        if (!mouse.cur.isDown(.left)) {
-                            toolbar.painting = false;
-                        } else {
-                            if (platform.keyboard.cur.isShiftDown()) {
-                                if (toolbar.active_type) |t| {
-                                    (try cur_level.board.cellPtrAt(cell_under_mouse)).motes.getPtr(t).* += 1;
-                                    toolbar.painting = false;
-                                }
-                            } else {
-                                try cur_level.board.setSingleMoteAt(cell_under_mouse, toolbar.active_type);
-                            }
-                        }
-                    } else {
-                        if (mouse.wasPressed(.left)) {
-                            toolbar.painting = true;
-                        }
-                        if (mouse.wasPressed(.right)) {
                             toolbar.active_type = cur_level.board.cellAt(cell_under_mouse).getSingleMote();
                         }
                     }
@@ -1856,24 +1846,29 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // tool keyboard interactions
         switch (toolbar.active_tool) {
-            .paint_state => {
-                for (&[_]Cell.State{ .off, .dim, .bright }, 0..) |t, k| {
-                    if (platform.keyboard.wasPressed(.digit(k + 1))) {
-                        toolbar.active_state = t;
+            .paint => {
+                if (platform.keyboard.wasPressed(.Space)) {
+                    if (platform.keyboard.cur.isShiftDown()) {
+                        toolbar.active_state = if (toolbar.active_state) |s| switch (s) {
+                            .off => null,
+                            .dim => Cell.State.off,
+                            .bright => Cell.State.dim,
+                        } else Cell.State.bright;
+                    } else {
+                        toolbar.active_state = if (toolbar.active_state) |s| switch (s) {
+                            .off => Cell.State.dim,
+                            .dim => Cell.State.bright,
+                            .bright => null,
+                        } else Cell.State.off;
                     }
                 }
-                if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
-                    toolbar.active_tool = .paint_type;
-                }
-            },
-            .paint_type => {
-                for (&MoteType.all, 0..) |t, k| {
+                for (&(MoteType.all ++ @as([1]?MoteType, .{null})), 0..) |t, k| {
                     if (platform.keyboard.wasPressed(.digit(k + 1))) {
                         toolbar.active_type = t;
                     }
                 }
-                if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
-                    toolbar.active_tool = .paint_state;
+                if (platform.keyboard.wasPressed(.digit(0))) {
+                    toolbar.active_type = null;
                 }
             },
             .rect => switch (toolbar.rect_tool_state) {
