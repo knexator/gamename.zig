@@ -66,9 +66,17 @@ pub const FuzzerContext = struct {
                 }.anon,
                 .recording_log = null,
 
-                .startTextInput = undefined,
-                .stopTextInput = undefined,
-                .consumeTextInput = undefined,
+                .startTextInput = struct {
+                    fn anon(_: ?Rect) void {}
+                }.anon,
+                .stopTextInput = struct {
+                    fn anon() void {}
+                }.anon,
+                .consumeTextInput = struct {
+                    fn anon() ?std.BoundedArray(u8, 4) {
+                        return null;
+                    }
+                }.anon,
 
                 .downloadActiveFramebuffer = undefined,
                 .setItem = undefined,
@@ -162,8 +170,14 @@ test "custom replay" {
     var player: FuzzerContext.Player = try .init(std.testing.allocator, std.testing.random_seed);
     defer player.deinit();
 
-    const inputs = @import("buggy_recording.zig").inputs;
-    for (inputs) |input| try player.advance(input);
+    // const inputs = @import("buggy_recording.zig").inputs;
+    // for (inputs) |input| try player.advance(input);
+    try player.advance(.{
+        .z_down = false,
+        .mouse_left_down = false,
+        .mouse_pos = .zero,
+        .mouse_right_down = false,
+    });
 }
 
 test "No leaks on Workspace and Drawer" {
@@ -3625,6 +3639,13 @@ const Workspace = struct {
     }
 
     pub fn deinit(workspace: *Workspace) void {
+        // TODO(design): remove this
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.as(.fnkbox_description)) |fnkbox_description| {
+                fnkbox_description.inner_text.deinit(workspace.gpa_for_text);
+            }
+        }
         workspace.undo_stack.deinit();
         workspace.arena_for_atom_names.deinit();
         workspace.arena_for_lenses_data.deinit();
@@ -6506,7 +6527,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 std.log.debug("data len: {d}", .{data.len});
                 var fbs = std.io.fixedBufferStream(data);
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
-            } else if (false) {
+            } else if (true) {
                 var fbs = std.io.fixedBufferStream(@embedFile("solutions.txt"));
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
             }

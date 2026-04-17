@@ -131,7 +131,7 @@ fn parseMatchCases(input: *[]const u8, pool: *MemoryPool(Sexpr), allocator_for_c
             template = try parseSexpr(input, pool);
             skipWhitespace(input);
         } else {
-            fnk_name = Sexpr.builtin.identity;
+            fnk_name = Sexpr.builtin.empty;
             template = fnk_name_or_template;
         }
         var next: ?MatchCases = undefined;
