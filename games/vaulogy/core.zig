@@ -92,6 +92,7 @@ pub const Sexpr = union(enum) {
 
     pub fn isFullyResolved(x: *const Sexpr) bool {
         return switch (x.*) {
+            .empty => true,
             .atom_lit => true,
             .atom_var => false,
             .pair => |p| p.left.isFullyResolved() and p.right.isFullyResolved(),

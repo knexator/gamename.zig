@@ -81,6 +81,7 @@ pub const levels: []const Level = &.{
         .fnk_name = &Sexpr.doLit("uppercase"),
         .description = "Get the uppercase version of each atom",
         .initial_definition = .{ .cases = &.{
+            .{ .pattern = Vals.lowercase[0], .template = Vals.uppercase[0], .fnk_name = Sexpr.builtin.@"eqAtoms?", .next = null },
             .{ .pattern = Vals.lowercase[0], .template = Vals.uppercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[1], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[2], .template = Vals.uppercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },

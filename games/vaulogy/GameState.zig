@@ -743,6 +743,25 @@ pub const Lego = struct {
                 return result;
             }
 
+            pub fn toOldCoreValueResolving(sexpr: *const Sexpr, bindings: []const Binding, mem: std.mem.Allocator) !*core.Sexpr {
+                const result = try mem.create(core.Sexpr);
+                result.* = switch (sexpr.kind) {
+                    .empty => .empty,
+                    .atom_var => for (bindings) |binding| {
+                        if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                            mem.destroy(result);
+                            return try toOldCoreValue(&binding.value.get().specific.sexpr, mem);
+                        }
+                    } else .{ .atom_var = .{ .value = sexpr.atom_name } },
+                    .atom_lit => .{ .atom_lit = .{ .value = sexpr.atom_name } },
+                    .pair => .{ .pair = .{
+                        .left = try sexpr.left().toOldCoreValueResolving(bindings, mem),
+                        .right = try sexpr.right().toOldCoreValueResolving(bindings, mem),
+                    } },
+                };
+                return result;
+            }
+
             pub fn buildFromOldCoreValue(point: Point, value: *const core.Sexpr, is_pattern: bool, is_fnkname: bool, undo_stack: ?*UndoStack) !Lego.Index {
                 return try Toybox.buildSexpr(point, switch (value.*) {
                     .empty => .empty,
@@ -5998,13 +6017,17 @@ const Workspace = struct {
             if (!matching) {
                 new_bindings.clearAndFree();
             }
+            const new_bindings_slice = try new_bindings.toOwnedSlice();
             const invoked_fnk: Lego.Index = if (!matching)
                 .nothing
             else blk: {
                 const offset = 3.0;
                 const function_point = Lego.Specific.Executor.relative_garland_point
                     .applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
-                if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point, scratch)) |garland| {
+                if (try workspace.getSkippedExecution(first_case.case().template, new_bindings_slice, first_case.case().fnkname, function_point, scratch)) |garland| {
+                    Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
+                    break :blk garland;
+                } else if (try workspace.getGarlandForFnk(first_case.case().fnkname, function_point, scratch)) |garland| {
                     Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
                     break :blk garland;
                 } else {
@@ -6013,7 +6036,6 @@ const Workspace = struct {
             };
             const garland_fnkname = try Lego.Specific.Garland.stealFnkname(garland_index, null, undo_stack);
             Toybox.addChildLast(floating_inputs_layer, garland_fnkname, undo_stack);
-            const new_bindings_slice = try new_bindings.toOwnedSlice();
             undo_stack.storeAllData(executor_index);
             executor.animation = .{
                 .matching = matching,
@@ -6171,6 +6193,54 @@ const Workspace = struct {
             => return null,
         };
         const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(new_point, fnkbody.*, scratch, undo_stack);
+        const original_fnkname = try Lego.Specific.Garland.stealFnkname(
+            garland,
+            try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
+            undo_stack,
+        );
+        assert(original_fnkname.get().specific.sexpr.kind == .empty);
+        Toybox.destroyFloating(original_fnkname, undo_stack);
+        return garland;
+    }
+
+    fn getSkippedExecution(
+        workspace: *Workspace,
+        input_unresolved: Lego.Index,
+        bindings: []const Binding,
+        fnkname: Lego.Index,
+        new_point: Point,
+        scratch: std.mem.Allocator,
+    ) !?Lego.Index {
+        const undo_stack = &workspace.undo_stack;
+
+        const fnkname_value = try fnkname.get().specific.sexpr.toOldCoreValue(scratch);
+
+        // TODO(game): allow skipping any function call
+        if (!fnkname_value.isTheLit("eqAtoms?")) {
+            return null;
+        }
+
+        const input_value = try input_unresolved.get().specific.sexpr.toOldCoreValueResolving(bindings, scratch);
+
+        const core = @import("core.zig");
+        const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
+        var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
+        defer temp_mem.deinit();
+        var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
+        defer scoring_run.deinit(false);
+
+        var exec: core.ExecutionThread = try .init(input_value, fnkname_value, &scoring_run);
+        defer exec.deinit();
+        const result_value = try exec.getFinalResult(&scoring_run);
+
+        const garland = try Toybox.buildGarland(new_point, &.{
+            try Toybox.buildCase(undefined, .{
+                .pattern = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, input_value, true, false, undo_stack),
+                .template = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, result_value, false, false, undo_stack),
+                .fnkname = null,
+                .next = null,
+            }, undo_stack),
+        }, undo_stack);
         const original_fnkname = try Lego.Specific.Garland.stealFnkname(
             garland,
             try Toybox.dupeIntoFloating(fnkname, true, undo_stack),
