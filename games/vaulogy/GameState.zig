@@ -6597,7 +6597,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 std.log.debug("data len: {d}", .{data.len});
                 var fbs = std.io.fixedBufferStream(data);
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
-            } else if (true) {
+            } else if (false) {
                 var fbs = std.io.fixedBufferStream(@embedFile("solutions.txt"));
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
             }
