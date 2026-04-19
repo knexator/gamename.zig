@@ -1304,7 +1304,7 @@ pub const Lego = struct {
                     var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run);
                     defer exec.deinit();
 
-                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true) catch |err| switch (err) {
+                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true, true) catch |err| switch (err) {
                         error.FnkNotFound,
                         error.UsedUndefinedVariable,
                         error.InvalidMetaFnk,
@@ -3400,7 +3400,7 @@ const Workspace = struct {
             defer pool.deinit();
             var scratch: std.heap.ArenaAllocator = .init(gpa);
             defer scratch.deinit();
-            const levels = @import("levels_new.zig").levels;
+            const levels = if (@import("builtin").mode == .Debug) @import("levels_new.zig").levels[0..3] else @import("levels_new.zig").levels;
             var x: f32 = 100;
             const Sexpr = Lego.Specific.Sexpr;
             for (levels, 0..) |level, k| {

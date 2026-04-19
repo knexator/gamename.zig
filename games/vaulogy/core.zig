@@ -608,7 +608,7 @@ pub const StackThing = struct {
     cur_cases: []const MatchCaseDefinition,
     cur_bindings: Bindings,
 
-    pub fn init(input: *const Sexpr, fn_name: *const Sexpr, scoring_run: *ScoringRun) !union(enum) {
+    pub fn init(input: *const Sexpr, fn_name: *const Sexpr, scoring_run: *ScoringRun, allow_undefined_fnks: bool) !union(enum) {
         builtin: *const Sexpr,
         stack_thing: StackThing,
     } {
@@ -618,8 +618,24 @@ pub const StackThing = struct {
             }
         }
 
+        // const new_thing = StackThing.init(this.active_value, case.fnk_name, scoring_run) catch |err| switch (err) {
+        //     else => return err,
+        //     error.FnkNotFound => if (allow_undefined_fnks)
+        //         .{ .builtin = this.active_value }
+        //     else
+        //         return err,
+        // };
+
+        const fnkbody = scoring_run.findFunktion(fn_name) catch |err| switch (err) {
+            else => return err,
+            error.FnkNotFound => if (allow_undefined_fnks)
+                return .{ .builtin = input }
+            else
+                return err,
+        };
+
         const bindings = std.ArrayList(Binding).init(scoring_run.mem.arena_for_bindings.allocator());
-        const cases = (try scoring_run.findFunktion(fn_name)).*.cases.items;
+        const cases = fnkbody.*.cases.items;
         return .{ .stack_thing = StackThing{
             .cur_bindings = bindings,
             .cur_cases = cases,
@@ -689,7 +705,7 @@ pub const ExecutionThread = struct {
         scoring_run: *ScoringRun,
     ) !ExecutionThread {
         var stack = std.ArrayList(StackThing).init(scoring_run.mem.allocator_for_stack);
-        switch (try StackThing.init(input, fn_name, scoring_run)) {
+        switch (try StackThing.init(input, fn_name, scoring_run, false)) {
             .builtin => |res| return ExecutionThread{
                 .active_value = res,
                 .stack = stack,
@@ -834,10 +850,10 @@ pub const ExecutionThread = struct {
     }
 
     pub fn advanceStep(this: *ExecutionThread, scoring_run: *ScoringRun) !?*const Sexpr {
-        return try this.advanceStepV2(scoring_run, false, false);
+        return try this.advanceStepV2(scoring_run, false, false, false);
     }
 
-    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool, allow_unbound_variables: bool) !?*const Sexpr {
+    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool, allow_unbound_variables: bool, allow_undefined_fnks: bool) !?*const Sexpr {
         var permanent_stuff = scoring_run.mem;
         if (this.stack.items.len > 0) {
             const last_stack_ptr: *StackThing = &this.stack.items[this.stack.items.len - 1];
@@ -862,7 +878,7 @@ pub const ExecutionThread = struct {
 
                 this.score.successful_matches += 1;
 
-                const new_thing = try StackThing.init(this.active_value, case.fnk_name, scoring_run);
+                const new_thing = try StackThing.init(this.active_value, case.fnk_name, scoring_run, allow_undefined_fnks);
                 switch (new_thing) {
                     .stack_thing => |x| {
                         try this.stack.append(x);
@@ -898,10 +914,10 @@ pub const ExecutionThread = struct {
         return this.getFinalResultBoundedV2(scoring_run, max_steps, true);
     }
 
-    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool, allow_unbound_variables: bool) !*const Sexpr {
+    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool, allow_unbound_variables: bool, allow_undefined_fnks: bool) !*const Sexpr {
         if (max_steps) |max| {
             for (0..max) |_| {
-                if (try this.advanceStepV2(scoring_run, allow_no_cases, allow_unbound_variables)) |res| {
+                if (try this.advanceStepV2(scoring_run, allow_no_cases, allow_unbound_variables, allow_undefined_fnks)) |res| {
                     return res;
                 }
             } else return error.TookTooLong;
