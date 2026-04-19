@@ -1609,6 +1609,13 @@ pub const Rect = extern struct {
         return .fromPivotAndSize(original.get(keep), keep.asPivot(), size);
     }
 
+    pub fn withSize1d(original: Rect, which: enum { width, height }, size: f32, keep: MeasureKind) Rect {
+        return original.withSize(switch (which) {
+            .width => .new(size, original.size.y),
+            .height => .new(original.size.x, size),
+        }, keep);
+    }
+
     pub fn withCenter(original: Rect, center: Vec2) Rect {
         return .fromPivotAndSize(center, MeasureKind.center.asPivot(), original.size);
     }

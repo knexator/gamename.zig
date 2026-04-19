@@ -1289,6 +1289,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const ui_cam: Rect = if (self.cur_level == null) camera else (Rect{ .top_left = .zero, .size = .new(16, 12) })
         .withAspectRatio(platform.aspect_ratio, .grow, .center);
     const ui_mouse = platform.getMouse(ui_cam);
+
+    const toolbar_bgs: [2]Rect = .{
+        ui_cam.withSize1d(.width, 2, .top_left),
+        ui_cam.withSize1d(.width, 2, .top_right),
+    };
+
     var ui_buttons: std.ArrayList(struct {
         pos: Rect,
         color: ?FColor,
@@ -1722,7 +1728,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (toolbar.painting) {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
-                        } else {
+                        } else if (for (toolbar_bgs) |r| {
+                            if (r.contains(ui_mouse.cur.position)) break false;
+                        } else true) {
                             if (toolbar.active_state) |active_state| {
                                 if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
                                     try cur_level.board.setStateAt(cell_under_mouse, active_state);
@@ -1745,7 +1753,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         }
                         if (mouse.wasPressed(.right)) {
                             toolbar.active_state = cur_level.board.cellAt(cell_under_mouse).state;
-                            toolbar.active_type = cur_level.board.cellAt(cell_under_mouse).getSingleMote();
+                            if (self.is_editor) {
+                                toolbar.active_type = cur_level.board.cellAt(cell_under_mouse).getSingleMote();
+                            }
                         }
                     }
                 },
@@ -1870,13 +1880,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         } else Cell.State.off;
                     }
                 }
-                for (&(MoteType.all ++ @as([1]?MoteType, .{null})), 0..) |t, k| {
-                    if (platform.keyboard.wasPressed(.digit(k + 1))) {
-                        toolbar.active_type = t;
+                if (self.is_editor) {
+                    for (&(MoteType.all ++ @as([1]?MoteType, .{null})), 0..) |t, k| {
+                        if (platform.keyboard.wasPressed(.digit(k + 1))) {
+                            toolbar.active_type = t;
+                        }
                     }
-                }
-                if (platform.keyboard.wasPressed(.digit(0))) {
-                    toolbar.active_type = null;
+                    if (platform.keyboard.wasPressed(.digit(0))) {
+                        toolbar.active_type = null;
+                    }
                 }
             },
             .rect => switch (toolbar.rect_tool_state) {
@@ -2003,20 +2015,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 canvas.strokeRect(camera, rect, 0.1, .red);
             }
         }
-
-        // hide non-square part of the board
-        if (true) {
-            canvas.fillRect(
-                .{ .top_left = .zero, .size = .new(4, 3) },
-                .{ .top_left = .zero, .size = .new(0.5, 3) },
-                Cell.State.off.color(),
-            );
-            canvas.fillRect(
-                .{ .top_left = .zero, .size = .new(4, 3) },
-                .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
-                Cell.State.off.color(),
-            );
-        }
     } else {
         var level_to_destroy: ?usize = null;
         for (self.all_levels.items, 0..) |l, k| {
@@ -2122,6 +2120,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             var logo_text = canvas.textBatch(0);
             try logo_text.addText("GoL", .centeredAt(.new(2, 0.5)), 0.5, .white);
             logo_text.draw(camera);
+        }
+    }
+
+    // ui bgs
+    if (self.cur_level != null) {
+        for (toolbar_bgs) |r| {
+            canvas.fillRect(ui_cam, r, Cell.State.off.color());
         }
     }
 
