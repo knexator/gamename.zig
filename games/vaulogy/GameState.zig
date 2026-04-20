@@ -222,7 +222,7 @@ test "solutions" {
 
             var exec: core.ExecutionThread = try .init(item.input, level.fnk_name, &scoring);
             defer exec.deinit();
-            const actual = try exec.getFinalResultBoundedV2(&scoring, 10_000, true, true);
+            const actual = try exec.getFinalResultBoundedV2(&scoring, 10_000, true, true, true);
             if (!actual.equals(item.expected)) {
                 if (std.testing.backend_can_print) {
                     std.debug.print(
