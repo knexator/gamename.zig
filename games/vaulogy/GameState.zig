@@ -314,7 +314,7 @@ pub const Lego = struct {
         },
         scrollable_list: ScrollableList,
 
-        // TODO(now): delete these and merge with
+        // TODO(design): delete these and merge with
         fnkbox_testcases: struct {
             scrollbar: Lego.Index,
         },
@@ -549,23 +549,15 @@ pub const Lego = struct {
             immutable: bool,
             jiggling_t: f32 = 0,
 
-            // TODO(design): rethink
-            executor_with_bindings: Lego.Index = .nothing,
             /// for patterns, this means the "eating value"
             emerging_value: Lego.Index = .nothing,
             emerging_value_t: f32 = 0,
-            // TODO(design): this is very hacky
-            /// set to true on patterns that have eaten their value
-            emerging_value_ignore_updates_to_t: bool = false,
+
+            // reset each frame
+            bindings_all: std.ArrayListUnmanaged([]const u8) = .empty,
+            bindings_unbound: std.ArrayListUnmanaged([]const u8) = .empty,
 
             pub const Kind = enum { empty, atom_lit, atom_var, pair };
-
-            pub fn setEmergingValueT(parent: Lego.Index, t: f32) void {
-                var cur_sexpr = parent;
-                while (cur_sexpr != .nothing) : (cur_sexpr = Toybox.next_preordered(cur_sexpr, parent).next) {
-                    Toybox.get(cur_sexpr).specific.sexpr.emerging_value_t = t;
-                }
-            }
 
             pub fn setIsPattern(parent: Lego.Index, is_pattern: bool) void {
                 // TODO(polish): slow-mo looks better with this, but not the normal flow
@@ -699,33 +691,6 @@ pub const Lego = struct {
                 assert(self.kind == .pair);
                 assert(Toybox.childCount(Lego.fromSpecificConst(.sexpr, self).index) == 2);
                 return &Toybox.get(Lego.fromSpecificConst(.sexpr, self).tree.last).specific.sexpr;
-            }
-
-            fn getAllVarNames(self: *const Sexpr, res: *std.ArrayList([]const u8)) !void {
-                const indexOfString = @import("kommon").funktional.indexOfString;
-                switch (self.kind) {
-                    .atom_lit, .empty => return,
-                    .atom_var => if (indexOfString(res.items, self.atom_name) == null) try res.append(self.atom_name),
-                    .pair => {
-                        try self.left().getAllVarNames(res);
-                        try self.right().getAllVarNames(res);
-                    },
-                }
-            }
-
-            pub fn getAllVarNamesHelper(pair: Lego.Index, allocator: std.mem.Allocator) !struct {
-                left: [][]const u8,
-                right: [][]const u8,
-            } {
-                var left_names: std.ArrayList([]const u8) = .init(allocator);
-                var right_names: std.ArrayList([]const u8) = .init(allocator);
-                const s = &Toybox.get(pair).specific.sexpr;
-                try s.left().getAllVarNames(&left_names);
-                try s.right().getAllVarNames(&right_names);
-                return .{
-                    .left = try left_names.toOwnedSlice(),
-                    .right = try right_names.toOwnedSlice(),
-                };
             }
 
             const core = @import("core.zig");
@@ -1570,7 +1535,7 @@ pub const Lego = struct {
                 const new_between = try Toybox.new(element.get().absolute_point, .{ .scrollable_list_inbetween = .{ .kind = kind } }, undo_stack);
                 Toybox.changeChildWithUndoAndAlsoCoords(element, new_between, undo_stack);
 
-                // TODO(now): revise
+                // TODO(code): revise
                 // const l_a = Toybox.get(original_parent_tree.next).specific.newcase.length();
                 // const l_b = Toybox.get(parent).specific.newcase.length();
                 // Toybox.get(original_parent_tree.next).specific.newcase.length_before = l_b;
@@ -1881,6 +1846,7 @@ pub const Lego = struct {
         }
 
         pub fn hasTag(index: Index, tag: Specific.Tag) bool {
+            if (index == .nothing) return false;
             return Toybox.get(index).specific.tag() == tag;
         }
 
@@ -3095,7 +3061,7 @@ const Workspace = struct {
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
     arena_for_atom_names: std.heap.ArenaAllocator,
-    arena_for_lenses_data: std.heap.ArenaAllocator,
+    arena_for_oneframe_data: std.heap.ArenaAllocator,
 
     // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
@@ -3179,7 +3145,7 @@ const Workspace = struct {
         dst.undo_stack = .init(gpa);
         dst.random_instance = .init(random_seed);
         dst.arena_for_atom_names = .init(gpa);
-        dst.arena_for_lenses_data = .init(gpa);
+        dst.arena_for_oneframe_data = .init(gpa);
         dst.gpa_for_bindings = gpa;
         dst.gpa_for_text = gpa;
 
@@ -3667,7 +3633,7 @@ const Workspace = struct {
         }
         workspace.undo_stack.deinit();
         workspace.arena_for_atom_names.deinit();
-        workspace.arena_for_lenses_data.deinit();
+        workspace.arena_for_oneframe_data.deinit();
     }
 
     const HotAndDropzone = struct {
@@ -4066,10 +4032,9 @@ const Workspace = struct {
                             .garland, .fnkbox, .testcase, .fnkslist_element => true,
                         };
 
-                        if (sexpr.emerging_value != .nothing and sexpr.executor_with_bindings != .nothing) {
+                        if (sexpr.emerging_value != .nothing) {
                             Toybox.refreshAbsolutePoints(&.{cur});
-                            const bindings = Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings);
-                            const t: f32 = if (bindings.anim_t) |anim_t| math.smoothstep(anim_t, 0, 0.4) else 0;
+                            const t = sexpr.emerging_value_t;
                             const offset: Point = if (sexpr.is_pattern)
                                 .{}
                             else
@@ -4080,7 +4045,6 @@ const Workspace = struct {
                                     -2.3,
                                     0,
                                 ), 0) };
-                            if (!sexpr.emerging_value_ignore_updates_to_t) Lego.Specific.Sexpr.setEmergingValueT(cur, t);
                             Toybox.get(sexpr.emerging_value).local_point = lego.absolute_point.applyToLocalPoint(offset);
                             updateSprings(workspace, &.{sexpr.emerging_value}, absolute_mouse_pos, interaction, delta_seconds);
                         }
@@ -4511,10 +4475,10 @@ const Workspace = struct {
                                 }
                             }
 
-                            const maybe_bindings: ?BindingsState = if (sexpr.executor_with_bindings != .nothing)
-                                Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings)
-                            else
-                                null;
+                            // const maybe_bindings: ?BindingsState = if (sexpr.executor_with_bindings != .nothing)
+                            //     Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings)
+                            // else
+                            //     null;
 
                             switch (sexpr.kind) {
                                 .empty => if (lego.tree.parent.get().specific.tag() != .sexpr and
@@ -4526,29 +4490,32 @@ const Workspace = struct {
                                 },
                                 .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
                                 .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
-                                .atom_var => if (!sexpr.emerging_value_ignore_updates_to_t) {
-                                    const extra_alpha: f32 = if (maybe_bindings) |bindings| blk: {
-                                        if (bindings.anim_t) |t| {
-                                            if (sexpr.emerging_value == .nothing) break :blk 1.0;
-                                            break :blk for (bindings.new) |binding| {
-                                                if (std.mem.eql(u8, binding.name, sexpr.atom_name)) break :blk (1.0 - t);
-                                            } else unreachable;
-                                        } else break :blk 1;
-                                    } else 1;
+                                .atom_var => {
+                                    const extra_alpha = 1.0 - sexpr.emerging_value_t;
                                     try drawer.drawVariable(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha * extra_alpha);
                                 },
                             }
 
                             if (sexpr.kind == .pair) {
-                                const names = try Lego.Specific.Sexpr.getAllVarNamesHelper(lego.index, drawer.canvas.frame_arena.allocator());
                                 try if (sexpr.is_pattern)
-                                    drawer.drawPatternWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, alpha)
+                                    drawer.drawPatternWildcardLinesNonRecursiveV2(
+                                        camera,
+                                        lego.specific.sexpr.left().bindings_all.items,
+                                        lego.specific.sexpr.right().bindings_all.items,
+                                        point,
+                                        alpha,
+                                    )
                                 else
-                                    drawer.drawTemplateWildcardLinesNonRecursiveV2(camera, names.left, names.right, point, maybe_bindings orelse .{
-                                        .anim_t = null,
-                                        .old = &.{},
-                                        .new = &.{},
-                                    }, alpha);
+                                    drawer.drawTemplateWildcardLinesNonRecursiveV3(
+                                        camera,
+                                        lego.specific.sexpr.left().bindings_unbound.items,
+                                        lego.specific.sexpr.left().bindings_all.items,
+                                        lego.specific.sexpr.right().bindings_unbound.items,
+                                        lego.specific.sexpr.right().bindings_all.items,
+                                        sexpr.emerging_value_t,
+                                        point,
+                                        alpha,
+                                    );
                             }
                         },
                         .lens => |lens| {
@@ -5070,7 +5037,7 @@ const Workspace = struct {
                             .pos = .new(0, 6),
                         }), false);
                     } else {
-                        // fnk not found, TODO(now): handle better
+                        // fnk not found, TODO(game): handle better
                     }
                 } else if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
                     // Case A.0: duplicating
@@ -5466,7 +5433,7 @@ const Workspace = struct {
                 }
             }
 
-            // TODO(now): revise
+            // TODO(game): revise
             // if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
             //     p.pos.addInPlace(mouse.deltaPos().neg());
             // }
@@ -5802,6 +5769,58 @@ const Workspace = struct {
                 if (lego.specific.as(.newcase)) |newcase| {
                     newcase.offset_ghost = .nothing;
                 }
+                if (lego.specific.as(.sexpr)) |sexpr| {
+                    sexpr.bindings_all = .empty;
+                    sexpr.bindings_unbound = .empty;
+                }
+            }
+
+            _ = workspace.arena_for_oneframe_data.reset(.retain_capacity);
+        }
+
+        if (true) { // update bindings names
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .sexpr and lego.specific.sexpr.kind == .atom_var) {
+                    const name = lego.specific.sexpr.atom_name;
+                    const unbound = lego.specific.sexpr.emerging_value == .nothing;
+                    var cur = lego.index;
+                    while (cur.hasTag(.sexpr)) : (cur = cur.get().tree.parent) {
+                        try cur.get().specific.sexpr.bindings_all.append(workspace.arena_for_oneframe_data.allocator(), name);
+                        if (unbound) {
+                            try cur.get().specific.sexpr.bindings_unbound.append(workspace.arena_for_oneframe_data.allocator(), name);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (true) { // update bindings_t
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.executor)) |executor_asdf| {
+                    const executor: *Lego.Specific.Executor = executor_asdf;
+                    const bindings = Lego.Specific.Executor.bindingsActive(lego.index);
+                    const t: f32 = if (bindings.anim_t) |anim_t| math.smoothstep(anim_t, 0, 0.4) else 0;
+
+                    if (executor.animation) |animation| {
+                        const parent_pattern = animation.active_case.case().pattern;
+                        var cur = animation.active_case;
+                        while (cur != .nothing) : (cur = Toybox.next_preordered(cur, animation.active_case).next) {
+                            if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
+                                if (sexpr.kind == .atom_var and
+                                    (!sexpr.is_pattern or Toybox.isAncestor(parent_pattern, cur)))
+                                {
+                                    for (animation.new_bindings) |binding| {
+                                        if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
+                                            sexpr.emerging_value_t = t;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -5814,8 +5833,7 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
             defer zone.deinit();
 
-            _ = workspace.arena_for_lenses_data.reset(.retain_capacity);
-            const allocator = workspace.arena_for_lenses_data.allocator();
+            const allocator = workspace.arena_for_oneframe_data.allocator();
             const microscopes = try Toybox.getChildrenUnknown(scratch, workspace.lenses_layer);
             for (microscopes, 0..) |microscope, k| {
                 const source, const target = Toybox.getChildrenExact(2, microscope);
@@ -5916,9 +5934,7 @@ const Workspace = struct {
                             defer cur = next;
                             if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
                                 if (sexpr.emerging_value != .nothing) {
-                                    if (sexpr.is_pattern) {
-                                        sexpr.emerging_value_ignore_updates_to_t = true;
-                                    } else {
+                                    if (!sexpr.is_pattern) {
                                         sexpr.emerging_value.get().local_point = cur.get().local_point;
                                         Toybox.changeChild(cur, sexpr.emerging_value, &workspace.undo_stack);
                                     }
@@ -6049,7 +6065,6 @@ const Workspace = struct {
                 var cur = first_case;
                 while (cur != .nothing) : (cur = Toybox.next_preordered(cur, first_case).next) {
                     if (Toybox.get(cur).specific.as(.sexpr)) |sexpr| {
-                        sexpr.executor_with_bindings = executor_index;
                         if (sexpr.kind == .atom_var and !sexpr.is_pattern) {
                             for (new_bindings_slice) |binding| {
                                 if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {

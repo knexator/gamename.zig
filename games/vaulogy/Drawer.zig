@@ -1038,6 +1038,39 @@ pub fn drawTemplateWildcardLinesNonRecursiveV2(
     }
 }
 
+pub fn drawTemplateWildcardLinesNonRecursiveV3(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names_unbound: []const []const u8,
+    left_names_all: []const []const u8,
+    right_names_unbound: []const []const u8,
+    right_names_all: []const []const u8,
+    binding_t: f32,
+    point: Point,
+    alpha: f32,
+) !void {
+    const use_all = binding_t < 0.4;
+
+    {
+        // TODO: these numbers are not exact, issues when zooming in
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 + 0.25 / 2.0, 0.75, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, 0.25)));
+            }
+        }.anon, point)), if (use_all) left_names_all else left_names_unbound, alpha);
+
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 - 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, -0.25)));
+            }
+        }.anon, point)), if (use_all) right_names_all else right_names_unbound, alpha);
+    }
+}
+
 pub fn drawPatternWildcardLinesNonRecursive(
     drawer: *Drawer,
     camera: Rect,
