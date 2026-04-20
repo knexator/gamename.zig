@@ -589,60 +589,79 @@ const BoardState = struct {
         }
 
         // step 2a: air motes extend the reach of all signals they receive.
-        // this step repeats until a steady state is reached.
+        // this step repeats until no more signals are forwarded to new cells.
         var air_received: Signals = .init(scratch);
-        var air_sent: Signals = try .clone(signals);
-        while (!Signals.equals(air_received, air_sent)) {
-            air_received = air_sent;
-            air_sent = .init(scratch);
+        var done: bool = false;
+        while (!done) {
+            done = true;
+            air_received = signals;
+            signals = .init(scratch);
             cell_it.reset();
             while (cell_it.next()) |kv| {
                 const pos = kv.key_ptr.*;
                 const cell = kv.value_ptr.*;
-                if (cell.motes.get(.air) == 0) continue;
+                const air = cell.motes.get(.air);
                 const received = air_received.at(pos);
-                if (cell.state == .off and received.water != 0) {
-                    const signal: Signal = .{
-                        .fire = 0,
-                        .water = received.water * cell.motes.get(.air),
-                        .earth = 0,
-                        .sulfur = 0,
-                        .push = .zero,
-                        .on_offset = .zero,
-                        .off_offset = received.off_offset.scale(cell.motes.get(.air) * (received.water + 1)),
-                    };
-                    try Signal.send_with_offsets(&signals, signal, pos.add(received.off_offset));
-                    try Signal.send_with_offsets(&air_sent, signal, pos.add(received.off_offset));
-                } else if (cell.state != .off and (received.fire != 0 or received.earth != 0 or received.sulfur != 0)) {
-                    const signal: Signal = .{
-                        .fire = received.fire * cell.motes.get(.air),
-                        .water = 0,
-                        .earth = received.earth * cell.motes.get(.air),
-                        .sulfur = received.sulfur * cell.motes.get(.air),
-                        .push = received.push.scale(cell.motes.get(.air)),
-                        .on_offset = received.on_offset.scale(cell.motes.get(.air) * (received.fire + received.earth + received.sulfur + 1)),
-                        .off_offset = .zero,
-                    };
-                    try Signal.send_with_offsets(&signals, signal, pos.add(received.on_offset));
-                    try Signal.send_with_offsets(&air_sent, signal, pos.add(received.on_offset));
+                if (air == 0) {
+                    try Signal.send_with_offsets(&signals, received, pos);
+                    continue;
                 }
+                var on: Signal = .{
+                    .fire = received.fire,
+                    .water = 0,
+                    .earth = received.earth,
+                    .sulfur = received.sulfur,
+                    .push = received.push,
+                    .on_offset = received.on_offset,
+                    .off_offset = .zero,
+                };
+                var off: Signal = .{
+                    .fire = 0,
+                    .water = received.water,
+                    .earth = 0,
+                    .sulfur = 0,
+                    .push = .zero,
+                    .on_offset = .zero,
+                    .off_offset = received.off_offset,
+                };
+                var on_offset: IVec2 = .zero;
+                var off_offset: IVec2 = .zero;
+                if (cell.state == .off) {
+                    off.water *= air;
+                    off.off_offset = off.off_offset.scale(air * (received.water + 1));
+                    off_offset = received.off_offset;
+                    if (off.water > 0 and !off_offset.equals(.zero))
+                        done = false;
+                } else {
+                    on.fire *= air;
+                    on.earth *= air;
+                    on.sulfur *= air;
+                    on.push = on.push.scale(air);
+                    on.on_offset = on.on_offset.scale(air * (received.fire + received.earth + received.sulfur + 1));
+                    on_offset = received.on_offset;
+                    if ((on.fire > 0 or on.earth > 0 or on.sulfur > 0) and !on_offset.equals(.zero))
+                        done = false;
+                }
+                try Signal.send_with_offsets(&signals, on, pos.add(on_offset));
+                try Signal.send_with_offsets(&signals, off, pos.add(off_offset));
             }
         }
 
-        // step 2b: if a cell receives new signals in the steady state, it will
-        // receive an infinite amount.  for now, add 1000 as a reasonably big number.
+        // step 2b: if a cell sent more signal then it received, then eventually
+        // it will send an infinite amount.  for now, add 1000 as a reasonably
+        // big number.
         var air_received_it = air_received.values.iterator();
         while (air_received_it.next()) |kv| {
             const pos = kv.key_ptr.*;
             const received = kv.value_ptr.*;
-            if (received.fire != 0 or received.water != 0 or received.earth != 0 or received.sulfur != 0) {
+            const sent = try signals.getPtr(pos);
+            if (sent.fire > received.fire or sent.water > received.water or sent.earth > received.earth or sent.sulfur > received.sulfur) {
                 std.log.warn("infinite signal at {any}!\n", .{pos});
-                const signal = try signals.getPtr(pos);
-                signal.fire += 1000 * received.fire;
-                signal.water += 1000 * received.water;
-                signal.earth += 1000 * received.earth;
-                signal.sulfur += 1000 * received.sulfur;
-                signal.push.addInPlace(received.push.scale(1000));
+                sent.fire += 1000 * (sent.fire - received.fire);
+                sent.water += 1000 * (sent.water - received.water);
+                sent.earth += 1000 * (sent.earth - received.earth);
+                sent.sulfur += 1000 * (sent.sulfur - received.sulfur);
+                sent.push.addInPlace(sent.push.sub(received.push).scale(1000));
             }
         }
 
@@ -735,7 +754,7 @@ const BoardState = struct {
         }
 
         // step 8: motes are pushed according to the accumulated push signal.
-        // quicksilver motes and lit air motes are not pushed.
+        // quicksilver motes are not pushed.
         const pre_push = try board.cloneWithAllocator(scratch);
         var signals_it = signals.values.iterator();
         while (signals_it.next()) |kv| {
@@ -747,13 +766,9 @@ const BoardState = struct {
             const dest_pos = pos.add(signal.push);
             const b = try board.cellPtrAt(pos);
             const d = try board.cellPtrAt(dest_pos);
-            inline for ([_]MoteType{ .fire, .water, .earth, .sulfur, .salt }) |t| {
+            inline for ([_]MoteType{ .fire, .water, .air, .earth, .sulfur, .salt }) |t| {
                 b.motes.getPtr(t).* -= cell.motes.get(t);
                 d.motes.getPtr(t).* += cell.motes.get(t);
-            }
-            if (cell.state == .off) {
-                b.motes.getPtr(.air).* -= cell.motes.get(.air);
-                d.motes.getPtr(.air).* += cell.motes.get(.air);
             }
         }
 
