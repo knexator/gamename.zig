@@ -861,7 +861,7 @@ pub const Lego = struct {
             pub const relative_fnkname_point: Point = .{ .pos = .{ .x = -2, .y = 0 }, .turns = 0.25, .scale = 0.5 };
 
             pub fn stealFnkname(garland: Lego.Index, replacement: ?Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
-                const original_fnkname = Lego.Specific.Garland.children(garland).fnkname;
+                const original_fnkname = garland.children(.garland).fnkname;
                 if (replacement) |r| {
                     r.get().local_point = Lego.Specific.Garland.relative_fnkname_point;
                     Lego.Specific.Sexpr.setIsPattern(r, true);
@@ -894,10 +894,12 @@ pub const Lego = struct {
                 Toybox.refreshAbsolutePoints(&.{ case, original_parent_tree.next });
             }
 
-            pub fn children(index: Lego.Index) struct {
+            pub const Children = struct {
                 fnkname: Lego.Index,
                 cases: Lego.Index,
-            } {
+            };
+
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .garland);
                 const asdf = Toybox.getChildrenExact(2, index);
                 return .{
@@ -1097,11 +1099,13 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn children(index: Lego.Index) struct {
+            pub const Children = struct {
                 input: Lego.Index,
                 garland: Lego.Index,
                 controls: Lego.Index,
-            } {
+            };
+
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .executor);
                 const asdf = Toybox.getChildrenExact(3, index);
                 return .{
@@ -1183,12 +1187,14 @@ pub const Lego = struct {
             );
             const edit_description_button_rect: Rect = relative_box.withSize(.both(1), .top_right);
 
-            pub fn children(index: Lego.Index) struct {
+            pub const Children = struct {
                 description: Lego.Index,
                 status_bar: Lego.Index,
                 testcases_scrollbar: Lego.Index,
                 testcases_area: Lego.Index,
-            } {
+            };
+
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .fnkbox_box);
                 const asdf = Toybox.getChildrenExact(4, index);
                 return .{
@@ -1238,11 +1244,13 @@ pub const Lego = struct {
                 return .{ .index = children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).executor };
             }
 
-            pub fn children(index: Lego.Index) struct {
+            pub const Children = struct {
                 box: Lego.Index,
                 fnkname: Lego.Index,
                 executor: Lego.Index,
-            } {
+            };
+
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .fnkbox);
                 const asdf = Toybox.getChildrenExact(3, index);
                 return .{
@@ -1611,12 +1619,14 @@ pub const Lego = struct {
                 return @truncate(hasher.final());
             }
 
-            pub fn children(index: Lego.Index) struct {
+            pub const Children = struct {
                 main: Lego.Index,
                 scrollbar: Lego.Index,
                 scrollable_list: Lego.Index,
                 sentinel: Lego.Index,
-            } {
+            };
+
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .list_viewer);
                 const asdf = Toybox.getChildrenExact(4, index);
                 return .{
@@ -1638,7 +1648,7 @@ pub const Lego = struct {
                     list_viewer.main_hash = new_main_hash;
                     defer list_viewer.list_hash = Lego.Specific.ListViewer.computeListHash(lego.index);
 
-                    const lego_children = Lego.Specific.ListViewer.children(lego.index);
+                    const lego_children = lego.index.children(.list_viewer);
                     const main = lego_children.main;
                     assert(main.hasTag(.sexpr));
 
@@ -1683,7 +1693,7 @@ pub const Lego = struct {
                 } else if (list_viewer.list_hash != new_list_hash) {
                     list_viewer.list_hash = new_list_hash;
 
-                    const lego_children = Lego.Specific.ListViewer.children(lego.index);
+                    const lego_children = lego.index.children(.list_viewer);
                     assert(lego_children.main.hasTag(.sexpr));
 
                     const new_main = try Toybox.buildSexpr(lego_children.main.get().local_point, .empty, false, false, undo_stack);
@@ -1867,13 +1877,13 @@ pub const Lego = struct {
             fnkname: Lego.Index,
             next: Lego.Index,
         } {
-            const children = Specific.Case.children(index);
+            const asdf = index.children(.case);
             return .{
                 .self = index,
-                .pattern = children.pattern,
-                .template = children.template,
-                .fnkname = children.fnkname,
-                .next = children.next,
+                .pattern = asdf.pattern,
+                .template = asdf.template,
+                .fnkname = asdf.fnkname,
+                .next = asdf.next,
             };
         }
 
@@ -1890,6 +1900,10 @@ pub const Lego = struct {
         } {
             assert(Toybox.get(index).specific.tag() == .garland);
             return .{ .self = index };
+        }
+
+        pub fn children(index: Index, comptime specific: Specific.Tag) Specific.Tagged(specific).Children {
+            return Specific.Tagged(specific).children(index);
         }
     };
 
@@ -2115,7 +2129,7 @@ pub const ApiFor = struct {
         index: Lego.Index,
 
         pub fn garland(this: @This()) Garland {
-            return .{ .index = Lego.Specific.Executor.children(this.index).garland };
+            return .{ .index = this.index.children(.executor).garland };
         }
     };
 
@@ -3421,9 +3435,9 @@ const Workspace = struct {
                 );
 
                 if (k == 0) {
-                    Lego.Specific.Executor.children(Lego.Specific.Fnkbox.children(fnkbox).executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
-                    Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_target = 2;
-                    Lego.Specific.FnkboxBox.children(Lego.Specific.Fnkbox.children(fnkbox).box).testcases_scrollbar.get().specific.scrollbar.scroll_visual = 2;
+                    fnkbox.children(.fnkbox).executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+                    fnkbox.children(.fnkbox).box.children(.fnkbox_box).testcases_scrollbar.get().specific.scrollbar.scroll_target = 2;
+                    fnkbox.children(.fnkbox).box.children(.fnkbox_box).testcases_scrollbar.get().specific.scrollbar.scroll_visual = 2;
                 }
 
                 if (level.fnk_name.isTheLit("calculator")) {
@@ -4375,14 +4389,14 @@ const Workspace = struct {
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
                     .fnkbox => |fnkbox| {
-                        Lego.Specific.Fnkbox.children(cur).fnkname.get().immutable = true;
+                        cur.children(.fnkbox).fnkname.get().immutable = true;
                         if (fnkbox.execution) |execution| {
-                            Lego.Specific.Executor.children(Lego.Specific.Fnkbox.children(cur).executor).garland.get().immutable = true;
+                            cur.children(.fnkbox).executor.children(.executor).garland.get().immutable = true;
                             if (execution.floating_input_or_output.getSafe()) |s| s.immutable = true;
                         }
                     },
                     .garland => {
-                        if (Lego.Specific.Garland.children(lego.index).fnkname.getSafe()) |f| f.immutable = true;
+                        if (lego.index.children(.garland).fnkname.getSafe()) |f| f.immutable = true;
                     },
                     .scrollable_list_inbetween, .list_viewer, .meta_viewer, .fnkslist_element, .testcase, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
@@ -4492,7 +4506,7 @@ const Workspace = struct {
                                 lego.absolute_point.applyToLocalPosition(.xneg),
                                 lego.absolute_point.applyToLocalPosition(.xpos),
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
-                            const next_garland = Lego.Specific.Case.children(cur).next;
+                            const next_garland = cur.children(.case).next;
                             if (next_garland.get().specific.garland.visible) {
                                 // TODO(game): draw variables in the cable
                                 drawer.canvas.line(camera, &.{
@@ -4928,7 +4942,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 if (lego.specific.tag() == .fnkbox) {
                     std.log.debug("{any} at pos {any}", .{
-                        try Lego.Specific.Fnkbox.children(lego.index).fnkname.get().specific.sexpr.toOldCoreValue(scratch),
+                        try lego.index.children(.fnkbox).fnkname.get().specific.sexpr.toOldCoreValue(scratch),
                         lego.local_point,
                     });
                 }
@@ -5106,7 +5120,7 @@ const Workspace = struct {
                                 for (toybox.all_legos.items) |*lego| {
                                     if (!lego.exists) continue;
                                     if (lego.specific.tag() == .fnkbox) {
-                                        const existing = Lego.Specific.Fnkbox.children(lego.index).fnkname;
+                                        const existing = lego.index.children(.fnkbox).fnkname;
                                         if (Lego.Specific.Sexpr.equalValue(fnkname, existing)) {
                                             math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
                                             fnkname.get().specific.sexpr.atom_name = new_name;
@@ -5595,7 +5609,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
-                        const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
+                        const executor_index = lego.index.children(.fnkbox).executor;
                         switch (execution.source) {
                             .testcase => |testcase| switch (execution.state) {
                                 .scrolling_towards_case => {
@@ -6478,9 +6492,7 @@ const Workspace = struct {
 
                 const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
                 if (fnks_indices.get(fnk.name)) |fnkbox_index| {
-                    Toybox.changeChild(Lego.Specific.Executor.children(
-                        Lego.Specific.Fnkbox.children(fnkbox_index).executor,
-                    ).garland, garland, null);
+                    Toybox.changeChild(fnkbox_index.children(.fnkbox).executor.children(.executor).garland, garland, null);
                     fnkbox_index.get().local_point.pos = pos;
                 } else {
                     const fnkbox = try Toybox.buildFnkbox(
@@ -6565,7 +6577,7 @@ const Workspace = struct {
             var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
             while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
                 const fnkbox = &Toybox.get(cur).specific.fnkbox;
-                const fnkname_value = try Toybox.get(Lego.Specific.Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
+                const fnkname_value = try Toybox.get(cur.children(.fnkbox).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 const garland = if (fnkbox.execution) |e|
                     e.original_garland
                 else
