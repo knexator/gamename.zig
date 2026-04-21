@@ -284,6 +284,9 @@ pub const Lego = struct {
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
     unhoverable: bool = false,
+    /// for now, only used for sexprs/cases/garlands
+    /// means that it can be duplicated, but not modified
+    immutable: bool = false,
 
     tree: Tree = .empty,
 
@@ -546,7 +549,6 @@ pub const Lego = struct {
             is_fnkname: bool,
             is_fnkname_t: f32,
             atom_name: []const u8,
-            immutable: bool,
             jiggling_t: f32 = 0,
 
             /// for patterns, this means the "eating value"
@@ -647,7 +649,7 @@ pub const Lego = struct {
                     }
 
                     if (sexpr.emerging_value != .nothing) {
-                        std.log.err("Shouldn't happen!", .{});
+                        std.log.err("TODO(now)", .{});
                         updateLocalPositionsAndOfChildren(sexpr.emerging_value);
                     }
                 }
@@ -2353,6 +2355,18 @@ pub const Toybox = struct {
             result.tree.last = .nothing;
         }
 
+        // special cases
+        switch (result.specific) {
+            else => {},
+            .sexpr => |*sexpr| {
+                if (sexpr.emerging_value != .nothing) {
+                    sexpr.emerging_value = try dupeIntoFloating(sexpr.emerging_value, true, undo_stack);
+                }
+                // sexpr.emerging_value = .nothing;
+                // sexpr.emerging_value_t = 0;
+            },
+        }
+
         return result_index;
     }
 
@@ -2822,7 +2836,6 @@ pub const Toybox = struct {
             .is_pattern_t = if (is_pattern) 1 else 0,
             .is_fnkname = is_fnkname,
             .is_fnkname_t = if (is_fnkname) 1 else 0,
-            .immutable = false,
             .atom_name = switch (value) {
                 .atom_lit, .atom_var => |v| v,
                 else => undefined,
@@ -2929,6 +2942,7 @@ pub const Toybox = struct {
                 for (testcases) |values| {
                     const Testcase = Lego.Specific.Testcase;
                     const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
+                    testcase.get().immutable = true;
                     Toybox.addChildLastV2(Testcase.relative_input_point, testcase, values[0], undo_stack);
                     Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, values[1], undo_stack);
                     Toybox.addChildLastV2(Testcase.relative_actual_point, testcase, try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack), undo_stack);
@@ -2943,6 +2957,7 @@ pub const Toybox = struct {
         }, undo_stack);
 
         fnkname.get().local_point = Fnkbox.relative_fnkname_point;
+        fnkname.get().immutable = true;
 
         if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
 
@@ -3120,7 +3135,7 @@ const Workspace = struct {
             .include_hand = false,
             .include_lenses = true,
             .include_toolbars = true,
-            .include_floating_inputs = false,
+            .include_floating_inputs = true,
         };
         pub const with_main_camera: @This() = .{
             .include_hand = false,
@@ -3191,6 +3206,7 @@ const Workspace = struct {
         dst.fnkboxes_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
+        dst.floating_inputs_layer.get().immutable = true;
 
         if (false) {
             Toybox.addChildLast(
@@ -3689,7 +3705,7 @@ const Workspace = struct {
                         {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root };
-                            } else if (grabbing != .nothing and !sexpr.immutable and Toybox.get(grabbing).specific.tag() == .sexpr) {
+                            } else if (grabbing != .nothing and !lego.immutable and Toybox.get(grabbing).specific.tag() == .sexpr) {
                                 return .{ .dropzone = cur, .over_background = root };
                             }
                         }
@@ -3821,14 +3837,14 @@ const Workspace = struct {
                             .garland_newcases,
                             => unreachable,
                             .case, .lens, .fnkbox, .list_viewer, .meta_viewer, .executor_brake, .executor_crank => .{ grabbing == .nothing, .hot },
-                            .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case, .drop },
+                            .newcase => .{ grabbing != .nothing and Toybox.get(grabbing).specific.tag() == .case and !lego.immutable, .drop },
                             .scrollable_list_inbetween => |t| .{ grabbing != .nothing and switch (t.kind) {
                                 .listviewer_sexprs => Toybox.get(grabbing).specific.tag() == .sexpr,
                             }, .drop },
                             .garland => if (grabbing == .nothing)
                                 .{ true, .hot }
                             else if (Toybox.get(grabbing).specific.tag() == .garland)
-                                .{ true, .drop }
+                                .{ !lego.immutable, .drop }
                             else
                                 .{ false, undefined },
                         };
@@ -4006,17 +4022,39 @@ const Workspace = struct {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
 
-                // TODO(design): remove this from here
-                lego.unhoverable = switch (lego.specific) {
-                    .sexpr, .case, .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
-                        .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
-                            fnkbox.specific.fnkbox.execution != null
-                        else
-                            executor.animation != null,
-                        else => false,
+                lego.unhoverable = false;
+                // // TODO(design): remove this from here
+                // lego.unhoverable = switch (lego.specific) {
+                //     .sexpr, .case, .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
+                //         .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
+                //             fnkbox.specific.fnkbox.execution != null
+                //         else
+                //             executor.animation != null,
+                //         else => false,
+                //     },
+                //     else => false,
+                // };
+
+                // TODO(now)
+                // lego.immutable = switch (lego.specific) {
+                //     else => if (lego.tree.parent == .nothing) false else lego.tree.parent.get().immutable,
+                //     .garland => if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
+                //         .executor => |executor| if (Toybox.safeGet(Toybox.findAncestor(cur, .fnkbox))) |fnkbox|
+                //             fnkbox.specific.fnkbox.execution != null
+                //         else
+                //             executor.animation != null,
+                //         else => false,
+                //     },
+                // };
+
+                // inherit immutability from parent, sometimes
+                switch (lego.specific) {
+                    else => {},
+                    .garland, .case, .newcase, .sexpr, .garland_newcases => if (lego.tree.parent.getSafe()) |p| switch (p.specific.tag()) {
+                        else => {},
+                        .garland, .case, .sexpr, .newcase, .testcase, .garland_newcases, .area => lego.immutable = p.immutable,
                     },
-                    else => false,
-                };
+                }
 
                 switch (lego.specific) {
                     .sexpr => |*sexpr| {
@@ -4025,12 +4063,6 @@ const Workspace = struct {
 
                         // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
                         // defer zone.deinit();
-
-                        sexpr.immutable = if (lego.tree.parent == .nothing) false else switch (Toybox.get(lego.tree.parent).specific) {
-                            else => false,
-                            .sexpr => |parent_sexpr| parent_sexpr.immutable,
-                            .garland, .fnkbox, .testcase, .fnkslist_element => true,
-                        };
 
                         if (sexpr.emerging_value != .nothing) {
                             Toybox.refreshAbsolutePoints(&.{cur});
@@ -4150,6 +4182,14 @@ const Workspace = struct {
 
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(cur);
+
+                        if (executor.animation) |animation| {
+                            animation.active_case.get().immutable = true;
+                            children.input.get().immutable = true;
+                            animation.garland_fnkname.get().immutable = true;
+                            if (animation.invoked_fnk.getSafe()) |s| s.immutable = true;
+                            children.garland.get().immutable = true;
+                        }
 
                         var pill_offset: f32 = 0;
                         if (executor.animation) |animation| {
@@ -4334,7 +4374,14 @@ const Workspace = struct {
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
-                    .scrollable_list_inbetween, .list_viewer, .meta_viewer, .garland, .fnkslist_element, .testcase, .fnkbox, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .fnkbox => |fnkbox| {
+                        Lego.Specific.Fnkbox.children(cur).fnkname.get().immutable = true;
+                        if (fnkbox.execution) |execution| {
+                            Lego.Specific.Executor.children(Lego.Specific.Fnkbox.children(cur).executor).garland.get().immutable = true;
+                            if (execution.floating_input_or_output.getSafe()) |s| s.immutable = true;
+                        }
+                    },
+                    .scrollable_list_inbetween, .list_viewer, .meta_viewer, .garland, .fnkslist_element, .testcase, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
@@ -4474,11 +4521,6 @@ const Workspace = struct {
                                     }
                                 }
                             }
-
-                            // const maybe_bindings: ?BindingsState = if (sexpr.executor_with_bindings != .nothing)
-                            //     Lego.Specific.Executor.bindingsActive(sexpr.executor_with_bindings)
-                            // else
-                            //     null;
 
                             switch (sexpr.kind) {
                                 .empty => if (lego.tree.parent.get().specific.tag() != .sexpr and
@@ -5039,7 +5081,7 @@ const Workspace = struct {
                     } else {
                         // fnk not found, TODO(game): handle better
                     }
-                } else if (mouse.wasPressed(.right) or (original_hot_data.specific.tag() == .sexpr and original_hot_data.specific.sexpr.immutable)) {
+                } else if (mouse.wasPressed(.right) or original_hot_data.immutable) {
                     // Case A.0: duplicating
                     switch (hot_index.get().canDuplicate()) {
                         .yes => {
