@@ -47,6 +47,38 @@ var CONFIG: struct {
     } = .{},
 } = .{};
 
+test "simulations" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    try testSimulation(2,
+        \\V2
+        \\grid:
+        \\:+ + +
+    ,
+        \\V2
+        \\grid:
+        \\.+.+:+
+    , arena.allocator());
+}
+
+fn testSimulation(steps: usize, start: []const u8, end: []const u8, scratch: std.mem.Allocator) !void {
+    var expected_board: BoardState = undefined;
+    try BoardState.init(&expected_board, scratch);
+    defer expected_board.deinit();
+    try expected_board.fromText(scratch, end);
+
+    var actual_board: BoardState = undefined;
+    try BoardState.init(&actual_board, scratch);
+    defer actual_board.deinit();
+    try actual_board.fromText(scratch, start);
+    for (0..steps) |_| {
+        try actual_board.next(scratch);
+    }
+
+    try std.testing.expect(actual_board.equals(expected_board));
+}
+
 const MoteType = enum {
     fire,
     water,
