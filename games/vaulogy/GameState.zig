@@ -4381,7 +4381,10 @@ const Workspace = struct {
                             if (execution.floating_input_or_output.getSafe()) |s| s.immutable = true;
                         }
                     },
-                    .scrollable_list_inbetween, .list_viewer, .meta_viewer, .garland, .fnkslist_element, .testcase, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
+                    .garland => {
+                        if (Lego.Specific.Garland.children(lego.index).fnkname.getSafe()) |f| f.immutable = true;
+                    },
+                    .scrollable_list_inbetween, .list_viewer, .meta_viewer, .fnkslist_element, .testcase, .pill, .area, .microscope, .lens, .button, .fnkbox_description, .postit, .postit_text, .postit_drawing => {},
                 }
             }
         }
