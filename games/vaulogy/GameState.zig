@@ -3779,7 +3779,7 @@ const Workspace = struct {
                     .button => |button| {
                         if (step.children_already_visited and
                             button.enabled and
-                            grabbing == .nothing and
+                            (grabbing == .nothing or grabbing == cur) and
                             button.local_rect.contains(absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos)))
                         {
                             return .{ .hot = cur, .over_background = root };
@@ -5329,22 +5329,24 @@ const Workspace = struct {
                     // Case B.2: releasing a grabbed thing, which might be a button
                     assert(dropzone_index == .nothing);
                     if (Toybox.get(workspace.grabbing.index).specific.as(.button)) |button| {
-                        switch (button.action) {
-                            .see_failing_testcase => {
-                                const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
-                                try launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved, undo_stack);
-                            },
-                            .launch_testcase => {
-                                const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
-                                try launchTestcase(testcase_index, undo_stack);
-                            },
-                            .scroll_up, .scroll_down => {},
-                            .edit_fnkbox_description => {
-                                const parent = workspace.grabbing.index.get().tree.parent;
-                                assert(parent.hasTag(.fnkbox_description));
-                                platform.startTextInput(null);
-                                workspace.active_text_input = parent;
-                            },
+                        if (hot_and_dropzone.hot == workspace.grabbing.index) {
+                            switch (button.action) {
+                                .see_failing_testcase => {
+                                    const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
+                                    try launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved, undo_stack);
+                                },
+                                .launch_testcase => {
+                                    const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
+                                    try launchTestcase(testcase_index, undo_stack);
+                                },
+                                .scroll_up, .scroll_down => {},
+                                .edit_fnkbox_description => {
+                                    const parent = workspace.grabbing.index.get().tree.parent;
+                                    assert(parent.hasTag(.fnkbox_description));
+                                    platform.startTextInput(null);
+                                    workspace.active_text_input = parent;
+                                },
+                            }
                         }
                         assert(workspace.valid(scratch));
                     }
