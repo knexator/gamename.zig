@@ -5377,9 +5377,15 @@ const Workspace = struct {
         // cursor
         platform.setCursor(
             if (workspace.grabbing.index != .nothing)
-                .grabbing // or maybe .pointer, if it's UI
+                if (workspace.grabbing.index.hasTag(.button))
+                    .pointer
+                else
+                    .grabbing
             else if (hot_and_dropzone.hot != .nothing)
-                .could_grab // or maybe .pointer, if it's UI
+                if (hot_and_dropzone.hot.hasTag(.button))
+                    .pointer
+                else
+                    .could_grab
             else
                 .default,
         );
