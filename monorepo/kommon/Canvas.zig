@@ -1448,6 +1448,17 @@ pub const TextBatch = struct {
         em: f32,
         color: FColor,
     ) !void {
+        return self.addTextV2(.{}, text, pos, em, color);
+    }
+
+    pub fn addTextV2(
+        self: *TextBatch,
+        parent_point: Point,
+        text: []const u8,
+        pos: TextRenderer.TextPosition,
+        em: f32,
+        color: FColor,
+    ) !void {
         if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
         const info = try self.text_renderer.quadsForLineV2(text, em, color, self.canvas.frame_arena.allocator());
         const quads = info.quads;
@@ -1456,7 +1467,7 @@ pub const TextBatch = struct {
         // const delta = bounds.deltaToAchieve(pos);
         const delta = self.text_renderer.deltaToAchieve(pos, info.total_advance, em);
         try self.quads.ensureUnusedCapacity(quads.len);
-        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
+        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta).withParentPoint(parent_point));
     }
 
     pub fn draw(self: *TextBatch, camera: Rect) void {
@@ -1467,8 +1478,13 @@ pub const TextBatch = struct {
 
 /// prefer .textBatch
 pub fn drawText(self: *Canvas, font_index: usize, camera: Rect, text: []const u8, pos: TextRenderer.TextPosition, em: f32, color: FColor) !void {
+    return self.drawTextV2(.{}, font_index, camera, text, pos, em, color);
+}
+
+/// prefer .textBatch
+pub fn drawTextV2(self: *Canvas, parent_point: Point, font_index: usize, camera: Rect, text: []const u8, pos: TextRenderer.TextPosition, em: f32, color: FColor) !void {
     var batch = self.textBatch(font_index);
-    try batch.addText(text, pos, em, color);
+    try batch.addTextV2(parent_point, text, pos, em, color);
     batch.draw(camera);
 }
 
@@ -1791,10 +1807,18 @@ pub const TextRenderer = struct {
         pos: Rect,
         tex: Rect,
         color: FColor,
+        // TODO: this is hacky, remove
+        parent_point: Point = .{},
 
         pub fn translate(self: Quad, delta: Vec2) Quad {
             var res = self;
             res.pos.top_left.addInPlace(delta);
+            return res;
+        }
+
+        pub fn withParentPoint(self: Quad, parent_point: Point) Quad {
+            var res = self;
+            res.parent_point = parent_point;
             return res;
         }
     };
@@ -1807,7 +1831,7 @@ pub const TextRenderer = struct {
         for (sprites, 0..) |sprite, i| {
             for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
                 vertices[i * 4 + k] = .{
-                    .a_position = sprite.pos.applyToLocalPosition(vertex),
+                    .a_position = sprite.parent_point.applyToLocalPosition(sprite.pos.applyToLocalPosition(vertex)),
                     .a_texcoord = sprite.tex.applyToLocalPosition(vertex),
                     .a_color = sprite.color,
                 };
