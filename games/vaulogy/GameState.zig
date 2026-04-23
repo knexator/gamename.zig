@@ -428,10 +428,12 @@ pub const Lego = struct {
                 scroll_down,
                 /// assumes that the editable text is the direct parent
                 edit_fnkbox_description,
+                /// assumes that fnkname_holder is the direct parent
+                toggle_skip_fnk,
             },
             enabled: bool = true,
-            /// only applies to edit_fnkbox_description
-            latched: bool = true,
+            /// only applies to edit_fnkbox_description and toggle_skip_fnk
+            latched: bool = false,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
@@ -441,6 +443,8 @@ pub const Lego = struct {
                     .scroll_up,
                     .scroll_down,
                     => false,
+                    .toggle_skip_fnk,
+                    => true,
                 };
             }
         };
@@ -776,13 +780,15 @@ pub const Lego = struct {
 
             const Children = struct {
                 fnkname: Lego.Index,
+                toggle_skip: Lego.Index,
             };
 
             pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .fnkname_holder);
-                const asdf = Toybox.getChildrenExact(1, index);
+                const asdf = Toybox.getChildrenExact(2, index);
                 return .{
                     .fnkname = asdf[0],
+                    .toggle_skip = asdf[1],
                 };
             }
 
@@ -791,6 +797,10 @@ pub const Lego = struct {
                 fnkname.get().local_point = Case.fnk_name_offset;
                 return try Toybox.createWithChildren(.{}, .{ .fnkname_holder = .{} }, &.{
                     fnkname,
+                    try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = .{ .top_left = .new(5, 0), .size = .one },
+                        .action = .toggle_skip_fnk,
+                    } }, undo_stack),
                 }, undo_stack);
             }
 
@@ -4749,6 +4759,12 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
+                                .toggle_skip_fnk => if (button.enabled) {
+                                    // TODO(game): nicer
+                                    // TODO(platform): fails for rotated cameras
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, if (button.latched) .blackAlpha(alpha) else COLORS.bg.withAlpha(alpha));
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, 0.1, .inner, .blackAlpha(alpha));
+                                },
                                 .edit_fnkbox_description => if (button.enabled) {
                                     // TODO(game): draw a better icon
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
@@ -5230,7 +5246,12 @@ const Workspace = struct {
                     if (Toybox.get(hot_index).specific.as(.button)) |b| {
                         if (b.instant()) {
                             grabbed_element_index = .nothing;
-                            @panic("unhandled instant button");
+                            switch (b.action) {
+                                inline else => unreachable,
+                                .toggle_skip_fnk => {
+                                    b.latched = !b.latched;
+                                },
+                            }
                         }
                     }
                 } else if (hot_parent != .nothing and hot_parent.hasTag(.area)) {
@@ -5331,6 +5352,7 @@ const Workspace = struct {
                     if (Toybox.get(workspace.grabbing.index).specific.as(.button)) |button| {
                         if (hot_and_dropzone.hot == workspace.grabbing.index) {
                             switch (button.action) {
+                                .toggle_skip_fnk => unreachable,
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
                                     try launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved, undo_stack);
@@ -5863,10 +5885,17 @@ const Workspace = struct {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                         .scroll_up, .scroll_down => true,
+                        // TODO(game): set this to true to use the toggle_skip ui
+                        .toggle_skip_fnk => false,
                         .edit_fnkbox_description => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.editable,
                     };
                     button.latched = switch (button.action) {
-                        else => false,
+                        .launch_testcase,
+                        .see_failing_testcase,
+                        .scroll_up,
+                        .scroll_down,
+                        => false,
+                        .toggle_skip_fnk => button.latched,
                         .edit_fnkbox_description => workspace.active_text_input == lego.tree.parent,
                     };
                 }
@@ -6172,7 +6201,7 @@ const Workspace = struct {
                 const offset = 3.0;
                 const function_point = Lego.Specific.Executor.relative_garland_point
                     .applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
-                if (try workspace.getSkippedExecution(first_case.case().template, new_bindings_slice, first_case.case().fnkname_holder.children(.fnkname_holder).fnkname, function_point, scratch)) |garland| {
+                if (try workspace.getSkippedExecution(first_case.case().template, new_bindings_slice, first_case.case().fnkname_holder, function_point, scratch)) |garland| {
                     Toybox.addChildLast(workspace.floating_inputs_layer, garland, undo_stack);
                     break :blk garland;
                 } else if (try workspace.getGarlandForFnk(first_case.case().fnkname_holder.children(.fnkname_holder).fnkname, function_point, scratch)) |garland| {
@@ -6354,16 +6383,18 @@ const Workspace = struct {
         workspace: *Workspace,
         input_unresolved: Lego.Index,
         bindings: []const Binding,
-        fnkname: Lego.Index,
+        fnkname_holder: Lego.Index,
         new_point: Point,
         scratch: std.mem.Allocator,
     ) !?Lego.Index {
         const undo_stack = &workspace.undo_stack;
 
+        const fnkname = fnkname_holder.children(.fnkname_holder).fnkname;
+        const force_skip = fnkname_holder.children(.fnkname_holder).toggle_skip.get().specific.button.latched;
+
         const fnkname_value = try fnkname.get().specific.sexpr.toOldCoreValue(scratch);
 
-        // TODO(game): allow skipping any function call
-        if (!fnkname_value.isTheLit("eqAtoms?")) {
+        if (!(force_skip or fnkname_value.isTheLit("eqAtoms?"))) {
             return null;
         }
 
