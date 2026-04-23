@@ -4066,7 +4066,13 @@ const Workspace = struct {
                     else => {},
                     .garland, .case, .newcase, .sexpr, .garland_newcases => if (lego.tree.parent.getSafe()) |p| switch (p.specific.tag()) {
                         else => {},
-                        .garland, .case, .sexpr, .newcase, .testcase, .garland_newcases, .area => lego.immutable = p.immutable,
+                        .garland, .case, .sexpr, .newcase, .testcase, .garland_newcases, .area => {
+                            if (p.specific.tag() == .garland and lego.specific.tag() == .sexpr) {
+                                // special case: ignore sexpr with garland parent (its the fnkname)
+                            } else {
+                                lego.immutable = p.immutable;
+                            }
+                        },
                     },
                 }
 
