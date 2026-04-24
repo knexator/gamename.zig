@@ -9,6 +9,8 @@ const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
 
+// TODO(game): duplicated listviewers share scrollbar state
+
 // TODO(optim): launching a fnkbox execution increases the number of existing legos
 
 const ENABLE_REUSE = true;
@@ -16,6 +18,10 @@ const SAVING_ENABLED = true;
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
+
+const Level = @import("levels_new.zig").Level;
+const levels = @import("levels_new.zig").levels;
+// const levels = if (@import("builtin").mode == .Debug) @import("levels_new.zig").levels[0..3] else @import("levels_new.zig").levels;
 
 pub const FuzzerContext = struct {
     var toybox_instance: Toybox = undefined;
@@ -202,7 +208,6 @@ test "No leaks on Workspace and Drawer" {
 test "solutions" {
     const gpa = std.testing.allocator;
     const core = @import("core.zig");
-    const levels = @import("levels_new.zig").levels;
     var mem: core.VeryPermamentGameStuff = .init(gpa);
     defer mem.deinit();
 
@@ -312,6 +317,10 @@ pub const Lego = struct {
         postit: Postit,
         list_viewer: ListViewer,
         meta_viewer: MetaViewer,
+        scorer: Scorer,
+        scorer_row: ScorerRow,
+        // TODO(design): simplify this
+        scorer_rows: void,
 
         scrollable_list_inbetween: struct {
             kind: enum { listviewer_sexprs },
@@ -396,6 +405,106 @@ pub const Lego = struct {
                 else => null,
             };
         }
+
+        pub const Scorer = struct {
+            score: ?Score = null,
+
+            pub const Score = struct {
+                total_time: usize,
+                max_stack: usize,
+                code_size: usize,
+                compile_time: usize,
+            };
+
+            pub const Children = struct {
+                scorer_rows: Lego.Index,
+            };
+
+            pub fn children(index: Lego.Index) Children {
+                assert(Toybox.get(index).specific.tag() == .scorer);
+                const asdf = Toybox.getChildrenExact(1, index);
+                return .{
+                    .scorer_rows = asdf[0],
+                };
+            }
+
+            const core = @import("core.zig");
+            pub fn updateStatus(scorer_index: Lego.Index, all_fnks: core.FnkCollection, scratch: std.mem.Allocator) !void {
+                assert(scorer_index.hasTag(.scorer));
+                var mem: core.VeryPermamentGameStuff = .init(scratch);
+                var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &mem);
+                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+
+                const rows = try Toybox.getChildrenUnknown(scratch, children(scorer_index).scorer_rows);
+                var score: struct {
+                    time: usize,
+                    max_stack: usize,
+                } = .{ .time = 0, .max_stack = 0 };
+                var failed_any: bool = false;
+                for (rows) |row| {
+                    const fnkname = try row.children(.scorer_row).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
+                    const level_index = row.get().specific.scorer_row.level_index;
+                    const level = levels[level_index];
+                    var samples_it = level.samplesIterator();
+                    while (try samples_it.next(&pool, scratch)) |sample| {
+                        defer _ = pool.reset(.retain_capacity);
+
+                        var exec = core.ExecutionThread.init(sample.input, fnkname, &scoring_run) catch |err| switch (err) {
+                            error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound => {
+                                failed_any = true;
+                                break;
+                            },
+                            error.BAD_INPUT => @panic("unreachable?"),
+                            error.OutOfMemory => |x| return x,
+                        };
+                        defer exec.deinit();
+
+                        const actual_output = exec.getFinalResult(&scoring_run) catch |err| switch (err) {
+                            error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound => {
+                                failed_any = true;
+                                break;
+                            },
+                            error.BAD_INPUT => @panic("unreachable?"),
+                            error.OutOfMemory => |x| return x,
+                        };
+
+                        if (!actual_output.equals(sample.expected)) {
+                            failed_any = true;
+                            break;
+                        } else {
+                            score.time += exec.score.successful_matches;
+                            score.max_stack = @max(score.max_stack, exec.score.max_stack);
+                        }
+                    }
+                    if (failed_any) break;
+                }
+                scorer_index.get().specific.scorer.score = if (failed_any)
+                    null
+                else
+                    .{
+                        .total_time = score.time,
+                        .max_stack = score.max_stack,
+                        .code_size = scoring_run.score.code_size,
+                        .compile_time = scoring_run.score.compile_time,
+                    };
+            }
+        };
+
+        pub const ScorerRow = struct {
+            level_index: usize,
+
+            pub const Children = struct {
+                fnkname: Lego.Index,
+            };
+
+            pub fn children(index: Lego.Index) Children {
+                assert(Toybox.get(index).specific.tag() == .scorer_row);
+                const asdf = Toybox.getChildrenExact(1, index);
+                return .{
+                    .fnkname = asdf[0],
+                };
+            }
+        };
 
         pub const FnkslistElement = struct {
             fnkbox: Lego.Index,
@@ -1938,6 +2047,9 @@ pub const Lego = struct {
 
     pub fn handle(lego: *const Lego) ?Handle {
         const radius: Handle.Size = switch (lego.specific) {
+            .scorer,
+            .scorer_row,
+            .scorer_rows,
             .sexpr,
             .area,
             .microscope,
@@ -2062,8 +2174,11 @@ pub const Lego = struct {
                 std.log.err("TODO(game): handle better", .{});
                 break :blk .no;
             },
+            .scorer,
+            .scorer_row,
             .fnkname_holder,
             .garland_newcases,
+            .scorer_rows,
             .executor_controls,
             .microscope,
             .fnkbox_box,
@@ -2100,6 +2215,9 @@ pub const Lego = struct {
             .list_viewer,
             .meta_viewer,
             => false,
+            .scorer,
+            .scorer_row,
+            .scorer_rows,
             .fnkname_holder,
             .garland_newcases,
             .executor_controls,
@@ -3067,6 +3185,22 @@ pub const Toybox = struct {
             try buildGarland(.{ .pos = .new(2, 3) }, &.{}, undo_stack),
         }, undo_stack);
     }
+
+    pub fn buildScorer(point: Point, levels_indices: []const usize, undo_stack: ?*UndoStack) !Lego.Index {
+        const rows_holder = try Toybox.new(.{}, .scorer_rows, undo_stack);
+        var y: f32 = 0;
+        for (levels_indices) |level_index| {
+            const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{ .level_index = level_index } }, &.{
+                try buildSexpr(.{ .pos = .new(0, -0.5), .scale = 0.5, .turns = 0.25 }, .empty, false, true, undo_stack),
+            }, undo_stack);
+            Toybox.addChildLast(rows_holder, new_row, undo_stack);
+            y += 2;
+        }
+        return try createWithChildren(point, .{ .scorer = .{} }, &.{
+            rows_holder,
+        }, undo_stack);
+    }
+
     pub fn setLocalPointSmooth(index: Lego.Index, new_local_point: Point) void {
         const current = index.get().local_point.applyToLocalPoint(index.get().visual_offset);
         const new_visual_offset = Point.inverseApplyGetLocal(new_local_point, current);
@@ -3259,6 +3393,10 @@ const Workspace = struct {
         dst.floating_inputs_layer.get().immutable = true;
 
         if (false) {
+            Toybox.addChildLast(dst.main_area, try Toybox.buildScorer(.{ .pos = .new(20, 0) }, &.{ 0, 1 }, undo_stack), undo_stack);
+        }
+
+        if (false) {
             Toybox.addChildLast(
                 dst.fnkboxes_layer,
                 try Toybox.buildFnkbox(
@@ -3432,7 +3570,6 @@ const Workspace = struct {
             defer pool.deinit();
             var scratch: std.heap.ArenaAllocator = .init(gpa);
             defer scratch.deinit();
-            const levels = if (@import("builtin").mode == .Debug) @import("levels_new.zig").levels[0..3] else @import("levels_new.zig").levels;
             var x: f32 = 100;
             const Sexpr = Lego.Specific.Sexpr;
             for (levels, 0..) |level, k| {
@@ -3674,6 +3811,8 @@ const Workspace = struct {
         defer zone.deinit();
         const undo_stack = &workspace.undo_stack;
 
+        const core = @import("core.zig");
+        const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (lego.specific.tag() == .fnkbox) {
@@ -3685,6 +3824,9 @@ const Workspace = struct {
             }
             if (lego.specific.tag() == .meta_viewer) {
                 try Lego.Specific.MetaViewer.canonize(lego.index, scratch, undo_stack);
+            }
+            if (lego.specific.tag() == .scorer) {
+                try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, scratch);
             }
         }
     }
@@ -3862,11 +4004,17 @@ const Workspace = struct {
                     .list_viewer,
                     .meta_viewer,
                     .fnkname_holder,
+                    .scorer,
+                    .scorer_row,
+                    .scorer_rows,
                     => {},
                 }
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
+                            .scorer,
+                            .scorer_row,
+                            .scorer_rows,
                             .sexpr,
                             .area,
                             .microscope,
@@ -4437,6 +4585,9 @@ const Workspace = struct {
                     .postit_text,
                     .postit_drawing,
                     .fnkname_holder,
+                    .scorer,
+                    .scorer_row,
+                    .scorer_rows,
                     => {},
                 }
             }
@@ -4848,6 +4999,34 @@ const Workspace = struct {
                                 }
                             }
                         },
+                        .scorer => |scorer| {
+                            const n_rows = Toybox.childCount(cur.children(.scorer).scorer_rows);
+                            drawer.canvas.strokeRect(camera_relative, .{
+                                .top_left = .new(-1, -1),
+                                .size = .new(15, 2 * tof32(n_rows)),
+                            }, 0.1, .black);
+                            try drawer.canvas.drawText(
+                                0,
+                                camera_relative,
+                                if (scorer.score) |score|
+                                    try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "Size {d}, Time {d}", .{ score.code_size, score.total_time })
+                                else
+                                    "unsolved!",
+                                .leftCenterAt(.new(1, -2)),
+                                1,
+                                .black,
+                            );
+                        },
+                        .scorer_row => |scorer_row| {
+                            try drawer.canvas.drawText(
+                                0,
+                                camera_relative,
+                                levels[scorer_row.level_index].description,
+                                .leftCenterAt(.new(1, 0)),
+                                0.5,
+                                .black,
+                            );
+                        },
                         .fnkbox_box => {
                             drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
                         },
@@ -4923,6 +5102,7 @@ const Workspace = struct {
                         .executor,
                         .fnkbox,
                         .pill,
+                        .scorer_rows,
                         => {},
                     }
                 }
@@ -5302,6 +5482,7 @@ const Workspace = struct {
 
                 assert(workspace.grabbing.index == .nothing and workspace.hand_layer == .nothing);
                 if (grabbed_element_index != .nothing) {
+                    grabbed_element_index.get().immutable = false;
                     workspace.setGrabbing(
                         .{ .index = grabbed_element_index, .offset = grabbed_element_index.get().getGrabbedOffset(mouse.cur.position) },
                         undo_stack,
@@ -5448,6 +5629,9 @@ const Workspace = struct {
                         math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
                         done = done and (@abs(executor.garland_appearing_t - 1) < eps);
                     },
+                    .scorer,
+                    .scorer_row,
+                    .scorer_rows,
                     .list_viewer,
                     .meta_viewer,
                     .pill,
@@ -6773,7 +6957,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 std.log.debug("data len: {d}", .{data.len});
                 var fbs = std.io.fixedBufferStream(data);
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
-            } else if (true) {
+            } else if (false) {
                 var fbs = std.io.fixedBufferStream(@embedFile("solutions.txt"));
                 try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
             }
