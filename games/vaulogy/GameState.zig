@@ -317,6 +317,7 @@ pub const Lego = struct {
         postit: Postit,
         list_viewer: ListViewer,
         meta_viewer: MetaViewer,
+        bubble: Bubble,
         scorer: Scorer,
         scorer_row: ScorerRow,
         // TODO(design): simplify this
@@ -405,6 +406,23 @@ pub const Lego = struct {
                 else => null,
             };
         }
+
+        pub const Bubble = struct {
+            blueprint: Lego.Index,
+
+            pub const Children = struct {
+                instanced: Lego.Index,
+            };
+
+            pub fn children(index: Lego.Index) Children {
+                assert(Toybox.get(index).specific.tag() == .bubble);
+                const asdf = Toybox.getChildrenExact(1, index);
+                assert(asdf[0].hasTag(.area));
+                return .{
+                    .instanced = asdf[0],
+                };
+            }
+        };
 
         pub const Scorer = struct {
             score: ?Score = null,
@@ -2047,6 +2065,7 @@ pub const Lego = struct {
 
     pub fn handle(lego: *const Lego) ?Handle {
         const radius: Handle.Size = switch (lego.specific) {
+            .bubble,
             .scorer,
             .scorer_row,
             .scorer_rows,
@@ -2174,6 +2193,7 @@ pub const Lego = struct {
                 std.log.err("TODO(game): handle better", .{});
                 break :blk .no;
             },
+            .bubble,
             .scorer,
             .scorer_row,
             .fnkname_holder,
@@ -2215,6 +2235,7 @@ pub const Lego = struct {
             .list_viewer,
             .meta_viewer,
             => false,
+            .bubble,
             .scorer,
             .scorer_row,
             .scorer_rows,
@@ -3201,6 +3222,14 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
+    pub fn buildBubble(point: Point, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+        assert(blueprint.hasTag(.area));
+        const instanced = try Toybox.dupeIntoFloating(blueprint, true, undo_stack);
+        return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint } }, &.{
+            instanced,
+        }, undo_stack);
+    }
+
     pub fn setLocalPointSmooth(index: Lego.Index, new_local_point: Point) void {
         const current = index.get().local_point.applyToLocalPoint(index.get().visual_offset);
         const new_visual_offset = Point.inverseApplyGetLocal(new_local_point, current);
@@ -3391,6 +3420,13 @@ const Workspace = struct {
         dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.floating_inputs_layer.get().immutable = true;
+
+        if (true) {
+            const blueprint = try Toybox.createWithChildren(.{ .pos = .new(20, 0) }, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+                try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+            }, undo_stack);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildBubble(.{ .pos = .new(20, 0) }, blueprint, undo_stack), undo_stack);
+        }
 
         if (false) {
             Toybox.addChildLast(dst.main_area, try Toybox.buildScorer(.{ .pos = .new(20, 0) }, &.{ 0, 1 }, undo_stack), undo_stack);
@@ -4007,11 +4043,13 @@ const Workspace = struct {
                     .scorer,
                     .scorer_row,
                     .scorer_rows,
+                    .bubble,
                     => {},
                 }
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
+                            .bubble,
                             .scorer,
                             .scorer_row,
                             .scorer_rows,
@@ -4588,6 +4626,7 @@ const Workspace = struct {
                     .scorer,
                     .scorer_row,
                     .scorer_rows,
+                    .bubble,
                     => {},
                 }
             }
@@ -5095,6 +5134,7 @@ const Workspace = struct {
                                 .blackAlpha(alpha),
                             );
                         },
+                        .bubble,
                         .scrollable_list_inbetween,
                         .fnkslist,
                         .executor_controls,
@@ -5660,6 +5700,7 @@ const Workspace = struct {
                     .executor_brake,
                     .executor_crank,
                     .fnkname_holder,
+                    .bubble,
                     => {},
                 }
 
