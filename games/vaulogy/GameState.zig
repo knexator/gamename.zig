@@ -288,7 +288,6 @@ pub const Lego = struct {
     active_t: f32 = 0,
     /// 1 if this element is being dropped into another
     dropping_t: f32 = 0,
-    unhoverable: bool = false,
     /// for now, only used for sexprs/cases/garlands
     /// means that it can be duplicated, but not modified
     immutable: bool = false,
@@ -408,6 +407,7 @@ pub const Lego = struct {
         }
 
         pub const Bubble = struct {
+            locked: bool,
             blueprint: Lego.Index,
 
             pub const Children = struct {
@@ -3227,10 +3227,10 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
-    pub fn buildBubble(point: Point, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildBubble(point: Point, blueprint: Lego.Index, locked: bool, undo_stack: ?*UndoStack) !Lego.Index {
         assert(blueprint.hasTag(.area));
         const instanced = try Toybox.dupeIntoFloating(blueprint, true, undo_stack);
-        return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint } }, &.{
+        return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint, .locked = locked } }, &.{
             instanced,
             try Toybox.new(.{}, .{ .button = .{
                 .local_rect = .fromCenterAndSize(.zero, .one),
@@ -3299,6 +3299,12 @@ const Workspace = struct {
     random_instance: std.Random.DefaultPrng,
     arena_for_atom_names: std.heap.ArenaAllocator,
     arena_for_oneframe_data: std.heap.ArenaAllocator,
+
+    // TODO: improve?
+    bubbles: struct {
+        initial: Lego.Index,
+        second: Lego.Index,
+    },
 
     // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
@@ -3388,6 +3394,7 @@ const Workspace = struct {
 
         const undo_stack: ?*UndoStack = null;
 
+        dst.bubbles = undefined;
         dst.main_area = try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, undo_stack);
         dst.toolbar_left = try Toybox.new(.{}, .{
             .area = .{
@@ -3432,9 +3439,21 @@ const Workspace = struct {
 
         if (true) {
             const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
-                try Toybox.buildSexpr(.{ .pos = .new(0, 2) }, .{ .atom_lit = "true" }, false, false, undo_stack),
+                try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
+                try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, undo_stack),
             }, undo_stack);
-            Toybox.addChildLast(dst.main_area, try Toybox.buildBubble(.{ .pos = .new(20, 10) }, blueprint, undo_stack), undo_stack);
+            const bubble = try Toybox.buildBubble(.{ .pos = .new(20, 10) }, blueprint, false, undo_stack);
+            Toybox.addChildLast(dst.main_area, bubble, undo_stack);
+            dst.bubbles.initial = bubble;
+        }
+
+        if (true) {
+            const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+                try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "false" }, true, false, undo_stack),
+            }, undo_stack);
+            const bubble = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, blueprint, true, undo_stack);
+            Toybox.addChildLast(dst.main_area, bubble, undo_stack);
+            dst.bubbles.second = bubble;
         }
 
         if (false) {
@@ -3874,6 +3893,17 @@ const Workspace = struct {
                 try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, scratch);
             }
         }
+
+        // TODO(design): improve
+        workspace.bubbles.second.get().specific.bubble.locked = blk: {
+            var cur = workspace.bubbles.initial;
+            while (cur != .nothing) : (cur = Toybox.next_preordered(cur, workspace.bubbles.initial).next) {
+                if (cur.hasTag(.scorer)) {
+                    if (cur.get().specific.scorer.score == null) break :blk true;
+                }
+            }
+            break :blk false;
+        };
     }
 
     pub fn deinit(workspace: *Workspace) void {
@@ -3919,12 +3949,16 @@ const Workspace = struct {
                 assert(lego.exists);
                 const absolute_point = Point.inverseApplyToLocalPoint(lego.absolute_point, lego.visual_offset); // lego.absolute_point;
                 const relative_needle_pos = absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
-                if (lego.unhoverable and !step.children_already_visited) {
+                const unhoverable = switch (lego.specific) {
+                    else => false,
+                    .bubble => |bubble| bubble.locked,
+                };
+                if (unhoverable and !step.children_already_visited) {
                     it.skipChildren();
                     _ = it.next();
                     continue;
                 }
-                assert(!lego.unhoverable);
+                assert(!unhoverable);
 
                 // TODO(optim): check that this works
                 const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
@@ -4268,9 +4302,6 @@ const Workspace = struct {
             while (cur != .nothing) : (cur = Toybox.next_preordered(cur, root).next) {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
-
-                // TODO(now): remove this property
-                lego.unhoverable = false;
 
                 // inherit immutability from parent, sometimes
                 switch (lego.specific) {
@@ -5148,7 +5179,30 @@ const Workspace = struct {
                                 .blackAlpha(alpha),
                             );
                         },
-                        .bubble,
+                        .bubble => |bubble| {
+                            if (bubble.locked) {
+                                it.skipChildren();
+                                _ = it.next();
+
+                                const area = bubble.blueprint.get().specific.area;
+                                switch (area.bg) {
+                                    .all, .none => unreachable,
+                                    .local_rect => |rect| {
+                                        drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                                    },
+                                }
+                                try drawer.canvas.drawText(
+                                    0,
+                                    camera_relative,
+                                    "Locked",
+                                    .centeredAt(.zero),
+                                    2,
+                                    .black,
+                                );
+
+                                continue;
+                            }
+                        },
                         .scrollable_list_inbetween,
                         .fnkslist,
                         .executor_controls,
