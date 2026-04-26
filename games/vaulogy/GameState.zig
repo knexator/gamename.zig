@@ -412,14 +412,16 @@ pub const Lego = struct {
 
             pub const Children = struct {
                 instanced: Lego.Index,
+                reset_bubble_button: Lego.Index,
             };
 
             pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .bubble);
-                const asdf = Toybox.getChildrenExact(1, index);
+                const asdf = Toybox.getChildrenExact(2, index);
                 assert(asdf[0].hasTag(.area));
                 return .{
                     .instanced = asdf[0],
+                    .reset_bubble_button = asdf[1],
                 };
             }
         };
@@ -557,6 +559,8 @@ pub const Lego = struct {
                 edit_fnkbox_description,
                 /// assumes that fnkname_holder is the direct parent
                 toggle_skip_fnk,
+                /// assumes that bubble is the direct parent
+                reset_bubble,
             },
             enabled: bool = true,
             /// only applies to edit_fnkbox_description and toggle_skip_fnk
@@ -569,6 +573,7 @@ pub const Lego = struct {
                     .edit_fnkbox_description,
                     .scroll_up,
                     .scroll_down,
+                    .reset_bubble,
                     => false,
                     .toggle_skip_fnk,
                     => true,
@@ -3227,6 +3232,10 @@ pub const Toybox = struct {
         const instanced = try Toybox.dupeIntoFloating(blueprint, true, undo_stack);
         return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint } }, &.{
             instanced,
+            try Toybox.new(.{}, .{ .button = .{
+                .local_rect = .fromCenterAndSize(.zero, .one),
+                .action = .reset_bubble,
+            } }, undo_stack),
         }, undo_stack);
     }
 
@@ -3422,10 +3431,10 @@ const Workspace = struct {
         dst.floating_inputs_layer.get().immutable = true;
 
         if (true) {
-            const blueprint = try Toybox.createWithChildren(.{ .pos = .new(20, 0) }, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
-                try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, false, false, undo_stack),
+            const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+                try Toybox.buildSexpr(.{ .pos = .new(0, 2) }, .{ .atom_lit = "true" }, false, false, undo_stack),
             }, undo_stack);
-            Toybox.addChildLast(dst.main_area, try Toybox.buildBubble(.{ .pos = .new(20, 0) }, blueprint, undo_stack), undo_stack);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildBubble(.{ .pos = .new(20, 10) }, blueprint, undo_stack), undo_stack);
         }
 
         if (false) {
@@ -4949,6 +4958,11 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
+                                .reset_bubble => {
+                                    // TODO(game): nicer
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                },
                                 .toggle_skip_fnk => if (button.enabled) {
                                     // TODO(game): nicer
                                     // TODO(platform): fails for rotated cameras
@@ -5574,6 +5588,12 @@ const Workspace = struct {
                         if (hot_and_dropzone.hot == workspace.grabbing.index) {
                             switch (button.action) {
                                 .toggle_skip_fnk => unreachable,
+                                .reset_bubble => {
+                                    const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
+                                    const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, true, undo_stack);
+                                    Toybox.changeChild(original_instanced, new_instanced, undo_stack);
+                                    Toybox.destroyFloating(original_instanced, undo_stack);
+                                },
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
                                     try launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved, undo_stack);
@@ -6109,7 +6129,7 @@ const Workspace = struct {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
-                        .scroll_up, .scroll_down => true,
+                        .scroll_up, .scroll_down, .reset_bubble => true,
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
                         .edit_fnkbox_description => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.editable,
@@ -6119,6 +6139,7 @@ const Workspace = struct {
                         .see_failing_testcase,
                         .scroll_up,
                         .scroll_down,
+                        .reset_bubble,
                         => false,
                         .toggle_skip_fnk => button.latched,
                         .edit_fnkbox_description => workspace.active_text_input == lego.tree.parent,
