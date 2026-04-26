@@ -514,14 +514,16 @@ pub const Lego = struct {
             level_index: usize,
 
             pub const Children = struct {
+                create_fnkname_button: Lego.Index,
                 fnkname: Lego.Index,
             };
 
             pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .scorer_row);
-                const asdf = Toybox.getChildrenExact(1, index);
+                const asdf = Toybox.getChildrenExact(2, index);
                 return .{
-                    .fnkname = asdf[0],
+                    .create_fnkname_button = asdf[0],
+                    .fnkname = asdf[1],
                 };
             }
         };
@@ -561,6 +563,8 @@ pub const Lego = struct {
                 toggle_skip_fnk,
                 /// assumes that bubble is the direct parent
                 reset_bubble,
+                /// assumes that scorer_row is the direct parent
+                create_fnkbox_for_row,
             },
             enabled: bool = true,
             /// only applies to edit_fnkbox_description and toggle_skip_fnk
@@ -574,6 +578,7 @@ pub const Lego = struct {
                     .scroll_up,
                     .scroll_down,
                     .reset_bubble,
+                    .create_fnkbox_for_row,
                     => false,
                     .toggle_skip_fnk,
                     => true,
@@ -3152,6 +3157,8 @@ pub const Toybox = struct {
 
         fnkname.get().local_point = Fnkbox.relative_fnkname_point;
         fnkname.get().immutable = true;
+        fnkname.get().specific.sexpr.is_pattern = true;
+        fnkname.get().specific.sexpr.is_fnkname = true;
 
         if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
 
@@ -3217,6 +3224,7 @@ pub const Toybox = struct {
         var y: f32 = 0;
         for (levels_indices) |level_index| {
             const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{ .level_index = level_index } }, &.{
+                try Toybox.new(.{}, .{ .button = .{ .local_rect = .fromCenterAndSize(.zero, .one), .action = .create_fnkbox_for_row } }, undo_stack),
                 try buildSexpr(.{ .pos = .new(0, -0.5), .scale = 0.5, .turns = 0.25 }, .empty, false, true, undo_stack),
             }, undo_stack);
             Toybox.addChildLast(rows_holder, new_row, undo_stack);
@@ -3628,7 +3636,7 @@ const Workspace = struct {
             ), undo_stack);
         }
 
-        if (true) { // add levels
+        if (false) { // add levels
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
@@ -4994,6 +5002,20 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
+                                .create_fnkbox_for_row => if (button.enabled) {
+                                    // TODO(game): nicer
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                    const s = 0.1;
+                                    drawer.canvas.line(camera_relative, &.{
+                                        .new(-s, 0),
+                                        .new(s, 0),
+                                    }, 0.05, .black);
+                                    drawer.canvas.line(camera_relative, &.{
+                                        .new(0, -s),
+                                        .new(0, s),
+                                    }, 0.05, .black);
+                                },
                                 .toggle_skip_fnk => if (button.enabled) {
                                     // TODO(game): nicer
                                     // TODO(platform): fails for rotated cameras
@@ -5642,6 +5664,62 @@ const Workspace = struct {
                         if (hot_and_dropzone.hot == workspace.grabbing.index) {
                             switch (button.action) {
                                 .toggle_skip_fnk => unreachable,
+                                .create_fnkbox_for_row => {
+                                    const row = workspace.grabbing.index.get().tree.parent;
+                                    assert(row.hasTag(.scorer_row));
+                                    // TODO(polish): better name
+                                    //  - use level fnkname if available
+                                    //  - ensure it is unique
+                                    const old_fnkname = row.children(.scorer_row).fnkname;
+                                    const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
+                                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+                                    const new_fnkname = try Toybox.buildSexpr(old_fnkname.get().local_point, .{ .atom_lit = new_name }, false, true, undo_stack);
+                                    Toybox.changeChild(old_fnkname, new_fnkname, undo_stack);
+                                    assert(old_fnkname.get().specific.sexpr.kind == .empty);
+                                    Toybox.destroyFloating(old_fnkname, undo_stack);
+
+                                    const level = levels[row.get().specific.scorer_row.level_index];
+
+                                    const core = @import("core.zig");
+                                    var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                                    defer pool.deinit();
+                                    const samples: []const [2]Lego.Index = blk: {
+                                        var samples_it = level.samplesIterator();
+                                        var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
+                                        while (try samples_it.next(&pool, scratch)) |item| {
+                                            try samples.append(scratch, .{
+                                                try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
+                                                try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
+                                            });
+                                            _ = pool.reset(.retain_capacity);
+                                        }
+                                        break :blk try samples.toOwnedSlice(scratch);
+                                    };
+
+                                    // TODO(game): better fnkbox positioning, posibly hardcoded in the row?
+                                    const fnkbox = try Toybox.buildFnkbox(
+                                        // TODO(now): actually correct for parent pos
+                                        .{ .pos = row.get().absolute_point.pos },
+                                        try Toybox.dupeIntoFloating(new_fnkname, true, undo_stack),
+                                        true,
+                                        level.description,
+                                        samples,
+                                        null,
+                                        workspace.gpa_for_text,
+                                        undo_stack,
+                                    );
+                                    Toybox.addChildLast(workspace.fnkboxes_layer, fnkbox, undo_stack);
+
+                                    if (true) { // add to fnkslist
+                                        const fnkslist = workspace.toolbar_fnks.get().tree.first;
+                                        fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
+                                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                                            Toybox.childCount(fnkslist),
+                                            fnkbox,
+                                            undo_stack,
+                                        ), undo_stack);
+                                    }
+                                },
                                 .reset_bubble => {
                                     const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
                                     const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, true, undo_stack);
@@ -6187,6 +6265,7 @@ const Workspace = struct {
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
                         .edit_fnkbox_description => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.editable,
+                        .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
                     };
                     button.latched = switch (button.action) {
                         .launch_testcase,
@@ -6194,6 +6273,7 @@ const Workspace = struct {
                         .scroll_up,
                         .scroll_down,
                         .reset_bubble,
+                        .create_fnkbox_for_row,
                         => false,
                         .toggle_skip_fnk => button.latched,
                         .edit_fnkbox_description => workspace.active_text_input == lego.tree.parent,
