@@ -3253,12 +3253,12 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
-    pub fn buildBubble(point: Point, reset_button_pos: Vec2, locked: bool, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildBubble(point: Point, reset_button_pos: ?Vec2, locked: bool, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         assert(blueprint.hasTag(.area));
         const instanced = try Toybox.dupeIntoFloating(blueprint, true, undo_stack);
         return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint, .locked = locked } }, &.{
             instanced,
-            try Toybox.new(.{ .pos = reset_button_pos }, .{ .button = .{
+            try Toybox.new(.{ .pos = reset_button_pos orelse blueprint.get().specific.area.bg.local_rect.top_left }, .{ .button = .{
                 .local_rect = .fromCenterAndSize(.zero, .one),
                 .action = .reset_bubble,
             } }, undo_stack),
@@ -3443,7 +3443,9 @@ const Workspace = struct {
         dst.floating_inputs_layer.get().immutable = true;
 
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 4.5 * 2.75 }, true);
-        dst.bubbles.welcome_to_the_lab = try Toybox.buildBubble(.{}, .both(-12), false, blk: {
+
+        var bubble_pos: Vec2 = .zero;
+        dst.bubbles.welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .both(-12), false, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
@@ -3486,6 +3488,39 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, dst.bubbles.welcome_to_the_lab, undo_stack);
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const bubble_second = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -7);
+            postit.addFromText(postit_pos, &.{ "I've prepared", "these slides", "for you." });
+            postit_pos.addInPlace(.new(7.5, 2));
+            postit.addFromText(postit_pos, &.{ "Don't worry about", "breaking them.", "Their top-left", "button resets", "them." });
+            postit_pos.addInPlace(.new(7.5, 1));
+            postit.addFromText(postit_pos, &.{ "And you can", "always undo", "with Z.", "", "So experiment!" });
+
+            postit_pos = .new(-8, 2);
+            postit.addFromText(postit_pos, &.{ "In this lab,", "we study Atoms." });
+            postit_pos.addInPlace(.new(5, 2));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "a" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, bubble_second, undo_stack);
+
+        // Toybox.addChildLast(dst.main_area, dst.bubbles.welcome_to_the_lab, undo_stack);
 
         if (true) {
             const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
@@ -3747,36 +3782,38 @@ const Workspace = struct {
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
 
-            postit.addFromText(postit_pos, &.{ "Welcome", "to the lab!" });
-            postit_pos.addInPlace(.new(12, 4));
-            postit.addFromText(postit_pos, &.{ "Move around", "with WASD", "or Arrow Keys" });
-            postit_pos.addInPlace(.new(-15, 5));
-            postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Atoms ->" });
-            postit_pos.addInPlace(.new(4.5, 1.25));
-            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
-                .{ .pos = postit_pos },
-                .{ .atom_lit = "a" },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
-            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
-                .{ .pos = postit_pos.add(.new(5, -1.5)) },
-                .{ .atom_lit = "b" },
-                true,
-                false,
-                undo_stack,
-            ), undo_stack);
-            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
-                .{ .pos = postit_pos.add(.new(-2, 4)) },
-                .{ .atom_lit = "C" },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
-            postit_pos.addInPlace(.new(5.5, 5.5));
-            postit.addFromText(postit_pos, &.{ "Right click to", "duplicate them" });
-            postit.addFromText(postit_pos.add(.new(6.5, 0.7)), &.{"Z to undo"});
+            if (false) {
+                postit.addFromText(postit_pos, &.{ "Welcome", "to the lab!" });
+                postit_pos.addInPlace(.new(12, 4));
+                postit.addFromText(postit_pos, &.{ "Move around", "with WASD", "or Arrow Keys" });
+                postit_pos.addInPlace(.new(-15, 5));
+                postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Atoms ->" });
+                postit_pos.addInPlace(.new(4.5, 1.25));
+                Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                    .{ .pos = postit_pos },
+                    .{ .atom_lit = "a" },
+                    false,
+                    false,
+                    undo_stack,
+                ), undo_stack);
+                Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                    .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                    .{ .atom_lit = "b" },
+                    true,
+                    false,
+                    undo_stack,
+                ), undo_stack);
+                Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
+                    .{ .pos = postit_pos.add(.new(-2, 4)) },
+                    .{ .atom_lit = "C" },
+                    false,
+                    false,
+                    undo_stack,
+                ), undo_stack);
+                postit_pos.addInPlace(.new(5.5, 5.5));
+                postit.addFromText(postit_pos, &.{ "Right click to", "duplicate them" });
+                postit.addFromText(postit_pos.add(.new(6.5, 0.7)), &.{"Z to undo"});
+            }
 
             postit_pos.addInPlace(.new(19, -14));
             postit.addFromText(postit_pos, &.{ "Your job:", "make machines", "that transform", "Atoms into", "other Atoms" });
