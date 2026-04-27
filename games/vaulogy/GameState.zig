@@ -3325,14 +3325,6 @@ const Workspace = struct {
     arena_for_atom_names: std.heap.ArenaAllocator,
     arena_for_oneframe_data: std.heap.ArenaAllocator,
 
-    // TODO: improve?
-    bubbles: struct {
-        welcome_to_the_lab: Lego.Index,
-
-        initial: Lego.Index,
-        second: Lego.Index,
-    },
-
     // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
     // TODO(design): remove
@@ -3340,6 +3332,9 @@ const Workspace = struct {
 
     display_fps: bool = false,
     debug_nodraw: bool = false,
+
+    // TODO(now): should maybe live on the bubble itself
+    unlock_connections: std.BoundedArray(BubbleUnlockConnection, 64) = .{},
 
     pub const Grabbing = struct {
         index: Lego.Index,
@@ -3350,6 +3345,16 @@ const Workspace = struct {
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
     pub const toolbar_fnks_rect: Rect = .{ .top_left = .zero, .size = .new(12, 15) };
+
+    pub const BubbleUnlockConnection = struct {
+        source: Lego.Index,
+        target: Lego.Index,
+        condition: union(enum) {
+            always,
+            all_scorers_solved,
+            has_sexpr: Lego.Index,
+        },
+    };
 
     const UndoableCommand = union(enum) {
         fence,
@@ -3420,7 +3425,6 @@ const Workspace = struct {
 
         const undo_stack: ?*UndoStack = null;
 
-        dst.bubbles = undefined;
         dst.main_area = try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, undo_stack);
         dst.toolbar_left = try Toybox.new(.{}, .{
             .area = .{
@@ -3445,7 +3449,7 @@ const Workspace = struct {
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 4.5 * 2.75 }, true);
 
         var bubble_pos: Vec2 = .zero;
-        dst.bubbles.welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .both(-12), false, blk: {
+        const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .both(-12), false, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
@@ -3458,7 +3462,7 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(12, 4));
             postit.addFromText(postit_pos, &.{ "Move around", "with WASD", "or Arrow Keys" });
             postit_pos.addInPlace(.new(-15, 5));
-            postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Atoms ->" });
+            postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Vaus ->" });
             postit_pos.addInPlace(.new(4.5, 1.25));
             Toybox.addChildLast(bp, try Toybox.buildSexpr(
                 .{ .pos = postit_pos },
@@ -3487,7 +3491,8 @@ const Workspace = struct {
 
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, dst.bubbles.welcome_to_the_lab, undo_stack);
+        Toybox.addChildLast(dst.main_area, welcome_to_the_lab, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = welcome_to_the_lab, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
         const bubble_second = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
@@ -3506,7 +3511,7 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "And you can", "always undo", "with Z.", "", "So experiment!" });
 
             postit_pos = .new(-8, 2);
-            postit.addFromText(postit_pos, &.{ "In this lab,", "we study Atoms." });
+            postit.addFromText(postit_pos, &.{ "In this lab,", "we study Vaus." });
             postit_pos.addInPlace(.new(5, 2));
             Toybox.addChildLast(bp, try Toybox.buildSexpr(
                 .{ .pos = postit_pos },
@@ -3519,26 +3524,101 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, bubble_second, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = bubble_second, .condition = .always });
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const bubble_third = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-5, -8);
+            postit.addFromText(postit_pos, &.{ "Build a vau", "that is", "((a . b) . c)" });
+            postit_pos.addInPlace(.new(12, 4));
+            postit_pos.addInPlace(.new(-15, 5));
+            postit_pos.addInPlace(.new(4.5, 1.25));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "a" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                .{ .pair = .{
+                    .up = try Toybox.buildSexpr(
+                        .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                        .{ .atom_lit = "c" },
+                        false,
+                        false,
+                        undo_stack,
+                    ),
+                    .down = try Toybox.buildSexpr(
+                        .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                        .{ .atom_lit = "b" },
+                        false,
+                        false,
+                        undo_stack,
+                    ),
+                } },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, bubble_third, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = bubble_third, .condition = .always });
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const bubble_4 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-5, -8);
+            postit.addFromText(postit_pos, &.{"very cool, etc"});
+            postit_pos.addInPlace(.new(12, 4));
+            postit.addFromText(postit_pos, &.{"this is a strand, etc"});
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, bubble_4, undo_stack);
+
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = bubble_third, .target = bubble_4, .condition = .{
+            .has_sexpr = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                .up = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                    .up = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                } }, false, false, undo_stack),
+                .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+            } }, false, false, undo_stack),
+        } });
 
         // Toybox.addChildLast(dst.main_area, dst.bubbles.welcome_to_the_lab, undo_stack);
 
         if (true) {
-            const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+            const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
                 try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, undo_stack),
-            }, undo_stack);
-            const bubble = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, blueprint, undo_stack);
-            Toybox.addChildLast(dst.main_area, bubble, undo_stack);
-            dst.bubbles.initial = bubble;
-        }
-
-        if (true) {
-            const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+            }, undo_stack), undo_stack);
+            Toybox.addChildLast(dst.main_area, bubble_1, undo_stack);
+            const bubble_2 = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, .zero, true, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "false" }, true, false, undo_stack),
-            }, undo_stack);
-            const bubble = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, .zero, true, blueprint, undo_stack);
-            Toybox.addChildLast(dst.main_area, bubble, undo_stack);
-            dst.bubbles.second = bubble;
+            }, undo_stack), undo_stack);
+            Toybox.addChildLast(dst.main_area, bubble_2, undo_stack);
+            dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = bubble_1, .condition = .always });
+            dst.unlock_connections.appendAssumeCapacity(.{
+                .source = bubble_1,
+                .target = bubble_2,
+                .condition = .all_scorers_solved,
+            });
         }
 
         if (false) {
@@ -3972,18 +4052,37 @@ const Workspace = struct {
             if (lego.specific.tag() == .scorer) {
                 try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, scratch);
             }
+
+            // TODO(design): improve
+            if (lego.specific.tag() == .bubble) {
+                lego.specific.bubble.locked = true;
+            }
         }
 
-        // TODO(design): improve
-        workspace.bubbles.second.get().specific.bubble.locked = blk: {
-            var cur = workspace.bubbles.initial;
-            while (cur != .nothing) : (cur = Toybox.next_preordered(cur, workspace.bubbles.initial).next) {
-                if (cur.hasTag(.scorer)) {
-                    if (cur.get().specific.scorer.score == null) break :blk true;
-                }
-            }
-            break :blk false;
-        };
+        // unlock if any of the conditions is met
+        for (workspace.unlock_connections.constSlice()) |connection| {
+            connection.target.get().specific.bubble.locked = connection.target.get().specific.bubble.locked and switch (connection.condition) {
+                .all_scorers_solved => blk: {
+                    var cur = connection.source;
+                    while (cur != .nothing) : (cur = Toybox.next_preordered(cur, connection.source).next) {
+                        if (cur.hasTag(.scorer)) {
+                            if (cur.get().specific.scorer.score == null) break :blk true;
+                        }
+                    }
+                    break :blk false;
+                },
+                .always => false,
+                .has_sexpr => |sexpr| blk: {
+                    var cur = connection.source;
+                    while (cur != .nothing) : (cur = Toybox.next_preordered(cur, connection.source).next) {
+                        if (cur.hasTag(.sexpr) and !cur.get().tree.parent.hasTag(.sexpr)) {
+                            if (Lego.Specific.Sexpr.equalValue(cur, sexpr)) break :blk false;
+                        }
+                    }
+                    break :blk true;
+                },
+            };
+        }
     }
 
     pub fn deinit(workspace: *Workspace) void {
