@@ -1618,6 +1618,24 @@ pub const Lego = struct {
         pub const Postit = struct {
             pub const local_rect: Rect = .fromCenterAndSize(.zero, .both(6));
 
+            pub fn buildFromText(pos: Vec2, lines: []const []const u8, undo_stack: ?*UndoStack) !Lego.Index {
+                const postit = try Toybox.new(
+                    .{ .pos = pos },
+                    .{ .postit = .{} },
+                    undo_stack,
+                );
+
+                for (lines, 0..) |line, k| {
+                    Toybox.addChildLast(postit, try Toybox.new(
+                        .{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) },
+                        .{ .postit_text = .{ .text = line } },
+                        undo_stack,
+                    ), undo_stack);
+                }
+
+                return postit;
+            }
+
             pub const Helper = struct {
                 main_area: Lego.Index,
                 undo_stack: ?*UndoStack,
@@ -3235,12 +3253,12 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
-    pub fn buildBubble(point: Point, blueprint: Lego.Index, locked: bool, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildBubble(point: Point, reset_button_pos: Vec2, locked: bool, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         assert(blueprint.hasTag(.area));
         const instanced = try Toybox.dupeIntoFloating(blueprint, true, undo_stack);
         return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint, .locked = locked } }, &.{
             instanced,
-            try Toybox.new(.{}, .{ .button = .{
+            try Toybox.new(.{ .pos = reset_button_pos }, .{ .button = .{
                 .local_rect = .fromCenterAndSize(.zero, .one),
                 .action = .reset_bubble,
             } }, undo_stack),
@@ -3309,6 +3327,8 @@ const Workspace = struct {
 
     // TODO: improve?
     bubbles: struct {
+        welcome_to_the_lab: Lego.Index,
+
         initial: Lego.Index,
         second: Lego.Index,
     },
@@ -3422,12 +3442,57 @@ const Workspace = struct {
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.floating_inputs_layer.get().immutable = true;
 
+        dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 4.5 * 2.75 }, true);
+        dst.bubbles.welcome_to_the_lab = try Toybox.buildBubble(.{}, .both(-12), false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-5, -8);
+            postit.addFromText(postit_pos, &.{ "Welcome", "to the lab!" });
+            postit_pos.addInPlace(.new(12, 4));
+            postit.addFromText(postit_pos, &.{ "Move around", "with WASD", "or Arrow Keys" });
+            postit_pos.addInPlace(.new(-15, 5));
+            postit.addFromText(postit_pos, &.{ "Left click", "to pick up", "Atoms ->" });
+            postit_pos.addInPlace(.new(4.5, 1.25));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "a" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(5, -1.5)) },
+                .{ .atom_lit = "b" },
+                true,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(-2, 4)) },
+                .{ .atom_lit = "C" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            postit_pos.addInPlace(.new(5.5, 5.5));
+            postit.addFromText(postit_pos, &.{ "Right click to", "duplicate them" });
+            postit.addFromText(postit_pos.add(.new(6.5, 0.7)), &.{"Z to undo"});
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, dst.bubbles.welcome_to_the_lab, undo_stack);
+
         if (true) {
             const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
                 try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, undo_stack),
             }, undo_stack);
-            const bubble = try Toybox.buildBubble(.{ .pos = .new(20, 10) }, blueprint, false, undo_stack);
+            const bubble = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, blueprint, undo_stack);
             Toybox.addChildLast(dst.main_area, bubble, undo_stack);
             dst.bubbles.initial = bubble;
         }
@@ -3436,7 +3501,7 @@ const Workspace = struct {
             const blueprint = try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "false" }, true, false, undo_stack),
             }, undo_stack);
-            const bubble = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, blueprint, true, undo_stack);
+            const bubble = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, .zero, true, blueprint, undo_stack);
             Toybox.addChildLast(dst.main_area, bubble, undo_stack);
             dst.bubbles.second = bubble;
         }
@@ -3678,7 +3743,7 @@ const Workspace = struct {
 
         if (true) { // tutorial postits
             var postit_pos: Vec2 = .new(40, -3);
-            dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
+            // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
 
@@ -7106,8 +7171,8 @@ pub fn beforeHotReload(_: *GameState) !void {}
 pub fn afterHotReload(self: *GameState) !void {
     try Drawer.AtomVisuals.Geometry.initFixed(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
     self.drawer.atom_visuals_cache = try .init(self.usual.mem.forever.allocator(), self.usual.canvas.gl);
-    // try self.workspace.init(&self.core_mem, 0);
     toybox = &self.toybox_instance;
+    try self.workspace.init(self.usual.mem.gpa, 0);
 }
 
 var first_frame_done = false;
