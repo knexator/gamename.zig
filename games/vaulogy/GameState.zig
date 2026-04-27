@@ -2232,11 +2232,11 @@ pub const Lego = struct {
         return switch (lego.specific) {
             .button,
             .lens,
-            .fnkbox,
             .executor_crank,
             .executor_brake,
             .scrollbar,
             => true,
+            .fnkbox,
             .sexpr,
             .garland,
             .case,
@@ -3291,7 +3291,6 @@ pub const UndoStack = struct {
 
 const Workspace = struct {
     main_area: Lego.Index,
-    fnkboxes_layer: Lego.Index,
     toolbar_left: Lego.Index,
     toolbar_left_unfolded_t: f32 = 0,
     toolbar_fnks: Lego.Index,
@@ -3382,7 +3381,6 @@ const Workspace = struct {
     }) std.BoundedArray(Lego.Index, 8) {
         var result: std.BoundedArray(Lego.Index, 8) = .{};
         result.appendAssumeCapacity(workspace.main_area);
-        result.appendAssumeCapacity(workspace.fnkboxes_layer);
         if (config.include_floating_inputs) result.appendAssumeCapacity(workspace.floating_inputs_layer);
         if (config.include_toolbars) result.appendAssumeCapacity(workspace.toolbar_left);
         if (config.include_toolbars) result.appendAssumeCapacity(workspace.toolbar_fnks);
@@ -3412,35 +3410,14 @@ const Workspace = struct {
                 },
             },
         }, undo_stack);
-        dst.toolbar_fnks, const fnkslist: Lego.Index = blk: {
-            const area = try Toybox.new(.{}, .{
-                .area = .{
-                    .bg = .{
-                        // ensure that "mouse off-screen on the right" also overlaps the toolbar
-                        .local_rect = toolbar_fnks_rect.plusMargin3(.right, 100),
-                    },
+        dst.toolbar_fnks = try Toybox.new(.{}, .{
+            .area = .{
+                .bg = .{
+                    // ensure that "mouse off-screen on the right" also overlaps the toolbar
+                    .local_rect = toolbar_fnks_rect.plusMargin3(.right, 100),
                 },
-            }, undo_stack);
-
-            const scrollbar = Lego.Specific.Scrollbar.build(
-                toolbar_fnks_rect
-                    .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
-                0,
-                toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
-                undo_stack,
-            );
-
-            const fnkslist = try Toybox.new(.{}, .{
-                .fnkslist = .{ .scrollbar = scrollbar },
-            }, undo_stack);
-
-            Toybox.addChildLast(area, fnkslist, undo_stack);
-
-            Toybox.addChildLast(area, scrollbar, undo_stack);
-
-            break :blk .{ area, fnkslist };
-        };
-        dst.fnkboxes_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
+            },
+        }, undo_stack);
         dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
         dst.floating_inputs_layer.get().immutable = true;
@@ -3696,13 +3673,6 @@ const Workspace = struct {
                 }
 
                 x += if (k < 4) 25 else if (k < 6) 30 else 35;
-
-                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
-                Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                    k,
-                    fnkbox,
-                    undo_stack,
-                ), undo_stack);
             }
         }
 
@@ -5518,17 +5488,7 @@ const Workspace = struct {
                                 workspace.gpa_for_text,
                                 undo_stack,
                             );
-                            Toybox.addChildLast(workspace.fnkboxes_layer, fnkbox, undo_stack);
-
-                            if (true) { // add to fnkslist
-                                const fnkslist = workspace.toolbar_fnks.get().tree.first;
-                                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
-                                Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                                    Toybox.childCount(fnkslist),
-                                    fnkbox,
-                                    undo_stack,
-                                ), undo_stack);
-                            }
+                            Toybox.addChildLast(workspace.main_area, fnkbox, undo_stack);
 
                             grabbed_element_index = fnkbox;
                             plucked = false;
@@ -5708,17 +5668,7 @@ const Workspace = struct {
                                         workspace.gpa_for_text,
                                         undo_stack,
                                     );
-                                    Toybox.addChildLast(workspace.fnkboxes_layer, fnkbox, undo_stack);
-
-                                    if (true) { // add to fnkslist
-                                        const fnkslist = workspace.toolbar_fnks.get().tree.first;
-                                        fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
-                                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                                            Toybox.childCount(fnkslist),
-                                            fnkbox,
-                                            undo_stack,
-                                        ), undo_stack);
-                                    }
+                                    Toybox.addChildLast(workspace.main_area, fnkbox, undo_stack);
                                 },
                                 .reset_bubble => {
                                     const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
@@ -6051,13 +6001,52 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
         }
 
-        if (true) { // open/close fnks toolbar
+        if (true) { // open/close fnks toolbar, and regenerate its contents
+            const old_t = workspace.toolbar_fnks_unfolded_t;
             math.lerpTowards(
                 &workspace.toolbar_fnks_unfolded_t,
                 if (hot_and_dropzone.over_background == workspace.toolbar_fnks) 1 else 0,
                 .slow,
                 delta_seconds,
             );
+            const new_t = workspace.toolbar_fnks_unfolded_t;
+
+            if (new_t <= 0.01) { // delete all current children
+                var cur = workspace.toolbar_fnks.get().tree.first;
+                while (cur != .nothing) {
+                    const original_tree = Toybox.get(cur).tree;
+                    Toybox.pop(cur, undo_stack);
+                    Toybox.destroyFloating(cur, undo_stack);
+                    cur = original_tree.next;
+                }
+            } else if (old_t <= 0.01) { // regenerate children
+
+                const scrollbar = Lego.Specific.Scrollbar.build(
+                    toolbar_fnks_rect
+                        .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
+                    0,
+                    toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
+                    undo_stack,
+                );
+                const fnkslist = try Toybox.new(.{}, .{
+                    .fnkslist = .{ .scrollbar = scrollbar },
+                }, undo_stack);
+                Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
+                Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
+
+                var count: usize = 0;
+                for (toybox.all_legos.items) |*lego| {
+                    if (!lego.exists) continue;
+                    if (lego.specific.tag() != .fnkbox) continue;
+                    Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                        count,
+                        lego.index,
+                        null,
+                    ), null);
+                    count += 1;
+                }
+                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length = tof32(count);
+            }
 
             const rect = toolbar_fnks_rect;
             const hot_t = workspace.toolbar_fnks_unfolded_t;
@@ -6865,8 +6854,10 @@ const Workspace = struct {
         const FnkboxBox = Lego.Specific.FnkboxBox;
         const Executor = Lego.Specific.Executor;
         if (true) {
-            var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
+            var cur = Toybox.get(workspace.main_area).tree.first;
             while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                if (!cur.get().exists) continue;
+                if (!cur.hasTag(.fnkbox)) continue;
                 // const fnkbox = &Toybox.get(cur).specific.fnkbox;
                 const fnkname_value = try Toybox.get(Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 const definition = try Toybox.get(Executor.children(Fnkbox.children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
@@ -6912,8 +6903,10 @@ const Workspace = struct {
 
         var fnks_indices: std.ArrayHashMap(*const core.Sexpr, Lego.Index, core.SexprContext, true) = .init(scratch);
         if (true) {
-            var cur = Toybox.get(dst.fnkboxes_layer).tree.first;
+            var cur = Toybox.get(dst.main_area).tree.first;
             while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+                if (!cur.get().exists) continue;
+                if (!cur.hasTag(.fnkbox)) continue;
                 const fnkname_value = try Toybox.get(Lego.Specific.Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 try fnks_indices.putNoClobber(fnkname_value, cur);
             }
@@ -6947,17 +6940,7 @@ const Workspace = struct {
                         dst.gpa_for_text,
                         null,
                     );
-                    Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
-
-                    if (true) { // add to fnkslist
-                        const fnkslist = dst.toolbar_fnks.get().tree.first;
-                        fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
-                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                            Toybox.childCount(fnkslist),
-                            fnkbox,
-                            null,
-                        ), null);
-                    }
+                    Toybox.addChildLast(dst.main_area, fnkbox, null);
                 }
             }
         } else {
@@ -6989,17 +6972,7 @@ const Workspace = struct {
                         dst.gpa_for_text,
                         null,
                     );
-                    Toybox.addChildLast(dst.fnkboxes_layer, fnkbox, null);
-
-                    if (true) { // add to fnkslist
-                        const fnkslist = dst.toolbar_fnks.get().tree.first;
-                        fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length += 1;
-                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                            Toybox.childCount(fnkslist),
-                            fnkbox,
-                            null,
-                        ), null);
-                    }
+                    Toybox.addChildLast(dst.main_area, fnkbox, null);
                 }
             }
         }
@@ -7055,11 +7028,14 @@ const Workspace = struct {
     }
 
     pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !@import("core.zig").FnkCollection {
+        _ = workspace;
         const core = @import("core.zig");
         var all_fnks: core.FnkCollection = .init(scratch);
         if (true) {
-            var cur = Toybox.get(workspace.fnkboxes_layer).tree.first;
-            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() != .fnkbox) continue;
+                const cur = lego.index;
                 const fnkbox = &Toybox.get(cur).specific.fnkbox;
                 const fnkname_value = try Toybox.get(cur.children(.fnkbox).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 const garland = if (fnkbox.execution) |e|
