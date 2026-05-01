@@ -3608,14 +3608,15 @@ const Workspace = struct {
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            var postit_pos: Vec2 = .new(-7.6, -8);
+            var postit_pos: Vec2 = .new(-5.6, -8);
             postit.addFromText(postit_pos, &.{ "Ok, enough", "manual labor." });
-            postit_pos.addInPlace(.new(6.9, 0.3));
+            postit_pos.addInPlace(.new(7.9, 0.3));
             postit.addFromText(postit_pos, &.{ "The real", "magic of Vaus", "is manipulating", "them with", "Strands." });
-            postit_pos.addInPlace(.new(7.8, 0.8));
-            postit.addFromText(postit_pos, &.{ "Here is an", "example Strand:" });
 
-            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-0.2, 1.9)) }, &.{
+            postit_pos = .new(-7.4, 0.2);
+            postit.addFromText(postit_pos, &.{ "Here is an", "example Strand:" });
+            postit_pos.addInPlace(.new(8, 0));
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
                 try Toybox.buildCase(.{}, .{
                     .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
                     .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
@@ -3629,13 +3630,40 @@ const Workspace = struct {
                     .next = null,
                 }, undo_stack),
             }, undo_stack), undo_stack);
-
-            // postit_pos = .new(0.2, -0.8);
-            postit_pos.addInPlace(.new(0.6, 11.3));
+            postit_pos.addInPlace(.new(5.8, 1.3));
             postit.addFromText(postit_pos, &.{ "It turns", "'a' into 'b',", "and", "'b' into 'c'" });
 
-            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, null, undo_stack);
-            Toybox.addChildLast(bp, executor, undo_stack);
+            postit_pos = .new(-7.4, 0.2);
+            postit_pos.addInPlace(.new(4.8, 7.4));
+            postit.addFromText(postit_pos, &.{ "Don't be", "afraid of", "breaking it!" });
+
+            // postit_pos = .new(-7.4, 0.2);
+            // postit_pos.addInPlace(.new(1.2, 7.9));
+            // postit.addFromText(postit_pos, &.{ "You'll see them", "in action", "soon, but first", "add this case", "to the strand." });
+            // // postit.addFromText(postit_pos, &.{ "You'll see it", "in action", "in the next", "slide, but first", "play around with it!" });
+
+            // postit_pos.addInPlace(.new(8, 0));
+            // postit_pos.addInPlace(.new(8.2, 1.1));
+            // postit.addFromText(postit_pos, &.{ "And play around", "wit it! You", "can always undo,", "or reset the", "whole slide." });
+
+            Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = .new(7.8, 10.2) }, .{
+                .pattern = try Toybox.buildSexpr(
+                    .{},
+                    .{ .atom_lit = "c" },
+                    true,
+                    false,
+                    undo_stack,
+                ),
+                .template = try Toybox.buildSexpr(
+                    .{},
+                    .{ .atom_lit = "a" },
+                    false,
+                    false,
+                    undo_stack,
+                ),
+                .fnkname = null,
+                .next = null,
+            }, undo_stack), undo_stack);
 
             break :blk bp;
         }, undo_stack);
@@ -3657,6 +3685,10 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{"very cool, etc"});
             postit_pos.addInPlace(.new(12, 4));
             postit.addFromText(postit_pos, &.{"this is a strand, etc"});
+
+            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, null, undo_stack);
+            Toybox.addChildLast(bp, executor, undo_stack);
+
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, bubble_4, undo_stack);
@@ -6509,15 +6541,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor| {
                     if (executor.controlled_by_parent_fnkbox) continue;
-
-                    if (executor.animation) |*animation| {
-                        _ = animation;
-                        @panic("TODO(game)");
-                    }
-
-                    if (Lego.Specific.Executor.shouldStartExecution(lego.index)) {
-                        @panic("TODO(game)");
-                    }
+                    try advanceExecutorAnimation(lego.index, workspace, undo_stack, delta_seconds, scratch);
                 }
             }
         }
