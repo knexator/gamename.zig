@@ -3154,7 +3154,6 @@ pub const Toybox = struct {
     ) !Lego.Index {
         const Fnkbox = Lego.Specific.Fnkbox;
         const FnkboxBox = Lego.Specific.FnkboxBox;
-        const Executor = Lego.Specific.Executor;
 
         const scrollbar =
             try createWithChildren(.{}, .{ .scrollbar = .buildForTestcases(testcases.len, 0) }, &.{
@@ -3208,10 +3207,25 @@ pub const Toybox = struct {
         fnkname.get().specific.sexpr.is_pattern = true;
         fnkname.get().specific.sexpr.is_fnkname = true;
 
-        if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
+        const executor = try buildExecutor(Fnkbox.relative_executor_point, true, initial_definition, undo_stack);
 
-        const executor = try Toybox.createWithChildren(Fnkbox.relative_executor_point, .{
-            .executor = .{ .controlled_by_parent_fnkbox = true },
+        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .editable = editable } }, &.{
+            box,
+            fnkname,
+            executor,
+        }, undo_stack);
+    }
+
+    pub fn buildExecutor(
+        point: Point,
+        controlled_by_parent_fnkbox: bool,
+        initial_definition: ?Lego.Index,
+        undo_stack: ?*UndoStack,
+    ) !Lego.Index {
+        const Executor = Lego.Specific.Executor;
+        if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
+        return try Toybox.createWithChildren(point, .{
+            .executor = .{ .controlled_by_parent_fnkbox = controlled_by_parent_fnkbox },
         }, &.{
             try Toybox.buildSexpr(Executor.relative_input_point, .empty, false, false, undo_stack),
             initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, undo_stack),
@@ -3221,12 +3235,6 @@ pub const Toybox = struct {
                 Toybox.addChildLast(controls, try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, undo_stack), undo_stack);
                 break :blk controls;
             },
-        }, undo_stack);
-
-        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .editable = editable } }, &.{
-            box,
-            fnkname,
-            executor,
         }, undo_stack);
     }
 
@@ -3592,7 +3600,7 @@ const Workspace = struct {
         dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = simple_warmup, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const bubble_third = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
@@ -3600,44 +3608,39 @@ const Workspace = struct {
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            var postit_pos: Vec2 = .new(-5, -8);
-            postit.addFromText(postit_pos, &.{ "Build a vau", "that is", "((a . b) . c)" });
-            postit_pos.addInPlace(.new(12, 4));
-            postit_pos.addInPlace(.new(-15, 5));
-            postit_pos.addInPlace(.new(4.5, 1.25));
-            Toybox.addChildLast(bp, try Toybox.buildSexpr(
-                .{ .pos = postit_pos },
-                .{ .atom_lit = "a" },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
-            Toybox.addChildLast(bp, try Toybox.buildSexpr(
-                .{ .pos = postit_pos.add(.new(5, -1.5)) },
-                .{ .pair = .{
-                    .up = try Toybox.buildSexpr(
-                        .{ .pos = postit_pos.add(.new(5, -1.5)) },
-                        .{ .atom_lit = "c" },
-                        false,
-                        false,
-                        undo_stack,
-                    ),
-                    .down = try Toybox.buildSexpr(
-                        .{ .pos = postit_pos.add(.new(5, -1.5)) },
-                        .{ .atom_lit = "b" },
-                        false,
-                        false,
-                        undo_stack,
-                    ),
-                } },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
+            var postit_pos: Vec2 = .new(-7.6, -8);
+            postit.addFromText(postit_pos, &.{ "Ok, enough", "manual labor." });
+            postit_pos.addInPlace(.new(6.9, 0.3));
+            postit.addFromText(postit_pos, &.{ "The real", "magic of Vaus", "is manipulating", "them with", "Strands." });
+            postit_pos.addInPlace(.new(7.8, 0.8));
+            postit.addFromText(postit_pos, &.{ "Here is an", "example Strand:" });
+
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-0.2, 1.9)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            // postit_pos = .new(0.2, -0.8);
+            postit_pos.addInPlace(.new(0.6, 11.3));
+            postit.addFromText(postit_pos, &.{ "It turns", "'a' into 'b',", "and", "'b' into 'c'" });
+
+            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, null, undo_stack);
+            Toybox.addChildLast(bp, executor, undo_stack);
+
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, bubble_third, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = simple_warmup, .target = bubble_third, .condition = .{
+        Toybox.addChildLast(dst.main_area, intro_to_strands, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = simple_warmup, .target = intro_to_strands, .condition = .{
             .has_sexpr = try Toybox.buildSexprFromText(.{}, "(a . (b . c))", false, false, undo_stack),
         } });
 
@@ -3658,7 +3661,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, bubble_4, undo_stack);
 
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = bubble_third, .target = bubble_4, .condition = .{
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = bubble_4, .condition = .{
             .has_sexpr = try Toybox.buildSexpr(.{}, .{ .pair = .{
                 .up = try Toybox.buildSexpr(.{}, .{ .pair = .{
                     .up = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
@@ -3912,7 +3915,7 @@ const Workspace = struct {
                 if (level.fnk_name.isTheLit("calculator")) {
                     Toybox.addChildLast(dst.main_area, try Sexpr.buildFromOldCoreValue(
                         .{ .pos = .new(x, -8) },
-                        try core.parsing.parseSingleSexpr("(1 2 3 4 5 6 7 8 9)", &pool),
+                        try core.parsing.parseSingleSexpr("s(1 2 3 4 5 6 7 8 9)", &pool),
                         false,
                         false,
                         undo_stack,
@@ -3924,7 +3927,7 @@ const Workspace = struct {
         }
 
         if (true) { // tutorial postits
-            var postit_pos: Vec2 = .new(40, -3);
+            var postit_pos: Vec2 = .new(70, -3);
             // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
@@ -4102,6 +4105,8 @@ const Workspace = struct {
         defer zone.deinit();
         const undo_stack = &workspace.undo_stack;
 
+        const debug_all_bubbles_unlocked = true and @import("builtin").mode == .Debug;
+
         const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         for (toybox.all_legos.items) |*lego| {
@@ -4122,7 +4127,7 @@ const Workspace = struct {
 
             // TODO(design): improve
             if (lego.specific.tag() == .bubble) {
-                lego.specific.bubble.locked = true;
+                lego.specific.bubble.locked = !debug_all_bubbles_unlocked;
             }
         }
 
@@ -6140,7 +6145,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.garland)) |garland| {
                     garland.visible =
-                        grabbing_garland_or_case or
+                        (grabbing_garland_or_case and !Toybox.isAncestor(workspace.grabbing.index, lego.index)) or
                         garland.hasChildCases() or
                         (if (lego.tree.parent.getSafe()) |p| switch (p.specific) {
                             else => false,
