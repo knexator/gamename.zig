@@ -3634,7 +3634,9 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "It turns", "'a' into 'b',", "and", "'b' into 'c'" });
 
             postit_pos = .new(-7.4, 0.2);
-            postit_pos.addInPlace(.new(4.8, 7.4));
+            postit_pos.addInPlace(.new(1.2, 7.1));
+            postit.addFromText(postit_pos, &.{ "You'll see it", "in action", "soon." });
+            postit_pos.addInPlace(.new(7.4, 1.1));
             postit.addFromText(postit_pos, &.{ "Don't be", "afraid of", "breaking it!" });
 
             // postit_pos = .new(-7.4, 0.2);
