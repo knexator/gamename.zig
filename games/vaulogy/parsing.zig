@@ -1,5 +1,6 @@
 const std = @import("std");
 const MemoryPool = std.heap.MemoryPool;
+const kommon = @import("kommon");
 
 const core = @import("core.zig");
 const Sexpr = core.Sexpr;
@@ -9,6 +10,38 @@ const Fnk = core.Fnk;
 const FnkCollection = core.FnkCollection;
 const MatchCases = core.MatchCases;
 const MatchCaseDefinition = core.MatchCaseDefinition;
+
+pub fn extractFromPair(input: []const u8) !struct { up: []const u8, down: []const u8 } {
+    std.debug.assert(input[0] == '(');
+    std.debug.assert(kommon.last(input).? == ')');
+    var dot_index: usize = 1;
+    var depth: i32 = 0;
+    while (true) {
+        if (input[dot_index] == '.' and depth == 0) break;
+        depth += switch (input[dot_index]) {
+            '(' => 1,
+            ')' => -1,
+            else => 0,
+        };
+        std.debug.assert(depth >= 0);
+        dot_index += 1;
+    }
+    return .{
+        .up = std.mem.trim(u8, input[1..dot_index], &std.ascii.whitespace),
+        .down = std.mem.trim(u8, input[dot_index + 1 .. input.len - 1], &std.ascii.whitespace),
+    };
+}
+
+test extractFromPair {
+    try std.testing.expectEqualStrings("foo", (try extractFromPair("(foo . bar)")).up);
+    try std.testing.expectEqualStrings("bar", (try extractFromPair("(foo . bar)")).down);
+
+    try std.testing.expectEqualStrings("foo", (try extractFromPair("(foo . (bar . etc))")).up);
+    try std.testing.expectEqualStrings("(bar . etc)", (try extractFromPair("(foo . (bar . etc))")).down);
+
+    try std.testing.expectEqualStrings("(foo . bar)", (try extractFromPair("((foo . bar) . etc))")).up);
+    try std.testing.expectEqualStrings("etc", (try extractFromPair("((foo . bar) . etc)")).down);
+}
 
 fn parseSexpr(input: *[]const u8, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     const result = try parseSexprTrue(input.*, pool);
