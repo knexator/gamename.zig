@@ -331,9 +331,7 @@ pub const Lego = struct {
         scrollable_list: ScrollableList,
 
         // TODO(design): delete these and merge with
-        fnkbox_testcases: struct {
-            scrollbar: Lego.Index,
-        },
+        fnkbox_testcases: struct {},
         fnkslist: struct {
             scrollbar: Lego.Index,
         },
@@ -2103,6 +2101,14 @@ pub const Lego = struct {
             assert(index.hasTag(specific));
             return Specific.Tagged(specific).children(index);
         }
+
+        pub fn scrollbar(index: Index, comptime specific: Specific.Tag) Lego.Index {
+            assert(index.hasTag(specific));
+            return switch (specific) {
+                else => comptime unreachable,
+                .fnkbox_testcases => index.get().tree.parent.children(.fnkbox_box).testcases_scrollbar,
+            };
+        }
     };
 
     pub fn handle(lego: *const Lego) ?Handle {
@@ -2198,8 +2204,8 @@ pub const Lego = struct {
             .fnkslist => |fnkslist| {
                 fnkslist.scrollbar.get().specific.scrollbar.scroll_target += amount;
             },
-            .fnkbox_testcases => |fnkbox_testcases| {
-                fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target += amount;
+            .fnkbox_testcases => {
+                lego.index.scrollbar(.fnkbox_testcases).get().specific.scrollbar.scroll_target += amount;
             },
             .scrollable_list => |scrollable_list| {
                 scrollable_list.scrollbar.get().specific.scrollbar.scroll_target += amount;
@@ -3236,9 +3242,7 @@ pub const Toybox = struct {
             } }, undo_stack),
             scrollbar,
             blk: {
-                const fnkbox_testcases = try Toybox.new(.{}, .{
-                    .fnkbox_testcases = .{ .scrollbar = scrollbar },
-                }, undo_stack);
+                const fnkbox_testcases = try Toybox.new(.{}, .{ .fnkbox_testcases = .{} }, undo_stack);
                 for (testcases) |values| {
                     const Testcase = Lego.Specific.Testcase;
                     const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
@@ -5046,11 +5050,11 @@ const Workspace = struct {
                             cur_element = Toybox.get(cur_element).tree.next;
                         }
                     },
-                    .fnkbox_testcases => |fnkbox_testcases| {
+                    .fnkbox_testcases => {
                         // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
                         // defer zone.deinit();
 
-                        const scroll_visual = fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_visual;
+                        const scroll_visual = lego.index.scrollbar(.fnkbox_testcases).get().specific.scrollbar.scroll_visual;
 
                         var k: usize = 0;
                         var cur_case: Lego.Index = lego.tree.first;
@@ -6540,7 +6544,7 @@ const Workspace = struct {
                                         execution.original_or_final_input_point = Toybox.get(new_input).local_point;
                                         execution.floating_input_or_output = new_input;
                                     } else {
-                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target;
+                                        const scroll = &Toybox.get(testcase).tree.parent.scrollbar(.fnkbox_testcases).get().specific.scrollbar.scroll_target;
                                         const target_scroll = scroll.* + offset_error;
                                         math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
                                         math.towards(scroll, target_scroll, 0.1 * delta_seconds);
@@ -6605,7 +6609,7 @@ const Workspace = struct {
                                     if (true) { // focus on the testcase
                                         const offset_from_top: f32 = (Toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
                                         const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
-                                        const scroll = &Toybox.get(Toybox.get(testcase).tree.parent).specific.fnkbox_testcases.scrollbar.get().specific.scrollbar.scroll_target;
+                                        const scroll = &Toybox.get(testcase).tree.parent.scrollbar(.fnkbox_testcases).get().specific.scrollbar.scroll_target;
                                         const target_scroll = scroll.* + offset_error;
                                         math.lerpTowards(scroll, target_scroll, .{ .duration = 0.5, .precision = 0.05 }, delta_seconds);
                                         math.towards(scroll, target_scroll, 0.1 * delta_seconds);
