@@ -79,7 +79,7 @@ pub const levels: []const Level = &.{
     // },
     .{
         .fnk_name = &Sexpr.doLit("changeLowercaseToNextCyclingOnC"),
-        .description = "a -> b -> c -> a",
+        .description = "Turn 'a' into 'b', 'b' into 'c', 'c' into 'a'.",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },

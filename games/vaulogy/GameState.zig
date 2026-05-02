@@ -511,6 +511,7 @@ pub const Lego = struct {
 
         pub const ScorerRow = struct {
             level_index: usize,
+            offset: ?Vec2,
 
             pub const Children = struct {
                 create_fnkname_button: Lego.Index,
@@ -3327,11 +3328,11 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
-    pub fn buildScorer(point: Point, levels_indices: []const usize, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildScorer(point: Point, levels_indices: []const usize, create_at_offsets: []const ?Vec2, undo_stack: ?*UndoStack) !Lego.Index {
         const rows_holder = try Toybox.new(.{}, .scorer_rows, undo_stack);
         var y: f32 = 0;
-        for (levels_indices) |level_index| {
-            const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{ .level_index = level_index } }, &.{
+        for (levels_indices, create_at_offsets) |level_index, offset| {
+            const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{ .level_index = level_index, .offset = offset } }, &.{
                 try Toybox.new(.{}, .{ .button = .{ .local_rect = .fromCenterAndSize(.zero, .one), .action = .create_fnkbox_for_row } }, undo_stack),
                 try buildSexpr(.{ .pos = .new(0, -0.5), .scale = 0.5, .turns = 0.25 }, .empty, false, true, undo_stack),
             }, undo_stack);
@@ -3798,7 +3799,7 @@ const Workspace = struct {
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = intro_to_executors, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, if (false) blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -3806,30 +3807,23 @@ const Workspace = struct {
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            var postit_pos: Vec2 = .new(-6, -8);
-            postit.addFromText(postit_pos, &.{"this is a fnkbox, etc"});
-            postit_pos.addInPlace(.new(8, 1));
-            Toybox.addChildLast(bp, try Toybox.buildSexpr(
-                .{ .pos = postit_pos.add(.new(-3.4, -1.7)) },
-                .{ .atom_lit = "a" },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
-            Toybox.addChildLast(bp, try Toybox.buildSexpr(
-                .{ .pos = postit_pos },
-                .{ .atom_lit = "c" },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
-            Toybox.addChildLast(bp, try Toybox.buildSexpr(
-                .{ .pos = postit_pos.add(.new(1.8, -2.6)) },
-                .{ .atom_lit = "b" },
-                false,
-                false,
-                undo_stack,
-            ), undo_stack);
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands," });
+            postit_pos.addInPlace(.new(7.4, 0.9));
+            postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new strand to", "solve each one." });
+            postit_pos.addInPlace(.new(7.6, 0.8));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 2.5) }, .part = .{ .paragraph = &.{ "This is the first", "assignment,", "already solved", "as an example." } } },
+                .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
+            });
+            postit_pos = .new(-6.5, 0);
+            postit.addFromText(postit_pos, &.{ "The box below", "is the solution", "to the assignment." });
+            postit_pos.addInPlace(.new(6.6, 2.8));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 2.5) }, .part = .{ .paragraph = &.{ "That green vau", "is the name", "of the strand" } } },
+                .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
+                .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
+            });
 
             postit_pos = .new(0, 6);
             const fnkbox = try Toybox.buildFnkboxFromLevel(
@@ -3844,6 +3838,72 @@ const Workspace = struct {
             fnkbox.children(.fnkbox).executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
             Toybox.addChildLast(bp, fnkbox, undo_stack);
 
+            postit_pos = .new(4, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{0}, undo_stack);
+            const old_fnkname = scorer.children(.scorer).scorer_rows.get().tree.first.children(.scorer_row).fnkname;
+            const new_fnkname = try Toybox.dupeIntoFloating(fnkbox.children(.fnkbox).fnkname, true, undo_stack);
+            new_fnkname.get().local_point = old_fnkname.get().local_point;
+            new_fnkname.get().specific.sexpr.is_pattern = false;
+            new_fnkname.get().immutable = false;
+            Toybox.changeChild(old_fnkname, new_fnkname, undo_stack);
+            Toybox.destroyFloating(old_fnkname, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        } else blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands," });
+            postit_pos.addInPlace(.new(7.4, 0.9));
+            postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new strand to", "solve each one." });
+            postit_pos.addInPlace(.new(7.6, 0.8));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 2.5) }, .part = .{ .paragraph = &.{ "This is the first", "assignment." } } },
+                .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
+            });
+
+            postit_pos = .new(-7.8, 2.4);
+            postit.addFromText(postit_pos, &.{ "This strand", "solves it:" });
+            postit_pos.addInPlace(.new(1, 4.7));
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{0}, &.{.new(4.5, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            postit_pos.addInPlace(.new(0, 4.5));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the +", "button to create", "a new 'solution'" } } },
+                .{ .point = .{ .pos = .new(3, 1), .turns = -0.25 }, .part = .arrow },
+            });
+            postit_pos.addInPlace(.new(6.8, 0.4));
+            postit.addFromText(postit_pos, &.{ "And move the", "strand to it,", "solving the", "assignment." });
+
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_fnkboxes, undo_stack);
@@ -3852,7 +3912,7 @@ const Workspace = struct {
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
-                try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, undo_stack),
+                try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, &.{ null, null }, undo_stack),
             }, undo_stack), undo_stack);
             Toybox.addChildLast(dst.main_area, bubble_1, undo_stack);
             const bubble_2 = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, .zero, true, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
@@ -5547,10 +5607,12 @@ const Workspace = struct {
                         },
                         .scorer => |scorer| {
                             const n_rows = Toybox.childCount(cur.children(.scorer).scorer_rows);
-                            drawer.canvas.strokeRect(camera_relative, .{
+                            const rect: Rect = .{
                                 .top_left = .new(-1, -1),
-                                .size = .new(15, 2 * tof32(n_rows)),
-                            }, 0.1, .black);
+                                .size = .new(14.4, 2 * tof32(n_rows)),
+                            };
+                            drawer.canvas.fillRect(camera_relative, rect, COLORS.bg);
+                            drawer.canvas.strokeRect(camera_relative, rect, 0.1, .black);
                             try drawer.canvas.drawText(
                                 0,
                                 camera_relative,
@@ -5559,7 +5621,7 @@ const Workspace = struct {
                                 else
                                     "unsolved!",
                                 .leftCenterAt(.new(1, -2)),
-                                1,
+                                0.75,
                                 .black,
                             );
                         },
@@ -5569,7 +5631,7 @@ const Workspace = struct {
                                 camera_relative,
                                 levels[scorer_row.level_index].description,
                                 .leftCenterAt(.new(1, 0)),
-                                0.5,
+                                0.75,
                                 .black,
                             );
                         },
@@ -6103,10 +6165,16 @@ const Workspace = struct {
                                         break :blk try samples.toOwnedSlice(scratch);
                                     };
 
-                                    // TODO(game): better fnkbox positioning, posibly hardcoded in the row?
+                                    const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(row.get().absolute_point);
+
+                                    // TODO(game): better fnkbox positioning when not hardcoded
                                     const fnkbox = try Toybox.buildFnkbox(
                                         // TODO(now): actually correct for parent pos
-                                        .{ .pos = row.get().absolute_point.pos },
+                                        if (row.get().specific.scorer_row.offset) |offset|
+                                            .{ .pos = offset }
+                                        else
+                                            .{ .pos = p.applyToLocalPosition(.new(0, 5)) },
+                                        // .{ .pos = row.get().absolute_point.applyToLocalPosition(offset orelse .new(0, 5)) },
                                         try Toybox.dupeIntoFloating(new_fnkname, true, undo_stack),
                                         true,
                                         level.description,
@@ -6115,7 +6183,10 @@ const Workspace = struct {
                                         workspace.gpa_for_text,
                                         undo_stack,
                                     );
-                                    Toybox.addChildLast(workspace.main_area, fnkbox, undo_stack);
+                                    Toybox.addChildLast(if (row.get().specific.scorer_row.offset == null)
+                                        workspace.main_area
+                                    else
+                                        Toybox.findAncestor(row, .area), fnkbox, undo_stack);
                                 },
                                 .reset_bubble => {
                                     const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
