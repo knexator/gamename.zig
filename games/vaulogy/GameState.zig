@@ -671,6 +671,7 @@ pub const Lego = struct {
         pub const Area = struct {
             /// kind of a collider
             bg: Bg,
+            style: enum { none, main_area, toolbar, bubble },
 
             pub const Bg = union(enum) {
                 none,
@@ -2405,7 +2406,7 @@ pub const Toybox = struct {
         // TODO(optim-late): tweak this number
         try dst.all_legos.ensureUnusedCapacity(
             dst.all_legos_arena.allocator(),
-            1024,
+            4096,
         );
     }
 
@@ -2558,6 +2559,7 @@ pub const Toybox = struct {
     }
 
     pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
+        assert(original.get().exists);
         const result_index = try Toybox.new(undefined, undefined, undo_stack);
         const result = Toybox.get(result_index);
         result.* = Toybox.get(original).*;
@@ -2581,7 +2583,7 @@ pub const Toybox = struct {
         }
 
         // special cases
-        switch (result.specific) {
+        switch (result_index.get().specific) {
             else => {},
             .sexpr => |*sexpr| {
                 if (sexpr.emerging_value != .nothing) {
@@ -3463,13 +3465,14 @@ const Workspace = struct {
 
         const undo_stack: ?*UndoStack = null;
 
-        dst.main_area = try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all } }, undo_stack);
+        dst.main_area = try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all, .style = .main_area } }, undo_stack);
         dst.toolbar_left = try Toybox.new(.{}, .{
             .area = .{
                 .bg = .{
                     // ensure that "mouse off-screen on the left" also overlaps the toolbar
                     .local_rect = toolbar_left_rect.plusMargin3(.left, 100),
                 },
+                .style = .toolbar,
             },
         }, undo_stack);
         dst.toolbar_fnks = try Toybox.new(.{}, .{
@@ -3478,10 +3481,11 @@ const Workspace = struct {
                     // ensure that "mouse off-screen on the right" also overlaps the toolbar
                     .local_rect = toolbar_fnks_rect.plusMargin3(.right, 100),
                 },
+                .style = .toolbar,
             },
         }, undo_stack);
-        dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
-        dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none } }, undo_stack);
+        dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, undo_stack);
+        dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, undo_stack);
         dst.floating_inputs_layer.get().immutable = true;
 
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 15 }, true);
@@ -3490,7 +3494,7 @@ const Workspace = struct {
         const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .both(-12), false, blk: {
             const bp = try Toybox.new(
                 .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
                 undo_stack,
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
@@ -3555,7 +3559,7 @@ const Workspace = struct {
         const simple_warmup = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
             const bp = try Toybox.new(
                 .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
                 undo_stack,
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
@@ -3603,7 +3607,7 @@ const Workspace = struct {
         const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
             const bp = try Toybox.new(
                 .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
                 undo_stack,
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
@@ -3675,27 +3679,70 @@ const Workspace = struct {
         } });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const bubble_4 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_executors = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
             const bp = try Toybox.new(
                 .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) } } },
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
                 undo_stack,
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            var postit_pos: Vec2 = .new(-5, -8);
-            postit.addFromText(postit_pos, &.{"very cool, etc"});
-            postit_pos.addInPlace(.new(12, 4));
-            postit.addFromText(postit_pos, &.{"this is a strand, etc"});
+            var postit_pos: Vec2 = .new(-6, -8);
+            postit.addFromText(postit_pos, &.{ "Take one of", "these vaus,", "and place it", "next to", "the strand:" });
+            postit_pos.addInPlace(.new(8, 1));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(-3.4, -1.7)) },
+                .{ .atom_lit = "a" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "c" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(1.8, -2.6)) },
+                .{ .atom_lit = "b" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
 
-            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, null, undo_stack);
+            postit_pos = .new(0, -3);
+            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, try Toybox.buildGarland(.{}, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+            executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
             Toybox.addChildLast(bp, executor, undo_stack);
+            postit.addFromText(postit_pos.add(.new(-6.5, 6)), &.{ "Use the crank", "and brake", "to control", "execution speed" });
+            postit_pos.addInPlace(.new(8.5, 11.5));
+            postit.addFromText(postit_pos, &.{ "It's one-use only,", "so undo with Z", "to try with", "another vau." });
 
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, bubble_4, undo_stack);
-
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = bubble_4, .condition = .{
+        Toybox.addChildLast(dst.main_area, intro_to_executors, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = intro_to_executors, .condition = .{
             .has_sexpr = try Toybox.buildSexpr(.{}, .{ .pair = .{
                 .up = try Toybox.buildSexpr(.{}, .{ .pair = .{
                     .up = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
@@ -3705,15 +3752,13 @@ const Workspace = struct {
             } }, false, false, undo_stack),
         } });
 
-        // Toybox.addChildLast(dst.main_area, dst.bubbles.welcome_to_the_lab, undo_stack);
-
         if (true) {
-            const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+            const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
                 try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, undo_stack),
             }, undo_stack), undo_stack);
             Toybox.addChildLast(dst.main_area, bubble_1, undo_stack);
-            const bubble_2 = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, .zero, true, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) } } }, &.{
+            const bubble_2 = try Toybox.buildBubble(.{ .pos = .new(30, 40) }, .zero, true, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "false" }, true, false, undo_stack),
             }, undo_stack), undo_stack);
             Toybox.addChildLast(dst.main_area, bubble_2, undo_stack);
@@ -3961,7 +4006,7 @@ const Workspace = struct {
         }
 
         if (true) { // tutorial postits
-            var postit_pos: Vec2 = .new(70, -3);
+            var postit_pos: Vec2 = .new(110, -3);
             // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
@@ -5179,11 +5224,20 @@ const Workspace = struct {
                             }
                         },
                         .area => |area| {
-                            switch (area.bg) {
+                            switch (area.style) {
                                 // TODO(game): .all background
-                                .all, .none => {},
-                                .local_rect => |rect| {
-                                    drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                                .main_area, .none => {},
+                                .toolbar => switch (area.bg) {
+                                    .all, .none => unreachable,
+                                    .local_rect => |rect| {
+                                        drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
+                                    },
+                                },
+                                .bubble => switch (area.bg) {
+                                    .all, .none => unreachable,
+                                    .local_rect => |rect| {
+                                        drawer.canvas.borderRect(camera, lego.absolute_point.applyToLocalRect(rect), 0.5 * lego.absolute_point.scale, .middle, .gray(0.4));
+                                    },
                                 },
                             }
                         },
@@ -5567,7 +5621,8 @@ const Workspace = struct {
         assert(workspace.valid(scratch));
         workspace.display_fps = platform.keyboard.cur.isDown(.KeyF);
         workspace.debug_nodraw = platform.keyboard.cur.isDown(.KeyV);
-        if (true and platform.keyboard.wasPressed(.KeyQ)) {
+
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (!lego.exists) continue;
@@ -5588,7 +5643,7 @@ const Workspace = struct {
             workspace.debugLogState();
         }
 
-        if (false and platform.keyboard.wasPressed(.KeyQ)) {
+        if (true and platform.keyboard.wasPressed(.KeyQ)) {
             var alive_count: usize = 0;
             for (toybox.all_legos.items, 0..) |lego, k| {
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
@@ -5596,7 +5651,8 @@ const Workspace = struct {
                     alive_count += 1;
                 }
             }
-            std.log.debug("total legos: {d}", .{alive_count});
+            std.log.debug("total alive legos: {d}", .{alive_count});
+            std.log.debug("total legos: {d}", .{toybox.all_legos.items.len});
         }
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
@@ -5795,7 +5851,7 @@ const Workspace = struct {
                             }
 
                             const fnkbox = try Toybox.buildFnkbox(
-                                hot_index.get().local_point,
+                                hot_index.get().absolute_point,
                                 fnkname,
                                 true,
                                 "Custom machine",
@@ -5804,10 +5860,9 @@ const Workspace = struct {
                                 workspace.gpa_for_text,
                                 undo_stack,
                             );
-                            Toybox.addChildLast(workspace.main_area, fnkbox, undo_stack);
 
                             grabbed_element_index = fnkbox;
-                            plucked = false;
+                            // plucked = false;
                         },
                     }
                 } else if (hot_index.hasTag(.microscope)) {
