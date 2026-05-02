@@ -3742,15 +3742,73 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_executors, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = intro_to_executors, .condition = .{
-            .has_sexpr = try Toybox.buildSexpr(.{}, .{ .pair = .{
-                .up = try Toybox.buildSexpr(.{}, .{ .pair = .{
-                    .up = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
-                    .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
-                } }, false, false, undo_stack),
-                .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
-            } }, false, false, undo_stack),
-        } });
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = intro_to_executors, .condition = .always });
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-6, -8);
+            postit.addFromText(postit_pos, &.{"this is a fnkbox, etc"});
+            postit_pos.addInPlace(.new(8, 1));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(-3.4, -1.7)) },
+                .{ .atom_lit = "a" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos },
+                .{ .atom_lit = "c" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(1.8, -2.6)) },
+                .{ .atom_lit = "b" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+
+            postit_pos = .new(0, -3);
+            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, try Toybox.buildGarland(.{}, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+            executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+            Toybox.addChildLast(bp, executor, undo_stack);
+            postit.addFromText(postit_pos.add(.new(-6.5, 6)), &.{ "Use the crank", "and brake", "to control", "execution speed" });
+            postit_pos.addInPlace(.new(8.5, 11.5));
+            postit.addFromText(postit_pos, &.{ "It's one-use only,", "so undo with Z", "to try with", "another vau." });
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, intro_to_fnkboxes, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_executors, .target = intro_to_fnkboxes, .condition = .always });
 
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
@@ -4222,7 +4280,7 @@ const Workspace = struct {
                     }
                     break :blk false;
                 },
-                .always => false,
+                .always => if (connection.source.getSafe()) |source| source.specific.bubble.locked else false,
                 .has_sexpr => |sexpr| blk: {
                     var it = Toybox.treeIterator(connection.source, false);
                     while (it.next()) |step| {
