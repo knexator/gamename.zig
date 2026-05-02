@@ -78,6 +78,22 @@ pub const levels: []const Level = &.{
     //     }.generate_sample,
     // },
     .{
+        .fnk_name = &Sexpr.doLit("changeLowercaseToNextCyclingOnC"),
+        .description = "a -> b -> c -> a",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[2], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (k < 3) {
+                    return .{ .input = Vals.lowercase[k], .expected = Vals.lowercase[@mod(k + 1, 3)] };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
         .fnk_name = &Sexpr.doLit("uppercase"),
         .description = "Get the uppercase version of each atom",
         .initial_definition = .{ .cases = &.{

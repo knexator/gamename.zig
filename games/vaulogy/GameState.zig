@@ -2100,6 +2100,7 @@ pub const Lego = struct {
         }
 
         pub fn children(index: Index, comptime specific: Specific.Tag) Specific.Tagged(specific).Children {
+            assert(index.hasTag(specific));
             return Specific.Tagged(specific).children(index);
         }
     };
@@ -2140,7 +2141,7 @@ pub const Lego = struct {
             .lens => .lens,
             .list_viewer => Handle.Size.default.scale(2),
             .meta_viewer => Handle.Size.default.scale(2),
-            .fnkbox => .default,
+            .fnkbox => |fnkbox| if (fnkbox.editable) .default else return null,
         };
         const enabled: bool = switch (lego.specific) {
             else => true,
@@ -2558,8 +2559,15 @@ pub const Toybox = struct {
         return result;
     }
 
+    // TODO(now): remove the dupe_children parameter
     pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
         assert(original.get().exists);
+        assert(dupe_children);
+
+        if (original.hasTag(.fnkbox)) {
+            assert(!original.get().specific.fnkbox.editable);
+        }
+
         const result_index = try Toybox.new(undefined, undefined, undo_stack);
         const result = Toybox.get(result_index);
         result.* = Toybox.get(original).*;
@@ -2592,6 +2600,9 @@ pub const Toybox = struct {
                 // sexpr.emerging_value = .nothing;
                 // sexpr.emerging_value_t = 0;
             },
+            // .scrollbar => |*scrollbar| {
+            //     // std.log.err("TODO: dupe scrollbars", .{});
+            // },
         }
 
         return result_index;
@@ -3139,6 +3150,47 @@ pub const Toybox = struct {
         return result;
     }
 
+    pub fn buildFnkboxFromLevel(
+        local_point: Point,
+        fnkname: Lego.Index,
+        level: Level,
+        editable: bool,
+        scratch: std.mem.Allocator,
+        text_allocator: std.mem.Allocator,
+        undo_stack: ?*UndoStack,
+    ) !Lego.Index {
+        const core = @import("core.zig");
+        var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+        defer pool.deinit();
+
+        const samples: []const [2]Lego.Index = blk: {
+            var samples_it = level.samplesIterator();
+            var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
+            while (try samples_it.next(&pool, scratch)) |item| {
+                try samples.append(scratch, .{
+                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
+                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
+                });
+                _ = pool.reset(.retain_capacity);
+            }
+            break :blk try samples.toOwnedSlice(scratch);
+        };
+
+        return try Toybox.buildFnkbox(
+            local_point,
+            fnkname,
+            editable,
+            level.description,
+            samples,
+            if (level.initial_definition) |definition|
+                try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch, undo_stack)
+            else
+                null,
+            text_allocator,
+            undo_stack,
+        );
+    }
+
     /// Children are:
     /// - box with (description area, status bar, testcases scroll bar, testcases area)
     /// - fnkname
@@ -3463,6 +3515,9 @@ const Workspace = struct {
         dst.gpa_for_bindings = gpa;
         dst.gpa_for_text = gpa;
 
+        var scratch: std.heap.ArenaAllocator = .init(gpa);
+        defer scratch.deinit();
+
         const undo_stack: ?*UndoStack = null;
 
         dst.main_area = try Toybox.new(.{ .scale = 0.1 }, .{ .area = .{ .bg = .all, .style = .main_area } }, undo_stack);
@@ -3778,32 +3833,18 @@ const Workspace = struct {
                 undo_stack,
             ), undo_stack);
 
-            postit_pos = .new(0, -3);
-            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, try Toybox.buildGarland(.{}, &.{
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
-                    .fnkname = null,
-                    .next = null,
-                }, undo_stack),
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
-                    .fnkname = null,
-                    .next = null,
-                }, undo_stack),
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
-                    .fnkname = null,
-                    .next = null,
-                }, undo_stack),
-            }, undo_stack), undo_stack);
-            executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
-            Toybox.addChildLast(bp, executor, undo_stack);
-            postit.addFromText(postit_pos.add(.new(-6.5, 6)), &.{ "Use the crank", "and brake", "to control", "execution speed" });
-            postit_pos.addInPlace(.new(8.5, 11.5));
-            postit.addFromText(postit_pos, &.{ "It's one-use only,", "so undo with Z", "to try with", "another vau." });
+            postit_pos = .new(0, 6);
+            const fnkbox = try Toybox.buildFnkboxFromLevel(
+                .{ .pos = postit_pos },
+                try dst.findFnkname(.{}, true, levels[0].fnk_name.atom_lit.value, undo_stack),
+                levels[0],
+                false,
+                scratch.allocator(),
+                dst.gpa_for_text,
+                undo_stack,
+            );
+            fnkbox.children(.fnkbox).executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+            Toybox.addChildLast(bp, fnkbox, undo_stack);
 
             break :blk bp;
         }, undo_stack);
@@ -4004,8 +4045,6 @@ const Workspace = struct {
             const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
-            var scratch: std.heap.ArenaAllocator = .init(gpa);
-            defer scratch.deinit();
             var x: f32 = 100;
             const Sexpr = Lego.Specific.Sexpr;
             for (levels, 0..) |level, k| {
@@ -4026,7 +4065,7 @@ const Workspace = struct {
                 const fnkbox =
                     try Toybox.buildFnkbox(
                         .{ .pos = .new(x, if (k % 2 == 0) -6 else -5) },
-                        try Sexpr.buildFromOldCoreValue(.{}, level.fnk_name, true, true, undo_stack),
+                        try dst.findFnkname(level.fnk_name.atom_lit.value, undo_stack),
                         false,
                         level.description,
                         samples,
@@ -4064,7 +4103,7 @@ const Workspace = struct {
         }
 
         if (true) { // tutorial postits
-            var postit_pos: Vec2 = .new(110, -3);
+            var postit_pos: Vec2 = .new(170, -3);
             // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
@@ -4248,6 +4287,7 @@ const Workspace = struct {
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
+            if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
                 try lego.specific.fnkbox.updateStatus(workspace, scratch);
             }
@@ -4308,7 +4348,11 @@ const Workspace = struct {
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (lego.specific.as(.fnkbox_description)) |fnkbox_description| {
-                fnkbox_description.inner_text.deinit(workspace.gpa_for_text);
+                if (Toybox.findAncestor(lego.index, .fnkbox).get().specific.fnkbox.editable or
+                    workspace.isFreefloating(lego.index))
+                {
+                    fnkbox_description.inner_text.deinit(workspace.gpa_for_text);
+                }
             }
         }
         workspace.undo_stack.deinit();
@@ -5868,8 +5912,9 @@ const Workspace = struct {
                     undo_stack.storeAllData(workspace.main_area);
                     grabbed_element_index = .nothing;
                     plucked = false;
-                    if (getFnkboxForFnk(hot_index)) |fnkbox_index| {
-                        workspace.centerCameraAt(fnkbox_index.get().local_point.applyToLocalPoint(.{
+                    if (getFnkboxForFnk(workspace, hot_index)) |fnkbox_index| {
+                        const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(fnkbox_index.get().absolute_point);
+                        workspace.centerCameraAt(p.applyToLocalPoint(.{
                             .scale = 8,
                             .pos = .new(0, 6),
                         }), false);
@@ -5889,28 +5934,10 @@ const Workspace = struct {
                             plucked = undefined;
                         },
                         .fnkbox => {
-                            // TODO(game): handle fnkbox creation better
-                            const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 8);
-                            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
-                            const fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = new_name }, true, true, undo_stack);
-
-                            blk: while (true) { // ensure the name is unique
-                                for (toybox.all_legos.items) |*lego| {
-                                    if (!lego.exists) continue;
-                                    if (lego.specific.tag() == .fnkbox) {
-                                        const existing = lego.index.children(.fnkbox).fnkname;
-                                        if (Lego.Specific.Sexpr.equalValue(fnkname, existing)) {
-                                            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
-                                            fnkname.get().specific.sexpr.atom_name = new_name;
-                                            continue :blk;
-                                        }
-                                    }
-                                } else break;
-                            }
-
+                            // TODO(game): maybe improve
                             const fnkbox = try Toybox.buildFnkbox(
                                 hot_index.get().absolute_point,
-                                fnkname,
+                                try workspace.findFnkname(.{}, true, null, undo_stack),
                                 true,
                                 "Custom machine",
                                 &.{},
@@ -5920,7 +5947,6 @@ const Workspace = struct {
                             );
 
                             grabbed_element_index = fnkbox;
-                            // plucked = false;
                         },
                     }
                 } else if (hot_index.hasTag(.microscope)) {
@@ -6056,18 +6082,12 @@ const Workspace = struct {
                                 .create_fnkbox_for_row => {
                                     const row = workspace.grabbing.index.get().tree.parent;
                                     assert(row.hasTag(.scorer_row));
-                                    // TODO(polish): better name
-                                    //  - use level fnkname if available
-                                    //  - ensure it is unique
-                                    const old_fnkname = row.children(.scorer_row).fnkname;
-                                    const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
-                                    math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
-                                    const new_fnkname = try Toybox.buildSexpr(old_fnkname.get().local_point, .{ .atom_lit = new_name }, false, true, undo_stack);
-                                    Toybox.changeChild(old_fnkname, new_fnkname, undo_stack);
-                                    assert(old_fnkname.get().specific.sexpr.kind == .empty);
-                                    Toybox.destroyFloating(old_fnkname, undo_stack);
-
                                     const level = levels[row.get().specific.scorer_row.level_index];
+                                    const old_fnkname = row.children(.scorer_row).fnkname;
+                                    assert(old_fnkname.get().specific.sexpr.kind == .empty);
+                                    const new_fnkname = try workspace.findFnkname(old_fnkname.get().local_point, false, level.fnk_name.atom_lit.value, undo_stack);
+                                    Toybox.changeChild(old_fnkname, new_fnkname, undo_stack);
+                                    Toybox.destroyFloating(old_fnkname, undo_stack);
 
                                     const core = @import("core.zig");
                                     var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
@@ -6253,7 +6273,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 switch (lego.specific) {
                     .fnkname_holder => |*fnkname_holder| {
-                        fnkname_holder.fnkbox = getFnkboxForFnk(lego.index.children(.fnkname_holder).fnkname) orelse .nothing;
+                        fnkname_holder.fnkbox = getFnkboxForFnk(workspace, lego.index.children(.fnkname_holder).fnkname) orelse .nothing;
                     },
                     else => {},
                 }
@@ -6430,6 +6450,7 @@ const Workspace = struct {
             Toybox.refreshAbsolutePoints(&.{workspace.toolbar_left});
         }
 
+        // TODO(bug): crashes if a fnkbox is deleted while the fnks toolbar is open
         if (true) { // open/close fnks toolbar, and regenerate its contents
             const old_t = workspace.toolbar_fnks_unfolded_t;
             math.lerpTowards(
@@ -6449,7 +6470,6 @@ const Workspace = struct {
                     cur = original_tree.next;
                 }
             } else if (old_t <= 0.01) { // regenerate children
-
                 const scrollbar = Lego.Specific.Scrollbar.build(
                     toolbar_fnks_rect
                         .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
@@ -6467,6 +6487,11 @@ const Workspace = struct {
                 for (toybox.all_legos.items) |*lego| {
                     if (!lego.exists) continue;
                     if (lego.specific.tag() != .fnkbox) continue;
+                    if (workspace.isFreefloating(lego.index)) continue;
+                    if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
+                        if (b.specific.bubble.locked) continue;
+                    }
+                    if (lego.tree.parent != .nothing and lego.tree.parent.hasTag(.bubble)) continue;
                     Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
                         count,
                         lego.index,
@@ -7113,9 +7138,14 @@ const Workspace = struct {
         return result;
     }
 
-    fn getFnkboxForFnk(fnkname: Lego.Index) ?Lego.Index {
+    fn getFnkboxForFnk(workspace: *Workspace, fnkname: Lego.Index) ?Lego.Index {
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
+            if (lego.specific.tag() != .fnkbox) continue;
+            if (workspace.isFreefloating(lego.index)) continue;
+            if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
+                if (b.specific.bubble.locked) continue;
+            }
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 if (Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname)) {
                     return lego.index;
@@ -7449,13 +7479,16 @@ const Workspace = struct {
     }
 
     pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !@import("core.zig").FnkCollection {
-        _ = workspace;
         const core = @import("core.zig");
         var all_fnks: core.FnkCollection = .init(scratch);
         if (true) {
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.tag() != .fnkbox) continue;
+                if (workspace.isFreefloating(lego.index)) continue;
+                if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
+                    if (b.specific.bubble.locked) continue;
+                }
                 const cur = lego.index;
                 const fnkbox = &Toybox.get(cur).specific.fnkbox;
                 const fnkname_value = try Toybox.get(cur.children(.fnkbox).fnkname).specific.sexpr.toOldCoreValue(scratch);
@@ -7468,6 +7501,37 @@ const Workspace = struct {
             }
         }
         return all_fnks;
+    }
+
+    pub fn isFnknameTaken(workspace: *Workspace, fnkname: Lego.Index) bool {
+        for (toybox.all_legos.items) |*lego| {
+            if (!lego.exists) continue;
+            if (lego.specific.tag() != .fnkbox) continue;
+            if (workspace.isFreefloating(lego.index)) continue;
+            const existing = lego.index.children(.fnkbox).fnkname;
+            if (Lego.Specific.Sexpr.equalValue(fnkname, existing)) return true;
+        } else return false;
+    }
+
+    pub fn findFnkname(workspace: *Workspace, point: Point, is_pattern: bool, suggestion: ?[]const u8, undo_stack: ?*UndoStack) !Lego.Index {
+        const fnkname = try Toybox.buildSexpr(point, .{ .atom_lit = suggestion orelse "" }, is_pattern, true, undo_stack);
+        if (suggestion != null and !isFnknameTaken(workspace, fnkname)) return fnkname;
+
+        const new_name = try workspace.arena_for_atom_names.allocator().alloc(u8, 8);
+        math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+        fnkname.get().specific.sexpr.atom_name = new_name;
+
+        while (isFnknameTaken(workspace, fnkname)) {
+            math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name);
+        }
+
+        return fnkname;
+    }
+
+    pub fn isFreefloating(workspace: *Workspace, index: Lego.Index) bool {
+        for (workspace.roots(.all).constSlice()) |root| {
+            if (Toybox.isAncestor(root, index)) return false;
+        } else return true;
     }
 };
 

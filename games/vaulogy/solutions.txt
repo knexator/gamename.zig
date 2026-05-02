@@ -1,5 +1,11 @@
 ////
 
+changeLowercaseToNextCyclingOnC {
+    a -> b;
+    b -> c;
+    c -> a;
+}
+
 uppercase {
     a -> A;
     b -> B;
