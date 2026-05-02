@@ -332,9 +332,7 @@ pub const Lego = struct {
 
         // TODO(design): delete these and merge with
         fnkbox_testcases: struct {},
-        fnkslist: struct {
-            scrollbar: Lego.Index,
-        },
+        fnkslist: struct {},
 
         // TODO(design): try to simplify these
         garland_newcases: void,
@@ -1724,7 +1722,6 @@ pub const Lego = struct {
         };
 
         pub const ScrollableList = struct {
-            scrollbar: Lego.Index,
             kind: enum { listviewer_sexprs },
 
             pub fn insertElement(inbetween: Lego.Index, new_element: Lego.Index, undo_stack: ?*UndoStack) !void {
@@ -2106,6 +2103,10 @@ pub const Lego = struct {
             assert(index.hasTag(specific));
             return switch (specific) {
                 else => comptime unreachable,
+                .scrollable_list => switch (index.get().specific.scrollable_list.kind) {
+                    .listviewer_sexprs => index.get().tree.prev,
+                },
+                .fnkslist => index.get().tree.next,
                 .fnkbox_testcases => index.get().tree.parent.children(.fnkbox_box).testcases_scrollbar,
             };
         }
@@ -2198,17 +2199,11 @@ pub const Lego = struct {
     pub fn addScroll(lego: *Lego, amount: f32) void {
         switch (lego.specific) {
             else => unreachable,
+            inline .fnkbox_testcases, .fnkslist, .scrollable_list => |_, t| {
+                lego.index.scrollbar(t).get().specific.scrollbar.scroll_target += amount;
+            },
             .scrollbar => |*scrollbar| {
                 scrollbar.scroll_target += amount;
-            },
-            .fnkslist => |fnkslist| {
-                fnkslist.scrollbar.get().specific.scrollbar.scroll_target += amount;
-            },
-            .fnkbox_testcases => {
-                lego.index.scrollbar(.fnkbox_testcases).get().specific.scrollbar.scroll_target += amount;
-            },
-            .scrollable_list => |scrollable_list| {
-                scrollable_list.scrollbar.get().specific.scrollbar.scroll_target += amount;
             },
         }
     }
@@ -3318,7 +3313,6 @@ pub const Toybox = struct {
             scrollbar,
             try Toybox.new(.{}, .{
                 .scrollable_list = .{
-                    .scrollbar = scrollbar,
                     .kind = .listviewer_sexprs,
                 },
             }, undo_stack),
@@ -5039,7 +5033,7 @@ const Workspace = struct {
                         crank.handle_pos = .fromPolar(0.75, crank.value);
                     },
                     .scrollable_list => |scrollable_list| {
-                        const scroll_visual = scrollable_list.scrollbar.get().specific.scrollbar.scroll_visual;
+                        const scroll_visual = cur.scrollbar(.scrollable_list).get().specific.scrollbar.scroll_visual;
 
                         var cur_element: Lego.Index = lego.tree.first;
                         var y: f32 = -scroll_visual;
@@ -5065,8 +5059,8 @@ const Workspace = struct {
                             cur_case = Toybox.get(cur_case).tree.next;
                         }
                     },
-                    .fnkslist => |fnkslist| {
-                        const scroll_visual = fnkslist.scrollbar.get().specific.scrollbar.scroll_visual;
+                    .fnkslist => {
+                        const scroll_visual = lego.index.scrollbar(.fnkslist).get().specific.scrollbar.scroll_visual;
 
                         var k: usize = 0;
                         var cur_element: Lego.Index = lego.tree.first;
@@ -6481,9 +6475,7 @@ const Workspace = struct {
                     toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
                     undo_stack,
                 );
-                const fnkslist = try Toybox.new(.{}, .{
-                    .fnkslist = .{ .scrollbar = scrollbar },
-                }, undo_stack);
+                const fnkslist = try Toybox.new(.{}, .{ .fnkslist = .{} }, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
 
@@ -6503,7 +6495,7 @@ const Workspace = struct {
                     ), null);
                     count += 1;
                 }
-                fnkslist.get().specific.fnkslist.scrollbar.get().specific.scrollbar.total_length = tof32(count);
+                fnkslist.scrollbar(.fnkslist).get().specific.scrollbar.total_length = tof32(count);
             }
 
             const rect = toolbar_fnks_rect;
