@@ -3909,6 +3909,64 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_fnkboxes, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_executors, .target = intro_to_fnkboxes, .condition = .always });
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const player_creates_fnkbox = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{"Try on your own!"});
+            postit_pos.addInPlace(.new(0.3, 6.7));
+            postit.addFromText(postit_pos, &.{ "(I promise", "the assignments", "will get more", "interesting)" });
+
+            postit_pos = .new(0.2, -10.4);
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+            postit_pos.addInPlace(.new(0.3, 3.9));
+            Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos }, .{
+                .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                .template = try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack),
+                .fnkname = null,
+                .next = null,
+            }, undo_stack), undo_stack);
+            postit_pos.addInPlace(.new(4.6, 1.2));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos }, .{ .atom_lit = "b" }, false, false, undo_stack), undo_stack);
+            postit_pos = .new(-6, 4);
+            Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos }, .{
+                .pattern = try Toybox.buildSexpr(.{}, .empty, true, false, undo_stack),
+                .template = try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack),
+                .fnkname = null,
+                .next = null,
+            }, undo_stack), undo_stack);
+            postit_pos.addInPlace(.new(-1.8, 0.9));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos }, .{
+                .atom_lit = "a",
+            }, true, false, undo_stack), undo_stack);
+            postit_pos = .new(-6, 4);
+            postit_pos.addInPlace(.new(1.4, -0.7));
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos }, .{
+                .atom_lit = "c",
+            }, false, false, undo_stack), undo_stack);
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{1}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, player_creates_fnkbox, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_fnkboxes, .target = player_creates_fnkbox, .condition = .all_scorers_solved });
+
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
@@ -6169,7 +6227,6 @@ const Workspace = struct {
 
                                     // TODO(game): better fnkbox positioning when not hardcoded
                                     const fnkbox = try Toybox.buildFnkbox(
-                                        // TODO(now): actually correct for parent pos
                                         if (row.get().specific.scorer_row.offset) |offset|
                                             .{ .pos = offset }
                                         else
