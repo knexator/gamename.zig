@@ -484,8 +484,8 @@ pub const Lego = struct {
                         };
                         defer exec.deinit();
 
-                        const actual_output = exec.getFinalResult(&scoring_run) catch |err| switch (err) {
-                            error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound => {
+                        const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true, true) catch |err| switch (err) {
+                            error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
                                 failed_any = true;
                                 break;
                             },
@@ -3973,6 +3973,46 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, player_creates_fnkbox, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_fnkboxes, .target = player_creates_fnkbox, .condition = .all_scorers_solved });
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_wildcards = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "This next assignment", "has too many cases", "to be hardcoded." });
+            postit_pos.addInPlace(.new(6.8, 0.4));
+            postit.addFromText(postit_pos, &.{ "Fear not!", "We can solve it", "elegantly, with", "Wildcards." });
+
+            postit_pos.addInPlace(.new(7.8, -1.4));
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexprFromText(.{}, "(@x . @y)", true, false, undo_stack),
+                    .template = try Toybox.buildSexprFromText(.{}, "(@y . @x)", false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            postit_pos = .new(-8, -8);
+            postit_pos.addInPlace(.new(1.8, 7.8));
+            postit.addFromText(postit_pos, &.{ "Wildcards match", "with any value,", "and can", "recreate it." });
+
+            postit_pos = .new(8.1, 4.7);
+            postit.addFromText(postit_pos, &.{ "By the way,", "right click", "to duplicate", "anything" });
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("swap")}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, intro_to_wildcards, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = player_creates_fnkbox, .target = intro_to_wildcards, .condition = .all_scorers_solved });
+
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
@@ -4225,7 +4265,7 @@ const Workspace = struct {
         }
 
         if (true) { // tutorial postits
-            var postit_pos: Vec2 = .new(170, -3);
+            var postit_pos: Vec2 = .new(270, -3);
             // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
@@ -7359,7 +7399,7 @@ const Workspace = struct {
 
         var exec: core.ExecutionThread = try .init(input_value, fnkname_value, &scoring_run);
         defer exec.deinit();
-        const result_value = try exec.getFinalResult(&scoring_run);
+        const result_value = try exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true, true);
 
         const garland = try Toybox.buildGarland(new_point, &.{
             try Toybox.buildCase(undefined, .{
