@@ -4037,8 +4037,8 @@ const Workspace = struct {
             postit.addFromText(postit_pos.add(.new(7.6, 5.3)), &.{ "Control-click it", "to see its", "definition" });
             Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1.5, 3.8)) }, &.{
                 try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexprFromText(.{}, "(@x . <empty>)", true, false, undo_stack),
-                    .template = try Toybox.buildSexprFromText(.{}, "@x", false, false, undo_stack),
+                    .pattern = try Toybox.buildSexprFromText(.{}, "(@f . <empty>)", true, false, undo_stack),
+                    .template = try Toybox.buildSexprFromText(.{}, "@f", false, false, undo_stack),
                     .fnkname = try Toybox.buildSexprFromText(.{}, levels[0].fnk_name, false, false, undo_stack),
                     .next = null,
                 }, undo_stack),
@@ -4052,6 +4052,45 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_calling, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_wildcards, .target = intro_to_calling, .condition = .all_scorers_solved });
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const calling_exercise = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Time to prove", "you're learning" });
+            postit_pos.addInPlace(.new(7.2, 0.2));
+            postit.addFromText(postit_pos, &.{ "In the left toolbar", "you have fresh", "pieces and", "wildcards" });
+            postit_pos.addInPlace(.new(7.1, 0.1));
+            postit.addFromText(postit_pos, &.{ "On the right one", "you have all your", "solutions so far" });
+
+            postit_pos = .new(-6, 1);
+            postit.addFromText(postit_pos, &.{ "Carefully", "study the", "examples", "to understand", "the assignment" });
+
+            if (false) {
+                postit_pos = .new(-6, 1);
+                Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos, .scale = 0.5, .turns = 0.25 }, .{
+                    .atom_lit = levels[0].fnk_name,
+                }, false, true, undo_stack), undo_stack);
+                postit_pos = .new(-4, 1);
+                Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos, .scale = 0.5, .turns = 0.25 }, .{
+                    .atom_lit = levels[1].fnk_name,
+                }, false, true, undo_stack), undo_stack);
+            }
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("shiftInUnknownDirection")}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, calling_exercise, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_calling, .target = calling_exercise, .condition = .all_scorers_solved });
 
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
@@ -5753,7 +5792,7 @@ const Workspace = struct {
                             const n_rows = Toybox.childCount(cur.children(.scorer).scorer_rows);
                             const rect: Rect = .{
                                 .top_left = .new(-1, -1),
-                                .size = .new(14.4, 2 * tof32(n_rows)),
+                                .size = .new(16, 2 * tof32(n_rows)),
                             };
                             drawer.canvas.fillRect(camera_relative, rect, COLORS.bg);
                             drawer.canvas.strokeRect(camera_relative, rect, 0.1, .black);

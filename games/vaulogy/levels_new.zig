@@ -175,13 +175,25 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = "cycleInUnknownDirection",
-        .description = "Shift the lower letter depending on the top one",
+        .fnk_name = "shiftInUnknownDirection",
+        .description = "Shift the lower half depending on the top",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                if (k < 3) {
-                    return .{ .input = Vals.lowercase[k], .expected = Vals.lowercase[@mod(k + 1, 3)] };
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const k1 = @mod(k, Vals.abc.len);
+                const k2 = @divFloor(k, Vals.abc.len);
+                if (k2 < Vals.abc.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(Vals.abc[k2], Vals.abc[k1])),
+                        .expected = Vals.abc[
+                            switch (k2) {
+                                0 => @mod(k1 + 1, Vals.abc.len),
+                                1 => k1,
+                                2 => @mod(k1 + Vals.abc.len - 1, Vals.abc.len),
+                                else => unreachable,
+                            }
+                        ],
+                    };
                 } else return null;
             }
         }.generate_sample,
