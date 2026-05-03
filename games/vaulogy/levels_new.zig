@@ -13,7 +13,7 @@ fn safeAt(arr: []const *const Sexpr, index: usize) ?*const Sexpr {
 }
 
 pub const Level = struct {
-    fnk_name: *const Sexpr,
+    fnk_name: []const u8,
     description: []const u8,
     initial_definition: ?core.FnkBodyV2,
     generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample,
@@ -61,7 +61,7 @@ const Helpers = struct {
 
 pub const levels: []const Level = &.{
     // .{
-    //     .fnk_name = &Sexpr.doLit("changeAtoBandBtoA"),
+    //     .fnk_name = "changeAtoBandBtoA",
     //     .description = "Turn 'a' into 'b', and 'b' into 'a'",
     //     .initial_definition = .{ .cases = &.{
     //         .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -78,7 +78,7 @@ pub const levels: []const Level = &.{
     //     }.generate_sample,
     // },
     .{
-        .fnk_name = &Sexpr.doLit("changeLowercaseToNextCyclingOnC"),
+        .fnk_name = "changeLowercaseToNextCyclingOnC",
         .description = "Turn 'a' into 'b', 'b' into 'c', 'c' into 'a'.",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -94,7 +94,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("changeLowercaseToPrevCyclingOnC"),
+        .fnk_name = "changeLowercaseToPrevCyclingOnC",
         .description = "Turn 'c' into 'b', 'b' into 'a', 'a' into 'c'.",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -110,7 +110,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("swap"),
+        .fnk_name = "swap",
         .description = "Swap both values",
         .initial_definition = .{ .cases = &.{.{
             .pattern = &.doPair(Sexpr.builtin.empty, Vals.vars.down),
@@ -158,7 +158,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("cycleInUnknownDirection"),
+        .fnk_name = "cycleInUnknownDirection",
         .description = "Turn 'c' into 'b', 'b' into 'a', 'a' into 'c'.",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -174,7 +174,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("uppercase"),
+        .fnk_name = "uppercase",
         .description = "Get the uppercase version of each atom",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.uppercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -194,7 +194,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("lowercase"),
+        .fnk_name = "lowercase",
         .description = "Get the lowercase version of each atom",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.uppercase[0], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -214,7 +214,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("isVowel"),
+        .fnk_name = "isVowel",
         .description = "Return true if the input letter is a vowel",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -235,7 +235,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("firstAsUppercase"),
+        .fnk_name = "firstAsUppercase",
         .description = "Get the pair's top half in uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
@@ -265,7 +265,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("startWithB"),
+        .fnk_name = "startWithB",
         .description = "Check if pair's top half is a B.",
         .initial_definition = .{ .cases = &.{
             .{
@@ -303,7 +303,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("uppercaseIfVowel"),
+        .fnk_name = "uppercaseIfVowel",
         .description = "Change only the vowels to uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
@@ -342,7 +342,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("withBottomUppercased"),
+        .fnk_name = "withBottomUppercased",
         .description = "Change the bottom half to be uppercase.",
         .initial_definition = null,
         // .{ .cases = &.{
@@ -393,7 +393,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("pairToUppercase"),
+        .fnk_name = "pairToUppercase",
         .description = "Make both halves into uppercase.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -410,7 +410,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("hasSomeB"),
+        .fnk_name = "hasSomeB",
         // intro to recursion
         .description = "Check if the input has a 'B' anywhere.",
         .initial_definition = .{ .cases = &.{
@@ -448,7 +448,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("second"),
+        .fnk_name = "second",
         // simplest intro to lists
         .description = "Get the second element of the list.",
         .initial_definition = .{ .cases = &.{
@@ -523,7 +523,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("listHasSomeB"),
+        .fnk_name = "listHasSomeB",
         // real intro to lists
         .description = "Check if the given list has a plain 'B' element.",
         .initial_definition = null,
@@ -567,7 +567,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("uppercaseEachElement"),
+        .fnk_name = "uppercaseEachElement",
         .description = "Uppercase each element in the list.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -599,7 +599,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("hasAnyVowel"),
+        .fnk_name = "hasAnyVowel",
         .description = "Return true if the list contains any vowel",
         .initial_definition = null,
         .generate_sample = struct {
@@ -631,7 +631,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("changeCase"),
+        .fnk_name = "changeCase",
         .description = "Change the casing of the given letter.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -651,7 +651,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("letterToBothCases"),
+        .fnk_name = "letterToBothCases",
         .description = "Get the lowercase and uppercase versions of the given letter.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -672,7 +672,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("reverse"),
+        .fnk_name = "reverse",
         .description = "Reverse the given list.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -717,7 +717,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("mostCommonBoolean"),
+        .fnk_name = "mostCommonBoolean",
         .description = "Return the most common element of the list.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -781,7 +781,7 @@ pub const levels: []const Level = &.{
     },
     .{
         // TODO(game): change to "secondMostCommonValue" to avoid boring solutions, maybe
-        .fnk_name = &Sexpr.doLit("secondMostCommonLetter"),
+        .fnk_name = "secondMostCommonLetter",
         .description = "Return the second most common element of the list.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -839,7 +839,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("calculator"),
+        .fnk_name = "calculator",
         .description = "Calculator!",
         .initial_definition = null,
         .generate_sample = struct {
@@ -894,7 +894,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("brainfuck"),
+        .fnk_name = "brainfuck",
         .description = "Implement a BrainF*ck interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -961,7 +961,7 @@ pub const levels: []const Level = &.{
 pub const future_levels: []const Level = &.{
     .{
         // TODO
-        .fnk_name = &Sexpr.doLit("interpreter"),
+        .fnk_name = "interpreter",
         .description = "Implement a Vaulogy interpreter.",
         .initial_definition = null,
         .generate_sample = struct {

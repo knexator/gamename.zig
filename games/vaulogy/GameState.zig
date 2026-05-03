@@ -23,6 +23,12 @@ const Level = @import("levels_new.zig").Level;
 const levels = @import("levels_new.zig").levels;
 // const levels = if (@import("builtin").mode == .Debug) @import("levels_new.zig").levels[0..3] else @import("levels_new.zig").levels;
 
+pub fn levelIndex(comptime name: []const u8) usize {
+    inline for (levels, 0..) |level, k| {
+        if (comptime std.mem.eql(u8, name, level.fnk_name)) return k;
+    } else @compileError("couldn't find name: " ++ name);
+}
+
 pub const FuzzerContext = struct {
     var toybox_instance: Toybox = undefined;
 
@@ -3839,7 +3845,7 @@ const Workspace = struct {
             Toybox.addChildLast(bp, fnkbox, undo_stack);
 
             postit_pos = .new(4, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{0}, undo_stack);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("changeLowercaseToNextCyclingOnC")}, undo_stack);
             const old_fnkname = scorer.children(.scorer).scorer_rows.get().tree.first.children(.scorer_row).fnkname;
             const new_fnkname = try Toybox.dupeIntoFloating(fnkbox.children(.fnkbox).fnkname, true, undo_stack);
             new_fnkname.get().local_point = old_fnkname.get().local_point;
@@ -3893,7 +3899,7 @@ const Workspace = struct {
             }, undo_stack), undo_stack);
 
             postit_pos = .new(0, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{0}, &.{.new(4.5, 8.5)}, undo_stack);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("changeLowercaseToNextCyclingOnC")}, &.{.new(4.5, 8.5)}, undo_stack);
             Toybox.addChildLast(bp, scorer, undo_stack);
 
             postit_pos.addInPlace(.new(0, 4.5));
@@ -3959,7 +3965,7 @@ const Workspace = struct {
             }, false, false, undo_stack), undo_stack);
 
             postit_pos = .new(0, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{1}, &.{.new(0, 8.5)}, undo_stack);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("changeLowercaseToPrevCyclingOnC")}, &.{.new(0, 8.5)}, undo_stack);
             Toybox.addChildLast(bp, scorer, undo_stack);
 
             break :blk bp;
@@ -4332,9 +4338,9 @@ const Workspace = struct {
                 .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "That's the       ", "name of the first", "machine, the one", "that transforms", "'a' into 'A'" } } },
                 .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
             });
-            Toybox.addChildLast(dst.main_area, try Lego.Specific.Sexpr.buildFromOldCoreValue(
+            Toybox.addChildLast(dst.main_area, try Toybox.buildSexpr(
                 .{ .pos = postit_pos.add(.new(4, -2.5)), .scale = 0.5, .turns = 0.25 },
-                @import("levels_new.zig").levels[0].fnk_name,
+                .{ .atom_lit = @import("levels_new.zig").levels[0].fnk_name },
                 false,
                 true,
                 undo_stack,
@@ -6203,7 +6209,7 @@ const Workspace = struct {
                                     const level = levels[row.get().specific.scorer_row.level_index];
                                     const old_fnkname = row.children(.scorer_row).fnkname;
                                     assert(old_fnkname.get().specific.sexpr.kind == .empty);
-                                    const new_fnkname = try workspace.findFnkname(old_fnkname.get().local_point, false, level.fnk_name.atom_lit.value, undo_stack);
+                                    const new_fnkname = try workspace.findFnkname(old_fnkname.get().local_point, false, level.fnk_name, undo_stack);
                                     Toybox.changeChild(old_fnkname, new_fnkname, undo_stack);
                                     Toybox.destroyFloating(old_fnkname, undo_stack);
 
