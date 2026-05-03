@@ -79,7 +79,7 @@ pub const levels: []const Level = &.{
     // },
     .{
         .fnk_name = "changeLowercaseToNextCyclingOnC",
-        .description = "Turn 'a' into 'b', 'b' into 'c', 'c' into 'a'.",
+        .description = "Shift 'a' into 'b', 'b' into 'c', 'c' into 'a'.",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -95,7 +95,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = "changeLowercaseToPrevCyclingOnC",
-        .description = "Turn 'c' into 'b', 'b' into 'a', 'a' into 'c'.",
+        .description = "Shift back: c into b, b into a, a into c.",
         .initial_definition = .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -111,7 +111,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = "swap",
-        .description = "Swap both values",
+        .description = "Swap both vau halves",
         .initial_definition = .{ .cases = &.{.{
             .pattern = &.doPair(Sexpr.builtin.empty, Vals.vars.down),
             .template = &.doPair(Vals.vars.down, Vals.vars.up),
@@ -158,13 +158,26 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .fnk_name = "shiftTopHalf",
+        .description = "Shift the pair's top half",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const k1 = @mod(k, Vals.abc.len);
+                const k2 = @divFloor(k, Vals.abc.len);
+                if (k2 < Vals.abc.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(Vals.abc[k1], Vals.abc[k2])),
+                        .expected = Vals.abc[@mod(k1 + 1, Vals.abc.len)],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
         .fnk_name = "cycleInUnknownDirection",
-        .description = "Turn 'c' into 'b', 'b' into 'a', 'a' into 'c'.",
-        .initial_definition = .{ .cases = &.{
-            .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[2], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
-        } },
+        .description = "Shift the lower letter depending on the top one",
+        .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < 3) {
@@ -1218,6 +1231,8 @@ test "randomCounts" {
 
 const Vals = struct {
     const peano_succ: *const Sexpr = &Sexpr.doLit("N");
+
+    const abc = lowercase[0..3];
 
     const lowercase: [6]*const Sexpr = .{
         &Sexpr.doLit("a"),

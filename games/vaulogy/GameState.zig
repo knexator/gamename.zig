@@ -4013,6 +4013,46 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_wildcards, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = player_creates_fnkbox, .target = intro_to_wildcards, .condition = .all_scorers_solved });
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_calling = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{"Next concept!"});
+            postit_pos.addInPlace(.new(7.2, 0.3));
+            postit.addFromText(postit_pos, &.{ "You can use", "old solutions", "as part of", "new solutions" });
+            postit_pos.addInPlace(.new(7.1, 0.2));
+            postit.addFromText(postit_pos, &.{ "For example", "this assignment", "is almost already", "solved by the", "first assignemnt" });
+
+            postit_pos = .new(-6.6, 0.5);
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 2.5), .scale = 0.95 }, .part = .{ .paragraph = &.{ "That's the 'name'", "of your solution", "to the first", "assignment" } } },
+                .{ .point = .{ .pos = .new(4, 5), .turns = 0.18 }, .part = .arrow },
+            });
+            postit.addFromText(postit_pos.add(.new(7.6, 5.3)), &.{ "Control-click it", "to see its", "definition" });
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1.5, 3.8)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexprFromText(.{}, "(@x . <empty>)", true, false, undo_stack),
+                    .template = try Toybox.buildSexprFromText(.{}, "@x", false, false, undo_stack),
+                    .fnkname = try Toybox.buildSexprFromText(.{}, levels[0].fnk_name, false, false, undo_stack),
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("shiftTopHalf")}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, intro_to_calling, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_wildcards, .target = intro_to_calling, .condition = .all_scorers_solved });
+
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
