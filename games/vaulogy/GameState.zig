@@ -4098,6 +4098,40 @@ const Workspace = struct {
 
         dst.toolbar_unlocks.case_with_wildcards = calling_exercise;
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_nested_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{"Final concept!"});
+            postit_pos.addInPlace(.new(7.2, 0.3));
+            postit.addFromText(postit_pos, &.{ "Strands can be", "nested inside", "other strands" });
+            postit_pos.addInPlace(.new(7.2, 0.3));
+            postit.addFromText(postit_pos, &.{ "It's easier to", "see than to", "explain, try", "it out" });
+
+            const level_index = levelIndex("startWithB");
+            postit_pos = .new(-6, 0);
+            Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
+                .{ .pos = postit_pos },
+                levels[level_index].initial_definition.?,
+                scratch.allocator(),
+                undo_stack,
+            ), undo_stack);
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{level_index}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, intro_to_nested_strands, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = calling_exercise, .target = intro_to_nested_strands, .condition = .all_scorers_solved });
+
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),

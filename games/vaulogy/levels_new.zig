@@ -291,7 +291,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = "startWithB",
-        .description = "Check if pair's top half is a B.",
+        .description = "Check if the top half is 'b'",
         .initial_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("left"), Sexpr.builtin.empty),
@@ -299,13 +299,19 @@ pub const levels: []const Level = &.{
                 .fnk_name = Sexpr.builtin.empty,
                 .next = &.{
                     .{
+                        .pattern = Vals.lowercase[0],
+                        .template = Sexpr.builtin.false,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                    .{
                         .pattern = Vals.lowercase[1],
                         .template = Sexpr.builtin.true,
                         .fnk_name = Sexpr.builtin.empty,
                         .next = null,
                     },
                     .{
-                        .pattern = &.doVar("else"),
+                        .pattern = Vals.lowercase[2],
                         .template = Sexpr.builtin.false,
                         .fnk_name = Sexpr.builtin.empty,
                         .next = null,
@@ -315,7 +321,7 @@ pub const levels: []const Level = &.{
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                const both = Vals.lowercase ++ Vals.uppercase;
+                const both = Vals.abc;
                 const k1 = @mod(k, both.len);
                 const k2 = @divFloor(k, both.len);
                 if (k2 < both.len) {
