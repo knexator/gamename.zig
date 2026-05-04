@@ -77,6 +77,12 @@ withBottomUppercased {
     }
 }
 
+withBottomShifted {
+    (@a . @b) -> changeLowercaseToNextCyclingOnC: @b {
+        @B -> (@a . @B);
+    }
+}
+
 pairToUppercase {
     (@a . @b) -> uppercase: @a {
         @A -> uppercase: @b {

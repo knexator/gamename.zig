@@ -4132,6 +4132,41 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_nested_strands, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = calling_exercise, .target = intro_to_nested_strands, .condition = .all_scorers_solved });
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_mixing_both_tricks = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "That's all!", "You're now", "an expert in", "vau manipulation" });
+
+            postit_pos.addInPlace(.new(8.2, 0.3));
+            postit.addFromText(postit_pos, &.{ "These last two", "'tricks' can be", "mixed:" });
+            postit_pos.addInPlace(.new(7.1, 0.3));
+            postit.addFromText(postit_pos, &.{ "call a previous", "solution,", "and then match", "on the result" });
+
+            const level_index = levelIndex("withBottomShifted");
+            postit_pos = .new(-7.6, 0);
+            Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
+                .{ .pos = postit_pos },
+                levels[level_index].initial_definition.?,
+                scratch.allocator(),
+                undo_stack,
+            ), undo_stack);
+
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{level_index}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_nested_strands, .target = intro_to_mixing_both_tricks, .condition = .all_scorers_solved });
+
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
@@ -4384,7 +4419,7 @@ const Workspace = struct {
         }
 
         if (true) { // tutorial postits
-            var postit_pos: Vec2 = .new(270, -3);
+            var postit_pos: Vec2 = .new(370, -3);
             // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
