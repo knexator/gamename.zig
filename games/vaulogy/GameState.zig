@@ -231,13 +231,13 @@ test "solutions" {
         while (try samples_it.next(&pool, scratch.allocator())) |item| {
             defer _ = pool.reset(.retain_capacity);
 
-            var exec: core.ExecutionThread = try .init(item.input, level.fnk_name, &scoring);
+            var exec: core.ExecutionThread = try .init(item.input, &.doLit(level.fnk_name), &scoring, .new);
             defer exec.deinit();
-            const actual = try exec.getFinalResultBoundedV2(&scoring, 10_000, true, true, true);
+            const actual = try exec.getFinalResultBoundedV2(&scoring, .new);
             if (!actual.equals(item.expected)) {
                 if (std.testing.backend_can_print) {
                     std.debug.print(
-                        "failed on fnk {any} with input {any}: expected {any}, got {any}\n",
+                        "failed on fnk {s} with input {any}: expected {any}, got {any}\n",
                         .{ level.fnk_name, item.input, item.expected, actual },
                     );
                 }
@@ -474,22 +474,34 @@ pub const Lego = struct {
                     while (try samples_it.next(&pool, scratch)) |sample| {
                         defer _ = pool.reset(.retain_capacity);
 
-                        var exec = core.ExecutionThread.init(sample.input, fnkname, &scoring_run) catch |err| switch (err) {
-                            error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound => {
-                                failed_any = true;
-                                break;
-                            },
-                            error.BAD_INPUT => @panic("unreachable?"),
+                        var exec = core.ExecutionThread.init(sample.input, fnkname, &scoring_run, .new) catch |err| switch (err) {
+                            // error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
+                            //     failed_any = true;
+                            //     break;
+                            // },
+                            error.NoMatchingCase,
+                            error.InvalidMetaFnk,
+                            error.UsedUndefinedVariable,
+                            error.FnkNotFound,
+                            error.TookTooLong,
+                            error.BAD_INPUT,
+                            => @panic("unreachable?"),
                             error.OutOfMemory => |x| return x,
                         };
                         defer exec.deinit();
 
-                        const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true, true) catch |err| switch (err) {
-                            error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
-                                failed_any = true;
-                                break;
-                            },
-                            error.BAD_INPUT => @panic("unreachable?"),
+                        const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
+                            // error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
+                            //     failed_any = true;
+                            //     break;
+                            // },
+                            error.NoMatchingCase,
+                            error.InvalidMetaFnk,
+                            error.UsedUndefinedVariable,
+                            error.FnkNotFound,
+                            error.TookTooLong,
+                            error.BAD_INPUT,
+                            => @panic("unreachable?"),
                             error.OutOfMemory => |x| return x,
                         };
 
@@ -950,7 +962,7 @@ pub const Lego = struct {
             }
 
             pub fn text(this: @This()) ?[]const u8 {
-                if (this.fnkbox == .nothing) return null;
+                if (this.fnkbox.getSafe() == null) return null;
                 return this.fnkbox.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.text();
             }
         };
@@ -1463,10 +1475,10 @@ pub const Lego = struct {
                     const t = Testcase.children(cur_testcase);
                     const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
                     const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
-                    var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run);
+                    var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run, .new);
                     defer exec.deinit();
 
-                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true, true) catch |err| switch (err) {
+                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
                         error.FnkNotFound,
                         error.UsedUndefinedVariable,
                         error.InvalidMetaFnk,
@@ -1626,24 +1638,6 @@ pub const Lego = struct {
         pub const Postit = struct {
             pub const local_rect: Rect = .fromCenterAndSize(.zero, .both(6));
 
-            pub fn buildFromText(pos: Vec2, lines: []const []const u8, undo_stack: ?*UndoStack) !Lego.Index {
-                const postit = try Toybox.new(
-                    .{ .pos = pos },
-                    .{ .postit = .{} },
-                    undo_stack,
-                );
-
-                for (lines, 0..) |line, k| {
-                    Toybox.addChildLast(postit, try Toybox.new(
-                        .{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) },
-                        .{ .postit_text = .{ .text = line } },
-                        undo_stack,
-                    ), undo_stack);
-                }
-
-                return postit;
-            }
-
             pub const Helper = struct {
                 main_area: Lego.Index,
                 undo_stack: ?*UndoStack,
@@ -1711,6 +1705,7 @@ pub const Lego = struct {
                         );
 
                         const max_line_len = 15;
+
                         for (lines, 0..) |line, k| {
                             Toybox.addChildLast(postit, try Toybox.new(
                                 .{
@@ -2102,6 +2097,9 @@ pub const Lego = struct {
         }
 
         pub fn children(index: Index, comptime specific: Specific.Tag) Specific.Tagged(specific).Children {
+            if (!index.hasTag(specific)) {
+                std.debug.panic("bad lego: {any}", .{index.get().specific});
+            }
             assert(index.hasTag(specific));
             return Specific.Tagged(specific).children(index);
         }
@@ -3432,6 +3430,12 @@ const Workspace = struct {
 
     // TODO(now): should maybe live on the bubble itself
     unlock_connections: std.BoundedArray(BubbleUnlockConnection, 64) = .{},
+    toolbar_unlocks: struct {
+        case_with_wildcards: Lego.Index = .nothing,
+        list_viewer: Lego.Index = .nothing,
+        meta_viewer: Lego.Index = .nothing,
+        lenses: Lego.Index = .nothing,
+    } = .{},
 
     pub const Grabbing = struct {
         index: Lego.Index,
@@ -4065,7 +4069,7 @@ const Workspace = struct {
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{ "Time to prove", "you're learning" });
             postit_pos.addInPlace(.new(7.2, 0.2));
-            postit.addFromText(postit_pos, &.{ "In the left toolbar", "you have fresh", "pieces and", "wildcards" });
+            postit.addFromText(postit_pos, &.{ "In the", "left toolbar", "you have fresh", "pieces and", "wildcards" });
             postit_pos.addInPlace(.new(7.1, 0.1));
             postit.addFromText(postit_pos, &.{ "On the right one", "you have all your", "solutions so far" });
 
@@ -4091,6 +4095,8 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calling_exercise, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_calling, .target = calling_exercise, .condition = .all_scorers_solved });
+
+        dst.toolbar_unlocks.case_with_wildcards = calling_exercise;
 
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
@@ -4546,41 +4552,42 @@ const Workspace = struct {
             // TODO(design): improve
             if (lego.specific.tag() == .bubble) {
                 lego.specific.bubble.locked = !debug_all_bubbles_unlocked;
-            }
-        }
 
-        // unlock if any of the conditions is met
-        for (workspace.unlock_connections.constSlice()) |connection| {
-            connection.target.get().specific.bubble.locked = connection.target.get().specific.bubble.locked and switch (connection.condition) {
-                .all_scorers_solved => blk: {
-                    var cur = connection.source;
-                    while (cur != .nothing) : (cur = Toybox.next_preordered(cur, connection.source).next) {
-                        if (cur.hasTag(.scorer)) {
-                            if (cur.get().specific.scorer.score == null) break :blk true;
-                        }
-                    }
-                    break :blk false;
-                },
-                .always => if (connection.source.getSafe()) |source| source.specific.bubble.locked else false,
-                .has_sexpr => |sexpr| blk: {
-                    var it = Toybox.treeIterator(connection.source, false);
-                    while (it.next()) |step| {
-                        if (step.children_already_visited) continue;
-                        const cur = step.index;
-                        if (cur.hasTag(.postit)) {
-                            it.skipChildren();
-                        }
-                        if (cur.hasTag(.sexpr)) {
-                            if (Lego.Specific.Sexpr.equalValue(cur, sexpr)) {
-                                break :blk false;
-                            } else {
-                                it.skipChildren();
+                // unlock if any of the conditions is met
+                for (workspace.unlock_connections.constSlice()) |connection| {
+                    if (connection.target != lego.index) continue;
+                    connection.target.get().specific.bubble.locked = connection.target.get().specific.bubble.locked and switch (connection.condition) {
+                        .all_scorers_solved => blk: {
+                            var cur = connection.source;
+                            while (cur != .nothing) : (cur = Toybox.next_preordered(cur, connection.source).next) {
+                                if (cur.hasTag(.scorer)) {
+                                    if (cur.get().specific.scorer.score == null) break :blk true;
+                                }
                             }
-                        }
-                    }
-                    break :blk true;
-                },
-            };
+                            break :blk false;
+                        },
+                        .always => if (connection.source.getSafe()) |source| source.specific.bubble.locked else false,
+                        .has_sexpr => |sexpr| blk: {
+                            var it = Toybox.treeIterator(connection.source, false);
+                            while (it.next()) |step| {
+                                if (step.children_already_visited) continue;
+                                const cur = step.index;
+                                if (cur.hasTag(.postit)) {
+                                    it.skipChildren();
+                                }
+                                if (cur.hasTag(.sexpr)) {
+                                    if (Lego.Specific.Sexpr.equalValue(cur, sexpr)) {
+                                        break :blk false;
+                                    } else {
+                                        it.skipChildren();
+                                    }
+                                }
+                            }
+                            break :blk true;
+                        },
+                    };
+                }
+            }
         }
     }
 
@@ -6519,18 +6526,6 @@ const Workspace = struct {
         //     }
         // }
 
-        if (true) { // set fnkboxes for fnkname_holders
-            for (toybox.all_legos.items) |*lego| {
-                if (!lego.exists) continue;
-                switch (lego.specific) {
-                    .fnkname_holder => |*fnkname_holder| {
-                        fnkname_holder.fnkbox = getFnkboxForFnk(workspace, lego.index.children(.fnkname_holder).fnkname) orelse .nothing;
-                    },
-                    else => {},
-                }
-            }
-        }
-
         if (true) { // pills decay
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
@@ -6643,7 +6638,13 @@ const Workspace = struct {
                     cur = original_tree.next;
                 }
             } else if (old_t <= 0.01) { // regenerate children
-                if (true) { // add a fresh case
+                const isUnlocked = struct {
+                    pub fn anon(i: Lego.Index) bool {
+                        return if (i.getSafe()) |l| !l.specific.bubble.locked else false;
+                    }
+                }.anon;
+
+                if (isUnlocked(workspace.toolbar_unlocks.case_with_wildcards)) { // add a fresh case
                     const new_name_1 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
                     const new_name_2 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
                     math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_1);
@@ -6665,7 +6666,7 @@ const Workspace = struct {
                     Toybox.addChildLast(workspace.toolbar_left, index, undo_stack);
                 }
 
-                if (true) { // add a fresh lens
+                if (isUnlocked(workspace.toolbar_unlocks.lenses)) { // add a fresh lens
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildMicroscope(
                         .new(1, 13),
                         .new(2.5, 12.5),
@@ -6674,14 +6675,14 @@ const Workspace = struct {
                     ), undo_stack);
                 }
 
-                if (true) { // add a listviewer
+                if (isUnlocked(workspace.toolbar_unlocks.list_viewer)) { // add a listviewer
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildListViewer(
                         .{ .pos = .new(2, 6), .scale = 0.5 },
                         undo_stack,
                     ), undo_stack);
                 }
 
-                if (true) { // add a metaviewer
+                if (isUnlocked(workspace.toolbar_unlocks.meta_viewer)) { // add a metaviewer
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildMetaViewer(
                         .{ .pos = .new(1.5, 9), .scale = 0.5 },
                         undo_stack,
@@ -6965,6 +6966,18 @@ const Workspace = struct {
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
                     crank.enabled = Toybox.findAncestor(lego.index, .executor).get().specific.executor.animation != null;
+                }
+            }
+        }
+
+        if (true) { // set fnkboxes for fnkname_holders
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                switch (lego.specific) {
+                    .fnkname_holder => |*fnkname_holder| {
+                        fnkname_holder.fnkbox = getFnkboxForFnk(workspace, lego.index.children(.fnkname_holder).fnkname) orelse .nothing;
+                    },
+                    else => {},
                 }
             }
         }
@@ -7428,15 +7441,17 @@ const Workspace = struct {
         var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
         defer scoring_run.deinit(false);
 
-        const fnkbody = scoring_run.findFunktion(fnkname_value) catch |err| switch (err) {
+        const fnkbody = scoring_run.findFunktion(fnkname_value, .new) catch |err| switch (err) {
             error.OutOfMemory => |x| return x,
             error.BAD_INPUT,
             error.FnkNotFound,
             error.NoMatchingCase,
             error.InvalidMetaFnk,
             error.UsedUndefinedVariable,
-            => return null,
-        };
+            error.TookTooLong,
+            => @panic("unreachable?"),
+            // => return null,
+        } orelse return null;
         const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(new_point, fnkbody.*, scratch, undo_stack);
         const original_fnkname = try Lego.Specific.Garland.stealFnkname(
             garland,
@@ -7476,9 +7491,9 @@ const Workspace = struct {
         var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
         defer scoring_run.deinit(false);
 
-        var exec: core.ExecutionThread = try .init(input_value, fnkname_value, &scoring_run);
+        var exec: core.ExecutionThread = try .init(input_value, fnkname_value, &scoring_run, .new);
         defer exec.deinit();
-        const result_value = try exec.getFinalResultBoundedV2(&scoring_run, 10_000, true, true, true);
+        const result_value = try exec.getFinalResultBoundedV2(&scoring_run, .new);
 
         const garland = try Toybox.buildGarland(new_point, &.{
             try Toybox.buildCase(undefined, .{

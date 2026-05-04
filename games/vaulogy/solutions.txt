@@ -6,6 +6,22 @@ changeLowercaseToNextCyclingOnC {
     c -> a;
 }
 
+changeLowercaseToPrevCyclingOnC {
+    a -> c;
+    b -> a;
+    c -> b;
+}
+
+shiftTopHalf {
+    (@x . <empty>) -> changeLowercaseToNextCyclingOnC: @x;
+}
+
+shiftInUnknownDirection {
+    (a . @x) -> changeLowercaseToNextCyclingOnC: @x;
+    (b . @x) -> @x;
+    (c . @x) -> changeLowercaseToPrevCyclingOnC: @x;
+}
+
 uppercase {
     a -> A;
     b -> B;

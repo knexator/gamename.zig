@@ -566,14 +566,15 @@ pub const ScoringRun = struct {
         if (owns_fnks) this.all_fnks.deinit();
     }
 
-    pub fn findFunktion(this: *ScoringRun, name: *const Sexpr) error{
+    pub fn findFunktion(this: *ScoringRun, name: *const Sexpr, config: ExecutionThread.Config) error{
         OutOfMemory,
         BAD_INPUT,
         FnkNotFound,
         NoMatchingCase,
         InvalidMetaFnk,
         UsedUndefinedVariable,
-    }!*const FnkBody {
+        TookTooLong,
+    }!?*const FnkBody {
         if (this.all_fnks.getPtr(name)) |fnk| {
             if (this.used_fnks.get(name) == null) {
                 try this.used_fnks.put(name, {});
@@ -583,13 +584,13 @@ pub const ScoringRun = struct {
         } else switch (name.*) {
             .atom_lit, .atom_var, .empty => {
                 // std.log.err("Fnk not found: {any}", .{name});
-                return error.FnkNotFound;
+                return null;
             },
             .pair => |p| {
                 // try to compile it!
-                var exec = try ExecutionThread.init(p.right, p.left, this);
+                var exec = try ExecutionThread.init(p.right, p.left, this, config);
                 defer exec.deinit();
-                const asdf = try exec.getFinalResult(this);
+                const asdf = try exec.getFinalResultBoundedV2(this, config);
                 this.score.compile_time += exec.score.successful_matches;
                 const cases = try fnkFromSexpr(asdf, this.mem.arena_for_cases.allocator(), &this.mem.pool_for_sexprs);
                 if (DEBUG) {
@@ -608,7 +609,7 @@ pub const StackThing = struct {
     cur_cases: []const MatchCaseDefinition,
     cur_bindings: Bindings,
 
-    pub fn init(input: *const Sexpr, fn_name: *const Sexpr, scoring_run: *ScoringRun, allow_undefined_fnks: bool) !union(enum) {
+    pub fn init(input: *const Sexpr, fn_name: *const Sexpr, scoring_run: *ScoringRun, config: ExecutionThread.Config) !union(enum) {
         builtin: *const Sexpr,
         stack_thing: StackThing,
     } {
@@ -626,13 +627,10 @@ pub const StackThing = struct {
         //         return err,
         // };
 
-        const fnkbody = scoring_run.findFunktion(fn_name) catch |err| switch (err) {
-            else => return err,
-            error.FnkNotFound => if (allow_undefined_fnks)
-                return .{ .builtin = input }
-            else
-                return err,
-        };
+        const fnkbody = (try scoring_run.findFunktion(fn_name, config)) orelse if (config.allow_undefined_fnks)
+            return .{ .builtin = input }
+        else
+            return error.FnkNotFound;
 
         const bindings = std.ArrayList(Binding).init(scoring_run.mem.arena_for_bindings.allocator());
         const cases = fnkbody.*.cases.items;
@@ -703,9 +701,10 @@ pub const ExecutionThread = struct {
         input: *const Sexpr,
         fn_name: *const Sexpr,
         scoring_run: *ScoringRun,
+        config: Config,
     ) !ExecutionThread {
         var stack = std.ArrayList(StackThing).init(scoring_run.mem.allocator_for_stack);
-        switch (try StackThing.init(input, fn_name, scoring_run, false)) {
+        switch (try StackThing.init(input, fn_name, scoring_run, config)) {
             .builtin => |res| return ExecutionThread{
                 .active_value = res,
                 .stack = stack,
@@ -738,7 +737,7 @@ pub const ExecutionThread = struct {
         var permanent_stuff = scoring_run.mem;
         const fn_name = try parsing.parseSingleSexpr(fn_name_raw, &permanent_stuff.pool_for_sexprs);
         const input = try parsing.parseSingleSexpr(input_raw, &permanent_stuff.pool_for_sexprs);
-        return ExecutionThread.init(input, fn_name, scoring_run);
+        return ExecutionThread.init(input, fn_name, scoring_run, .old);
     }
 
     pub const Result = union(enum) {
@@ -850,21 +849,21 @@ pub const ExecutionThread = struct {
     }
 
     pub fn advanceStep(this: *ExecutionThread, scoring_run: *ScoringRun) !?*const Sexpr {
-        return try this.advanceStepV2(scoring_run, false, false, false);
+        return try this.advanceStepV2(scoring_run, .old);
     }
 
-    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool, allow_unbound_variables: bool, allow_undefined_fnks: bool) !?*const Sexpr {
+    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, config: Config) !?*const Sexpr {
         var permanent_stuff = scoring_run.mem;
         if (this.stack.items.len > 0) {
             const last_stack_ptr: *StackThing = &this.stack.items[this.stack.items.len - 1];
             const initial_bindings_count = last_stack_ptr.cur_bindings.items.len;
             for (last_stack_ptr.cur_cases) |case| {
-                if (!(try generateBindingsV2(case.pattern, this.active_value, &last_stack_ptr.cur_bindings, allow_unbound_variables))) {
+                if (!(try generateBindingsV2(case.pattern, this.active_value, &last_stack_ptr.cur_bindings, config.allow_unbound_variables))) {
                     undoLastBindings(&last_stack_ptr.cur_bindings, initial_bindings_count);
                     continue;
                 }
                 const argument_fill = try partiallyFillTemplateV2(case.template, last_stack_ptr.cur_bindings.items, &permanent_stuff.pool_for_sexprs);
-                if (!argument_fill.complete and !allow_unbound_variables) {
+                if (!argument_fill.complete and !config.allow_unbound_variables) {
                     return error.UsedUndefinedVariable;
                 }
                 const argument = argument_fill.result;
@@ -878,7 +877,7 @@ pub const ExecutionThread = struct {
 
                 this.score.successful_matches += 1;
 
-                const new_thing = try StackThing.init(this.active_value, case.fnk_name, scoring_run, allow_undefined_fnks);
+                const new_thing = try StackThing.init(this.active_value, case.fnk_name, scoring_run, config);
                 switch (new_thing) {
                     .stack_thing => |x| {
                         try this.stack.append(x);
@@ -891,7 +890,7 @@ pub const ExecutionThread = struct {
 
                 return null;
             }
-            if (allow_no_cases) {
+            if (config.allow_no_cases) {
                 _ = this.stack.pop();
                 return null;
             } else {
@@ -910,14 +909,31 @@ pub const ExecutionThread = struct {
         }
     }
 
-    pub fn getFinalResultBounded(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize) !*const Sexpr {
-        return this.getFinalResultBoundedV2(scoring_run, max_steps, true);
-    }
+    pub const Config = struct {
+        allow_no_cases: bool,
+        allow_unbound_variables: bool,
+        allow_undefined_fnks: bool,
+        max_steps: ?usize,
 
-    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool, allow_unbound_variables: bool, allow_undefined_fnks: bool) !*const Sexpr {
-        if (max_steps) |max| {
+        pub const new: Config = .{
+            .allow_no_cases = true,
+            .allow_unbound_variables = true,
+            .allow_undefined_fnks = true,
+            .max_steps = 100_000,
+        };
+
+        pub const old: Config = .{
+            .allow_no_cases = false,
+            .allow_unbound_variables = false,
+            .allow_undefined_fnks = false,
+            .max_steps = null,
+        };
+    };
+
+    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, config: Config) !*const Sexpr {
+        if (config.max_steps) |max| {
             for (0..max) |_| {
-                if (try this.advanceStepV2(scoring_run, allow_no_cases, allow_unbound_variables, allow_undefined_fnks)) |res| {
+                if (try this.advanceStepV2(scoring_run, config)) |res| {
                     return res;
                 }
             } else return error.TookTooLong;
@@ -949,7 +965,7 @@ const SingleRunHelper = struct {
 
         const fn_name = try parsing.parseSingleSexpr(fn_name_raw, &result.permanent_stuff.pool_for_sexprs);
         const input = try parsing.parseSingleSexpr(input_raw, &result.permanent_stuff.pool_for_sexprs);
-        result.execution = try ExecutionThread.init(input, fn_name, &result.scoring_run);
+        result.execution = try ExecutionThread.init(input, fn_name, &result.scoring_run, .old);
     }
 
     pub fn deinit(this: *SingleRunHelper) void {
@@ -1244,7 +1260,7 @@ test "main test" {
     const expected = Sexpr.doLit("output");
     try expectEqualSexprs(&expected, actual);
 
-    var exec = try ExecutionThread.init(&Sexpr.doLit("input"), &Sexpr.doLit("fn_name"), &game.scoring_run);
+    var exec = try ExecutionThread.init(&Sexpr.doLit("input"), &Sexpr.doLit("fn_name"), &game.scoring_run, .old);
     defer exec.deinit();
     try expectEqualSexprs(&expected, try exec.getFinalResult(&game.scoring_run));
 }
