@@ -456,6 +456,24 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .fnk_name = "shiftPair",
+        .description = "Shift both halves",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                const k1 = @mod(k, values.len);
+                const k2 = @divFloor(k, values.len);
+                if (k2 < values.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(values[k1], values[k2])),
+                        .expected = try store(pool, Sexpr.doPair(values[@mod(k1 + 1, values.len)], values[@mod(k2 + 1, values.len)])),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
         .fnk_name = "pairToUppercase",
         .description = "Make both halves into uppercase.",
         .initial_definition = null,

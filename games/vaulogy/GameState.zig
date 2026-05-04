@@ -4167,6 +4167,30 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_nested_strands, .target = intro_to_mixing_both_tricks, .condition = .all_scorers_solved });
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const final_tutorial = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "You now know", "everything!" });
+            postit_pos.addInPlace(.new(7.7, 0.8));
+            postit.addFromText(postit_pos, &.{"Good luck!"});
+
+            const level_index = levelIndex("shiftPair");
+            postit_pos = .new(0, 0);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{level_index}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, final_tutorial, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_mixing_both_tricks, .target = final_tutorial, .condition = .all_scorers_solved });
+
         if (true) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
