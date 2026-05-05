@@ -147,8 +147,8 @@ pub const levels: []const Level = &.{
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                     const random = random_instance.random();
-                    const left = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, if (k < 10) 2 else 4);
-                    const right = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, if (k < 10) 2 else 4);
+                    const left = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 0, if (k < 10) 2 else 4);
+                    const right = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 0, if (k < 10) 2 else 4);
                     return .{
                         .input = try store(pool, Sexpr.doPair(left, right)),
                         .expected = try store(pool, Sexpr.doPair(right, left)),
@@ -516,15 +516,23 @@ pub const levels: []const Level = &.{
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                if (k < 100) {
-                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
-                    const random = random_instance.random();
-                    const input = try randomSexpr(pool, &Vals.lowercase, random, 5);
-                    return .{
-                        .input = input,
-                        .expected = Sexpr.fromBool(Helpers.hasSomeB(input)),
-                    };
-                } else return null;
+                switch (k) {
+                    0...2 => return .{
+                        .input = Vals.abc[k],
+                        .expected = Sexpr.fromBool(Helpers.hasSomeB(Vals.abc[k])),
+                    },
+                    3...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        const use_b = @mod(k, 2) == 1;
+                        const input = try randomSexpr(pool, if (use_b) Vals.abc else &.{ Vals.lowercase[0], Vals.lowercase[2] }, random, 1, if (k < 6) 1 else 5);
+                        return .{
+                            .input = input,
+                            .expected = Sexpr.fromBool(Helpers.hasSomeB(input)),
+                        };
+                    },
+                    else => return null,
+                }
             }
         }.generate_sample,
     },
@@ -635,7 +643,7 @@ pub const levels: []const Level = &.{
                         const v = if (random.float(f32) < 0.05)
                             Vals.lowercase[1]
                         else
-                            try randomSexpr(pool, &Vals.lowercase, random, 3);
+                            try randomSexpr(pool, &Vals.lowercase, random, 0, 3);
                         has_b = has_b or Helpers.isB(v);
                         input = try store(pool, Sexpr.doPair(v, input));
                     }
@@ -1154,13 +1162,14 @@ fn randomChoice(options: []const *const Sexpr, random: std.Random) *const Sexpr 
     return options[random.uintLessThan(usize, options.len)];
 }
 
-fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random, max_depth: usize) !*const Sexpr {
-    if (max_depth == 0 or random.float(f32) < 0.3) {
+fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random, min_depth: usize, max_depth: usize) !*const Sexpr {
+    assert(min_depth <= max_depth);
+    if (max_depth == 0 or (min_depth == 0 and random.float(f32) < 0.3)) {
         return randomChoice(atoms, random);
     } else {
         return try store(pool, Sexpr.doPair(
-            try randomSexpr(pool, atoms, random, max_depth - 1),
-            try randomSexpr(pool, atoms, random, max_depth - 1),
+            try randomSexpr(pool, atoms, random, min_depth -| 1, max_depth - 1),
+            try randomSexpr(pool, atoms, random, min_depth -| 1, max_depth - 1),
         ));
     }
 }

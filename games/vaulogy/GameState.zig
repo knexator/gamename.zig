@@ -4191,7 +4191,24 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, final_tutorial, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_mixing_both_tricks, .target = final_tutorial, .condition = .all_scorers_solved });
 
-        if (true) {
+        bubble_pos.addInPlace(.new(30, 0));
+        const first_recursion = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const level_index = levelIndex("hasSomeB");
+            const scorer = try Toybox.buildScorer(.{ .pos = .new(0, 0) }, &.{level_index}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, first_recursion, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion, .condition = .all_scorers_solved });
+
+        if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
                 try Toybox.buildScorer(.{ .pos = .new(0, 5) }, &.{ 0, 1 }, &.{ null, null }, undo_stack),
@@ -4442,8 +4459,8 @@ const Workspace = struct {
             }
         }
 
-        if (true) { // tutorial postits
-            var postit_pos: Vec2 = .new(370, -3);
+        if (false) { // tutorial postits
+            var postit_pos: Vec2 = .new(470, -3);
             // dst.centerCameraAt(.{ .pos = postit_pos.add(.new(13, 8)), .scale = 4.5 * 2.75 }, true);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = dst.main_area, .undo_stack = undo_stack };
@@ -4621,7 +4638,7 @@ const Workspace = struct {
         defer zone.deinit();
         const undo_stack = &workspace.undo_stack;
 
-        const debug_all_bubbles_unlocked = true and @import("builtin").mode == .Debug;
+        const debug_all_bubbles_unlocked = true or @import("builtin").mode == .Debug;
 
         const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
