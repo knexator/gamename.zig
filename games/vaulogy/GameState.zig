@@ -491,6 +491,10 @@ pub const Lego = struct {
                         defer exec.deinit();
 
                         const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
+                            error.TookTooLong => {
+                                failed_any = true;
+                                break;
+                            },
                             // error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
                             //     failed_any = true;
                             //     break;
@@ -499,7 +503,6 @@ pub const Lego = struct {
                             error.InvalidMetaFnk,
                             error.UsedUndefinedVariable,
                             error.FnkNotFound,
-                            error.TookTooLong,
                             error.BAD_INPUT,
                             => @panic("unreachable?"),
                             error.OutOfMemory => |x| return x,
@@ -4192,7 +4195,31 @@ const Workspace = struct {
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_mixing_both_tricks, .target = final_tutorial, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const first_recursion = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const first_recursion_cruel = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Most assignments", "will be", "unreasonably", "hard" });
+            postit_pos.addInPlace(.new(7.7, 0.8));
+            postit.addFromText(postit_pos, &.{ "Don't hesitate", "to look on the", "slides on top", "for a hint" });
+
+            const level_index = levelIndex("shiftAll");
+            const scorer = try Toybox.buildScorer(.{ .pos = .new(0, 0) }, &.{level_index}, &.{.new(0, 8.5)}, undo_stack);
+            Toybox.addChildLast(bp, scorer, undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, first_recursion_cruel, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion_cruel, .condition = .all_scorers_solved });
+
+        bubble_pos.addInPlace(.new(0, -40));
+        const first_recursion_nicer = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4205,8 +4232,8 @@ const Workspace = struct {
 
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, first_recursion, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion, .condition = .all_scorers_solved });
+        Toybox.addChildLast(dst.main_area, first_recursion_nicer, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion_nicer, .condition = .all_scorers_solved });
 
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{

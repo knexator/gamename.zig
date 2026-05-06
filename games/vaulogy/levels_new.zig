@@ -57,6 +57,25 @@ const Helpers = struct {
             return hasSomeB(in.pair.left) or hasSomeB(in.pair.right);
         } else return isB(in);
     }
+
+    fn shift(in: *const Sexpr) ?*const Sexpr {
+        for (0..3) |k| {
+            if (in.equals(Vals.abc[k])) {
+                return Vals.abc[@mod(k + 1, 3)];
+            }
+        } else return null;
+    }
+
+    fn shiftAll(pool: *SexprPool, in: *const Sexpr) !*const Sexpr {
+        return switch (in.*) {
+            else => in,
+            .atom_lit => shift(in) orelse in,
+            .pair => |pair| try store(pool, Sexpr.doPair(
+                try shiftAll(pool, pair.left),
+                try shiftAll(pool, pair.right),
+            )),
+        };
+    }
 };
 
 pub const levels: []const Level = &.{
@@ -650,6 +669,25 @@ pub const levels: []const Level = &.{
                     return .{
                         .input = input,
                         .expected = Sexpr.fromBool(has_b),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "shiftAll",
+        .description = "Shift each letter",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    const input = try randomSexpr(pool, values, random, if (k < 10) 1 else 2, 5);
+                    return .{
+                        .input = input,
+                        .expected = try Helpers.shiftAll(pool, input),
                     };
                 } else return null;
             }
