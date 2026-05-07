@@ -76,6 +76,21 @@ const Helpers = struct {
             )),
         };
     }
+
+    fn atomsCount(in: *const Sexpr) usize {
+        return switch (in.*) {
+            .empty, .atom_var => 0,
+            .atom_lit => 1,
+            .pair => |pair| atomsCount(pair.left) + atomsCount(pair.right),
+        };
+    }
+
+    fn maxDepth(in: *const Sexpr) usize {
+        return switch (in.*) {
+            .empty, .atom_var, .atom_lit => 0,
+            .pair => |pair| 1 + @max(maxDepth(pair.left), maxDepth(pair.right)),
+        };
+    }
 };
 
 pub const levels: []const Level = &.{
@@ -689,6 +704,56 @@ pub const levels: []const Level = &.{
                         .input = input,
                         .expected = try Helpers.shiftAll(pool, input),
                     };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "biggestHalf",
+        .description = "Return the half with more letters",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    while (true) {
+                        const left = try randomSexpr(pool, values, random, 1, if (k < 5) 2 else 5);
+                        const right = try randomSexpr(pool, values, random, 1, if (k < 5) 2 else 5);
+                        const ln = Helpers.atomsCount(left);
+                        const rn = Helpers.atomsCount(right);
+                        if (ln == rn) continue;
+                        return .{
+                            .input = try store(pool, .doPair(left, right)),
+                            .expected = if (ln > rn) left else right,
+                        };
+                    }
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "deepestHalf",
+        .description = "Return the half with deeper nesting",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    while (true) {
+                        const left = try randomSexpr(pool, values, random, 1, if (k < 5) 3 else 5);
+                        const right = try randomSexpr(pool, values, random, 1, if (k < 5) 3 else 5);
+                        const ln = Helpers.maxDepth(left);
+                        const rn = Helpers.maxDepth(right);
+                        if (ln == rn) continue;
+                        return .{
+                            .input = try store(pool, .doPair(left, right)),
+                            .expected = if (ln > rn) left else right,
+                        };
+                    }
                 } else return null;
             }
         }.generate_sample,

@@ -154,6 +154,31 @@ letterToBothCases {
     }
 }
 
+biggestHalf {
+    ((@a . @b) . (@c . @d)) -> keepRemovingOne: ((@a . @b) . (@c . @d)) {
+        ((@x . @y) . @single) -> (@a . @b);
+        (@single . (@x . @y)) -> (@c . @d);
+    }
+    ((@x . @y) . @single) -> (@x . @y);
+    (@single . (@x . @y)) -> (@x . @y);
+}
+
+keepRemovingOne {
+    ((@a . @b) . (@c . @d)) -> removeOne: (@a . @b) {
+        @x -> removeOne: (@c . @d) {
+            @y -> keepRemovingOne: (@x . @y);
+        }
+    }
+}
+
+removeOne {
+    ((@x . @y) . @z) -> removeOne: (@x . @y) {
+        @r -> (@r . @z);
+    }
+    (@single . @z) -> @z;
+}
+
+
 // custom
 reverse_stackless {
     (nil . @acc) -> @acc;

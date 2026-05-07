@@ -4234,6 +4234,42 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_nicer, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion_nicer, .condition = .all_scorers_solved });
+        bubble_pos.addInPlace(.new(0, 40));
+
+        bubble_pos.addInPlace(.new(0, 40));
+        const optional = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "These are", "even harder", "optional", "assignments" });
+            postit_pos.addInPlace(.new(7.7, 0.1));
+            postit.addFromText(postit_pos, &.{ "They will be a bit", "spoiled by later", "assignments,", "so it's more fun to", "try them now" });
+            postit_pos.addInPlace(.new(7.7, 0.2));
+            postit.addFromText(postit_pos, &.{ "But don't", "expect to", "succeed!" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -2) }, &.{
+                levelIndex("biggestHalf"),
+            }, &.{
+                .new(-6, 8.5),
+            }, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-4, 2) }, &.{
+                levelIndex("deepestHalf"),
+            }, &.{
+                .new(6, 8.5),
+            }, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, optional, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = first_recursion_cruel, .target = optional, .condition = .all_scorers_solved });
+        bubble_pos.addInPlace(.new(0, -40));
 
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
