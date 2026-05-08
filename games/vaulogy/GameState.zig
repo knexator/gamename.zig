@@ -4317,7 +4317,8 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             const postit_pos: Vec2 = .new(-5, 2);
-            postit.addFromText(postit_pos, &.{ "Note that a list", "might have a 'bb'", "element; this", "assignment asks", "only for 'b' elements" });
+            postit.addFromText(postit_pos, &.{ "Note that this list", "has no 'b',", "only an element", "that has two 'b's" });
+            Toybox.addChildLast(bp, try Toybox.buildListViewer(.{ .pos = postit_pos.add(.new(5, 0)) }, try Toybox.buildSexprFromText(.{ .scale = 2 }, " ((b . b) . (c . nil))", false, false, undo_stack), undo_stack), undo_stack);
 
             Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -8) }, &.{
                 levelIndex("second"),
