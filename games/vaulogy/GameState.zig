@@ -3308,7 +3308,7 @@ pub const Toybox = struct {
         return result;
     }
 
-    pub fn buildListViewer(point: Point, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildListViewer(point: Point, value: ?Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         const scrollbar = Lego.Specific.Scrollbar.build(
             .fromCenterAndSize(.new(6.5, 0), .new(0.5, 5)),
             0,
@@ -3317,7 +3317,7 @@ pub const Toybox = struct {
         );
 
         return try createWithChildren(point, .{ .list_viewer = .{} }, &.{
-            try buildSexpr(.{ .scale = 2 }, .empty, false, false, undo_stack),
+            value orelse try buildSexpr(.{ .scale = 2 }, .empty, false, false, undo_stack),
             scrollbar,
             try Toybox.new(.{}, .{
                 .scrollable_list = .{
@@ -4034,7 +4034,7 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(7.2, 0.3));
             postit.addFromText(postit_pos, &.{ "You can use", "old solutions", "as part of", "new solutions" });
             postit_pos.addInPlace(.new(7.1, 0.2));
-            postit.addFromText(postit_pos, &.{ "For example", "this assignment", "is almost already", "solved by the", "first assignemnt" });
+            postit.addFromText(postit_pos, &.{ "For example", "this assignment", "is almost already", "solved by the", "first assignment" });
 
             postit_pos = .new(-6.6, 0.5);
             postit.addFromParts(postit_pos, &.{
@@ -4270,6 +4270,68 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, optional, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = first_recursion_cruel, .target = optional, .condition = .all_scorers_solved });
         bubble_pos.addInPlace(.new(0, -40));
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "All assignments", "take and return", "a single vau" });
+            postit_pos.addInPlace(.new(7.3, 0.3));
+            postit.addFromText(postit_pos, &.{ "But sometimes", "this isn't enough!" });
+            postit_pos.addInPlace(.new(7.4, 0.2));
+            postit.addFromText(postit_pos, &.{ "Luckily, we can", "encode any", "sequence of vaus", "into a single one" });
+
+            postit_pos = .new(-7, -1);
+            postit.addFromText(postit_pos, &.{ "The top half is", "the first element,", "the bottom half", "is the rest" });
+            postit_pos.addInPlace(.new(7.3, 0.2));
+            postit.addFromText(postit_pos, &.{ "When there are", "no elements left", "we use the", "'empty list' vau:" });
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos.add(.new(4, 0)) }, .{ .atom_lit = "nil" }, false, false, undo_stack), undo_stack);
+
+            postit_pos = .new(-7.2, 6.2);
+            postit.addFromText(postit_pos, &.{ "I've added this", "to your toolbar:" });
+            postit.addFromText(postit_pos.add(.new(15.8, 1.1)), &.{ "It lets you", "easily edit", "a list of vaus" });
+            postit_pos.addInPlace(.new(5.1, 0.1));
+            Toybox.addChildLast(bp, try Toybox.buildListViewer(.{ .pos = postit_pos }, try Toybox.buildSexprFromText(.{ .scale = 2 }, "(a . (b . (c . nil)))", false, false, undo_stack), undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, intro_to_lists, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = first_recursion_cruel, .target = intro_to_lists, .condition = .all_scorers_solved });
+        dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            const postit_pos: Vec2 = .new(-5, 2);
+            postit.addFromText(postit_pos, &.{ "Note that a list", "might have a 'bb'", "element; this", "assignment asks", "only for 'b' elements" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -8) }, &.{
+                levelIndex("second"),
+            }, &.{.new(8, -4.5)}, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("listHasSomeB"),
+            }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, lists_1, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_lists, .target = lists_1, .condition = .all_scorers_solved });
+        dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
 
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
@@ -6851,6 +6913,7 @@ const Workspace = struct {
                 if (isUnlocked(workspace.toolbar_unlocks.list_viewer)) { // add a listviewer
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildListViewer(
                         .{ .pos = .new(2, 6), .scale = 0.5 },
+                        null,
                         undo_stack,
                     ), undo_stack);
                 }

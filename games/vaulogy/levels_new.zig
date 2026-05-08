@@ -648,7 +648,7 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "listHasSomeB",
         // real intro to lists
-        .description = "Check if the given list has a plain 'B' element.",
+        .description = "Check if the given list has a 'b' element.",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
