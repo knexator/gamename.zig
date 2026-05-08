@@ -58,6 +58,16 @@ const Helpers = struct {
         } else return isB(in);
     }
 
+    fn last(in: *const Sexpr) *const Sexpr {
+        return switch (in.*) {
+            else => @panic("bad input"),
+            .pair => |pair| if (pair.right.isNil())
+                pair.left
+            else
+                last(pair.right),
+        };
+    }
+
     fn shift(in: *const Sexpr) ?*const Sexpr {
         for (0..3) |k| {
             if (in.equals(Vals.abc[k])) {
@@ -690,6 +700,32 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .fnk_name = "last",
+        // simplest intro to lists
+        .description = "Get the last element of the list.",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                switch (k) {
+                    0...3 => return .{
+                        .input = try toList(pool, Vals.lowercase[0 .. 2 + k]),
+                        .expected = Vals.lowercase[1 + k],
+                    },
+                    4...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        const list = try randomList(pool, &Vals.lowercase, random, random.intRangeAtMost(usize, 1, 12));
+                        return .{
+                            .input = list,
+                            .expected = Helpers.last(list),
+                        };
+                    },
+                    else => return null,
+                }
+            }
+        }.generate_sample,
+    },
+    .{
         .fnk_name = "shiftAll",
         .description = "Shift each letter",
         .initial_definition = null,
@@ -910,7 +946,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = "mostCommonBoolean",
-        .description = "Return the most common element of the list.",
+        .description = "Return the most common element",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
@@ -966,6 +1002,37 @@ pub const levels: []const Level = &.{
                     return .{
                         .input = try toList(pool, all_elements),
                         .expected = Sexpr.fromBool(num_true > num_false),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "findSecondLongest",
+        .description = "Return the second-longest list",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    var elements_count = 3 + random.uintLessThan(usize, if (sample_index < 5) 1 else 12);
+                    // long samples
+                    if (sample_index > 90) elements_count += 20;
+                    const counts = try arena.alloc(usize, elements_count);
+                    counts[0] = 1 + random.uintLessThan(usize, if (sample_index < 3) 1 else 10);
+                    for (counts[1..], 0..) |*dst, n| {
+                        dst.* = counts[n] + 1 + random.uintLessThan(usize, 6);
+                    }
+                    const elements = try arena.alloc(*const Sexpr, elements_count);
+                    for (counts, elements) |count, *dst| {
+                        dst.* = try randomList(pool, &Vals.lowercase, random, count);
+                    }
+                    const result = elements[elements_count - 2];
+                    random.shuffle(*const Sexpr, elements);
+                    return .{
+                        .input = try toList(pool, elements),
+                        .expected = result,
                     };
                 } else return null;
             }

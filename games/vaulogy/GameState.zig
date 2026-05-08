@@ -4316,23 +4316,58 @@ const Workspace = struct {
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            const postit_pos: Vec2 = .new(-5, 2);
-            postit.addFromText(postit_pos, &.{ "Note that this list", "has no 'b',", "only an element", "that has two 'b's" });
-            Toybox.addChildLast(bp, try Toybox.buildListViewer(.{ .pos = postit_pos.add(.new(5, 0)) }, try Toybox.buildSexprFromText(.{ .scale = 2 }, " ((b . b) . (c . nil))", false, false, undo_stack), undo_stack), undo_stack);
+            const postit_pos: Vec2 = .new(-5, -3);
+            postit.addFromText(postit_pos, &.{ "Note that this list", "has three", "elements,", "none of them 'b'" });
+            Toybox.addChildLast(bp, try Toybox.buildListViewer(.{ .pos = postit_pos.add(.new(5, 0)) }, try Toybox.buildSexprFromText(
+                .{ .scale = 2 },
+                "(a . ((b . b) . (c . nil)))",
+                false,
+                false,
+                undo_stack,
+            ), undo_stack), undo_stack);
 
             Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -8) }, &.{
                 levelIndex("second"),
             }, &.{.new(8, -4.5)}, undo_stack), undo_stack);
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 3) }, &.{
                 levelIndex("listHasSomeB"),
             }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("last"),
+            }, &.{.new(5, 10.5)}, undo_stack), undo_stack);
 
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_1, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_lists, .target = lists_1, .condition = .all_scorers_solved });
         dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const lists_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -8) }, &.{
+                levelIndex("reverse"),
+            }, &.{.new(8, -4.5)}, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 0) }, &.{
+                levelIndex("mostCommonBoolean"),
+            }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("findSecondLongest"),
+            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, lists_2, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = lists_1, .target = lists_2, .condition = .all_scorers_solved });
 
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{

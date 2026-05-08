@@ -178,6 +178,10 @@ pub const Sexpr = union(enum) {
         };
     }
 
+    pub fn isNil(this: *const Sexpr) bool {
+        return this.isTheLit("nil");
+    }
+
     pub fn isPair(this: *const Sexpr) bool {
         return switch (this.*) {
             .pair => true,
