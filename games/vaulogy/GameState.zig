@@ -455,6 +455,9 @@ pub const Lego = struct {
 
             const core = @import("core.zig");
             pub fn updateStatus(scorer_index: Lego.Index, all_fnks: core.FnkCollection, scratch: std.mem.Allocator) !void {
+                const zone = tracy.initZone(@src(), .{ .name = "update status for scorer" });
+                defer zone.deinit();
+
                 assert(scorer_index.hasTag(.scorer));
                 var mem: core.VeryPermamentGameStuff = .init(scratch);
                 var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &mem);
@@ -1463,6 +1466,9 @@ pub const Lego = struct {
             }
 
             pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator) !void {
+                const zone = tracy.initZone(@src(), .{ .name = "update status for fnkboxes" });
+                defer zone.deinit();
+
                 // TODO(optim): improve somehow
                 const core = @import("core.zig");
                 const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
