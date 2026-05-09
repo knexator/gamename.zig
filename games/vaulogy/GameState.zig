@@ -320,6 +320,7 @@ pub const Lego = struct {
         fnkbox: Fnkbox,
         fnkbox_box: FnkboxBox,
         testcase: Testcase,
+        unloaded_testcase: UnloadedTestcase,
         microscope: Microscope,
         lens: Lens,
         postit: Postit,
@@ -1478,58 +1479,92 @@ pub const Lego = struct {
                 defer temp_mem.deinit();
                 var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
                 defer scoring_run.deinit(false);
+
                 // Update 'actual' values
                 var cur_testcase = FnkboxBox.children(children(fnkbox_index).box).testcases_area.get().tree.first;
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
-                    const t = Testcase.children(cur_testcase);
-                    const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
-                    const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
-                    var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run, .new);
-                    defer exec.deinit();
+                    switch (cur_testcase.get().specific) {
+                        else => unreachable,
+                        .unloaded_testcase => {},
+                        .testcase => {
+                            const t = Testcase.children(cur_testcase);
+                            const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
+                            const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
+                            var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run, .new);
+                            defer exec.deinit();
 
-                    const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
-                        error.FnkNotFound,
-                        error.UsedUndefinedVariable,
-                        error.InvalidMetaFnk,
-                        error.TookTooLong,
-                        => core.Sexpr.builtin.empty,
-                        error.OutOfMemory => return err,
-                        error.BAD_INPUT => @panic("panic"),
-                        error.NoMatchingCase => unreachable,
-                    };
-                    if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
-                        Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(
-                            t.actual.get().local_point,
-                            actual_output,
-                            false,
-                            false,
-                            &workspace.undo_stack,
-                        ), &workspace.undo_stack);
-                        Toybox.destroyFloating(t.actual, &workspace.undo_stack);
+                            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
+                                error.FnkNotFound,
+                                error.UsedUndefinedVariable,
+                                error.InvalidMetaFnk,
+                                error.TookTooLong,
+                                => core.Sexpr.builtin.empty,
+                                error.OutOfMemory => return err,
+                                error.BAD_INPUT => @panic("panic"),
+                                error.NoMatchingCase => unreachable,
+                            };
+                            if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
+                                Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(
+                                    t.actual.get().local_point,
+                                    actual_output,
+                                    false,
+                                    false,
+                                    &workspace.undo_stack,
+                                ), &workspace.undo_stack);
+                                Toybox.destroyFloating(t.actual, &workspace.undo_stack);
+                            }
+                        },
                     }
                 }
+
+                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                defer pool.deinit();
 
                 // Get the actual status and update testcases solved
                 const box_index = children(fnkbox_index).box;
                 cur_testcase = FnkboxBox.children(box_index).testcases_area.get().tree.first;
                 var wrote_first_wrong = false;
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
-                    const actual: Lego.Index = if (fnkbox.execution) |execution|
-                        switch (execution.source) {
-                            .testcase => |source| if (source == cur_testcase)
-                                execution.old_testcase_actual_value
+                    const correct = blk: switch (cur_testcase.get().specific) {
+                        else => unreachable,
+                        .unloaded_testcase => |*unloaded_testcase| {
+                            const sample = (try levels[unloaded_testcase.source.level].generate_sample(unloaded_testcase.source.sample, &pool, scratch)).?;
+                            var exec = try core.ExecutionThread.init(sample.input, fnkname_value, &scoring_run, .new);
+                            defer exec.deinit();
+                            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
+                                error.TookTooLong => break :blk false,
+                                error.OutOfMemory => return err,
+                                error.FnkNotFound,
+                                error.UsedUndefinedVariable,
+                                error.InvalidMetaFnk,
+                                error.BAD_INPUT,
+                                => @panic("panic"),
+                                error.NoMatchingCase => unreachable,
+                            };
+                            const correct = actual_output.equals(sample.expected);
+                            unloaded_testcase.solved = correct;
+                            _ = pool.reset(.retain_capacity);
+                            break :blk correct;
+                        },
+                        .testcase => |*testcase| {
+                            const actual: Lego.Index = if (fnkbox.execution) |execution|
+                                switch (execution.source) {
+                                    .testcase => |source| if (source == cur_testcase)
+                                        execution.old_testcase_actual_value
+                                    else
+                                        Testcase.children(cur_testcase).actual,
+                                    .input => Testcase.children(cur_testcase).actual,
+                                }
                             else
-                                Testcase.children(cur_testcase).actual,
-                            .input => Testcase.children(cur_testcase).actual,
-                        }
-                    else
-                        Testcase.children(cur_testcase).actual;
+                                Testcase.children(cur_testcase).actual;
 
-                    const expected = Testcase.children(cur_testcase).expected;
+                            const expected = Testcase.children(cur_testcase).expected;
 
-                    const correct = Sexpr.equalValue(actual, expected);
-                    cur_testcase.get().specific.testcase.solved = correct;
-
+                            const correct = Sexpr.equalValue(actual, expected);
+                            testcase.solved = correct;
+                            break :blk correct;
+                        },
+                    };
                     if (!correct and !wrote_first_wrong) {
                         fnkbox.status = .{ .unsolved = cur_testcase };
                         wrote_first_wrong = true;
@@ -2158,6 +2193,7 @@ pub const Lego = struct {
             .fnkslist_element,
             .executor,
             .testcase,
+            .unloaded_testcase,
             .pill,
             .postit,
             .postit_text,
@@ -2281,6 +2317,7 @@ pub const Lego = struct {
             .area,
             .scrollable_list_inbetween,
             .testcase,
+            .unloaded_testcase,
             .pill,
             .postit_text,
             .postit_drawing,
@@ -2323,6 +2360,7 @@ pub const Lego = struct {
             .newcase,
             .area,
             .testcase,
+            .unloaded_testcase,
             .pill,
             .postit_text,
             .postit_drawing,
@@ -2334,7 +2372,7 @@ pub const Lego = struct {
         return switch (lego.specific) {
             else => .infinite,
             .sexpr => .fromRect(.fromCenterAndSize(.zero, .new(5, 2.5))),
-            .testcase => .fromRect(Specific.Testcase.relative_bounding_box),
+            .testcase, .unloaded_testcase => .fromRect(Specific.Testcase.relative_bounding_box),
             .scrollable_list => |scrollable_list| if (scrollable_list.clip()) .fromRect(scrollable_list.rect()) else .infinite,
             .fnkbox_testcases => .fromRect(Specific.FnkboxBox.testcases_box),
             .fnkbox => Bounds.fromRect(Specific.FnkboxBox.relative_box)
@@ -2587,7 +2625,7 @@ pub const Toybox = struct {
         return result;
     }
 
-    // TODO(now): remove the dupe_children parameter
+    // TODO(easy): remove the dupe_children parameter
     pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool, undo_stack: ?*UndoStack) !Lego.Index {
         assert(original.get().exists);
         assert(dupe_children);
@@ -3178,12 +3216,15 @@ pub const Toybox = struct {
         return result;
     }
 
-    pub fn buildTestcase(source: union(enum) {
+    pub fn buildTestcase(kind: union(enum) {
         unloaded: Lego.Specific.UnloadedTestcase.Source,
         existing: struct { input: Lego.Index, expected: Lego.Index },
     }, undo_stack: ?*UndoStack) !Lego.Index {
-        switch (source) {
-            .unloaded => @panic("TODO"),
+        switch (kind) {
+            .unloaded => |source| {
+                const testcase = try Toybox.new(.{}, .{ .unloaded_testcase = .{ .source = source } }, undo_stack);
+                return testcase;
+            },
             .existing => |existing| {
                 const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
                 testcase.get().immutable = true;
@@ -3464,7 +3505,7 @@ const Workspace = struct {
     display_fps: bool = false,
     debug_nodraw: bool = false,
 
-    // TODO(now): should maybe live on the bubble itself
+    // TODO(game): should maybe live on the bubble itself
     unlock_connections: std.BoundedArray(BubbleUnlockConnection, 64) = .{},
     toolbar_unlocks: struct {
         case_with_wildcards: Lego.Index = .nothing,
@@ -5054,6 +5095,11 @@ const Workspace = struct {
                             }
                         }
                     },
+                    .unloaded_testcase => {
+                        // TODO(bug): if we got here, it means that the testcase hasn't been expanded in time,
+                        //  or that the culling isn't working
+                        std.log.err("TODO", .{});
+                    },
                     .scrollable_list,
                     .scrollable_list_inbetween,
                     .case,
@@ -5102,6 +5148,7 @@ const Workspace = struct {
                             .executor,
                             .fnkbox_box,
                             .testcase,
+                            .unloaded_testcase,
                             .pill,
                             .postit,
                             .postit_text,
@@ -5646,6 +5693,7 @@ const Workspace = struct {
                     .meta_viewer,
                     .fnkslist_element,
                     .testcase,
+                    .unloaded_testcase,
                     .pill,
                     .area,
                     .microscope,
@@ -6221,6 +6269,11 @@ const Workspace = struct {
                                 continue;
                             }
                         },
+                        .unloaded_testcase => {
+                            // TODO(bug): if we got here, it means that the testcase hasn't been expanded in time,
+                            //  or that the culling isn't working
+                            std.log.err("TODO", .{});
+                        },
                         .scrollable_list_inbetween,
                         .fnkslist,
                         .executor_controls,
@@ -6652,18 +6705,21 @@ const Workspace = struct {
                                     var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
                                     defer pool.deinit();
                                     const samples: []const Lego.Index = blk: {
-                                        var samples_it = level.samplesIterator();
                                         var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
                                         try samples.ensureUnusedCapacity(scratch, 100);
-                                        while (try samples_it.next(&pool, scratch)) |item| {
-                                            try samples.append(scratch, try Toybox.buildTestcase(.{ .existing = .{
-                                                .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
-                                                .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
-                                            } }, undo_stack));
+                                        var sample_index: usize = 0;
+                                        while (try level.generate_sample(sample_index, &pool, scratch) != null) : ({
+                                            sample_index += 1;
                                             _ = pool.reset(.retain_capacity);
+                                        }) {
+                                            try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .{
+                                                .level = level_index,
+                                                .sample = sample_index,
+                                            } }, undo_stack));
                                         }
                                         break :blk try samples.toOwnedSlice(scratch);
                                     };
+                                    std.log.debug("samples len: {d}", .{samples.len});
 
                                     const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(row.get().absolute_point);
 
@@ -6812,6 +6868,7 @@ const Workspace = struct {
                     .button,
                     .scrollbar,
                     .testcase,
+                    .unloaded_testcase,
                     .postit,
                     .postit_text,
                     .postit_drawing,
