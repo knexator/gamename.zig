@@ -1541,8 +1541,21 @@ pub const Lego = struct {
             }
         };
 
+        pub const UnloadedTestcase = struct {
+            solved: bool = false,
+            source: Source,
+
+            pub const Source = struct {
+                level: usize,
+                sample: usize,
+            };
+        };
+
         pub const Testcase = struct {
             solved: bool = false,
+
+            /// points to an unloaded_testcase, if it came from there
+            source: Lego.Index = .nothing,
 
             pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
             pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
@@ -3165,6 +3178,28 @@ pub const Toybox = struct {
         return result;
     }
 
+    pub fn buildTestcase(source: union(enum) {
+        unloaded: Lego.Specific.UnloadedTestcase.Source,
+        existing: struct { input: Lego.Index, expected: Lego.Index },
+    }, undo_stack: ?*UndoStack) !Lego.Index {
+        switch (source) {
+            .unloaded => @panic("TODO"),
+            .existing => |existing| {
+                const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
+                testcase.get().immutable = true;
+                const Testcase = Lego.Specific.Testcase;
+                Toybox.addChildLastV2(Testcase.relative_input_point, testcase, existing.input, undo_stack);
+                Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, existing.expected, undo_stack);
+                Toybox.addChildLastV2(Testcase.relative_actual_point, testcase, try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack), undo_stack);
+                Toybox.addChildLast(testcase, try Toybox.new(.{}, .{ .button = .{
+                    .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
+                    .action = .launch_testcase,
+                } }, undo_stack), undo_stack);
+                return testcase;
+            },
+        }
+    }
+
     pub fn buildFnkboxFromLevel(
         local_point: Point,
         fnkname: Lego.Index,
@@ -3216,7 +3251,8 @@ pub const Toybox = struct {
         fnkname: Lego.Index,
         editable: bool,
         text: []const u8,
-        testcases: []const [2]Lego.Index,
+        /// must be Testcase or UnloadedTestcase
+        testcases: []const Lego.Index,
         initial_definition: ?Lego.Index,
         text_allocator: std.mem.Allocator,
         undo_stack: ?*UndoStack,
@@ -3252,17 +3288,8 @@ pub const Toybox = struct {
             scrollbar,
             blk: {
                 const fnkbox_testcases = try Toybox.new(.{}, .{ .fnkbox_testcases = .{} }, undo_stack);
-                for (testcases) |values| {
-                    const Testcase = Lego.Specific.Testcase;
-                    const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
-                    testcase.get().immutable = true;
-                    Toybox.addChildLastV2(Testcase.relative_input_point, testcase, values[0], undo_stack);
-                    Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, values[1], undo_stack);
-                    Toybox.addChildLastV2(Testcase.relative_actual_point, testcase, try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack), undo_stack);
-                    Toybox.addChildLast(testcase, try Toybox.new(.{}, .{ .button = .{
-                        .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
-                        .action = .launch_testcase,
-                    } }, undo_stack), undo_stack);
+                for (testcases) |testcase| {
+                    assert(isFloating(testcase));
                     Toybox.addChildLast(fnkbox_testcases, testcase, undo_stack);
                 }
                 break :blk fnkbox_testcases;
@@ -6613,7 +6640,8 @@ const Workspace = struct {
                                 .create_fnkbox_for_row => {
                                     const row = workspace.grabbing.index.get().tree.parent;
                                     assert(row.hasTag(.scorer_row));
-                                    const level = levels[row.get().specific.scorer_row.level_index];
+                                    const level_index = row.get().specific.scorer_row.level_index;
+                                    const level = levels[level_index];
                                     const old_fnkname = row.children(.scorer_row).fnkname;
                                     assert(old_fnkname.get().specific.sexpr.kind == .empty);
                                     const new_fnkname = try workspace.findFnkname(old_fnkname.get().local_point, false, level.fnk_name, undo_stack);
@@ -6623,14 +6651,15 @@ const Workspace = struct {
                                     const core = @import("core.zig");
                                     var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
                                     defer pool.deinit();
-                                    const samples: []const [2]Lego.Index = blk: {
+                                    const samples: []const Lego.Index = blk: {
                                         var samples_it = level.samplesIterator();
-                                        var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
+                                        var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                                        try samples.ensureUnusedCapacity(scratch, 100);
                                         while (try samples_it.next(&pool, scratch)) |item| {
-                                            try samples.append(scratch, .{
-                                                try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
-                                                try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
-                                            });
+                                            try samples.append(scratch, try Toybox.buildTestcase(.{ .existing = .{
+                                                .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
+                                                .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
+                                            } }, undo_stack));
                                             _ = pool.reset(.retain_capacity);
                                         }
                                         break :blk try samples.toOwnedSlice(scratch);
