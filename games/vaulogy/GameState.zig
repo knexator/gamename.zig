@@ -6433,12 +6433,16 @@ const Workspace = struct {
                     undo_stack.storeAllData(workspace.main_area);
                     grabbed_element_index = .nothing;
                     plucked = false;
-                    if (getFnkboxForFnk(workspace, hot_index)) |fnkbox_index| {
-                        const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(fnkbox_index.get().absolute_point);
-                        workspace.centerCameraAt(p.applyToLocalPoint(.{
-                            .scale = 8,
-                            .pos = .new(0, 6),
-                        }), false);
+
+                    for (try workspace.allFnkboxes(false, scratch)) |fnkbox_index| {
+                        if (Lego.Specific.Sexpr.equalValue(fnkbox_index.children(.fnkbox).fnkname, hot_index)) {
+                            const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(fnkbox_index.get().absolute_point);
+                            workspace.centerCameraAt(p.applyToLocalPoint(.{
+                                .scale = 8,
+                                .pos = .new(0, 6),
+                            }), false);
+                            break;
+                        }
                     } else {
                         // fnk not found, TODO(game): handle better
                     }
@@ -7005,23 +7009,15 @@ const Workspace = struct {
                 Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
 
-                var count: usize = 0;
-                for (toybox.all_legos.items) |*lego| {
-                    if (!lego.exists) continue;
-                    if (lego.specific.tag() != .fnkbox) continue;
-                    if (workspace.isFreefloating(lego.index)) continue;
-                    if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
-                        if (b.specific.bubble.locked) continue;
-                    }
-                    if (lego.tree.parent != .nothing and lego.tree.parent.hasTag(.bubble)) continue;
+                const fnkboxes = try workspace.allFnkboxes(false, scratch);
+                for (fnkboxes, 0..) |index, k| {
                     Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                        count,
-                        lego.index,
+                        k,
+                        index,
                         null,
                     ), null);
-                    count += 1;
                 }
-                fnkslist.scrollbar(.fnkslist).get().specific.scrollbar.total_length = tof32(count);
+                fnkslist.scrollbar(.fnkslist).get().specific.scrollbar.total_length = tof32(fnkboxes.len);
             }
 
             const rect = toolbar_fnks_rect;
@@ -7243,11 +7239,24 @@ const Workspace = struct {
         }
 
         if (true) { // set fnkboxes for fnkname_holders
+            const zone = tracy.initZone(@src(), .{ .name = "set fnkboxes for fnkname_holders" });
+            defer zone.deinit();
+
+            const fnkboxes = try workspace.allFnkboxes(false, scratch);
+            var map: std.HashMapUnmanaged(u32, Lego.Index, kommon.AutoContextForIntKeys(u32), std.hash_map.default_max_load_percentage) = .empty;
+            try map.ensureUnusedCapacity(scratch, @intCast(fnkboxes.len));
+            for (fnkboxes) |index| {
+                const fnkname_hash = Lego.Specific.Sexpr.hash(index.children(.fnkbox).fnkname);
+                map.putAssumeCapacityNoClobber(fnkname_hash, index);
+            }
+
             for (toybox.all_legos.items) |*lego| {
                 if (!lego.exists) continue;
                 switch (lego.specific) {
                     .fnkname_holder => |*fnkname_holder| {
-                        fnkname_holder.fnkbox = getFnkboxForFnk(workspace, lego.index.children(.fnkname_holder).fnkname) orelse .nothing;
+                        fnkname_holder.fnkbox = map.get(Lego.Specific.Sexpr.hash(
+                            lego.index.children(.fnkname_holder).fnkname,
+                        )) orelse .nothing;
                     },
                     else => {},
                 }
@@ -7672,20 +7681,23 @@ const Workspace = struct {
         return result;
     }
 
-    fn getFnkboxForFnk(workspace: *Workspace, fnkname: Lego.Index) ?Lego.Index {
+    fn allFnkboxes(workspace: *Workspace, include_locked: bool, allocator: std.mem.Allocator) ![]const Lego.Index {
+        var result: std.ArrayListUnmanaged(Lego.Index) = .empty;
+
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (lego.specific.tag() != .fnkbox) continue;
+            // don't include fnkboxes that are part of a blueprint, or other strange situations
             if (workspace.isFreefloating(lego.index)) continue;
-            if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
-                if (b.specific.bubble.locked) continue;
-            }
-            if (lego.specific.as(.fnkbox)) |fnkbox| {
-                if (Lego.Specific.Sexpr.equalValue(fnkbox.fnkname(), fnkname)) {
-                    return lego.index;
+            if (!include_locked) {
+                if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
+                    if (b.specific.bubble.locked) continue;
                 }
             }
-        } else return null;
+            try result.append(allocator, lego.index);
+        }
+
+        return try result.toOwnedSlice(allocator);
     }
 
     /// duplicates the garland and returns it
@@ -8015,27 +8027,21 @@ const Workspace = struct {
     }
 
     pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !@import("core.zig").FnkCollection {
+        const fnkboxes = try workspace.allFnkboxes(false, scratch);
+
         const core = @import("core.zig");
         var all_fnks: core.FnkCollection = .init(scratch);
-        if (true) {
-            for (toybox.all_legos.items) |*lego| {
-                if (!lego.exists) continue;
-                if (lego.specific.tag() != .fnkbox) continue;
-                if (workspace.isFreefloating(lego.index)) continue;
-                if (Toybox.findAncestor(lego.index, .bubble).getSafe()) |b| {
-                    if (b.specific.bubble.locked) continue;
-                }
-                const cur = lego.index;
-                const fnkbox = &Toybox.get(cur).specific.fnkbox;
-                const fnkname_value = try Toybox.get(cur.children(.fnkbox).fnkname).specific.sexpr.toOldCoreValue(scratch);
-                const garland = if (fnkbox.execution) |e|
-                    e.original_garland
-                else
-                    fnkbox.executor().garland().index;
-                const definition = try garland.get().specific.garland.toOldCoreValue(scratch);
-                try all_fnks.putNoClobber(fnkname_value, definition);
-            }
+        for (fnkboxes) |cur| {
+            const fnkbox = &Toybox.get(cur).specific.fnkbox;
+            const fnkname_value = try Toybox.get(cur.children(.fnkbox).fnkname).specific.sexpr.toOldCoreValue(scratch);
+            const garland = if (fnkbox.execution) |e|
+                e.original_garland
+            else
+                fnkbox.executor().garland().index;
+            const definition = try garland.get().specific.garland.toOldCoreValue(scratch);
+            try all_fnks.putNoClobber(fnkname_value, definition);
         }
+
         return all_fnks;
     }
 

@@ -115,4 +115,17 @@ pub fn unicodeEraseLastCodepoint(buf: []const u8) usize {
     return i;
 }
 
+pub fn AutoContextForIntKeys(comptime K: type) type {
+    comptime std.debug.assert(@typeInfo(K) == .int);
+    return struct {
+        const Context = @This();
+        pub fn eql(_: Context, a: K, b: K) bool {
+            return a == b;
+        }
+        pub fn hash(_: Context, key: K) u64 {
+            return @intCast(key);
+        }
+    };
+}
+
 const std = @import("std");
