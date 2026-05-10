@@ -4870,11 +4870,13 @@ const Workspace = struct {
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
-        const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
-        defer zone.deinit();
+        // when scrolling a lot of cases and tracy is active, this crashes :(
+        // const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
+        // defer zone.deinit();
+
         const undo_stack = &workspace.undo_stack;
 
-        const debug_all_bubbles_unlocked = false or @import("builtin").mode == .Debug;
+        const debug_all_bubbles_unlocked = true or @import("builtin").mode == .Debug;
 
         const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
@@ -5364,9 +5366,6 @@ const Workspace = struct {
 
                         // TODO(optim): skip children in most cases
 
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - sexpr" });
-                        // defer zone.deinit();
-
                         if (sexpr.emerging_value != .nothing) {
                             Toybox.refreshAbsolutePoints(&.{cur});
                             const t = sexpr.emerging_value_t;
@@ -5389,9 +5388,6 @@ const Workspace = struct {
                         Lego.Specific.Case.updateLocalPositions(cur);
                     },
                     .garland_newcases => {
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - garland" });
-                        // defer zone.deinit();
-
                         var a = Toybox.get(lego.tree.first);
                         var offset: f32 = 0;
                         while (true) {
@@ -5405,9 +5401,6 @@ const Workspace = struct {
                         lego.tree.parent.get().specific.garland.computed_height = offset;
                     },
                     .newcase => |*newcase| {
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - newcase" });
-                        // defer zone.deinit();
-
                         const Garland = Lego.Specific.Garland;
 
                         const is_first = lego.tree.prev == .nothing;
@@ -5480,9 +5473,6 @@ const Workspace = struct {
                     },
                     .fnkbox_box => {},
                     .executor => |executor| {
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor" });
-                        // defer zone.deinit();
-
                         const Executor = Lego.Specific.Executor;
                         const children = Executor.children(cur);
 
@@ -5624,9 +5614,6 @@ const Workspace = struct {
                     },
                     .executor_controls => {},
                     .executor_brake => |*brake| {
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - executor_brake" });
-                        // defer zone.deinit();
-
                         lego.local_point = .{};
                         brake.handle_pos = Lego.Specific.Executor.Controls.brakeHandlePath(brake.brake_t);
                     },
@@ -5647,9 +5634,6 @@ const Workspace = struct {
                         }
                     },
                     .fnkbox_testcases => {
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - fnkbox_testcases" });
-                        // defer zone.deinit();
-
                         const scroll_visual = lego.index.scrollbar(.fnkbox_testcases).get().specific.scrollbar.scroll_visual;
 
                         var k: usize = 0;
@@ -5673,9 +5657,6 @@ const Workspace = struct {
                         }
                     },
                     .scrollbar => |*scrollbar| {
-                        // const zone = tracy.initZone(@src(), .{ .name = "updateSprings - scrollbar" });
-                        // defer zone.deinit();
-
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
@@ -7919,6 +7900,8 @@ const Workspace = struct {
         const core = @import("core.zig");
         var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
         defer pool.deinit();
+        // TODO(optim-late): tune this number
+        // try pool.preheat(1_000_000);
         const source = testcase_index.get().specific.unloaded_testcase.source;
         const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch)).?;
 
