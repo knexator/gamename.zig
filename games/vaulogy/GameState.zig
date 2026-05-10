@@ -1512,6 +1512,7 @@ pub const Lego = struct {
                                     &workspace.undo_stack,
                                 ), &workspace.undo_stack);
                                 Toybox.destroyFloating(t.actual, &workspace.undo_stack);
+                                Toybox.refreshAbsolutePoints(&.{cur_testcase});
                             }
                         },
                     }
@@ -4994,7 +4995,7 @@ const Workspace = struct {
                 }
                 assert(!unhoverable);
 
-                // TODO(optim): check that this works
+                // TODO(optim): add a test to confirm that this always works
                 const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
                 const absolute_bounds = absolute_point.applyToLocalBounds(local_bounds);
                 if (!absolute_bounds.contains(absolute_needle_pos)) {
@@ -5096,9 +5097,9 @@ const Workspace = struct {
                         }
                     },
                     .unloaded_testcase => {
-                        // TODO(bug): if we got here, it means that the testcase hasn't been expanded in time,
+                        // if we got here, it means that the testcase hasn't been expanded in time,
                         //  or that the culling isn't working
-                        std.log.err("TODO", .{});
+                        panic("unexpected unloaded testcase while interacting!", .{});
                     },
                     .scrollable_list,
                     .scrollable_list_inbetween,
@@ -6270,9 +6271,8 @@ const Workspace = struct {
                             }
                         },
                         .unloaded_testcase => {
-                            // TODO(bug): if we got here, it means that the testcase hasn't been expanded in time,
-                            //  or that the culling isn't working
-                            std.log.err("TODO", .{});
+                            // TODO(optim-late): if we had better culling, this would be unreachable
+                            // panic("unexpected unloaded testcase while drawing!", .{});
                         },
                         .scrollable_list_inbetween,
                         .fnkslist,
@@ -7356,39 +7356,6 @@ const Workspace = struct {
             }
         }
 
-        if (true) { // load/unload testcases depending on their visibility
-            const zone = tracy.initZone(@src(), .{ .name = "load/unload testcases" });
-            defer zone.deinit();
-
-            const fnkboxes = try workspace.allFnkboxes(false, scratch);
-            for (fnkboxes) |fnkbox_index| {
-                const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
-                assert(testcases_parent.hasTag(.fnkbox_testcases));
-                const parent_box: Bounds = testcases_parent.get().localBoundingBoxThatContainsSelfAndAllChildren();
-                const child_box: Bounds = .fromRect(Lego.Specific.Testcase.relative_bounding_box);
-                var cur = testcases_parent.get().tree.first;
-                while (cur != .nothing) : (cur = cur.get().tree.next) {
-                    const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null;
-                    if (is_visible) {
-                        cur = try ensureLoadedTestcase(cur, scratch, undo_stack);
-                    } else {
-                        cur = tryToUnloadTestcase(cur, undo_stack) orelse cur;
-                    }
-                }
-            }
-        }
-
-        const something_happened = undo_stack.anyChangesThisFrame();
-        if (something_happened) {
-            try workspace.canonizeAfterChanges(scratch);
-        }
-
-        assert(workspace.valid(scratch));
-
-        // There should be no further changes
-        undo_stack.startFrame();
-        defer assert(!undo_stack.anyChangesThisFrame());
-
         if (true) { // reset per-frame variables
             const zone = tracy.initZone(@src(), .{ .name = "reset per-frame variables" });
             defer zone.deinit();
@@ -7462,6 +7429,40 @@ const Workspace = struct {
         workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
 
         if (true) Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
+
+        if (true) { // load/unload testcases depending on their visibility
+            const zone = tracy.initZone(@src(), .{ .name = "load/unload testcases" });
+            defer zone.deinit();
+
+            const fnkboxes = try workspace.allFnkboxes(false, scratch);
+            for (fnkboxes) |fnkbox_index| {
+                const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
+                assert(testcases_parent.hasTag(.fnkbox_testcases));
+                const parent_box: Bounds = testcases_parent.get().localBoundingBoxThatContainsSelfAndAllChildren();
+                const child_box: Bounds = .fromRect(Lego.Specific.Testcase.relative_bounding_box);
+                var cur = testcases_parent.get().tree.first;
+                while (cur != .nothing) : (cur = cur.get().tree.next) {
+                    const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null;
+                    if (is_visible) {
+                        cur = try ensureLoadedTestcase(cur, scratch, undo_stack);
+                    } else {
+                        cur = tryToUnloadTestcase(cur, undo_stack) orelse cur;
+                    }
+                }
+                Toybox.refreshAbsolutePoints(&.{testcases_parent});
+            }
+        }
+
+        const something_happened = undo_stack.anyChangesThisFrame();
+        if (something_happened or true) {
+            try workspace.canonizeAfterChanges(scratch);
+        }
+
+        assert(workspace.valid(scratch));
+
+        // There should be no further changes
+        undo_stack.startFrame();
+        defer assert(!undo_stack.anyChangesThisFrame());
 
         if (true) { // set lenses data
             const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
