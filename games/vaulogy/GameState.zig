@@ -213,7 +213,6 @@ test "No leaks on Workspace and Drawer" {
 
 test "solutions" {
     const gpa = std.testing.allocator;
-    const core = @import("core.zig");
     var mem: core.VeryPermamentGameStuff = .init(gpa);
     defer mem.deinit();
 
@@ -454,7 +453,6 @@ pub const Lego = struct {
                 };
             }
 
-            const core = @import("core.zig");
             pub fn updateStatus(scorer_index: Lego.Index, all_fnks: core.FnkCollection, scratch: std.mem.Allocator) !void {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for scorer" });
                 defer zone.deinit();
@@ -864,7 +862,6 @@ pub const Lego = struct {
                 return &Toybox.get(Lego.fromSpecificConst(.sexpr, self).tree.last).specific.sexpr;
             }
 
-            const core = @import("core.zig");
             pub fn toOldCoreValue(sexpr: *const Sexpr, mem: std.mem.Allocator) !*core.Sexpr {
                 const result = try mem.create(core.Sexpr);
                 result.* = switch (sexpr.kind) {
@@ -1126,7 +1123,6 @@ pub const Lego = struct {
                 return &garland.casesHolder().get().tree.first.get().specific.newcase;
             }
 
-            const core = @import("core.zig");
             pub fn toOldCoreValue(garland: *const Garland, allocator: std.mem.Allocator) !core.FnkBody {
                 const cable_segments = try Toybox.getChildrenUnknown(allocator, garland.casesHolder());
                 defer allocator.free(cable_segments);
@@ -1471,7 +1467,6 @@ pub const Lego = struct {
                 defer zone.deinit();
 
                 // TODO(optim): improve somehow
-                const core = @import("core.zig");
                 const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
                 const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
@@ -2031,7 +2026,6 @@ pub const Lego = struct {
                 const new_value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer_index);
                 const new_garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer_index);
 
-                const core = @import("core.zig");
                 var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
                 defer pool.deinit();
 
@@ -3251,7 +3245,6 @@ pub const Toybox = struct {
         text_allocator: std.mem.Allocator,
         undo_stack: ?*UndoStack,
     ) !Lego.Index {
-        const core = @import("core.zig");
         var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
         defer pool.deinit();
 
@@ -4635,7 +4628,6 @@ const Workspace = struct {
         }
 
         if (false) { // add levels
-            const core = @import("core.zig");
             var pool: std.heap.MemoryPool(core.Sexpr) = .init(gpa);
             defer pool.deinit();
             var x: f32 = 100;
@@ -4878,7 +4870,6 @@ const Workspace = struct {
 
         const debug_all_bubbles_unlocked = true or @import("builtin").mode == .Debug;
 
-        const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
@@ -6682,7 +6673,6 @@ const Workspace = struct {
                                     Toybox.changeChild(old_fnkname, new_fnkname, undo_stack);
                                     Toybox.destroyFloating(old_fnkname, undo_stack);
 
-                                    const core = @import("core.zig");
                                     var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
                                     defer pool.deinit();
                                     const samples: []const Lego.Index = blk: {
@@ -7814,7 +7804,6 @@ const Workspace = struct {
             return null;
         }
 
-        const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         const fnkname_value = try fnkname.get().specific.sexpr.toOldCoreValue(scratch);
         var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
@@ -7865,7 +7854,6 @@ const Workspace = struct {
 
         const input_value = try input_unresolved.get().specific.sexpr.toOldCoreValueResolving(bindings, scratch);
 
-        const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
         defer temp_mem.deinit();
@@ -7897,7 +7885,6 @@ const Workspace = struct {
     fn ensureLoadedTestcase(testcase_index: Lego.Index, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
         if (testcase_index.hasTag(.testcase)) return testcase_index;
         assert(testcase_index.hasTag(.unloaded_testcase));
-        const core = @import("core.zig");
         var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
         defer pool.deinit();
         // TODO(optim-late): tune this number
@@ -7980,7 +7967,6 @@ const Workspace = struct {
         const version: u32 = 1;
         try out.writeInt(u32, version, ENDIANNESS);
 
-        const core = @import("core.zig");
         const Fnkbox = Lego.Specific.Fnkbox;
         const FnkboxBox = Lego.Specific.FnkboxBox;
         const Executor = Lego.Specific.Executor;
@@ -8029,8 +8015,6 @@ const Workspace = struct {
         toybox.deinit();
         try toybox.init(toybox.all_legos_arena.child_allocator);
         try dst.init(dst.arena_for_atom_names.child_allocator, dst.random_instance.next());
-
-        const core = @import("core.zig");
 
         var fnks_indices: std.ArrayHashMap(*const core.Sexpr, Lego.Index, core.SexprContext, true) = .init(scratch);
         if (true) {
@@ -8161,7 +8145,6 @@ const Workspace = struct {
     pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !@import("core.zig").FnkCollection {
         const fnkboxes = try workspace.allFnkboxes(false, scratch);
 
-        const core = @import("core.zig");
         var all_fnks: core.FnkCollection = .init(scratch);
         for (fnkboxes) |cur| {
             const fnkbox = &Toybox.get(cur).specific.fnkbox;
@@ -8380,6 +8363,8 @@ pub fn readString(in: std.io.AnyReader, allocator: std.mem.Allocator) ![]u8 {
 const std = @import("std");
 const assert = std.debug.assert;
 const panic = std.debug.panic;
+
+const core = @import("core.zig");
 
 const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
