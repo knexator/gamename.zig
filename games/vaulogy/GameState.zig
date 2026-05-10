@@ -1590,7 +1590,7 @@ pub const Lego = struct {
             solved: bool = false,
 
             /// points to an unloaded_testcase, if it came from there
-            source: Lego.Index = .nothing,
+            source: Lego.Index,
 
             pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
             pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
@@ -3218,7 +3218,7 @@ pub const Toybox = struct {
 
     pub fn buildTestcase(kind: union(enum) {
         unloaded: Lego.Specific.UnloadedTestcase.Source,
-        existing: struct { input: Lego.Index, expected: Lego.Index },
+        existing: struct { input: Lego.Index, expected: Lego.Index, unloaded: Lego.Index },
     }, undo_stack: ?*UndoStack) !Lego.Index {
         switch (kind) {
             .unloaded => |source| {
@@ -3226,7 +3226,7 @@ pub const Toybox = struct {
                 return testcase;
             },
             .existing => |existing| {
-                const testcase = try Toybox.new(.{}, .{ .testcase = .{} }, undo_stack);
+                const testcase = try Toybox.new(.{}, .{ .testcase = .{ .source = existing.unloaded } }, undo_stack);
                 testcase.get().immutable = true;
                 const Testcase = Lego.Specific.Testcase;
                 Toybox.addChildLastV2(Testcase.relative_input_point, testcase, existing.input, undo_stack);
@@ -6751,7 +6751,8 @@ const Workspace = struct {
                                 },
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
-                                    try launchTestcase(fnkbox.get().specific.fnkbox.status.unsolved, undo_stack);
+                                    const testcase_index = try ensureLoadedTestcase(fnkbox.get().specific.fnkbox.status.unsolved, scratch, undo_stack);
+                                    try launchTestcase(testcase_index, undo_stack);
                                 },
                                 .launch_testcase => {
                                     const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
@@ -7887,6 +7888,26 @@ const Workspace = struct {
         assert(original_fnkname.get().specific.sexpr.kind == .empty);
         Toybox.destroyFloating(original_fnkname, undo_stack);
         return garland;
+    }
+
+    fn ensureLoadedTestcase(testcase_index: Lego.Index, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
+        if (testcase_index.hasTag(.testcase)) return testcase_index;
+        assert(testcase_index.hasTag(.unloaded_testcase));
+        const core = @import("core.zig");
+        var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+        defer pool.deinit();
+        const source = testcase_index.get().specific.unloaded_testcase.source;
+        const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch)).?;
+
+        const new = try Toybox.buildTestcase(.{ .existing = .{
+            .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, sample.input, false, false, undo_stack),
+            .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, sample.expected, false, false, undo_stack),
+            .unloaded = testcase_index,
+        } }, undo_stack);
+        new.get().local_point = testcase_index.get().local_point;
+        Toybox.changeChild(testcase_index, new, undo_stack);
+
+        return new;
     }
 
     fn launchTestcase(testcase_index: Lego.Index, undo_stack: *UndoStack) !void {
