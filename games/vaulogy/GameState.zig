@@ -232,7 +232,17 @@ test "solutions" {
 
             var exec: core.ExecutionThread = try .init(item.input, &.doLit(level.fnk_name), &scoring, .new);
             defer exec.deinit();
-            const actual = try exec.getFinalResultBoundedV2(&scoring, .new);
+            const actual = exec.getFinalResultBoundedV2(&scoring, .new) catch |err| switch (err) {
+                else => {
+                    if (std.testing.backend_can_print) {
+                        std.debug.print(
+                            "error {s} on fnk {s} with input {any}, expected {any}\n",
+                            .{ @errorName(err), level.fnk_name, item.input, item.expected },
+                        );
+                    }
+                    return err;
+                },
+            };
             if (!actual.equals(item.expected)) {
                 if (std.testing.backend_can_print) {
                     std.debug.print(
@@ -3441,6 +3451,7 @@ pub const Toybox = struct {
 };
 
 pub const UndoStack = struct {
+    // TODO(optim-late): use a fancy arena thing
     commands: std.ArrayList(Workspace.UndoableCommand),
     last_frame_command_count: usize = 0,
 
@@ -3594,6 +3605,9 @@ const Workspace = struct {
         dst.arena_for_oneframe_data = .init(gpa);
         dst.gpa_for_bindings = gpa;
         dst.gpa_for_text = gpa;
+
+        // TODO(optim-late): tune this number
+        if (!@import("builtin").is_test) try dst.undo_stack.commands.ensureUnusedCapacity(1_000_000);
 
         var scratch: std.heap.ArenaAllocator = .init(gpa);
         defer scratch.deinit();

@@ -91,6 +91,29 @@ pairToUppercase {
     }
 }
 
+shiftPair {
+    (@a . @b) -> changeLowercaseToNextCyclingOnC: @a {
+        @A -> changeLowercaseToNextCyclingOnC: @b {
+            @B -> (@A . @B);
+        }
+    }
+}
+
+last {
+    (@x . nil) -> @x;
+    (@x . @y) -> last: @y;
+}
+
+
+shiftAll {
+    (@a . @b) -> shiftAll: @a {
+        @A -> shiftAll: @b {
+            @B -> (@A . @B);
+        }
+    }
+    @x -> changeLowercaseToNextCyclingOnC: @x;
+}
+
 hasSomeB {
     (@x . @y) -> hasSomeB: @x {
         false -> hasSomeB: @y;
@@ -178,6 +201,28 @@ removeOne {
     (@single . @z) -> @z;
 }
 
+// is there some 'clever' way to do this?
+deepestHalf {
+    (@a . @b) -> depthOf: @a {
+        @A -> depthOf: @b {
+            @B -> comparePeano: (@A . @B) {
+                smaller -> @b;
+                @greater_or_equal -> @a;
+            }
+        }
+    }
+}
+
+depthOf {
+    (@a . @b) -> depthOf: @a {
+        @A -> depthOf: @b {
+            @B -> maxPeano: (@A . @B) {
+                @C -> (true . @C);
+            }
+        }
+    }
+    @x -> nil;
+}
 
 // custom
 reverse_stackless {
@@ -243,6 +288,12 @@ findTopTwo {
     }
 }
 
+findSecondLongest {
+    @x -> findTopTwo: (@x . (nil . nil)) {
+        (@fst . @snd) -> @snd;
+    }
+}
+
 // custom
 comparePeano {
     (nil . nil) -> equal;
@@ -250,6 +301,15 @@ comparePeano {
     (nil . (@x . @rest)) -> smaller;
     ((@a . @arest) . (@b . @brest)) -> comparePeano: (@arest . @brest);
 }
+
+// custom
+maxPeano {
+    (@a . @b) -> comparePeano: (@a . @b) {
+        smaller -> @b;
+        @greater_or_equal -> @a;
+    }
+}
+
 
 // TODO(game): sort
 
