@@ -4874,7 +4874,7 @@ const Workspace = struct {
         defer zone.deinit();
         const undo_stack = &workspace.undo_stack;
 
-        const debug_all_bubbles_unlocked = true or @import("builtin").mode == .Debug;
+        const debug_all_bubbles_unlocked = false or @import("builtin").mode == .Debug;
 
         const core = @import("core.zig");
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
@@ -4903,7 +4903,7 @@ const Workspace = struct {
                 for (workspace.unlock_connections.constSlice()) |connection| {
                     if (connection.target != lego.index) continue;
                     connection.target.get().specific.bubble.locked = connection.target.get().specific.bubble.locked and switch (connection.condition) {
-                        .all_scorers_solved => blk: {
+                        .all_scorers_solved => connection.source.get().specific.bubble.locked or blk: {
                             var cur = connection.source;
                             while (cur != .nothing) : (cur = Toybox.next_preordered(cur, connection.source).next) {
                                 if (cur.hasTag(.scorer)) {
@@ -4913,7 +4913,7 @@ const Workspace = struct {
                             break :blk false;
                         },
                         .always => if (connection.source.getSafe()) |source| source.specific.bubble.locked else false,
-                        .has_sexpr => |sexpr| blk: {
+                        .has_sexpr => |sexpr| connection.source.get().specific.bubble.locked or blk: {
                             var it = Toybox.treeIterator(connection.source, false);
                             while (it.next()) |step| {
                                 if (step.children_already_visited) continue;
