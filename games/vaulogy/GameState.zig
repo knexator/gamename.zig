@@ -7356,6 +7356,28 @@ const Workspace = struct {
             }
         }
 
+        if (true) { // load/unload testcases depending on their visibility
+            const zone = tracy.initZone(@src(), .{ .name = "load/unload testcases" });
+            defer zone.deinit();
+
+            const fnkboxes = try workspace.allFnkboxes(false, scratch);
+            for (fnkboxes) |fnkbox_index| {
+                const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
+                assert(testcases_parent.hasTag(.fnkbox_testcases));
+                const parent_box: Bounds = testcases_parent.get().localBoundingBoxThatContainsSelfAndAllChildren();
+                const child_box: Bounds = .fromRect(Lego.Specific.Testcase.relative_bounding_box);
+                var cur = testcases_parent.get().tree.first;
+                while (cur != .nothing) : (cur = cur.get().tree.next) {
+                    const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null;
+                    if (is_visible) {
+                        cur = try ensureLoadedTestcase(cur, scratch, undo_stack);
+                    } else {
+                        cur = tryToUnloadTestcase(cur, undo_stack) orelse cur;
+                    }
+                }
+            }
+        }
+
         const something_happened = undo_stack.anyChangesThisFrame();
         if (something_happened) {
             try workspace.canonizeAfterChanges(scratch);
@@ -7908,6 +7930,19 @@ const Workspace = struct {
         Toybox.changeChild(testcase_index, new, undo_stack);
 
         return new;
+    }
+
+    fn tryToUnloadTestcase(testcase_index: Lego.Index, undo_stack: ?*UndoStack) ?Lego.Index {
+        if (testcase_index.hasTag(.unloaded_testcase)) return testcase_index;
+        assert(testcase_index.hasTag(.testcase));
+
+        const source = testcase_index.get().specific.testcase.source;
+        if (source == .nothing) return null;
+
+        source.get().local_point = testcase_index.get().local_point;
+        Toybox.changeChild(testcase_index, source, undo_stack);
+        Toybox.destroyFloating(testcase_index, undo_stack);
+        return source;
     }
 
     fn launchTestcase(testcase_index: Lego.Index, undo_stack: *UndoStack) !void {
