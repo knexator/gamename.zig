@@ -1,5 +1,72 @@
 const std = @import("std");
 
+// based on https://www.snellman.net/blog/archive/2016-12-13-ring-buffers/
+// fails after maxInt(usize) insertions, but maintains that read < write
+pub fn RingBuffer(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        data: []T,
+        read: usize = 0,
+        write: usize = 0,
+
+        pub fn len(self: Self) usize {
+            return self.write - self.read;
+        }
+
+        pub fn isEmpty(self: Self) bool {
+            return self.len() == 0;
+        }
+
+        pub fn isFull(self: Self) bool {
+            return self.len() == self.data.len;
+        }
+
+        pub fn push(self: *Self, element: T) error{ Full, Overflow }!void {
+            const new_write = try std.math.add(usize, self.write, 1);
+            if (self.isFull()) return error.Full;
+            self.data[self.write % self.data.len] = element;
+            self.write = new_write;
+        }
+
+        pub fn peekFirst(self: *Self) ?T {
+            if (self.isEmpty()) return null;
+            return self.data[self.read % self.data.len];
+        }
+
+        pub fn shift(self: *Self) ?T {
+            if (self.isEmpty()) return null;
+            const result = self.data[self.read % self.data.len];
+            self.read = std.math.add(usize, self.read, 1) catch unreachable;
+            return result;
+        }
+
+        pub fn pop(self: *Self) ?T {
+            if (self.isEmpty()) return null;
+            self.write -= 1;
+            return self.data[self.write % self.data.len];
+        }
+    };
+}
+
+test "RingBuffer circularity" {
+    var buffer: [5]u16 = undefined;
+    var ring_buffer: RingBuffer(u16) = .{ .data = &buffer };
+
+    try ring_buffer.push(0);
+    try ring_buffer.push(0);
+
+    for (0..100) |_| {
+        try ring_buffer.push(0);
+        try std.testing.expect(ring_buffer.shift() != null);
+    }
+
+    try std.testing.expect(ring_buffer.shift() != null);
+    try std.testing.expect(ring_buffer.pop() != null);
+    try std.testing.expect(ring_buffer.shift() == null);
+    try std.testing.expect(ring_buffer.pop() == null);
+}
+
 pub fn CircularBuffer(comptime T: type, comptime buffer_size: usize) type {
     return struct {
         const Self = @This();

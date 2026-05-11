@@ -11,6 +11,7 @@ pub const input = @import("input.zig");
 pub const BFS = @import("bfs.zig").BFS;
 pub const meta = @import("meta.zig");
 pub const CircularBuffer = @import("circular_buffer.zig").CircularBuffer;
+pub const RingBuffer = @import("circular_buffer.zig").RingBuffer;
 pub const Triangulator = @import("triangulator.zig").Triangulator;
 pub const Noise = @import("fastnoise.zig").Noise(f32);
 pub const Gl = @import("Gl.zig");

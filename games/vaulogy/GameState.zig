@@ -3452,19 +3452,34 @@ pub const Toybox = struct {
 
 pub const UndoStack = struct {
     // TODO(optim-late): use a fancy arena thing
-    commands: std.ArrayList(Workspace.UndoableCommand),
+    commands: kommon.RingBuffer(Workspace.UndoableCommand),
     last_frame_command_count: usize = 0,
 
-    pub fn init(gpa: std.mem.Allocator) UndoStack {
-        return .{ .commands = .init(gpa) };
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) !UndoStack {
+        return .{ .commands = .{ .data = try allocator.alloc(Workspace.UndoableCommand, capacity) } };
     }
 
-    pub fn deinit(self: *UndoStack) void {
-        self.commands.deinit();
+    pub fn deinit(self: *UndoStack, allocator: std.mem.Allocator) void {
+        allocator.free(self.commands.data);
+    }
+
+    pub fn removeUntilNextFenceOrEmpty(self: *UndoStack) void {
+        var popped_at_least_once = false;
+        while (self.commands.peekFirst()) |c| {
+            if (popped_at_least_once and c == .fence) return;
+            _ = self.commands.shift().?;
+            popped_at_least_once = true;
+        }
     }
 
     pub fn append(self: *UndoStack, command: Workspace.UndoableCommand) void {
-        self.commands.append(command) catch Toybox.OoM();
+        self.commands.push(command) catch |err| switch (err) {
+            error.Full => {
+                self.removeUntilNextFenceOrEmpty();
+                self.commands.push(command) catch unreachable;
+            },
+            else => Toybox.OoM(),
+        };
     }
 
     pub fn storeAllData(self: *UndoStack, index: Lego.Index) void {
@@ -3476,11 +3491,11 @@ pub const UndoStack = struct {
     }
 
     pub fn startFrame(self: *UndoStack) void {
-        self.last_frame_command_count = self.commands.items.len;
+        self.last_frame_command_count = self.commands.len();
     }
 
     pub fn anyChangesThisFrame(self: *UndoStack) bool {
-        return self.commands.items.len != self.last_frame_command_count;
+        return self.commands.len() != self.last_frame_command_count;
     }
 };
 
@@ -3506,6 +3521,7 @@ const Workspace = struct {
     gpa_for_bindings: std.mem.Allocator,
     // TODO(design): remove
     gpa_for_text: std.mem.Allocator,
+    gpa_for_big_buffers: std.mem.Allocator,
 
     display_fps: bool = false,
     debug_nodraw: bool = false,
@@ -3598,16 +3614,17 @@ const Workspace = struct {
     }
 
     pub fn init(dst: *Workspace, gpa: std.mem.Allocator, random_seed: u64) !void {
+        // TODO(optim-late): tune this number
+        const undo_stack_capacity = if (@import("builtin").is_test) 1_000 else 1_000_000;
+
         dst.* = kommon.meta.initDefaultFields(Workspace);
-        dst.undo_stack = .init(gpa);
+        dst.undo_stack = try .init(gpa, undo_stack_capacity);
         dst.random_instance = .init(random_seed);
         dst.arena_for_atom_names = .init(gpa);
         dst.arena_for_oneframe_data = .init(gpa);
         dst.gpa_for_bindings = gpa;
         dst.gpa_for_text = gpa;
-
-        // TODO(optim-late): tune this number
-        if (!@import("builtin").is_test) try dst.undo_stack.commands.ensureUnusedCapacity(1_000_000);
+        dst.gpa_for_big_buffers = gpa;
 
         var scratch: std.heap.ArenaAllocator = .init(gpa);
         defer scratch.deinit();
@@ -4956,7 +4973,7 @@ const Workspace = struct {
                 }
             }
         }
-        workspace.undo_stack.deinit();
+        workspace.undo_stack.deinit(workspace.gpa_for_big_buffers);
         workspace.arena_for_atom_names.deinit();
         workspace.arena_for_oneframe_data.deinit();
     }
