@@ -1960,6 +1960,7 @@ pub const Lego = struct {
                     }
                     // + 0.5 to give a bit of extra for adding at the end
                     lego_children.scrollbar.get().specific.scrollbar.total_length = count + 0.5;
+                    Toybox.refreshAbsolutePoints(&.{index});
                 } else if (list_viewer.list_hash != new_list_hash) {
                     list_viewer.list_hash = new_list_hash;
 
@@ -2001,6 +2002,7 @@ pub const Lego = struct {
                         try canonize(index, undo_stack);
                     } else {
                         list_viewer.main_hash = Lego.Specific.ListViewer.computeMainHash(lego.index);
+                        Toybox.refreshAbsolutePoints(&.{index});
                     }
                 }
             }
@@ -2062,6 +2064,7 @@ pub const Lego = struct {
 
                     Toybox.changeChild(old_garland, new_garland, undo_stack);
                     Toybox.destroyFloating(old_garland, undo_stack);
+                    Toybox.refreshAbsolutePoints(&.{meta_viewer_index});
                 } else if (meta_viewer.garland_hash != new_garland_hash) {
                     meta_viewer.garland_hash = new_garland_hash;
                     defer meta_viewer.value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer_index);
@@ -2077,6 +2080,7 @@ pub const Lego = struct {
 
                     Toybox.changeChild(old_value, new_value, undo_stack);
                     Toybox.destroyFloating(old_value, undo_stack);
+                    Toybox.refreshAbsolutePoints(&.{meta_viewer_index});
                 }
             }
         };
