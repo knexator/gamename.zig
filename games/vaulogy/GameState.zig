@@ -2019,10 +2019,12 @@ pub const Lego = struct {
                 return Garland.hash(children(meta_viewer).garland);
             }
 
-            pub fn children(meta_viewer: Lego.Index) struct {
+            pub const Children = struct {
                 value: Lego.Index,
                 garland: Lego.Index,
-            } {
+            };
+
+            pub fn children(meta_viewer: Lego.Index) Children {
                 assert(Toybox.get(meta_viewer).specific.tag() == .meta_viewer);
                 const asdf = Toybox.getChildrenExact(2, meta_viewer);
                 return .{
@@ -4513,6 +4515,98 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = calculator, .target = optional_brainfuck, .condition = .always });
         bubble_pos.addInPlace(.new(0, -40));
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Huge news:", "we can represent", "strands with vaus!" });
+            postit_pos.addInPlace(.new(7.7, 0.2));
+            postit.addFromText(postit_pos, &.{ "In other words,", "you can make", "strands", "that operate", "on strands!" });
+
+            postit_pos = .new(-8, 0);
+            postit.addFromText(postit_pos, &.{ "This converts", "between vaus", "and strands:" });
+            const meta_viewer = try Toybox.buildMetaViewer(.{ .pos = postit_pos.add(.new(7, -2)) }, undo_stack);
+            Toybox.addChildLast(bp, meta_viewer, undo_stack);
+            const old_garland = meta_viewer.children(.meta_viewer).garland;
+            const new_garland = try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack);
+            new_garland.get().local_point = old_garland.get().local_point;
+            Toybox.changeChild(old_garland, new_garland, undo_stack);
+            Toybox.destroyFloating(old_garland, undo_stack);
+            meta_viewer.get().specific.meta_viewer.value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer);
+            // meta_viewer.get().specific.meta_viewer.garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("meta_constant"),
+            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_1, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = calculator, .target = meta_1, .condition = .all_scorers_solved });
+        dst.toolbar_unlocks.meta_viewer = meta_1;
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            // const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            // var postit_pos: Vec2 = .new(-8, -8);
+            // postit.addFromText(postit_pos, &.{""});
+            // postit_pos.addInPlace(.new(7.7, 0.2));
+            // postit.addFromText(postit_pos, &.{ "In other words,", "you can make strands", "that operate", "on strands!" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("meta_hardcoded_map"),
+            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_2, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = meta_1, .target = meta_2, .condition = .all_scorers_solved });
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const meta_final = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            // const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            // var postit_pos: Vec2 = .new(-8, -8);
+            // postit.addFromText(postit_pos, &.{""});
+            // postit_pos.addInPlace(.new(7.7, 0.2));
+            // postit.addFromText(postit_pos, &.{ "In other words,", "you can make strands", "that operate", "on strands!" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("interpreter"),
+            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_final, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = meta_2, .target = meta_final, .condition = .all_scorers_solved });
 
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{

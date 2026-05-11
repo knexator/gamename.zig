@@ -1214,10 +1214,34 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-};
-
-// TODO(game): include these
-pub const future_levels: []const Level = &.{
+    .{
+        .fnk_name = "meta_constant",
+        .description = "Build a strand that always returns the given input",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                // TODO(game)
+                _ = k;
+                _ = pool;
+                _ = arena;
+                return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "meta_hardcoded_map",
+        .description = "Build a strand for the given hardcoded map",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                // TODO(game)
+                _ = k;
+                _ = pool;
+                _ = arena;
+                return null;
+            }
+        }.generate_sample,
+    },
     .{
         // TODO
         .fnk_name = "interpreter",
