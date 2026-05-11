@@ -52,11 +52,11 @@ test "simulations" {
     defer arena.deinit();
 
     try testSimulation(2,
-        \\V2
+        \\V3
         \\grid:
         \\:+ + +
     ,
-        \\V2
+        \\V3
         \\grid:
         \\.+.+:+
     , arena.allocator());
@@ -87,6 +87,9 @@ const MoteType = enum {
     sulfur,
     quicksilver,
     salt,
+    truesaltA,
+    truesaltB,
+    truesaltC,
 
     pub const all: [@typeInfo(MoteType).@"enum".fields.len]MoteType = .{
         .fire,
@@ -96,6 +99,9 @@ const MoteType = enum {
         .salt,
         .sulfur,
         .quicksilver,
+        .truesaltA,
+        .truesaltB,
+        .truesaltC,
     };
 
     // a bit hacky :(
@@ -107,15 +113,11 @@ const MoteType = enum {
         .salt,
         .sulfur,
         .quicksilver,
+        .truesaltA,
+        .truesaltB,
+        .truesaltC,
         null,
     };
-
-    // TODO: delete
-    pub fn text(self: MoteType) []const u8 {
-        return switch (self) {
-            inline else => |x| &.{comptime x.toChar()},
-        };
-    }
 
     pub fn toChar(self: MoteType) u8 {
         return switch (self) {
@@ -126,6 +128,9 @@ const MoteType = enum {
             .sulfur => 'o',
             .quicksilver => '?',
             .salt => '*',
+            .truesaltA => 'A',
+            .truesaltB => 'B',
+            .truesaltC => 'C',
         };
     }
 
@@ -134,6 +139,20 @@ const MoteType = enum {
         inline for (all) |c| {
             if (char == c.toChar()) return c;
         } else return error.BadText;
+    }
+
+    // ensure that toChar-fromChar loop around
+    comptime {
+        for (MoteType.all) |t| {
+            assert(t == (fromChar(t.toChar()) catch unreachable) orelse unreachable);
+        }
+    }
+
+    pub fn hasTexture(t: MoteType) bool {
+        return switch (t) {
+            .truesaltA, .truesaltB, .truesaltC => false,
+            else => true,
+        };
     }
 
     /// this gets added to the cell's vertical pos
@@ -152,6 +171,7 @@ const MoteType = enum {
             '*' => 1.3,
             '-' => 1.5,
             '?', '~' => 1.0,
+            'A', 'B', 'C' => 0.75,
             else => 1.3,
         };
     }
@@ -267,14 +287,14 @@ const Cell = struct {
         pub fn addMotes(batch: *Batch, cell: Cell, pos: IVec2) !void {
             inline for (MoteType.all, 0..) |t, k| {
                 if (cell.motes.get(t) > 0) {
-                    if (CONFIG.use_motes_texture) {
+                    if (CONFIG.use_motes_texture and t.hasTexture()) {
                         batch.sprite_batch.add(.{ .texcoord = .{
                             .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
                             .size = .both(1.0 / 3.0),
                         }, .point = .{ .pos = pos.tof32() }, .tint = cell.state.textColorOver() });
                     } else {
                         try batch.text_batch.addText(
-                            t.text(),
+                            &.{t.toChar()},
                             .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
                             t.sizeCorrection(),
                             cell.state.textColorOver(),
@@ -289,7 +309,7 @@ const Cell = struct {
             const scale = 1.0 / bounds.size.y;
             inline for (MoteType.all, 0..) |t, k| {
                 if (cell.motes.get(t) > 0) {
-                    if (CONFIG.use_motes_texture) {
+                    if (CONFIG.use_motes_texture and t.hasTexture()) {
                         batch.sprite_batch.add(.{ .texcoord = .{
                             .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
                             .size = .both(1.0 / 3.0),
@@ -299,7 +319,7 @@ const Cell = struct {
                         }, .tint = cell.state.textColorOver() });
                     } else {
                         try batch.text_batch.addText(
-                            t.text(),
+                            &.{t.toChar()},
                             .centeredAt(button_pos.applyToLocalPosition(pos.tof32().sub(offset).add(.half).addY(t.verticalCorrection()).scale(scale))),
                             scale * t.sizeCorrection() * button_pos.size.y,
                             cell.state.textColorOver(),
@@ -906,11 +926,19 @@ const BoardState = struct {
     }
 
     pub fn toText(self: BoardState, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        try out.writeAll("V2\n");
+        try out.writeAll("V3\n");
 
         var motes_legend: std.AutoArrayHashMap(MoteCollection, u8) = .init(scratch);
         {
-            const valid_legends = "ABCDEFGHIJKLMNPQRSTUVWXYZ" ++ "abcdefghijklmnpqrstuvwxyz";
+            const valid_legends = "abcdefghijklmnpqrstuvwxyz" ++ "1234567890";
+
+            // ensure that those characters are not already used by a mote
+            comptime {
+                for (MoteType.all) |t| {
+                    assert(std.mem.indexOfScalar(u8, valid_legends, t.toChar()) == null);
+                }
+            }
+
             var legend_index: u8 = 0;
             var it = self.cells.iterator();
             while (it.next()) |kv| {
@@ -964,7 +992,16 @@ const BoardState = struct {
     pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, text: []const u8) !void {
         dst.cells.clearRetainingCapacity();
         const contents = std.mem.trim(u8, text, &std.ascii.whitespace);
-        if (std.mem.startsWith(u8, contents, "V1\n")) {
+        const version: u8 = if (std.mem.startsWith(u8, contents, "V1\n"))
+            1
+        else if (std.mem.startsWith(u8, contents, "V2\n"))
+            2
+        else if (std.mem.startsWith(u8, contents, "V3\n"))
+            3
+        else
+            return error.BadText;
+
+        if (version == 1) {
             const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
             defer raw_ascii.deinit(scratch);
             var it = raw_ascii.iteratorSigned();
@@ -980,13 +1017,19 @@ const BoardState = struct {
                 const cell: Cell = .fromStateAndMote(cell_state, cell_mote);
                 if (!cell.equals(.empty)) try dst.cells.put(p, cell);
             }
-        } else if (std.mem.startsWith(u8, contents, "V2\n")) {
-            var remaining = contents["V2\n".len..];
+        } else if (version == 2 or version == 3) {
+            var remaining = contents["Vx\n".len..];
             var motes_legend: std.AutoHashMap(u8, MoteCollection) = .init(scratch);
             inline for (MoteType.all) |t| {
-                var single_mote: MoteCollection = .initFill(0);
-                single_mote.set(t, 1);
-                try motes_legend.putNoClobber(t.toChar(), single_mote);
+                const ignore_mote = (version == 2 and switch (t) {
+                    inline .truesaltA, .truesaltB, .truesaltC => true,
+                    else => false,
+                });
+                if (!ignore_mote) {
+                    var single_mote: MoteCollection = .initFill(0);
+                    single_mote.set(t, 1);
+                    try motes_legend.putNoClobber(t.toChar(), single_mote);
+                }
             }
             try motes_legend.putNoClobber('.', .initFill(0));
             while (true) {
@@ -1396,7 +1439,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // paint cell types
         if (self.is_editor) {
             for (MoteType.all_and_empty, 0..) |t, k| {
-                const button: Rect = top_left_button.move(.new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4)))).plusMargin(-0.1);
+                const button: Rect = top_left_button.move(.new(tof32(@mod(k, 2)), tof32(4 + @divFloor(k, 2)))).plusMargin(-0.1);
                 try ui_buttons.append(.{
                     .pos = button,
                     .color = null,
@@ -1929,7 +1972,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
                 if (self.is_editor) {
                     for (&(MoteType.all ++ @as([1]?MoteType, .{null})), 0..) |t, k| {
-                        if (platform.keyboard.wasPressed(.digit(k + 1))) {
+                        if (k + 1 < 10 and platform.keyboard.wasPressed(.digit(k + 1))) {
                             toolbar.active_type = t;
                         }
                     }
