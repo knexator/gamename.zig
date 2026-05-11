@@ -4468,6 +4468,52 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, lists_2, undo_stack);
         dst.unlock_connections.appendAssumeCapacity(.{ .source = lists_1, .target = lists_2, .condition = .all_scorers_solved });
 
+        bubble_pos.addInPlace(.new(30, 0));
+        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 0) }, &.{
+                levelIndex("calculator"),
+            }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, calculator, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = lists_2, .target = calculator, .condition = .all_scorers_solved });
+
+        bubble_pos.addInPlace(.new(0, 40));
+        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "This assignment", "is about", "Brainf*ck,", "a programming", "language" });
+            postit_pos.addInPlace(.new(7.7, 0.1));
+            postit.addFromText(postit_pos, &.{ "Search online", "how it works" });
+            postit_pos.addInPlace(.new(7.7, 0.2));
+            postit.addFromText(postit_pos, &.{ "The top half", "is the code,", "the lower half", "is the stdin;", "return the stdout" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-4, 2) }, &.{
+                levelIndex("brainfuck"),
+            }, &.{
+                .new(0, 8.5),
+            }, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
+        dst.unlock_connections.appendAssumeCapacity(.{ .source = calculator, .target = optional_brainfuck, .condition = .always });
+        bubble_pos.addInPlace(.new(0, -40));
+
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
                 try Toybox.buildSexpr(.{ .pos = .new(-3, 0) }, .{ .atom_lit = "true" }, false, false, undo_stack),
