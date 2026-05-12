@@ -8139,33 +8139,27 @@ const Workspace = struct {
 
     /// only saves fnkboxes
     pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 1;
+        const version: u32 = 2;
         try out.writeInt(u32, version, ENDIANNESS);
 
-        const Fnkbox = Lego.Specific.Fnkbox;
-        const FnkboxBox = Lego.Specific.FnkboxBox;
-        const Executor = Lego.Specific.Executor;
-        if (true) {
-            var cur = Toybox.get(workspace.main_area).tree.first;
-            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
-                if (!cur.get().exists) continue;
-                if (!cur.hasTag(.fnkbox)) continue;
-                // const fnkbox = &Toybox.get(cur).specific.fnkbox;
-                const fnkname_value = try Toybox.get(Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
-                const definition = try Toybox.get(Executor.children(Fnkbox.children(cur).executor).garland).specific.garland.toOldCoreValue(scratch);
-                // try all_fnks.putNoClobber(fnkname_value, definition);
+        try out.writeStructEndian(workspace.main_area.get().local_point, ENDIANNESS);
 
-                try out.writeStructEndian(cur.get().local_point.pos, ENDIANNESS);
+        const fnkboxes = try workspace.allFnkboxes(false, scratch);
+        for (fnkboxes) |cur| {
+            const fnkname_value = try cur.children(.fnkbox).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
+            const definition = try cur.children(.fnkbox).executor.children(.executor).garland.get().specific.garland.toOldCoreValue(scratch);
 
-                // write description
-                try writeString(out, FnkboxBox.children(Fnkbox.children(cur).box).description.get().specific.fnkbox_description.inner_text.items);
+            const local_point_from_mainarea = workspace.main_area.get().absolute_point.inverseApplyGetLocal(cur.get().absolute_point);
+            try out.writeStructEndian(local_point_from_mainarea.pos, ENDIANNESS);
 
-                var tmp_out: std.ArrayList(u8) = .init(scratch);
-                defer tmp_out.deinit();
-                const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
-                try tmp_out.writer().print("{any}\n", .{fnk});
-                try writeString(out, tmp_out.items);
-            }
+            // write description
+            try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.inner_text.items);
+
+            var tmp_out: std.ArrayList(u8) = .init(scratch);
+            defer tmp_out.deinit();
+            const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
+            try tmp_out.writer().print("{any}\n", .{fnk});
+            try writeString(out, tmp_out.items);
         }
     }
 
@@ -8174,12 +8168,14 @@ const Workspace = struct {
         const text_magic: u32 = @bitCast(@as([4]u8, "////".*));
         const Config = struct {
             has_description: bool,
+            starts_with_camera_point: bool,
             is_text_based: bool = false,
         };
         const config: Config = switch (version) {
-            0 => .{ .has_description = false },
-            1 => .{ .has_description = true },
-            text_magic => .{ .is_text_based = true, .has_description = undefined },
+            0 => .{ .has_description = false, .starts_with_camera_point = false },
+            1 => .{ .has_description = true, .starts_with_camera_point = false },
+            2 => .{ .has_description = true, .starts_with_camera_point = true },
+            text_magic => .{ .is_text_based = true, .has_description = undefined, .starts_with_camera_point = false },
             else => {
                 std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
                 return;
@@ -8191,15 +8187,8 @@ const Workspace = struct {
         try toybox.init(toybox.all_legos_arena.child_allocator);
         try dst.init(dst.arena_for_atom_names.child_allocator, dst.random_instance.next());
 
-        var fnks_indices: std.ArrayHashMap(*const core.Sexpr, Lego.Index, core.SexprContext, true) = .init(scratch);
-        if (true) {
-            var cur = Toybox.get(dst.main_area).tree.first;
-            while (cur != .nothing) : (cur = Toybox.get(cur).tree.next) {
-                if (!cur.get().exists) continue;
-                if (!cur.hasTag(.fnkbox)) continue;
-                const fnkname_value = try Toybox.get(Lego.Specific.Fnkbox.children(cur).fnkname).specific.sexpr.toOldCoreValue(scratch);
-                try fnks_indices.putNoClobber(fnkname_value, cur);
-            }
+        if (config.starts_with_camera_point) {
+            dst.main_area.get().local_point = try in.readStructEndian(Point, ENDIANNESS);
         }
 
         if (config.is_text_based) {
@@ -8210,28 +8199,21 @@ const Workspace = struct {
                 var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
                 defer pool.deinit();
                 const fnk = try core.parsing.parseFnk(&input, &pool, scratch);
-                const pos: Vec2 = .new(x, 0);
+                const pos: Vec2 = .new(x, 20);
                 const description: []const u8 = try std.fmt.allocPrint(scratch, "{any}", .{fnk.name});
 
                 const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
-                if (fnks_indices.get(fnk.name)) |fnkbox_index| {
-                    Toybox.changeChild(Lego.Specific.Executor.children(
-                        Lego.Specific.Fnkbox.children(fnkbox_index).executor,
-                    ).garland, garland, null);
-                    fnkbox_index.get().local_point.pos = pos;
-                } else {
-                    const fnkbox = try Toybox.buildFnkbox(
-                        .{ .pos = pos },
-                        try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
-                        true,
-                        description,
-                        &.{},
-                        garland,
-                        dst.gpa_for_text,
-                        null,
-                    );
-                    Toybox.addChildLast(dst.main_area, fnkbox, null);
-                }
+                const fnkbox = try Toybox.buildFnkbox(
+                    .{ .pos = pos },
+                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                    true,
+                    description,
+                    &.{},
+                    garland,
+                    dst.gpa_for_text,
+                    null,
+                );
+                Toybox.addChildLast(dst.main_area, fnkbox, null);
             }
         } else {
             while (true) {
@@ -8248,22 +8230,17 @@ const Workspace = struct {
                 const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
 
                 const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
-                if (fnks_indices.get(fnk.name)) |fnkbox_index| {
-                    Toybox.changeChild(fnkbox_index.children(.fnkbox).executor.children(.executor).garland, garland, null);
-                    fnkbox_index.get().local_point.pos = pos;
-                } else {
-                    const fnkbox = try Toybox.buildFnkbox(
-                        .{ .pos = pos },
-                        try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
-                        true,
-                        description,
-                        &.{},
-                        garland,
-                        dst.gpa_for_text,
-                        null,
-                    );
-                    Toybox.addChildLast(dst.main_area, fnkbox, null);
-                }
+                const fnkbox = try Toybox.buildFnkbox(
+                    .{ .pos = pos },
+                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
+                    true,
+                    description,
+                    &.{},
+                    garland,
+                    dst.gpa_for_text,
+                    null,
+                );
+                Toybox.addChildLast(dst.main_area, fnkbox, null);
             }
         }
 
