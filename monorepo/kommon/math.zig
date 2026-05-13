@@ -2132,6 +2132,10 @@ pub const Point = extern struct {
         return center.inverseApplyGetLocalPosition(needle_pos).magSq() <= (local_inclusive_dist * local_inclusive_dist);
     }
 
+    pub fn distSqTo(center: Point, needle_pos: Vec2) f32 {
+        return center.inverseApplyGetLocalPosition(needle_pos).magSq();
+    }
+
     pub fn plusTurns(original: Point, extra_turns: f32) Point {
         return .{ .pos = original.pos, .turns = original.turns + extra_turns, .scale = original.scale };
     }

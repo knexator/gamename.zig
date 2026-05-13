@@ -1707,17 +1707,26 @@ pub const TextRenderer = struct {
         }));
     }
 
+    const CursorPoint = struct {
+        offset: f32,
+        index: usize,
+    };
+
     pub fn quadsForLineV2(
         self: TextRenderer,
         text: []const u8,
         em: f32,
         color: FColor,
         target: std.mem.Allocator,
-    ) !struct { quads: []Quad, total_advance: f32 } {
+    ) !struct { quads: []Quad, cursor_offsets: []CursorPoint, total_advance: f32 } {
+        assert(std.mem.indexOf(u8, text, "\n") == null);
+
         var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
+        var cursor_offsets: std.ArrayList(CursorPoint) = try .initCapacity(target, text.len + 1);
         var cursor: Vec2 = .zero;
 
         var utf8 = (try std.unicode.Utf8View.init(text)).iterator();
+        cursor_offsets.appendAssumeCapacity(.{ .offset = cursor.x, .index = utf8.i });
         var prev: ?u21 = null;
         while (utf8.nextCodepoint()) |codepoint| {
             if (prev) |p| {
@@ -1725,6 +1734,8 @@ pub const TextRenderer = struct {
             }
             cursor, const quad = self.addLetter(cursor, codepoint, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
+            assert(cursor.y == 0);
+            cursor_offsets.appendAssumeCapacity(.{ .offset = cursor.x, .index = utf8.i });
             prev = codepoint;
         }
 
@@ -1737,7 +1748,11 @@ pub const TextRenderer = struct {
         // }
 
         assert(cursor.y == 0);
-        return .{ .quads = try quads.toOwnedSlice(), .total_advance = cursor.x };
+        return .{
+            .quads = try quads.toOwnedSlice(),
+            .total_advance = cursor.x,
+            .cursor_offsets = try cursor_offsets.toOwnedSlice(),
+        };
     }
 
     pub fn quadsForLine(

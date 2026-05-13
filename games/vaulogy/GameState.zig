@@ -354,6 +354,9 @@ pub const Lego = struct {
         garland_newcases: void,
         fnkbox_description: struct {
             inner_text: std.ArrayListUnmanaged(u8),
+            /// resets each frame
+            cursor_points: std.ArrayListUnmanaged(CursorPoint) = .empty,
+
             pub fn text(this: @This()) []const u8 {
                 return if (this.inner_text.items.len > 0)
                     this.inner_text.items
@@ -2467,6 +2470,13 @@ pub const Handle = struct {
     }
 };
 
+const CursorPoint = struct {
+    /// the lowest corner of the cursor line
+    relative_pos: Vec2,
+    relative_height: f32,
+    index: usize,
+};
+
 pub const Toybox = struct {
     // TODO(optim-late): use a fancy arena thing
     all_legos: std.ArrayListUnmanaged(Lego),
@@ -3517,10 +3527,13 @@ const Workspace = struct {
 
     grabbing: Grabbing = .nothing,
     active_text_input: Lego.Index = .nothing,
+    /// indexes into cursor_points
+    active_text_cursor: usize = undefined,
 
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
     arena_for_atom_names: std.heap.ArenaAllocator,
+    /// resets after interaction but before springs and drawing
     arena_for_oneframe_data: std.heap.ArenaAllocator,
 
     // TODO(design): remove
@@ -5127,6 +5140,9 @@ const Workspace = struct {
         dropzone: Lego.Index = .nothing,
         over_background: Lego.Index,
 
+        /// used when 'hot' is a CursorPoint
+        text_index: usize = 0,
+
         pub fn empty(x: @This()) bool {
             return x.hot == .nothing and x.dropzone == .nothing;
         }
@@ -5269,6 +5285,23 @@ const Workspace = struct {
                         //  or that the culling isn't working
                         panic("unexpected unloaded testcase while interacting!", .{});
                     },
+                    .fnkbox_description => |fnkbox_description| {
+                        var best_index: usize = 0;
+                        var best_dist: f32 = std.math.inf(f32);
+                        for (fnkbox_description.cursor_points.items) |cursor_point| {
+                            const p = lego.absolute_point
+                                .applyToLocalPoint(.{ .pos = cursor_point.relative_pos.addY(-cursor_point.relative_height) });
+                            const cur_dist = p.distSqTo(absolute_needle_pos);
+                            if (cur_dist < best_dist) {
+                                best_dist = cur_dist;
+                                best_index = cursor_point.index;
+                            }
+                        }
+                        // this 1 is kind of arbitrary
+                        if (best_dist < 1) {
+                            return .{ .hot = cur, .text_index = best_index, .over_background = root };
+                        }
+                    },
                     .scrollable_list,
                     .scrollable_list_inbetween,
                     .case,
@@ -5278,7 +5311,6 @@ const Workspace = struct {
                     .executor,
                     .fnkbox,
                     .fnkbox_box,
-                    .fnkbox_description,
                     .fnkslist,
                     .fnkslist_element,
                     .testcase,
@@ -5877,7 +5909,7 @@ const Workspace = struct {
             try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
                 lego.specific.tag() == .sexpr
             else
-                false, camera, drawer);
+                false, camera, drawer, workspace.active_text_input, workspace.active_text_cursor);
         }
 
         if (workspace.display_fps) try drawer.canvas.drawText(
@@ -5895,7 +5927,14 @@ const Workspace = struct {
     }
 
     // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
-    fn _draw(roots_in_draw_order: []const Lego.Index, holding_a_sexpr: bool, camera: Rect, drawer: *Drawer) !void {
+    fn _draw(
+        roots_in_draw_order: []const Lego.Index,
+        holding_a_sexpr: bool,
+        camera: Rect,
+        drawer: *Drawer,
+        active_text_input: Lego.Index,
+        active_text_cursor: usize,
+    ) !void {
         for (roots_in_draw_order) |root| {
             var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
@@ -5990,7 +6029,7 @@ const Workspace = struct {
                                             drawer.canvas.clipper.pop();
                                             drawer.canvas.clipper.use(drawer.canvas);
                                         }
-                                        try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer);
+                                        try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer, active_text_input, active_text_cursor);
                                     } else |_| {
                                         std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                     }
@@ -6048,7 +6087,7 @@ const Workspace = struct {
                                     }
                                     drawer.canvas.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
 
-                                    try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer);
+                                    try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer, active_text_input, active_text_cursor);
                                 } else |_| {
                                     std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                 }
@@ -6268,6 +6307,13 @@ const Workspace = struct {
                                 0.8,
                                 .black,
                             );
+                            if (cur == active_text_input) {
+                                const cursor_point = fnkbox_description.cursor_points.items[active_text_cursor];
+                                drawer.canvas.line(camera_relative, &.{
+                                    cursor_point.relative_pos,
+                                    cursor_point.relative_pos.addY(-cursor_point.relative_height),
+                                }, 0.1, .black);
+                            }
                         },
                         .fnkslist_element => |fnkslist_element| {
                             try drawer.canvas.drawText(
@@ -6591,24 +6637,55 @@ const Workspace = struct {
 
         const typing: bool = workspace.active_text_input != .nothing;
 
-        if (platform.keyboard.wasPressed(.Escape) and typing) {
+        if (typing and platform.keyboard.wasPressed(.Escape)) {
             platform.stopTextInput();
             workspace.active_text_input = .nothing;
         }
-        if ((mouse.wasPressed(.left) or mouse.wasPressed(.right)) and typing) {
+        if (typing and (mouse.wasPressed(.left) or mouse.wasPressed(.right))) {
             platform.stopTextInput();
             workspace.active_text_input = .nothing;
         }
-
-        while (platform.consumeTextInput()) |input| {
-            try workspace.active_text_input.get().specific.fnkbox_description.inner_text.appendSlice(workspace.gpa_for_bindings, input.constSlice());
+        if (typing and platform.wasKeyPressedOrRetriggered(.ArrowLeft, 0.1)) {
+            workspace.active_text_cursor -|= 1;
         }
-        if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1) and typing) {
-            const text = &workspace.active_text_input.get().specific.fnkbox_description.inner_text;
-            text.shrinkRetainingCapacity(kommon.unicodeEraseLastCodepoint(text.items));
+        if (typing and platform.wasKeyPressedOrRetriggered(.ArrowRight, 0.1)) {
+            workspace.active_text_cursor = @min(
+                workspace.active_text_cursor + 1,
+                workspace.active_text_input.get().specific.fnkbox_description.cursor_points.items.len -| 1,
+            );
         }
 
-        if (platform.keyboard.wasPressed(.KeyZ) and !typing) {
+        // TODO(polish): should be a while loop, but we aren't recomputing the new cursor_points
+        if (platform.consumeTextInput()) |input| {
+            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
+            try fnkbox_description.inner_text
+                .insertSlice(
+                workspace.gpa_for_text,
+                fnkbox_description.cursor_points.items[workspace.active_text_cursor].index,
+                input.constSlice(),
+            );
+            workspace.active_text_cursor += 1;
+        }
+        if (typing and platform.wasKeyPressedOrRetriggered(.Backspace, 0.1)) {
+            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
+            if (workspace.active_text_cursor > 0) {
+                const start = fnkbox_description.cursor_points.items[workspace.active_text_cursor - 1];
+                const end = fnkbox_description.cursor_points.items[workspace.active_text_cursor];
+                fnkbox_description.inner_text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
+                workspace.active_text_cursor -= 1;
+            }
+        }
+        if (typing and platform.wasKeyPressedOrRetriggered(.Delete, 0.1)) {
+            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
+            const max = fnkbox_description.cursor_points.items.len -| 1;
+            if (workspace.active_text_cursor < max) {
+                const start = fnkbox_description.cursor_points.items[workspace.active_text_cursor];
+                const end = fnkbox_description.cursor_points.items[workspace.active_text_cursor + 1];
+                fnkbox_description.inner_text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
+            }
+        }
+
+        if (!typing and platform.keyboard.wasPressed(.KeyZ)) {
             // std.log.debug("on undo, undo_stack len was: {d}", .{undo_stack.commands.items.len});
             while (undo_stack.pop()) |command| {
                 switch (command) {
@@ -6720,6 +6797,14 @@ const Workspace = struct {
                     // continue with Case A.3
                     grabbed_element_index = hot_index;
                     plucked = false;
+                } else if (hot_index.hasTag(.fnkbox_description)) {
+                    // Special case: edit text
+                    // TODO(now): select range
+                    platform.startTextInput(null);
+                    workspace.active_text_input = hot_index;
+                    workspace.active_text_cursor = hot_and_dropzone.text_index;
+                    plucked = false;
+                    grabbed_element_index = .nothing;
                 } else if (hot_index.get().grabsWithoutPlucking()) {
                     // Case A.3: grabbing rather than plucking, including buttons
                     undo_stack.storeAllData(hot_index);
@@ -6910,6 +6995,7 @@ const Workspace = struct {
                                     assert(parent.hasTag(.fnkbox_description));
                                     platform.startTextInput(null);
                                     workspace.active_text_input = parent;
+                                    workspace.active_text_cursor = parent.get().specific.fnkbox_description.inner_text.items.len;
                                 },
                             }
                         }
@@ -7520,6 +7606,9 @@ const Workspace = struct {
                     sexpr.bindings_all = .empty;
                     sexpr.bindings_unbound = .empty;
                 }
+                if (lego.specific.as(.fnkbox_description)) |fnkbox_description| {
+                    fnkbox_description.cursor_points = .empty;
+                }
             }
 
             _ = workspace.arena_for_oneframe_data.reset(.retain_capacity);
@@ -7609,6 +7698,37 @@ const Workspace = struct {
         // There should be no further changes
         undo_stack.startFrame();
         defer assert(!undo_stack.anyChangesThisFrame());
+
+        if (drawer) |drwr| { // recompute cursor_points
+            for (toybox.all_legos.items) |*lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .fnkbox_description) {
+                    const cursor_points = &lego.specific.fnkbox_description.cursor_points;
+                    assert(cursor_points.items.len == 0);
+                    const text = lego.specific.fnkbox_description.inner_text.items;
+
+                    const text_renderer = &drwr.canvas.text_renderers[0];
+                    const metrics = text_renderer.font_info.value.metrics;
+                    const em = 0.8;
+                    const pos: Canvas.TextRenderer.TextPosition = .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0));
+                    const info = try text_renderer.quadsForLineV2(text, em, undefined, scratch);
+                    const delta = text_renderer.deltaToAchieve(pos, info.total_advance, em);
+
+                    try cursor_points.ensureTotalCapacityPrecise(
+                        workspace.arena_for_oneframe_data.allocator(),
+                        info.cursor_offsets.len,
+                    );
+                    assert(metrics.ascender < 0 and metrics.descender > 0);
+                    for (info.cursor_offsets) |asdf| {
+                        cursor_points.appendAssumeCapacity(.{
+                            .relative_pos = delta.addX(asdf.offset).addY(metrics.descender * em),
+                            .index = asdf.index,
+                            .relative_height = (metrics.descender - metrics.ascender) * em,
+                        });
+                    }
+                }
+            }
+        }
 
         if (true) { // set lenses data
             const zone = tracy.initZone(@src(), .{ .name = "set lenses data" });
