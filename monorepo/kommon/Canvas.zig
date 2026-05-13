@@ -1425,6 +1425,7 @@ pub fn startFrame(self: *Canvas, gl: Gl) void {
 // TODO: baselines, etc
 pub const TextBatch = struct {
     quads: std.ArrayList(TextRenderer.Quad),
+    bgs: std.ArrayList(FilledRect),
     canvas: *Canvas,
     text_renderer: *TextRenderer,
 
@@ -1470,9 +1471,62 @@ pub const TextBatch = struct {
         for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta).withParentPoint(parent_point));
     }
 
+    /// returns the cursor's lower corner, if any
+    pub fn addEditableText(
+        self: *TextBatch,
+        parent_point: Point,
+        text: []const u8,
+        selection: ?TextSelection,
+        pos: TextRenderer.TextPosition,
+        em: f32,
+        color: FColor,
+        selected_bg_color: FColor,
+    ) !?Line {
+        if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
+        const info = try self.text_renderer.quadsForLineV2(text, em, color, self.canvas.frame_arena.allocator());
+        const quads = info.quads;
+        defer self.canvas.frame_arena.allocator().free(quads);
+        const delta = self.text_renderer.deltaToAchieve(pos, info.total_advance, em);
+        try self.quads.ensureUnusedCapacity(quads.len);
+        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta).withParentPoint(parent_point));
+
+        const metrics = self.text_renderer.font_info.value.metrics;
+        assert(metrics.ascender < 0 and metrics.descender > 0);
+
+        if (selection) |s| {
+            try self.bgs.ensureUnusedCapacity(info.cursor_offsets.len -| 1);
+            for (s.min()..s.max()) |k| {
+                self.bgs.appendAssumeCapacity(.{
+                    .color = selected_bg_color,
+                    .pos = .fromTopLeftAndBottomRight(
+                        delta.addX(info.cursor_offsets[k].offset).addY(metrics.ascender * em),
+                        delta.addX(info.cursor_offsets[k + 1].offset).addY(metrics.descender * em),
+                    ),
+                });
+            }
+            const p = delta.addX(info.cursor_offsets[s.cursor].offset);
+            return .{ .a = p.addY(metrics.descender * em), .b = p.addY(metrics.ascender * em) };
+        } else return null;
+    }
+
     pub fn draw(self: *TextBatch, camera: Rect) void {
+        self.canvas.fillRects(camera, self.bgs.items);
         self.text_renderer.drawQuads(self.canvas.gl, camera, self.quads.items, self.canvas.frame_arena.allocator());
         self.quads.clearAndFree();
+        self.bgs.clearAndFree();
+    }
+};
+
+pub const TextSelection = struct {
+    cursor: usize,
+    anchor: usize,
+
+    pub fn min(text_selection: TextSelection) usize {
+        return @min(text_selection.cursor, text_selection.anchor);
+    }
+
+    pub fn max(text_selection: TextSelection) usize {
+        return @max(text_selection.cursor, text_selection.anchor);
     }
 };
 
@@ -1488,10 +1542,43 @@ pub fn drawTextV2(self: *Canvas, parent_point: Point, font_index: usize, camera:
     batch.draw(camera);
 }
 
+pub const Line = struct {
+    a: Vec2,
+    b: Vec2,
+};
+
+/// prefer .textBatch
+pub fn drawEditableText(
+    self: *Canvas,
+    parent_point: Point,
+    font_index: usize,
+    camera: Rect,
+    text: []const u8,
+    selection: ?TextSelection,
+    pos: TextRenderer.TextPosition,
+    em: f32,
+    color: FColor,
+    selected_bg_color: FColor,
+) !?Line {
+    var batch = self.textBatch(font_index);
+    const cursor_line = try batch.addEditableText(
+        parent_point,
+        text,
+        selection,
+        pos,
+        em,
+        color,
+        selected_bg_color,
+    );
+    batch.draw(camera);
+    return cursor_line;
+}
+
 pub fn textBatch(self: *Canvas, font_index: usize) TextBatch {
     return .{
         .canvas = self,
         .quads = .init(self.frame_arena.allocator()),
+        .bgs = .init(self.frame_arena.allocator()),
         .text_renderer = &self.text_renderers[font_index],
     };
 }
