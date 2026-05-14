@@ -1518,7 +1518,9 @@ pub const TextBatch = struct {
 };
 
 pub const TextSelection = struct {
+    /// indexes into cursor_points
     cursor: usize,
+    /// indexes into cursor_points
     anchor: usize,
 
     pub fn min(text_selection: TextSelection) usize {
@@ -1527,6 +1529,10 @@ pub const TextSelection = struct {
 
     pub fn max(text_selection: TextSelection) usize {
         return @max(text_selection.cursor, text_selection.anchor);
+    }
+
+    pub fn both(v: usize) TextSelection {
+        return .{ .cursor = v, .anchor = v };
     }
 };
 

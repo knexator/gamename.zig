@@ -2470,6 +2470,61 @@ pub const Handle = struct {
     }
 };
 
+const TextManipulation = struct {
+    selection: *TextSelection,
+    text: *std.ArrayListUnmanaged(u8),
+    alloc_text: std.mem.Allocator,
+    cursor_points: *std.ArrayListUnmanaged(CursorPoint),
+    alloc_cursor_points: std.mem.Allocator,
+
+    pub fn moveLeft(edit: *TextManipulation) void {
+        edit.selection.cursor -|= 1;
+        edit.selection.anchor = edit.selection.cursor;
+    }
+
+    pub fn moveRight(edit: *TextManipulation) void {
+        edit.selection.cursor = @min(
+            edit.selection.cursor + 1,
+            edit.cursor_points.items.len -| 1,
+        );
+        edit.selection.anchor = edit.selection.cursor;
+    }
+
+    pub fn backspace(edit: *TextManipulation) void {
+        // TODO: erase whole selection
+        if (edit.selection.cursor > 0) {
+            const start = edit.cursor_points.items[edit.selection.cursor - 1];
+            const end = edit.cursor_points.items[edit.selection.cursor];
+            edit.text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
+            edit.selection.cursor -= 1;
+            edit.selection.anchor = edit.selection.cursor;
+        }
+    }
+
+    pub fn delete(edit: *TextManipulation) void {
+        // TODO: erase whole selection
+        const max = edit.cursor_points.items.len -| 1;
+        if (edit.selection.cursor < max) {
+            const start = edit.cursor_points.items[edit.selection.cursor];
+            const end = edit.cursor_points.items[edit.selection.cursor + 1];
+            edit.text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
+        }
+    }
+
+    pub fn insertCharacter(edit: *TextManipulation, bytes: []const u8) !void {
+        // TODO: replace selection
+        // TODO(bug): recompute cursor_points
+        try edit.text
+            .insertSlice(
+            edit.alloc_text,
+            edit.cursor_points.items[edit.selection.cursor].index,
+            bytes,
+        );
+        edit.selection.cursor += 1;
+        edit.selection.anchor = edit.selection.cursor;
+    }
+};
+
 const CursorPoint = struct {
     /// the lowest corner of the cursor line
     relative_pos: Vec2,
@@ -3527,10 +3582,7 @@ const Workspace = struct {
 
     grabbing: Grabbing = .nothing,
     active_text_input: Lego.Index = .nothing,
-    /// indexes into cursor_points
-    active_text_cursor: usize = undefined,
-    /// indexes into cursor_points
-    active_text_anchor: usize = undefined,
+    active_text_selection: Canvas.TextSelection = undefined,
 
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
@@ -5394,7 +5446,7 @@ const Workspace = struct {
         }
     }
 
-    fn dragGrabbing(grabbing: Grabbing, active_text_cursor: *usize, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+    fn dragGrabbing(grabbing: Grabbing, active_text_selection: *TextSelection, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
         if (grabbing.index == .nothing) return;
         const cur = grabbing.index;
         const lego = Toybox.get(cur);
@@ -5533,7 +5585,7 @@ const Workspace = struct {
                 },
                 .fnkbox_description => {
                     if (interaction.text_index) |i| {
-                        active_text_cursor.* = i;
+                        active_text_selection.cursor = i;
                     }
                 },
             }
@@ -5916,7 +5968,7 @@ const Workspace = struct {
             try _draw(workspace.roots(.all).constSlice(), if (Toybox.safeGet(workspace.grabbing.index)) |lego|
                 lego.specific.tag() == .sexpr
             else
-                false, camera, drawer, workspace.active_text_input, workspace.active_text_cursor, workspace.active_text_anchor);
+                false, camera, drawer, workspace.active_text_input, workspace.active_text_selection);
         }
 
         if (workspace.display_fps) try drawer.canvas.drawText(
@@ -5940,8 +5992,7 @@ const Workspace = struct {
         camera: Rect,
         drawer: *Drawer,
         active_text_input: Lego.Index,
-        active_text_cursor: usize,
-        active_text_anchor: usize,
+        active_text_selection: TextSelection,
     ) !void {
         for (roots_in_draw_order) |root| {
             var it = Toybox.treeIterator(root, true);
@@ -6037,7 +6088,7 @@ const Workspace = struct {
                                             drawer.canvas.clipper.pop();
                                             drawer.canvas.clipper.use(drawer.canvas);
                                         }
-                                        try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer, active_text_input, active_text_cursor, active_text_anchor);
+                                        try _draw(&.{sexpr.emerging_value}, holding_a_sexpr, camera, drawer, active_text_input, active_text_selection);
                                     } else |_| {
                                         std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                     }
@@ -6095,7 +6146,7 @@ const Workspace = struct {
                                     }
                                     drawer.canvas.fillCircleV2(camera_relative, lens_circle, COLORS.bg);
 
-                                    try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer, active_text_input, active_text_cursor, active_text_anchor);
+                                    try _draw(lens.roots_to_draw, holding_a_sexpr, lens.transform.getCamera(camera), drawer, active_text_input, active_text_selection);
                                 } else |_| {
                                     std.log.err("reached max lens depth, TODO(polish): improve", .{});
                                 }
@@ -6312,7 +6363,7 @@ const Workspace = struct {
                                 0,
                                 camera_relative,
                                 fnkbox_description.text(),
-                                if (cur == active_text_input) .{ .cursor = active_text_cursor, .anchor = active_text_anchor } else null,
+                                if (cur == active_text_input) active_text_selection else null,
                                 .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
                                 0.8,
                                 .black,
@@ -6644,58 +6695,53 @@ const Workspace = struct {
 
         assert(workspace.valid(scratch));
 
-        const typing: bool = workspace.active_text_input != .nothing;
+        var typing: bool = workspace.active_text_input != .nothing;
 
-        if (typing and platform.keyboard.wasPressed(.Escape)) {
+        if (typing) {
+            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
+            var textedit: TextManipulation = .{
+                .selection = &workspace.active_text_selection,
+                .text = &fnkbox_description.inner_text,
+                .alloc_text = workspace.gpa_for_text,
+                .cursor_points = &fnkbox_description.cursor_points,
+                .alloc_cursor_points = workspace.arena_for_oneframe_data.allocator(),
+            };
+
+            if (platform.wasKeyPressedOrRetriggered(.ArrowLeft, 0.1)) {
+                textedit.moveLeft();
+            }
+            if (platform.wasKeyPressedOrRetriggered(.ArrowRight, 0.1)) {
+                textedit.moveRight();
+            }
+            if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1)) {
+                textedit.backspace();
+            }
+            if (platform.wasKeyPressedOrRetriggered(.Delete, 0.1)) {
+                textedit.delete();
+            }
+
+            while (platform.consumeTextInput()) |input| {
+                try textedit.insertCharacter(input.constSlice());
+            }
+        } else {
+            assert(platform.consumeTextInput() == null);
+        }
+
+        if (typing and (workspace.grabbing.index != .nothing and
+            (!(mouse.cur.isDown(.left) or mouse.cur.isDown(.right)) or
+                workspace.grabbingSomethingIllegal())))
+        {
+            workspace.setGrabbing(.{ .index = .nothing, .offset = .zero }, undo_stack);
+            workspace.setHandLayer(.nothing, undo_stack);
+        }
+
+        if (typing and (platform.keyboard.wasPressed(.Escape) or
+            mouse.wasPressed(.left) or
+            mouse.wasPressed(.right)))
+        {
             platform.stopTextInput();
             workspace.active_text_input = .nothing;
-        }
-        if (typing and (mouse.wasPressed(.left) or mouse.wasPressed(.right))) {
-            platform.stopTextInput();
-            workspace.active_text_input = .nothing;
-        }
-        if (typing and platform.wasKeyPressedOrRetriggered(.ArrowLeft, 0.1)) {
-            workspace.active_text_cursor -|= 1;
-            workspace.active_text_anchor = workspace.active_text_cursor;
-        }
-        if (typing and platform.wasKeyPressedOrRetriggered(.ArrowRight, 0.1)) {
-            workspace.active_text_cursor = @min(
-                workspace.active_text_cursor + 1,
-                workspace.active_text_input.get().specific.fnkbox_description.cursor_points.items.len -| 1,
-            );
-            workspace.active_text_anchor = workspace.active_text_cursor;
-        }
-
-        // TODO(polish): should be a while loop, but we aren't recomputing the new cursor_points
-        if (platform.consumeTextInput()) |input| {
-            assert(typing);
-            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
-            try fnkbox_description.inner_text
-                .insertSlice(
-                workspace.gpa_for_text,
-                fnkbox_description.cursor_points.items[workspace.active_text_cursor].index,
-                input.constSlice(),
-            );
-            workspace.active_text_cursor += 1;
-            workspace.active_text_anchor = workspace.active_text_cursor;
-        }
-        if (typing and platform.wasKeyPressedOrRetriggered(.Backspace, 0.1)) {
-            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
-            if (workspace.active_text_cursor > 0) {
-                const start = fnkbox_description.cursor_points.items[workspace.active_text_cursor - 1];
-                const end = fnkbox_description.cursor_points.items[workspace.active_text_cursor];
-                fnkbox_description.inner_text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
-                workspace.active_text_cursor -= 1;
-            }
-        }
-        if (typing and platform.wasKeyPressedOrRetriggered(.Delete, 0.1)) {
-            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
-            const max = fnkbox_description.cursor_points.items.len -| 1;
-            if (workspace.active_text_cursor < max) {
-                const start = fnkbox_description.cursor_points.items[workspace.active_text_cursor];
-                const end = fnkbox_description.cursor_points.items[workspace.active_text_cursor + 1];
-                fnkbox_description.inner_text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
-            }
+            typing = false;
         }
 
         if (!typing and platform.keyboard.wasPressed(.KeyZ)) {
@@ -6731,7 +6777,7 @@ const Workspace = struct {
                     },
                 }
             }
-        } else { // INTERACTION
+        } else if (!typing) { // INTERACTION
             const zone = tracy.initZone(@src(), .{ .name = "interaction" });
             defer zone.deinit();
 
@@ -6814,8 +6860,7 @@ const Workspace = struct {
                     // Special case: edit text
                     platform.startTextInput(null);
                     workspace.active_text_input = hot_index;
-                    workspace.active_text_cursor = hot_and_dropzone.text_index.?;
-                    workspace.active_text_anchor = hot_and_dropzone.text_index.?;
+                    workspace.active_text_selection = .both(hot_and_dropzone.text_index.?);
                     plucked = false;
                     grabbed_element_index = hot_index;
                 } else if (hot_index.get().grabsWithoutPlucking()) {
@@ -7008,8 +7053,8 @@ const Workspace = struct {
                                     assert(parent.hasTag(.fnkbox_description));
                                     platform.startTextInput(null);
                                     workspace.active_text_input = parent;
-                                    workspace.active_text_cursor = parent.get().specific.fnkbox_description.inner_text.items.len;
-                                    workspace.active_text_anchor = 0;
+                                    workspace.active_text_selection.cursor = parent.get().specific.fnkbox_description.inner_text.items.len;
+                                    workspace.active_text_selection.anchor = 0;
                                 },
                             }
                         }
@@ -7062,7 +7107,7 @@ const Workspace = struct {
         // Do this here, for .grabbingSomethingIllegal to work correctly
         dragGrabbing(
             workspace.grabbing,
-            &workspace.active_text_cursor,
+            &workspace.active_text_selection,
             mouse.cur.position,
             hot_and_dropzone,
             delta_seconds,
@@ -8685,6 +8730,7 @@ pub const PrecomputedShape = kommon.renderer.PrecomputedShape;
 pub const RenderableInfo = kommon.renderer.RenderableInfo;
 pub const Gl = kommon.Gl;
 pub const Canvas = kommon.Canvas;
+pub const TextSelection = Canvas.TextSelection;
 pub const TextRenderer = Canvas.TextRenderer;
 pub const Mem = kommon.Mem;
 pub const Key = kommon.Key;
