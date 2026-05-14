@@ -1523,6 +1523,10 @@ pub const TextSelection = struct {
     /// indexes into cursor_points
     anchor: usize,
 
+    pub fn empty(text_selection: TextSelection) bool {
+        return text_selection.cursor == text_selection.anchor;
+    }
+
     pub fn min(text_selection: TextSelection) usize {
         return @min(text_selection.cursor, text_selection.anchor);
     }

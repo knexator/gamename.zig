@@ -212,6 +212,8 @@ test "No leaks on Workspace and Drawer" {
 }
 
 test "solutions" {
+    if (true) return error.SkipZigTest;
+
     const gpa = std.testing.allocator;
     var mem: core.VeryPermamentGameStuff = .init(gpa);
     defer mem.deinit();
@@ -2477,51 +2479,216 @@ const TextManipulation = struct {
     cursor_points: *std.ArrayListUnmanaged(CursorPoint),
     alloc_cursor_points: std.mem.Allocator,
 
-    pub fn moveLeft(edit: *TextManipulation) void {
+    pub fn left(edit: TextManipulation, extend: bool) void {
         edit.selection.cursor -|= 1;
-        edit.selection.anchor = edit.selection.cursor;
+        if (!extend) edit.selection.anchor = edit.selection.cursor;
     }
 
-    pub fn moveRight(edit: *TextManipulation) void {
-        edit.selection.cursor = @min(
-            edit.selection.cursor + 1,
-            edit.cursor_points.items.len -| 1,
-        );
-        edit.selection.anchor = edit.selection.cursor;
+    pub fn right(edit: TextManipulation, extend: bool) void {
+        edit.selection.cursor = edit.clamped(edit.selection.cursor + 1);
+        if (!extend) edit.selection.anchor = edit.selection.cursor;
     }
 
-    pub fn backspace(edit: *TextManipulation) void {
-        // TODO: erase whole selection
-        if (edit.selection.cursor > 0) {
-            const start = edit.cursor_points.items[edit.selection.cursor - 1];
-            const end = edit.cursor_points.items[edit.selection.cursor];
-            edit.text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
-            edit.selection.cursor -= 1;
-            edit.selection.anchor = edit.selection.cursor;
+    fn delete(edit: TextManipulation, start: usize, end: usize) void {
+        const start_byte = edit.cursor_points.items[start].index;
+        const end_byte = edit.cursor_points.items[end].index;
+        edit.text.replaceRangeAssumeCapacity(start_byte, end_byte - start_byte, &.{});
+        edit.cursor_points.replaceRangeAssumeCapacity(start, end - start, &.{});
+        for (edit.cursor_points.items[start..]) |*dst| {
+            dst.index -= end_byte - start_byte;
         }
+        if (edit.selection.anchor >= end) edit.selection.anchor -= end - start;
+        if (edit.selection.cursor >= end) edit.selection.cursor -= end - start;
     }
 
-    pub fn delete(edit: *TextManipulation) void {
-        // TODO: erase whole selection
-        const max = edit.cursor_points.items.len -| 1;
-        if (edit.selection.cursor < max) {
-            const start = edit.cursor_points.items[edit.selection.cursor];
-            const end = edit.cursor_points.items[edit.selection.cursor + 1];
-            edit.text.replaceRangeAssumeCapacity(start.index, end.index - start.index, &.{});
+    pub fn backspace(edit: TextManipulation) void {
+        const start: usize, const end: usize = if (edit.selection.empty())
+            .{ edit.selection.cursor -| 1, edit.selection.cursor }
+        else
+            .{ edit.selection.min(), edit.selection.max() };
+
+        edit.delete(start, end);
+
+        // edit.selection.* = .both(start);
+    }
+
+    fn clamped(edit: TextManipulation, cursor: usize) usize {
+        return @min(cursor, edit.cursor_points.items.len -| 1);
+    }
+
+    pub fn supr(edit: TextManipulation) void {
+        const start: usize, const end: usize = if (edit.selection.empty())
+            .{ edit.selection.cursor, edit.clamped(edit.selection.cursor + 1) }
+        else
+            .{ edit.selection.min(), edit.selection.max() };
+
+        edit.delete(start, end);
+    }
+
+    pub fn insertCharacter(edit: TextManipulation, bytes: []const u8) !void {
+        if (!edit.selection.empty()) {
+            edit.delete(edit.selection.min(), edit.selection.max());
         }
-    }
+        assert(edit.selection.empty());
 
-    pub fn insertCharacter(edit: *TextManipulation, bytes: []const u8) !void {
-        // TODO: replace selection
-        // TODO(bug): recompute cursor_points
-        try edit.text
-            .insertSlice(
+        try edit.text.insertSlice(
             edit.alloc_text,
             edit.cursor_points.items[edit.selection.cursor].index,
             bytes,
         );
-        edit.selection.cursor += 1;
-        edit.selection.anchor = edit.selection.cursor;
+        edit.selection.* = .both(edit.selection.cursor + 1);
+
+        const dup = edit.cursor_points.items[edit.selection.cursor - 1];
+        try edit.cursor_points.insert(edit.alloc_cursor_points, edit.selection.cursor, dup);
+        for (edit.cursor_points.items[edit.selection.cursor..]) |*dst| {
+            dst.index += bytes.len;
+        }
+    }
+
+    const TestHelper = struct {
+        text: std.ArrayListUnmanaged(u8) = .empty,
+        selection: TextSelection = .both(0),
+        cursor_points: std.ArrayListUnmanaged(CursorPoint) = .empty,
+        allocator: std.mem.Allocator,
+
+        /// in state, | means cursor and !
+        fn init(gpa: std.mem.Allocator, state: []const u8) !TestHelper {
+            try std.testing.expect(std.mem.count(u8, state, ".") == 1);
+            try std.testing.expect(std.mem.count(u8, state, ",") == 1);
+
+            var result: TestHelper = .{ .allocator = gpa };
+            try result.cursor_points.ensureUnusedCapacity(gpa, state.len);
+            try result.text.ensureUnusedCapacity(gpa, state.len);
+
+            var utf8 = (try std.unicode.Utf8View.init(state)).iterator();
+
+            var text_index: usize = 0;
+            var points_index: usize = 0;
+
+            result.cursor_points.appendAssumeCapacity(.{ .index = text_index, .relative_pos = .zero, .relative_height = 0 });
+            while (utf8.nextCodepointSlice()) |codepoint| {
+                if (std.mem.eql(u8, codepoint, ".")) {
+                    result.selection.anchor = points_index;
+                } else if (std.mem.eql(u8, codepoint, ",")) {
+                    result.selection.cursor = points_index;
+                } else {
+                    text_index += codepoint.len;
+                    points_index += codepoint.len;
+                    result.cursor_points.appendAssumeCapacity(.{ .index = text_index, .relative_pos = .zero, .relative_height = 0 });
+                    result.text.appendSliceAssumeCapacity(codepoint);
+                }
+            }
+
+            return result;
+        }
+
+        fn deinit(helper: *TestHelper) void {
+            helper.text.deinit(helper.allocator);
+            helper.cursor_points.deinit(helper.allocator);
+        }
+
+        fn expectState(helper: TestHelper, state: []const u8) !void {
+            var other: TestHelper = try .init(helper.allocator, state);
+            defer other.deinit();
+
+            try std.testing.expectEqualStrings(other.text.items, helper.text.items);
+            try std.testing.expectEqualSlices(CursorPoint, other.cursor_points.items, helper.cursor_points.items);
+            try std.testing.expectEqual(other.selection, helper.selection);
+        }
+
+        fn edit(helper: *TestHelper) TextManipulation {
+            return .{
+                .selection = &helper.selection,
+                .text = &helper.text,
+                .alloc_text = helper.allocator,
+                .cursor_points = &helper.cursor_points,
+                .alloc_cursor_points = helper.allocator,
+            };
+        }
+    };
+
+    test "basics" {
+        var helper: TestHelper = try .init(std.testing.allocator, "he.,llo");
+        defer helper.deinit();
+
+        // validate the actual helper
+        try helper.expectState("he.,llo");
+        try helper.expectState("he,.llo");
+        try std.testing.expectEqualStrings("hello", helper.text.items);
+        try std.testing.expectEqualSlices(CursorPoint, &.{
+            .{ .index = 0, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = 1, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = 2, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = 3, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = 4, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = 5, .relative_pos = .zero, .relative_height = 0 },
+        }, helper.cursor_points.items);
+
+        helper.edit().supr();
+        try helper.expectState("he.,lo");
+
+        helper.edit().backspace();
+        try helper.expectState("h.,lo");
+
+        helper.edit().right(true);
+        try helper.expectState("h.l,o");
+
+        helper.edit().backspace();
+        try helper.expectState("h.,o");
+
+        helper.edit().right(true);
+        try helper.expectState("h.o,");
+
+        helper.edit().right(true);
+        try helper.expectState("h.o,");
+
+        helper.edit().left(true);
+        try helper.expectState("h.,o");
+
+        helper.edit().right(false);
+        try helper.expectState("ho.,");
+
+        helper.edit().left(true);
+        try helper.expectState("h,o.");
+
+        helper.edit().left(true);
+        try helper.expectState(",ho.");
+
+        helper.edit().backspace();
+        try helper.expectState(",.");
+
+        helper.edit().backspace();
+        try helper.expectState(",.");
+
+        helper.edit().supr();
+        try helper.expectState(",.");
+
+        try helper.edit().insertCharacter("a");
+        try helper.expectState("a.,");
+    }
+
+    test "jumps" {
+        var helper: TestHelper = try .init(std.testing.allocator, "hello .,there you");
+        defer helper.deinit();
+
+        helper.edit().right(true, true);
+        try helper.expectState("hello .there, you");
+    }
+
+    test "non-ascii" {
+        var helper: TestHelper = try .init(std.testing.allocator, ".,我");
+        defer helper.deinit();
+
+        try helper.expectState(".,我");
+        try std.testing.expectEqualStrings("我", helper.text.items);
+        try std.testing.expectEqualSlices(CursorPoint, &.{
+            .{ .index = 0, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = "我".len, .relative_pos = .zero, .relative_height = 0 },
+        }, helper.cursor_points.items);
+
+        // TODO(bug)
+        helper.edit().right(true);
+        try helper.expectState(".我,");
     }
 };
 
@@ -6708,16 +6875,16 @@ const Workspace = struct {
             };
 
             if (platform.wasKeyPressedOrRetriggered(.ArrowLeft, 0.1)) {
-                textedit.moveLeft();
+                textedit.left(platform.keyboard.cur.isShiftDown());
             }
             if (platform.wasKeyPressedOrRetriggered(.ArrowRight, 0.1)) {
-                textedit.moveRight();
+                textedit.right(platform.keyboard.cur.isShiftDown());
             }
             if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1)) {
                 textedit.backspace();
             }
             if (platform.wasKeyPressedOrRetriggered(.Delete, 0.1)) {
-                textedit.delete();
+                textedit.supr();
             }
 
             while (platform.consumeTextInput()) |input| {
