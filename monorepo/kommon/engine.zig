@@ -82,12 +82,19 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
             return result;
         }
 
-        pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
+        pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32, first_retrigger_time: ?f32) bool {
             if (self.keyboard.wasPressed(key)) return true;
-            if (self.keyboard.cur.isDown(key) and self.keyboard.timeSinceChange(key) > retrigger_time) {
+
+            const t = if (first_retrigger_time == null or self.keyboard.alreadyRetriggered(key))
+                retrigger_time
+            else
+                first_retrigger_time.?;
+
+            if (self.keyboard.cur.isDown(key) and self.keyboard.timeSinceChange(key) > t) {
                 self.setKeyChanged(key);
                 return true;
             }
+
             return false;
         }
 

@@ -453,7 +453,7 @@ fn updateGame(self: *GameState, platform: PlatformGives) !bool {
         self.level_state.reset();
     }
 
-    if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.2)) {
+    if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.1, 0.3)) {
         self.level_state.undo();
     }
 

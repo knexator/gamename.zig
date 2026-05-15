@@ -964,6 +964,7 @@ pub fn main() !void {
                                 if (event.key.scancode == sdl_scancode) {
                                     @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
                                     @field(keyboard.last_change_at, @tagName(key)) = sdl_platform.global_seconds;
+                                    @field(keyboard.manually_changed, @tagName(key)) = false;
                                     break;
                                 }
                             }

@@ -6919,16 +6919,19 @@ const Workspace = struct {
                 .alloc_cursor_points = workspace.arena_for_oneframe_data.allocator(),
             };
 
-            if (platform.wasKeyPressedOrRetriggered(.ArrowLeft, 0.1)) {
+            const key_time_first = 0.40;
+            const key_time_rest = 0.05;
+
+            if (platform.wasKeyPressedOrRetriggered(.ArrowLeft, key_time_rest, key_time_first)) {
                 textedit.left(platform.keyboard.cur.isShiftDown(), if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
-            if (platform.wasKeyPressedOrRetriggered(.ArrowRight, 0.1)) {
+            if (platform.wasKeyPressedOrRetriggered(.ArrowRight, key_time_rest, key_time_first)) {
                 textedit.right(platform.keyboard.cur.isShiftDown(), if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
-            if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1)) {
+            if (platform.wasKeyPressedOrRetriggered(.Backspace, key_time_rest, key_time_first)) {
                 textedit.backspace();
             }
-            if (platform.wasKeyPressedOrRetriggered(.Delete, 0.1)) {
+            if (platform.wasKeyPressedOrRetriggered(.Delete, key_time_rest, key_time_first)) {
                 textedit.supr();
             }
 

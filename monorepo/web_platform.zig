@@ -1380,6 +1380,7 @@ fn keychanged(key: KeyCode, is_pressed: bool) void {
         inline else => |x| {
             @field(keyboard.cur.keys, @tagName(x)) = is_pressed;
             @field(keyboard.last_change_at, @tagName(x)) = web_platform.global_seconds;
+            @field(keyboard.manually_changed, @tagName(x)) = false;
         },
     }
 }
