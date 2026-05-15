@@ -603,8 +603,6 @@ pub const Lego = struct {
                 scroll_up,
                 /// assumes that the scrollbar is the direct parent
                 scroll_down,
-                /// assumes that the editable text is the direct parent
-                edit_fnkbox_description,
                 /// assumes that fnkname_holder is the direct parent
                 toggle_skip_fnk,
                 /// assumes that bubble is the direct parent
@@ -613,14 +611,13 @@ pub const Lego = struct {
                 create_fnkbox_for_row,
             },
             enabled: bool = true,
-            /// only applies to edit_fnkbox_description and toggle_skip_fnk
+            /// only applies to toggle_skip_fnk
             latched: bool = false,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
                     .launch_testcase,
                     .see_failing_testcase,
-                    .edit_fnkbox_description,
                     .scroll_up,
                     .scroll_down,
                     .reset_bubble,
@@ -3609,14 +3606,9 @@ pub const Toybox = struct {
             }, undo_stack);
 
         const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
-            try Toybox.createWithChildren(.{}, .{ .fnkbox_description = .{
+            try Toybox.new(.{}, .{ .fnkbox_description = .{
                 .inner_text = .fromOwnedSlice(try text_allocator.dupe(u8, text)),
-            } }, &.{
-                try new(.{}, .{ .button = .{
-                    .local_rect = FnkboxBox.edit_description_button_rect,
-                    .action = .edit_fnkbox_description,
-                } }, undo_stack),
-            }, undo_stack),
+            } }, undo_stack),
             try new(.{}, .{ .button = .{
                 .local_rect = FnkboxBox.status_bar_goal,
                 .action = .see_failing_testcase,
@@ -6512,15 +6504,6 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, if (button.latched) .blackAlpha(alpha) else COLORS.bg.withAlpha(alpha));
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, 0.1, .inner, .blackAlpha(alpha));
                                 },
-                                .edit_fnkbox_description => if (button.enabled) {
-                                    // TODO(game): draw a better icon
-                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
-                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(
-                                        @as(f32, if (button.latched) 0.15 else 0.05),
-                                        0.15,
-                                        @max(lego.hot_t, lego.active_t),
-                                    ), .inner, .black);
-                                },
                             }
                         },
                         .scrollbar => |scrollbar| {
@@ -7257,14 +7240,6 @@ const Workspace = struct {
                                     try launchTestcase(testcase_index, undo_stack);
                                 },
                                 .scroll_up, .scroll_down => {},
-                                .edit_fnkbox_description => {
-                                    const parent = workspace.grabbing.index.get().tree.parent;
-                                    assert(parent.hasTag(.fnkbox_description));
-                                    platform.startTextInput(null);
-                                    workspace.active_text_input = parent;
-                                    workspace.active_text_selection.cursor = parent.get().specific.fnkbox_description.inner_text.items.len;
-                                    workspace.active_text_selection.anchor = 0;
-                                },
                             }
                         }
                         assert(workspace.valid(scratch));
@@ -7820,7 +7795,6 @@ const Workspace = struct {
                         .scroll_up, .scroll_down, .reset_bubble => true,
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
-                        .edit_fnkbox_description => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.editable,
                         .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
                     };
                     button.latched = switch (button.action) {
@@ -7832,7 +7806,6 @@ const Workspace = struct {
                         .create_fnkbox_for_row,
                         => false,
                         .toggle_skip_fnk => button.latched,
-                        .edit_fnkbox_description => workspace.active_text_input == lego.tree.parent,
                     };
                 }
                 if (lego.specific.as(.executor_crank)) |crank| {
