@@ -2479,13 +2479,56 @@ const TextManipulation = struct {
     cursor_points: *std.ArrayListUnmanaged(CursorPoint),
     alloc_cursor_points: std.mem.Allocator,
 
-    pub fn left(edit: TextManipulation, extend: bool) void {
-        edit.selection.cursor -|= 1;
+    pub const Jump = enum { one, word, full };
+
+    fn moved(edit: TextManipulation, start: usize, direction: enum { left, right }, amount: Jump) usize {
+        switch (amount) {
+            .one => return switch (direction) {
+                .left => start -| 1,
+                .right => @min(start + 1, edit.cursor_points.items.len -| 1),
+            },
+            .full => return switch (direction) {
+                .left => 0,
+                .right => edit.cursor_points.items.len -| 1,
+            },
+            .word => {
+                // based on raddbg's ui_scanned_column_from_column
+                var found_text = false;
+                var found_non_space = false;
+                var cur = start;
+                while (true) {
+                    if (direction == .left and cur == 0) return cur;
+                    if (direction == .right and cur == edit.cursor_points.items.len -| 1) return cur;
+                    const next = edit.moved(cur, direction, .one);
+                    const codepoint = edit.textBetween(cur, next);
+                    assert(codepoint.len > 0);
+                    const is_non_space = !(codepoint.len == 1 and std.ascii.isWhitespace(codepoint[0]));
+                    const is_name = (codepoint.len > 1 or std.ascii.isAlphanumeric(codepoint[0]));
+                    if (found_non_space and !is_non_space) return cur;
+                    if (found_text and !is_name) return cur;
+                    if (is_name) found_text = true;
+                    if (is_non_space) found_non_space = true;
+                    cur = next;
+                }
+            },
+        }
+    }
+
+    fn textBetween(edit: TextManipulation, a: usize, b: usize) []const u8 {
+        const start = @min(a, b);
+        const end = @max(a, b);
+        const start_byte = edit.cursor_points.items[start].index;
+        const end_byte = edit.cursor_points.items[end].index;
+        return edit.text.items[start_byte..end_byte];
+    }
+
+    pub fn left(edit: TextManipulation, extend: bool, jump: Jump) void {
+        edit.selection.cursor = edit.moved(edit.selection.cursor, .left, jump);
         if (!extend) edit.selection.anchor = edit.selection.cursor;
     }
 
-    pub fn right(edit: TextManipulation, extend: bool) void {
-        edit.selection.cursor = edit.clamped(edit.selection.cursor + 1);
+    pub fn right(edit: TextManipulation, extend: bool, jump: Jump) void {
+        edit.selection.cursor = edit.moved(edit.selection.cursor, .right, jump);
         if (!extend) edit.selection.anchor = edit.selection.cursor;
     }
 
@@ -2503,22 +2546,16 @@ const TextManipulation = struct {
 
     pub fn backspace(edit: TextManipulation) void {
         const start: usize, const end: usize = if (edit.selection.empty())
-            .{ edit.selection.cursor -| 1, edit.selection.cursor }
+            .{ edit.moved(edit.selection.cursor, .left, .one), edit.selection.cursor }
         else
             .{ edit.selection.min(), edit.selection.max() };
 
         edit.delete(start, end);
-
-        // edit.selection.* = .both(start);
-    }
-
-    fn clamped(edit: TextManipulation, cursor: usize) usize {
-        return @min(cursor, edit.cursor_points.items.len -| 1);
     }
 
     pub fn supr(edit: TextManipulation) void {
         const start: usize, const end: usize = if (edit.selection.empty())
-            .{ edit.selection.cursor, edit.clamped(edit.selection.cursor + 1) }
+            .{ edit.selection.cursor, edit.moved(edit.selection.cursor, .right, .one) }
         else
             .{ edit.selection.min(), edit.selection.max() };
 
@@ -2630,28 +2667,28 @@ const TextManipulation = struct {
         helper.edit().backspace();
         try helper.expectState("h.,lo");
 
-        helper.edit().right(true);
+        helper.edit().right(true, .one);
         try helper.expectState("h.l,o");
 
         helper.edit().backspace();
         try helper.expectState("h.,o");
 
-        helper.edit().right(true);
+        helper.edit().right(true, .one);
         try helper.expectState("h.o,");
 
-        helper.edit().right(true);
+        helper.edit().right(true, .one);
         try helper.expectState("h.o,");
 
-        helper.edit().left(true);
+        helper.edit().left(true, .one);
         try helper.expectState("h.,o");
 
-        helper.edit().right(false);
+        helper.edit().right(false, .one);
         try helper.expectState("ho.,");
 
-        helper.edit().left(true);
+        helper.edit().left(true, .one);
         try helper.expectState("h,o.");
 
-        helper.edit().left(true);
+        helper.edit().left(true, .one);
         try helper.expectState(",ho.");
 
         helper.edit().backspace();
@@ -2671,8 +2708,14 @@ const TextManipulation = struct {
         var helper: TestHelper = try .init(std.testing.allocator, "hello .,there you");
         defer helper.deinit();
 
-        helper.edit().right(true, true);
+        helper.edit().right(true, .word);
         try helper.expectState("hello .there, you");
+
+        helper.edit().right(false, .one);
+        try helper.expectState("hello there .,you");
+
+        helper.edit().left(false, .word);
+        try helper.expectState("hello ,.there you");
     }
 
     test "non-ascii" {
@@ -2689,7 +2732,7 @@ const TextManipulation = struct {
             .{ .index = "我你".len, .relative_pos = .zero, .relative_height = 0 },
         }, helper.cursor_points.items);
 
-        helper.edit().right(true);
+        helper.edit().right(true, .one);
         try helper.expectState(".我你,");
     }
 };
@@ -6877,10 +6920,10 @@ const Workspace = struct {
             };
 
             if (platform.wasKeyPressedOrRetriggered(.ArrowLeft, 0.1)) {
-                textedit.left(platform.keyboard.cur.isShiftDown());
+                textedit.left(platform.keyboard.cur.isShiftDown(), if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
             if (platform.wasKeyPressedOrRetriggered(.ArrowRight, 0.1)) {
-                textedit.right(platform.keyboard.cur.isShiftDown());
+                textedit.right(platform.keyboard.cur.isShiftDown(), if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
             if (platform.wasKeyPressedOrRetriggered(.Backspace, 0.1)) {
                 textedit.backspace();
