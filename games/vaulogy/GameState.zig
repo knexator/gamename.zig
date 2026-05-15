@@ -6394,11 +6394,20 @@ const Workspace = struct {
                                         drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
                                     },
                                 },
-                                .bubble => switch (area.bg) {
-                                    .all, .none => unreachable,
-                                    .local_rect => |rect| {
-                                        drawer.canvas.borderRect(camera, lego.absolute_point.applyToLocalRect(rect), 0.5 * lego.absolute_point.scale, .middle, .gray(0.4));
-                                    },
+                                .bubble => {
+                                    const locked = lego.tree.parent.get().specific.bubble.locked;
+                                    switch (area.bg) {
+                                        .all, .none => unreachable,
+                                        .local_rect => |rect| {
+                                            drawer.canvas.borderRect(
+                                                camera,
+                                                lego.absolute_point.applyToLocalRect(rect),
+                                                0.5 * lego.absolute_point.scale,
+                                                .middle,
+                                                if (locked) .gray(0.4) else .fromHex("#386c38"),
+                                            );
+                                        },
+                                    }
                                 },
                             }
                         },
@@ -6794,8 +6803,11 @@ const Workspace = struct {
 
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         assert(workspace.valid(scratch));
-        workspace.display_fps = platform.keyboard.cur.isDown(.KeyF);
-        workspace.debug_nodraw = platform.keyboard.cur.isDown(.KeyV);
+
+        var typing: bool = workspace.active_text_input != .nothing;
+
+        workspace.display_fps = !typing and platform.keyboard.cur.isDown(.KeyF);
+        workspace.debug_nodraw = !typing and platform.keyboard.cur.isDown(.KeyV);
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             for (toybox.all_legos.items, 0..) |lego, k| {
@@ -6907,8 +6919,6 @@ const Workspace = struct {
         }
 
         assert(workspace.valid(scratch));
-
-        var typing: bool = workspace.active_text_input != .nothing;
 
         if (typing) {
             const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
