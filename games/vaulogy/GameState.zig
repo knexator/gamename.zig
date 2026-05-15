@@ -4025,14 +4025,15 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(6.7, 1.4));
             postit.addFromText(postit_pos.add(.new(0.4, 0.45)), &.{ "(the Theoretical", "Vaulogy lab", "is right next", "door; they do", "very much care)" });
             postit.addFromText(postit_pos, &.{ "Who cares!", "The cool part", "is, what can", "you do with them?" });
-            postit_pos.addInPlace(.new(-4.2, 7.4));
+            postit_pos.addInPlace(.new(-6.2, 6.4));
+            postit.addFromText(postit_pos, &.{ "Right now,", "not a lot" });
+            postit_pos.addInPlace(.new(6.3, 1.1));
             postit.addFromText(postit_pos, &.{ "Their only", "power is", "matching", "with themselves." });
-            postit_pos.addInPlace(.new(-2.2, 6.7));
-            postit.addFromText(postit_pos, &.{ "As a warmup,", "make both Vaus", "match." });
+            postit_pos.addInPlace(.new(-3.2, 6.7));
 
-            postit_pos.addInPlace(.new(6.8, 0.1));
             postit.addFromParts(postit_pos, &.{
-                .{ .point = .{ .pos = .new(5, 3) }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "As a warmup,", "make both Vaus", "match:" } } },
+                .{ .point = .{ .pos = .new(2, 4.8) }, .part = .{ .thing = try Toybox.buildSexprFromText(
                     .{},
                     "(a . (b . c))",
                     true,
@@ -4042,7 +4043,7 @@ const Workspace = struct {
             });
 
             Toybox.addChildLast(bp, try Toybox.buildSexprFromText(
-                .{ .pos = postit_pos.add(.new(-2, 0)) },
+                .{ .pos = postit_pos.add(.new(-5, 1.8)) },
                 "(c . (b . a))",
                 false,
                 false,
