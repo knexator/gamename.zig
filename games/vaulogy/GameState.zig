@@ -3810,6 +3810,7 @@ const Workspace = struct {
 
     display_fps: bool = false,
     debug_nodraw: bool = false,
+    debug_all_bubbles_unlocked: bool = false,
 
     // TODO(game): should maybe live on the bubble itself
     unlock_connections: std.BoundedArray(BubbleUnlockConnection, 64) = .{},
@@ -5323,7 +5324,7 @@ const Workspace = struct {
 
         const undo_stack = &workspace.undo_stack;
 
-        const debug_all_bubbles_unlocked = true or @import("builtin").mode == .Debug;
+        const debug_all_bubbles_unlocked = workspace.debug_all_bubbles_unlocked;
 
         const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
         for (toybox.all_legos.items) |*lego| {
@@ -6808,6 +6809,9 @@ const Workspace = struct {
 
         workspace.display_fps = !typing and platform.keyboard.cur.isDown(.KeyF);
         workspace.debug_nodraw = !typing and platform.keyboard.cur.isDown(.KeyV);
+        if (!typing and platform.keyboard.wasPressed(.KeyU)) {
+            workspace.debug_all_bubbles_unlocked = !workspace.debug_all_bubbles_unlocked;
+        }
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             for (toybox.all_legos.items, 0..) |lego, k| {
