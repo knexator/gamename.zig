@@ -427,8 +427,16 @@ pub const Lego = struct {
         }
 
         pub const Bubble = struct {
-            locked: bool,
+            locked: bool = true,
+            fulfilled: bool = false,
+            goal: FulfillCondition,
+            prev_bubble: Lego.Index,
             blueprint: Lego.Index,
+
+            pub const FulfillCondition = union(enum) {
+                all_scorers_solved,
+                has_sexpr: Lego.Index,
+            };
 
             pub const Children = struct {
                 instanced: Lego.Index,
@@ -3712,12 +3720,16 @@ pub const Toybox = struct {
         }, undo_stack);
     }
 
-    pub fn buildBubble(point: Point, reset_button_pos: ?Vec2, locked: bool, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+    pub fn buildBubble(point: Point, prev: Lego.Index, goal: Lego.Specific.Bubble.FulfillCondition, blueprint: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
         assert(blueprint.hasTag(.area));
         const instanced = try Toybox.dupeIntoFloating(blueprint, true, undo_stack);
-        return try Toybox.createWithChildren(point, .{ .bubble = .{ .blueprint = blueprint, .locked = locked } }, &.{
+        return try Toybox.createWithChildren(point, .{ .bubble = .{
+            .blueprint = blueprint,
+            .prev_bubble = prev,
+            .goal = goal,
+        } }, &.{
             instanced,
-            try Toybox.new(.{ .pos = reset_button_pos orelse blueprint.get().specific.area.bg.local_rect.top_left }, .{ .button = .{
+            try Toybox.new(.{ .pos = blueprint.get().specific.area.bg.local_rect.top_left }, .{ .button = .{
                 .local_rect = .fromCenterAndSize(.zero, .one),
                 .action = .reset_bubble,
             } }, undo_stack),
@@ -3812,8 +3824,7 @@ const Workspace = struct {
     debug_nodraw: bool = false,
     debug_all_bubbles_unlocked: bool = false,
 
-    // TODO(game): should maybe live on the bubble itself
-    unlock_connections: std.BoundedArray(BubbleUnlockConnection, 64) = .{},
+    /// toolbar element unlocks when the bubble is unlocked, not fulfilled
     toolbar_unlocks: struct {
         case_with_wildcards: Lego.Index = .nothing,
         list_viewer: Lego.Index = .nothing,
@@ -3830,16 +3841,6 @@ const Workspace = struct {
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
     pub const toolbar_fnks_rect: Rect = .{ .top_left = .zero, .size = .new(12, 15) };
-
-    pub const BubbleUnlockConnection = struct {
-        source: Lego.Index,
-        target: Lego.Index,
-        condition: union(enum) {
-            always,
-            all_scorers_solved,
-            has_sexpr: Lego.Index,
-        },
-    };
 
     const UndoableCommand = union(enum) {
         fence,
@@ -3943,7 +3944,7 @@ const Workspace = struct {
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 15 }, true);
 
         var bubble_pos: Vec2 = .zero;
-        const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .both(-12), false, blk: {
+        const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .nothing, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4005,10 +4006,11 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, welcome_to_the_lab, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = welcome_to_the_lab, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const simple_warmup = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const simple_warmup = try Toybox.buildBubble(.{ .pos = bubble_pos }, welcome_to_the_lab, .{
+            .has_sexpr = try Toybox.buildSexprFromText(.{}, "(a . (b . c))", false, false, undo_stack),
+        }, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4054,10 +4056,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, simple_warmup, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = .nothing, .target = simple_warmup, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, simple_warmup, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4127,12 +4128,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_strands, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = simple_warmup, .target = intro_to_strands, .condition = .{
-            .has_sexpr = try Toybox.buildSexprFromText(.{}, "(a . (b . c))", false, false, undo_stack),
-        } });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_executors = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_executors = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_strands, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4195,10 +4193,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_executors, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_strands, .target = intro_to_executors, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, if (false) blk: {
+        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_executors, .all_scorers_solved, if (false) blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4306,10 +4303,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_fnkboxes, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_executors, .target = intro_to_fnkboxes, .condition = .always });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const player_creates_fnkbox = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const player_creates_fnkbox = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_fnkboxes, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4364,10 +4360,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, player_creates_fnkbox, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_fnkboxes, .target = player_creates_fnkbox, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_wildcards = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_wildcards = try Toybox.buildBubble(.{ .pos = bubble_pos }, player_creates_fnkbox, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4404,10 +4399,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_wildcards, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = player_creates_fnkbox, .target = intro_to_wildcards, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_calling = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_calling = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_wildcards, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4444,10 +4438,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_calling, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_wildcards, .target = intro_to_calling, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const calling_exercise = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const calling_exercise = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_calling, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4483,12 +4476,11 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calling_exercise, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_calling, .target = calling_exercise, .condition = .all_scorers_solved });
 
         dst.toolbar_unlocks.case_with_wildcards = calling_exercise;
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_nested_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_nested_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, calling_exercise, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4519,10 +4511,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_nested_strands, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = calling_exercise, .target = intro_to_nested_strands, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_mixing_both_tricks = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_mixing_both_tricks = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_nested_strands, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4554,10 +4545,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_nested_strands, .target = intro_to_mixing_both_tricks, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const final_tutorial = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const final_tutorial = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_mixing_both_tricks, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4578,10 +4568,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, final_tutorial, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_mixing_both_tricks, .target = final_tutorial, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const first_recursion_cruel = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const first_recursion_cruel = try Toybox.buildBubble(.{ .pos = bubble_pos }, final_tutorial, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4602,10 +4591,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_cruel, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion_cruel, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(0, -40));
-        const first_recursion_nicer = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const first_recursion_nicer = try Toybox.buildBubble(.{ .pos = bubble_pos }, final_tutorial, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4619,11 +4607,10 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_nicer, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = final_tutorial, .target = first_recursion_nicer, .condition = .all_scorers_solved });
         bubble_pos.addInPlace(.new(0, 40));
 
         bubble_pos.addInPlace(.new(0, 40));
-        const optional = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const optional = try Toybox.buildBubble(.{ .pos = bubble_pos }, first_recursion_cruel, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4654,11 +4641,10 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, optional, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = first_recursion_cruel, .target = optional, .condition = .all_scorers_solved });
         bubble_pos.addInPlace(.new(0, -40));
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, first_recursion_cruel, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4689,11 +4675,10 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_lists, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = first_recursion_cruel, .target = intro_to_lists, .condition = .all_scorers_solved });
         dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
 
         bubble_pos.addInPlace(.new(30, 0));
-        const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_lists, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4727,11 +4712,10 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_1, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = intro_to_lists, .target = lists_1, .condition = .all_scorers_solved });
         dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
 
         bubble_pos.addInPlace(.new(30, 0));
-        const lists_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const lists_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_1, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4753,10 +4737,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_2, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = lists_1, .target = lists_2, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_2, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4770,10 +4753,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calculator, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = lists_2, .target = calculator, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(0, 40));
-        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_2, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4798,11 +4780,10 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = calculator, .target = optional_brainfuck, .condition = .always });
         bubble_pos.addInPlace(.new(0, -40));
 
         bubble_pos.addInPlace(.new(30, 0));
-        const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, calculator, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4842,11 +4823,10 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, meta_1, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = calculator, .target = meta_1, .condition = .all_scorers_solved });
         dst.toolbar_unlocks.meta_viewer = meta_1;
 
         bubble_pos.addInPlace(.new(30, 0));
-        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_1, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4867,10 +4847,9 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, meta_2, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = meta_1, .target = meta_2, .condition = .all_scorers_solved });
 
         bubble_pos.addInPlace(.new(30, 0));
-        const meta_final = try Toybox.buildBubble(.{ .pos = bubble_pos }, null, false, blk: {
+        const meta_final = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_2, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4891,7 +4870,6 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, meta_final, undo_stack);
-        dst.unlock_connections.appendAssumeCapacity(.{ .source = meta_2, .target = meta_final, .condition = .all_scorers_solved });
 
         if (false) {
             const bubble_1 = try Toybox.buildBubble(.{ .pos = .new(0, 40) }, .zero, false, try Toybox.createWithChildren(.{}, .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(10)) }, .style = .bubble } }, &.{
@@ -5343,45 +5321,46 @@ const Workspace = struct {
             if (lego.specific.tag() == .scorer) {
                 try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, scratch);
             }
-
-            // TODO(design): improve
             if (lego.specific.tag() == .bubble) {
-                lego.specific.bubble.locked = !debug_all_bubbles_unlocked;
+                if (debug_all_bubbles_unlocked) {
+                    lego.specific.bubble.locked = false;
+                } else {
+                    lego.specific.bubble.locked = if (lego.specific.bubble.prev_bubble.getSafe()) |prev|
+                        prev.specific.bubble.locked or !prev.specific.bubble.fulfilled
+                    else
+                        false;
+                }
 
-                // unlock if any of the conditions is met
-                for (workspace.unlock_connections.constSlice()) |connection| {
-                    if (connection.target != lego.index) continue;
-                    connection.target.get().specific.bubble.locked = connection.target.get().specific.bubble.locked and switch (connection.condition) {
-                        .all_scorers_solved => connection.source.get().specific.bubble.locked or blk: {
-                            var cur = connection.source;
-                            while (cur != .nothing) : (cur = Toybox.next_preordered(cur, connection.source).next) {
-                                if (cur.hasTag(.scorer)) {
-                                    if (cur.get().specific.scorer.score == null) break :blk true;
-                                }
+                const area = lego.index.children(.bubble).instanced;
+                lego.specific.bubble.fulfilled = switch (lego.specific.bubble.goal) {
+                    .all_scorers_solved => blk: {
+                        var cur = area;
+                        while (cur != .nothing) : (cur = Toybox.next_preordered(cur, area).next) {
+                            if (cur.hasTag(.scorer)) {
+                                if (cur.get().specific.scorer.score == null) break :blk false;
                             }
-                            break :blk false;
-                        },
-                        .always => if (connection.source.getSafe()) |source| source.specific.bubble.locked else false,
-                        .has_sexpr => |sexpr| connection.source.get().specific.bubble.locked or blk: {
-                            var it = Toybox.treeIterator(connection.source, false);
-                            while (it.next()) |step| {
-                                if (step.children_already_visited) continue;
-                                const cur = step.index;
-                                if (cur.hasTag(.postit)) {
+                        }
+                        break :blk true;
+                    },
+                    .has_sexpr => |sexpr| blk: {
+                        var it = Toybox.treeIterator(area, false);
+                        while (it.next()) |step| {
+                            if (step.children_already_visited) continue;
+                            const cur = step.index;
+                            if (cur.hasTag(.postit)) {
+                                it.skipChildren();
+                            }
+                            if (cur.hasTag(.sexpr)) {
+                                if (Lego.Specific.Sexpr.equalValue(cur, sexpr)) {
+                                    break :blk true;
+                                } else {
                                     it.skipChildren();
                                 }
-                                if (cur.hasTag(.sexpr)) {
-                                    if (Lego.Specific.Sexpr.equalValue(cur, sexpr)) {
-                                        break :blk false;
-                                    } else {
-                                        it.skipChildren();
-                                    }
-                                }
                             }
-                            break :blk true;
-                        },
-                    };
-                }
+                        }
+                        break :blk false;
+                    },
+                };
             }
         }
     }
@@ -6395,20 +6374,20 @@ const Workspace = struct {
                                         drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect), .gray(0.4));
                                     },
                                 },
-                                .bubble => {
-                                    const locked = lego.tree.parent.get().specific.bubble.locked;
-                                    switch (area.bg) {
-                                        .all, .none => unreachable,
-                                        .local_rect => |rect| {
-                                            drawer.canvas.borderRect(
-                                                camera,
-                                                lego.absolute_point.applyToLocalRect(rect),
-                                                0.5 * lego.absolute_point.scale,
-                                                .middle,
-                                                if (locked) .gray(0.4) else .fromHex("#386c38"),
-                                            );
-                                        },
-                                    }
+                                .bubble => switch (area.bg) {
+                                    .all, .none => unreachable,
+                                    .local_rect => |rect| {
+                                        drawer.canvas.borderRect(
+                                            camera,
+                                            lego.absolute_point.applyToLocalRect(rect),
+                                            0.5 * lego.absolute_point.scale,
+                                            .middle,
+                                            if (lego.tree.parent.get().specific.bubble.fulfilled)
+                                                .fromHex("#386c38")
+                                            else
+                                                .gray(0.4),
+                                        );
+                                    },
                                 },
                             }
                         },
