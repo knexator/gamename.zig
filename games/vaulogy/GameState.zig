@@ -2573,7 +2573,7 @@ const TextManipulation = struct {
                     result.selection.cursor = points_index;
                 } else {
                     text_index += codepoint.len;
-                    points_index += codepoint.len;
+                    points_index += 1;
                     result.cursor_points.appendAssumeCapacity(.{ .index = text_index, .relative_pos = .zero, .relative_height = 0 });
                     result.text.appendSliceAssumeCapacity(codepoint);
                 }
@@ -2676,19 +2676,21 @@ const TextManipulation = struct {
     }
 
     test "non-ascii" {
-        var helper: TestHelper = try .init(std.testing.allocator, ".,我");
+        var helper: TestHelper = try .init(std.testing.allocator, ".我,你");
         defer helper.deinit();
 
-        try helper.expectState(".,我");
-        try std.testing.expectEqualStrings("我", helper.text.items);
+        // validate the actual helper
+        try helper.expectState(".我,你");
+        try std.testing.expectEqualStrings("我你", helper.text.items);
+        try std.testing.expectEqual(1, helper.selection.cursor);
         try std.testing.expectEqualSlices(CursorPoint, &.{
             .{ .index = 0, .relative_pos = .zero, .relative_height = 0 },
             .{ .index = "我".len, .relative_pos = .zero, .relative_height = 0 },
+            .{ .index = "我你".len, .relative_pos = .zero, .relative_height = 0 },
         }, helper.cursor_points.items);
 
-        // TODO(bug)
         helper.edit().right(true);
-        try helper.expectState(".我,");
+        try helper.expectState(".我你,");
     }
 };
 
