@@ -4081,7 +4081,7 @@ const Workspace = struct {
                 }, undo_stack),
             }, undo_stack), undo_stack);
             postit_pos.addInPlace(.new(5.8, 1.3));
-            postit.addFromText(postit_pos, &.{ "It turns", "'a' into 'b',", "and", "'b' into 'c'" });
+            postit.addFromText(postit_pos, &.{ "This one turns", "'a' into 'b',", "and", "'b' into 'c'" });
 
             postit_pos = .new(-7.4, 0.2);
             postit_pos.addInPlace(.new(1.2, 7.1));
@@ -4196,7 +4196,7 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands," });
+            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands" });
             postit_pos.addInPlace(.new(7.4, 0.9));
             postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new strand to", "solve each one." });
             postit_pos.addInPlace(.new(7.6, 0.8));
@@ -4602,7 +4602,7 @@ const Workspace = struct {
         bubble_pos.addInPlace(.new(0, 40));
 
         bubble_pos.addInPlace(.new(0, 40));
-        const optional = try Toybox.buildBubble(.{ .pos = bubble_pos }, first_recursion_cruel, .all_scorers_solved, blk: {
+        const optional = try Toybox.buildBubble(.{ .pos = bubble_pos }, final_tutorial, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -7414,9 +7414,11 @@ const Workspace = struct {
                         (grabbing_garland_or_case and !Toybox.isAncestor(workspace.grabbing.index, lego.index)) or
                         garland.hasChildCases() or
                         (if (lego.tree.parent.getSafe()) |p| switch (p.specific) {
-                            else => false,
+                            else => panic("unexpected tag: {s}", .{@tagName(p.specific.tag())}),
+                            .area => true,
+                            .case => false,
                             .executor, .meta_viewer => true,
-                        } else false);
+                        } else true);
                 }
             }
         }
