@@ -1598,15 +1598,19 @@ pub fn toListPlusSentinel(values: []const *const Sexpr, sentinel: *const Sexpr, 
 }
 
 pub fn sexprFromCase(case: MatchCaseDefinition, pool: *MemoryPool(Sexpr)) error{OutOfMemory}!*const Sexpr {
-    return toListPlusSentinel(&.{
-        try externalFromInternal(case.pattern, pool),
-        case.fnk_name,
-        try externalFromInternal(case.template, pool),
-    }, if (case.next) |next|
-        try sexprFromCases(next.items, pool)
-    else
-        Sexpr.builtin.nil, pool);
-    // Sexpr.builtin.meta.@"return", pool);
+    return try storeSexprInPool(pool, Sexpr.doPair(
+        try storeSexprInPool(pool, Sexpr.doPair(
+            try externalFromInternal(case.pattern, pool),
+            try externalFromInternal(case.template, pool),
+        )),
+        try storeSexprInPool(pool, Sexpr.doPair(
+            case.fnk_name,
+            if (case.next) |next|
+                try sexprFromCases(next.items, pool)
+            else
+                Sexpr.builtin.nil,
+        )),
+    ));
 }
 
 pub fn sexprFromCases(cases: []MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*const Sexpr {
