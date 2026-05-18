@@ -6181,7 +6181,7 @@ const Workspace = struct {
         );
     }
 
-    // TODO(game): emerging values seem 1-frame delayed, can easilty be seen in the queuing anim for "@a -> x: b { c -> @a; }"
+    // TODO(game): emerging values seem 1-frame delayed, can easily be seen in the queuing anim for "@a -> x: b { c -> @a; }"
     fn _draw(
         roots_in_draw_order: []const Lego.Index,
         holding_a_sexpr: bool,
@@ -6288,7 +6288,9 @@ const Workspace = struct {
                             }
 
                             switch (sexpr.kind) {
-                                .empty => if (lego.tree.parent.get().specific.tag() != .sexpr and
+                                // parent is nothing if it's an emerging sexpr
+                                .empty => if (lego.tree.parent != .nothing and
+                                    lego.tree.parent.get().specific.tag() != .sexpr and
                                     (holding_a_sexpr or !sexpr.is_fnkname) and
                                     // Don't draw empty garland fnknames
                                     !(sexpr.is_fnkname and sexpr.is_pattern))
@@ -6653,6 +6655,7 @@ const Workspace = struct {
                                 //     symbol_pos.applyToLocalPosition(.new(1.5, -1.25)),
                                 // }, 0.1 * lego.absolute_point.scale, .blackAlpha(alpha));
                             } else {
+                                // TODO(visual): better icon, maybe a smiley face
                                 drawer.canvas.line(camera, &.{
                                     symbol_pos.applyToLocalPosition(.new(1, -1)),
                                     symbol_pos.applyToLocalPosition(.new(-1, 1)),
