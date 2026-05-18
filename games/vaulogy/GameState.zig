@@ -341,6 +341,7 @@ pub const Lego = struct {
         // TODO(design): simplify this
         scorer_rows: void,
 
+        // TODO(design): could this be something else?
         scrollable_list_inbetween: struct {
             kind: enum { listviewer_sexprs },
         },
@@ -606,6 +607,8 @@ pub const Lego = struct {
                 reset_bubble,
                 /// assumes that scorer_row is the direct parent
                 create_fnkbox_for_row,
+                /// assumes that the scrollable_list of testcases is the direct parent
+                add_testcase,
             },
             enabled: bool = true,
             /// only applies to toggle_skip_fnk
@@ -619,6 +622,7 @@ pub const Lego = struct {
                     .scroll_down,
                     .reset_bubble,
                     .create_fnkbox_for_row,
+                    .add_testcase,
                     => false,
                     .toggle_skip_fnk,
                     => true,
@@ -666,7 +670,8 @@ pub const Lego = struct {
                     .withSize(.new(0.5, FnkboxBox.testcases_height - 1.2), .top_left)
                     .move(.new(0.1, 0.6));
                 return .{
-                    .total_length = tof32(n_testcases),
+                    // + 1.0 to give a bit of extra for adding at the end
+                    .total_length = tof32(n_testcases) + 1.0,
                     .visible_length = FnkboxBox.visible_testcases,
                     .total_rect = total_rect,
                     .scroll_visual = scroll,
@@ -1497,6 +1502,7 @@ pub const Lego = struct {
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     switch (cur_testcase.get().specific) {
                         else => unreachable,
+                        .button => |button| assert(button.action == .add_testcase),
                         .unloaded_testcase => {},
                         .testcase => {
                             const t = Testcase.children(cur_testcase);
@@ -1540,6 +1546,10 @@ pub const Lego = struct {
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     const correct = blk: switch (cur_testcase.get().specific) {
                         else => unreachable,
+                        .button => |button| x: {
+                            assert(button.action == .add_testcase);
+                            break :x true;
+                        },
                         .unloaded_testcase => |*unloaded_testcase| {
                             const sample = (try levels[unloaded_testcase.source.level].generate_sample(unloaded_testcase.source.sample, &pool, scratch)).?;
                             var exec = try core.ExecutionThread.init(sample.input, fnkname_value, &scoring_run, .new);
@@ -3633,6 +3643,10 @@ pub const Toybox = struct {
                     assert(isFloating(testcase));
                     Toybox.addChildLast(fnkbox_testcases, testcase, undo_stack);
                 }
+                Toybox.addChildLast(fnkbox_testcases, try Toybox.new(.{}, .{ .button = .{
+                    .local_rect = .fromCenterAndSize(.zero, .one),
+                    .action = .add_testcase,
+                } }, undo_stack), undo_stack);
                 break :blk fnkbox_testcases;
             },
         }, undo_stack);
@@ -6477,7 +6491,7 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
-                                .create_fnkbox_for_row => if (button.enabled) {
+                                .create_fnkbox_for_row, .add_testcase => if (button.enabled) {
                                     // TODO(game): nicer
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
@@ -7225,6 +7239,19 @@ const Workspace = struct {
                                     const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
                                     try launchTestcase(testcase_index, undo_stack);
                                 },
+                                .add_testcase => {
+                                    const index = workspace.grabbing.index;
+                                    const fnkbox_testcases = index.get().tree.parent;
+                                    assert(fnkbox_testcases.hasTag(.scrollable_list));
+                                    Toybox.pop(index, undo_stack);
+                                    Toybox.addChildLast(fnkbox_testcases, try Toybox.buildTestcase(.{ .existing = .{
+                                        .input = try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack),
+                                        .expected = try Toybox.buildSexpr(.{}, .empty, false, false, undo_stack),
+                                        .unloaded = .nothing,
+                                    } }, undo_stack), undo_stack);
+                                    Toybox.addChildLast(fnkbox_testcases, index, undo_stack);
+                                    fnkbox_testcases.scrollbar(.scrollable_list).get().specific.scrollbar.total_length += 1;
+                                },
                                 .scroll_up, .scroll_down => {},
                             }
                         }
@@ -7774,7 +7801,7 @@ const Workspace = struct {
                     button.enabled = switch (button.action) {
                         .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
-                        .scroll_up, .scroll_down, .reset_bubble => true,
+                        .scroll_up, .scroll_down, .reset_bubble, .add_testcase => true,
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
                         .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
@@ -7786,6 +7813,7 @@ const Workspace = struct {
                         .scroll_down,
                         .reset_bubble,
                         .create_fnkbox_for_row,
+                        .add_testcase,
                         => false,
                         .toggle_skip_fnk => button.latched,
                     };
@@ -7910,6 +7938,10 @@ const Workspace = struct {
                 const child_box: Bounds = .fromRect(Lego.Specific.Testcase.relative_bounding_box);
                 var cur = testcases_parent.get().tree.first;
                 while (cur != .nothing) : (cur = cur.get().tree.next) {
+                    if (!cur.hasTag(.testcase) and !cur.hasTag(.unloaded_testcase)) {
+                        assert(cur.get().specific.button.action == .add_testcase);
+                        continue;
+                    }
                     const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null;
                     if (is_visible) {
                         cur = try ensureLoadedTestcase(cur, scratch, undo_stack);
