@@ -144,7 +144,7 @@ pub const Sexpr = union(enum) {
         return switch (s.*) {
             .empty => 0,
             .atom_lit => |a| std.array_hash_map.hashString(a.value),
-            .atom_var => |a| std.hash.uint32(std.array_hash_map.hashString(a.value)),
+            .atom_var => |a| std.hash.int(std.array_hash_map.hashString(a.value)),
             .pair => |p| {
                 // return std.hash.uint32(hash(self, p.left.*)) ^ hash(self, p.right.*);
                 var hasher = std.hash.Wyhash.init(0);

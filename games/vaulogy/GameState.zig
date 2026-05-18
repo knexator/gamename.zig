@@ -1596,6 +1596,17 @@ pub const Lego = struct {
             pub const Source = struct {
                 level: usize,
                 sample: usize,
+                input_hash: u32,
+                expected_hash: u32,
+
+                pub fn build(level: usize, sample: usize, sample_core: Sample) Source {
+                    return .{
+                        .level = level,
+                        .sample = sample,
+                        .input_hash = sample_core.input.hash(),
+                        .expected_hash = sample_core.expected.hash(),
+                    };
+                }
             };
         };
 
@@ -1605,16 +1616,18 @@ pub const Lego = struct {
             /// points to an unloaded_testcase, if it came from there
             source: Lego.Index,
 
-            pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
-            pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
-            pub const relative_input_point: Point = .{ .pos = .new(-4, 0) };
-            pub const relative_bounding_box: Rect = .fromCenterAndSize(.zero, .new(FnkboxBox.relative_box.size.x, 2.5));
-            pub fn children(index: Lego.Index) struct {
+            pub const Children = struct {
                 input: Lego.Index,
                 expected: Lego.Index,
                 actual: Lego.Index,
                 play_button: Lego.Index,
-            } {
+            };
+
+            pub const relative_actual_point: Point = .{ .pos = .new(4, 0) };
+            pub const relative_expected_point: Point = .{ .pos = .new(0, 0) };
+            pub const relative_input_point: Point = .{ .pos = .new(-4, 0) };
+            pub const relative_bounding_box: Rect = .fromCenterAndSize(.zero, .new(FnkboxBox.relative_box.size.x, 2.5));
+            pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .testcase);
                 const asdf = Toybox.getChildrenExact(4, index);
                 return .{
@@ -3520,7 +3533,6 @@ pub const Toybox = struct {
             },
             .existing => |existing| {
                 const testcase = try Toybox.new(.{}, .{ .testcase = .{ .source = existing.unloaded } }, undo_stack);
-                testcase.get().immutable = true;
                 const Testcase = Lego.Specific.Testcase;
                 Toybox.addChildLastV2(Testcase.relative_input_point, testcase, existing.input, undo_stack);
                 Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, existing.expected, undo_stack);
@@ -5788,7 +5800,11 @@ const Workspace = struct {
                         else => {},
                         .garland, .case, .sexpr, .newcase, .testcase, .garland_newcases, .area, .fnkname_holder => {
                             if (p.specific.tag() == .garland and lego.specific.tag() == .sexpr) {
-                                // special case: ignore sexpr with garland parent (its the fnkname)
+                                // special case: ignore sexpr with garland parent (it's the fnkname)
+                                assert(lego.immutable);
+                            } else if (p.specific.tag() == .testcase and p.index.children(.testcase).actual == cur) {
+                                // special case: the 'actual' sexpr in a testcase is always immutable
+                                lego.immutable = true;
                             } else {
                                 lego.immutable = p.immutable;
                             }
@@ -7159,14 +7175,14 @@ const Workspace = struct {
                                         var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
                                         try samples.ensureUnusedCapacity(scratch, 100);
                                         var sample_index: usize = 0;
-                                        while (try level.generate_sample(sample_index, &pool, scratch) != null) : ({
+                                        while (try level.generate_sample(sample_index, &pool, scratch)) |sample| {
+                                            try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .build(
+                                                level_index,
+                                                sample_index,
+                                                sample,
+                                            ) }, undo_stack));
                                             sample_index += 1;
                                             _ = pool.reset(.retain_capacity);
-                                        }) {
-                                            try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .{
-                                                .level = level_index,
-                                                .sample = sample_index,
-                                            } }, undo_stack));
                                         }
                                         break :blk try samples.toOwnedSlice(scratch);
                                     };
@@ -8421,6 +8437,13 @@ const Workspace = struct {
 
         const source = testcase_index.get().specific.testcase.source;
         if (source == .nothing) return null;
+
+        if (source.get().specific.unloaded_testcase.source.input_hash != Lego.Specific.Sexpr.hash(testcase_index.children(.testcase).input) or
+            source.get().specific.unloaded_testcase.source.expected_hash != Lego.Specific.Sexpr.hash(testcase_index.children(.testcase).expected))
+        {
+            // TODO(optim-late): measure if setting the source to .nothing is a worthy tradeoff
+            return null;
+        }
 
         source.get().local_point = testcase_index.get().local_point;
         Toybox.changeChild(testcase_index, source, undo_stack);
