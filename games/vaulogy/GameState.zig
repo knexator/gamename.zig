@@ -1492,7 +1492,7 @@ pub const Lego = struct {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for fnkbox" });
                 defer zone.deinit();
 
-                // TODO(optim): improve somehow
+                // TODO(optim): gradual update?
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
                 const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
@@ -1558,11 +1558,15 @@ pub const Lego = struct {
                 while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     const correct = blk: switch (cur_testcase.get().specific) {
                         else => unreachable,
-                        .button => |button| x: {
+                        .button => |button| {
                             assert(button.action == .add_testcase);
-                            break :x true;
+                            continue;
                         },
                         .unloaded_testcase => |*unloaded_testcase| {
+                            if (all_fnks_hash == unloaded_testcase.solved_computed_at.all_fnks_hash) {
+                                break :blk unloaded_testcase.solved;
+                            }
+
                             const sample = (try levels[unloaded_testcase.source.level].generate_sample(unloaded_testcase.source.sample, &pool, scratch)).?;
                             var exec = try core.ExecutionThread.init(sample.input, fnkname_value, &scoring_run, .new);
                             defer exec.deinit();
@@ -1578,6 +1582,7 @@ pub const Lego = struct {
                             };
                             const correct = actual_output.equals(sample.expected);
                             unloaded_testcase.solved = correct;
+                            unloaded_testcase.solved_computed_at.all_fnks_hash = all_fnks_hash;
                             _ = pool.reset(.retain_capacity);
                             break :blk correct;
                         },
@@ -1614,6 +1619,10 @@ pub const Lego = struct {
         pub const UnloadedTestcase = struct {
             solved: bool = false,
             source: Source,
+
+            solved_computed_at: struct {
+                all_fnks_hash: u32,
+            } = .{ .all_fnks_hash = 0 },
 
             pub const Source = struct {
                 level: usize,
@@ -6106,6 +6115,7 @@ const Workspace = struct {
                     .scrollable_list => |scrollable_list| {
                         const scroll_visual = cur.scrollbar(.scrollable_list).get().specific.scrollbar.scroll_visual;
 
+                        var height: f32 = 0;
                         var cur_element: Lego.Index = lego.tree.first;
                         var y: f32 = -scroll_visual;
                         while (cur_element != .nothing) {
@@ -6113,6 +6123,11 @@ const Workspace = struct {
                                 .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() });
                             y += if (cur_element.hasTag(.scrollable_list_inbetween)) 0.5 * cur_element.get().dropzone_t else 1.0;
                             cur_element = Toybox.get(cur_element).tree.next;
+                            height += 1;
+                        }
+
+                        if (scrollable_list.kind == .fnkbox_testcases) {
+                            cur.scrollbar(.scrollable_list).get().specific.scrollbar.total_length = height;
                         }
                     },
                     .fnkslist => {
@@ -7283,7 +7298,6 @@ const Workspace = struct {
                                     assert(fnkbox_testcases.hasTag(.scrollable_list));
                                     Toybox.pop(testcase_index, undo_stack);
                                     Toybox.destroyFloating(testcase_index, undo_stack);
-                                    fnkbox_testcases.scrollbar(.scrollable_list).get().specific.scrollbar.total_length -= 1;
                                 },
                                 .add_testcase => {
                                     const index = workspace.grabbing.index;
@@ -7296,7 +7310,6 @@ const Workspace = struct {
                                         .unloaded = .nothing,
                                     } }, undo_stack), undo_stack);
                                     Toybox.addChildLast(fnkbox_testcases, index, undo_stack);
-                                    fnkbox_testcases.scrollbar(.scrollable_list).get().specific.scrollbar.total_length += 1;
                                 },
                                 .scroll_up, .scroll_down => {},
                             }
