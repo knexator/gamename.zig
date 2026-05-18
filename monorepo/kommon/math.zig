@@ -697,6 +697,10 @@ pub const Vec2 = extern struct {
         try expectApproxEqAbs(.new(4, 2), Vec2.new(4, 3).withAspectRatio(2, .shrink), 0.0001);
     }
 
+    pub fn min(v: Vec2) f32 {
+        return @min(v.x, v.y);
+    }
+
     pub fn minEach(a: Vec2, b: Vec2) Vec2 {
         return .new(
             @min(a.x, b.x),

@@ -595,6 +595,7 @@ pub const Lego = struct {
         pub const Button = struct {
             local_rect: Rect,
             action: enum {
+                /// assumes that the testcase is the direct parent
                 launch_testcase,
                 see_failing_testcase,
                 /// assumes that the scrollbar is the direct parent
@@ -609,6 +610,8 @@ pub const Lego = struct {
                 create_fnkbox_for_row,
                 /// assumes that the scrollable_list of testcases is the direct parent
                 add_testcase,
+                /// assumes that the testcase is the direct parent
+                delete_testcase,
             },
             enabled: bool = true,
             /// only applies to toggle_skip_fnk
@@ -617,6 +620,7 @@ pub const Lego = struct {
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
                     .launch_testcase,
+                    .delete_testcase,
                     .see_failing_testcase,
                     .scroll_up,
                     .scroll_down,
@@ -6469,6 +6473,21 @@ const Workspace = struct {
                                         rect.getCenter().add(.new(-0.25, 0.25)).addX(0.15),
                                     }, 0.05, .black);
                                 },
+                                .delete_testcase => {
+                                    // TODO(game): nicer
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                    const center = button.local_rect.get(.center);
+                                    const s = button.local_rect.size.min() * 0.3;
+                                    drawer.canvas.line(camera_relative, &.{
+                                        center.add(.new(-s, -s)),
+                                        center.add(.new(s, s)),
+                                    }, 0.05, .black);
+                                    drawer.canvas.line(camera_relative, &.{
+                                        center.add(.new(s, -s)),
+                                        center.add(.new(-s, s)),
+                                    }, 0.05, .black);
+                                },
                                 .see_failing_testcase => {
                                     if (button.enabled) {
                                         drawer.canvas.rectGradient(
@@ -7242,6 +7261,15 @@ const Workspace = struct {
                                     const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
                                     try launchTestcase(testcase_index, undo_stack);
                                 },
+                                .delete_testcase => {
+                                    const testcase_index = Toybox.get(workspace.grabbing.index).tree.parent;
+                                    assert(testcase_index.hasTag(.testcase));
+                                    const fnkbox_testcases = testcase_index.get().tree.parent;
+                                    assert(fnkbox_testcases.hasTag(.scrollable_list));
+                                    Toybox.pop(testcase_index, undo_stack);
+                                    Toybox.destroyFloating(testcase_index, undo_stack);
+                                    fnkbox_testcases.scrollbar(.scrollable_list).get().specific.scrollbar.total_length -= 1;
+                                },
                                 .add_testcase => {
                                     const index = workspace.grabbing.index;
                                     const fnkbox_testcases = index.get().tree.parent;
@@ -7802,7 +7830,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
-                        .launch_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
+                        .launch_testcase, .delete_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                         .scroll_up, .scroll_down, .reset_bubble, .add_testcase => true,
                         // TODO(game): set this to true to use the toggle_skip ui
@@ -7811,6 +7839,7 @@ const Workspace = struct {
                     };
                     button.latched = switch (button.action) {
                         .launch_testcase,
+                        .delete_testcase,
                         .see_failing_testcase,
                         .scroll_up,
                         .scroll_down,
@@ -7953,6 +7982,26 @@ const Workspace = struct {
                     }
                 }
                 Toybox.refreshAbsolutePoints(&.{testcases_parent});
+            }
+        }
+
+        if (true) { // for all testcases, set the correct button (launch or delete)
+            const zone = tracy.initZone(@src(), .{ .name = "update testcases button" });
+            defer zone.deinit();
+
+            const fnkboxes = try workspace.allFnkboxes(false, scratch);
+            for (fnkboxes) |fnkbox_index| {
+                const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
+                assert(testcases_parent.hasTag(.scrollable_list));
+                var cur = testcases_parent.get().tree.first;
+                while (cur != .nothing) : (cur = cur.get().tree.next) {
+                    if (cur.hasTag(.testcase)) {
+                        cur.children(.testcase).play_button.get().specific.button.action = if (cur.children(.testcase).input.get().specific.sexpr.kind == .empty)
+                            .delete_testcase
+                        else
+                            .launch_testcase;
+                    }
+                }
             }
         }
 
