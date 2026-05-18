@@ -1488,7 +1488,7 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, all_fnks: core.FnkCollection) !void {
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32) !void {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for fnkbox" });
                 defer zone.deinit();
 
@@ -1507,8 +1507,15 @@ pub const Lego = struct {
                         else => unreachable,
                         .button => |button| assert(button.action == .add_testcase),
                         .unloaded_testcase => {},
-                        .testcase => {
+                        .testcase => |*testcase| {
                             const t = Testcase.children(cur_testcase);
+                            const input_hash = Lego.Specific.Sexpr.hash(t.input);
+                            if (input_hash == testcase.actual_computed_at.input_hash and
+                                all_fnks_hash == testcase.actual_computed_at.all_fnks_hash)
+                            {
+                                continue;
+                            }
+
                             const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
                             const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
                             var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run, .new);
@@ -1535,6 +1542,8 @@ pub const Lego = struct {
                                 Toybox.destroyFloating(t.actual, &workspace.undo_stack);
                                 Toybox.refreshAbsolutePoints(&.{cur_testcase});
                             }
+                            testcase.actual_computed_at.input_hash = input_hash;
+                            testcase.actual_computed_at.all_fnks_hash = all_fnks_hash;
                         },
                     }
                 }
@@ -1628,6 +1637,11 @@ pub const Lego = struct {
 
             /// points to an unloaded_testcase, if it came from there
             source: Lego.Index,
+
+            actual_computed_at: struct {
+                all_fnks_hash: u32,
+                input_hash: u32,
+            } = .{ .all_fnks_hash = 0, .input_hash = 0 },
 
             pub const Children = struct {
                 input: Lego.Index,
@@ -5326,12 +5340,12 @@ const Workspace = struct {
 
         const debug_all_bubbles_unlocked = workspace.debug_all_bubbles_unlocked;
 
-        const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
+        const all_fnks: core.FnkCollection, const all_fnks_hash = try workspace.getAllFnks(scratch);
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(workspace, scratch, all_fnks);
+                try lego.specific.fnkbox.updateStatus(workspace, scratch, all_fnks, all_fnks_hash);
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
@@ -8414,7 +8428,7 @@ const Workspace = struct {
             return null;
         }
 
-        const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
+        const all_fnks: core.FnkCollection, _ = try workspace.getAllFnks(scratch);
         const fnkname_value = try fnkname.get().specific.sexpr.toOldCoreValue(scratch);
         var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
         defer temp_mem.deinit();
@@ -8464,7 +8478,7 @@ const Workspace = struct {
 
         const input_value = try input_unresolved.get().specific.sexpr.toOldCoreValueResolving(bindings, scratch);
 
-        const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
+        const all_fnks: core.FnkCollection, _ = try workspace.getAllFnks(scratch);
         var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
         defer temp_mem.deinit();
         var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
@@ -8736,9 +8750,10 @@ const Workspace = struct {
         std.log.debug("-----", .{});
     }
 
-    pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !@import("core.zig").FnkCollection {
+    pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !std.meta.Tuple(&.{ core.FnkCollection, u32 }) {
         const fnkboxes = try workspace.allFnkboxes(false, scratch);
 
+        var hasher = std.hash.Wyhash.init(0);
         var all_fnks: core.FnkCollection = .init(scratch);
         for (fnkboxes) |cur| {
             const fnkbox = &Toybox.get(cur).specific.fnkbox;
@@ -8749,9 +8764,14 @@ const Workspace = struct {
                 fnkbox.executor().garland().index;
             const definition = try garland.get().specific.garland.toOldCoreValue(scratch);
             try all_fnks.putNoClobber(fnkname_value, definition);
+
+            std.hash.autoHash(&hasher, struct {
+                fnkname_hash: u32,
+                fnkbody_hash: u32,
+            }{ .fnkname_hash = fnkname_value.hash(), .fnkbody_hash = definition.hash() });
         }
 
-        return all_fnks;
+        return .{ all_fnks, @truncate(hasher.final()) };
     }
 
     pub fn isFnknameTaken(workspace: *Workspace, fnkname: Lego.Index) bool {
