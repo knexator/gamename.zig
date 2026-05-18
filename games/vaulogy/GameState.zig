@@ -1488,12 +1488,11 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator) !void {
-                const zone = tracy.initZone(@src(), .{ .name = "update status for fnkboxes" });
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, all_fnks: core.FnkCollection) !void {
+                const zone = tracy.initZone(@src(), .{ .name = "update status for fnkbox" });
                 defer zone.deinit();
 
                 // TODO(optim): improve somehow
-                const all_fnks: core.FnkCollection = try workspace.getAllFnks(scratch);
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
                 const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
                 var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
@@ -5332,7 +5331,7 @@ const Workspace = struct {
             if (!lego.exists) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(workspace, scratch);
+                try lego.specific.fnkbox.updateStatus(workspace, scratch, all_fnks);
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
@@ -6789,6 +6788,8 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         assert(workspace.valid(scratch));
 
+        tracy.plot(u32, "canvas frame arena capacity in mb", @intCast(@divFloor(drawer.?.canvas.frame_arena.queryCapacity(), 1024 * 1024)));
+
         var typing: bool = workspace.active_text_input != .nothing;
 
         workspace.display_fps = !typing and platform.keyboard.cur.isDown(.KeyF);
@@ -7759,9 +7760,6 @@ const Workspace = struct {
                                         if (execution.old_testcase_actual_value != .nothing) Toybox.destroyFloating(execution.old_testcase_actual_value, undo_stack);
                                         fnkbox.execution = null;
                                         Toybox.refreshAbsolutePoints(&.{new_actual});
-
-                                        // TODO(optim): call this somewhere else
-                                        try fnkbox.updateStatus(workspace, scratch);
                                     }
                                 },
                             },
