@@ -337,6 +337,14 @@ pub const FnkBody = struct {
         }
         return .{ .cases = cases };
     }
+
+    pub fn hash(self: FnkBody) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (self.cases.items) |case| {
+            hasher.update(std.mem.asBytes(&case.hash()));
+        }
+        return @truncate(hasher.final());
+    }
 };
 pub const MatchCases = std.ArrayListUnmanaged(MatchCaseDefinition);
 pub const MatchCaseDefinition = struct {
@@ -358,6 +366,22 @@ pub const MatchCaseDefinition = struct {
         } else {
             try writer.writeAll(";");
         }
+    }
+
+    pub fn hash(case: MatchCaseDefinition) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, struct {
+            pattern_hash: u32,
+            template_hash: u32,
+            fnkname_hash: u32,
+            next_hash: u32,
+        }{
+            .pattern_hash = case.pattern.hash(),
+            .template_hash = case.template.hash(),
+            .fnkname_hash = case.fnk_name.hash(),
+            .next_hash = if (case.next) |n| (FnkBody{ .cases = n }).hash() else 0,
+        });
+        return @truncate(hasher.final());
     }
 };
 

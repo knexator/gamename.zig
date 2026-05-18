@@ -8004,7 +8004,7 @@ const Workspace = struct {
         }
 
         const something_happened = undo_stack.anyChangesThisFrame();
-        if (something_happened or true) {
+        if (something_happened or false) {
             try workspace.canonizeAfterChanges(scratch);
         }
 
