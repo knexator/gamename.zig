@@ -10,6 +10,7 @@ const Drawer = @import("Drawer.zig");
 pub const tracy = @import("tracy");
 
 // TODO(optim): launching a fnkbox execution increases the number of existing legos
+// TODO(game): see diff between sexprs
 
 const ENABLE_REUSE = true;
 const SAVING_ENABLED = true;
@@ -508,7 +509,7 @@ pub const Lego = struct {
                             error.FnkNotFound,
                             error.TookTooLong,
                             error.BAD_INPUT,
-                            => @panic("unreachable?"),
+                            => panic("unreachable? {s}", .{@errorName(err)}),
                             error.OutOfMemory => |x| return x,
                         };
                         defer exec.deinit();
@@ -527,7 +528,8 @@ pub const Lego = struct {
                             error.UsedUndefinedVariable,
                             error.FnkNotFound,
                             error.BAD_INPUT,
-                            => @panic("unreachable?"),
+                            => return err,
+                            // => panic("unreachable? {s}", .{@errorName(err)}),
                             error.OutOfMemory => |x| return x,
                         };
 
@@ -4300,7 +4302,7 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands," });
+            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands" });
             postit_pos.addInPlace(.new(7.4, 0.9));
             postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new strand to", "solve each one." });
             postit_pos.addInPlace(.new(7.6, 0.8));
@@ -8456,7 +8458,7 @@ const Workspace = struct {
             error.InvalidMetaFnk,
             error.UsedUndefinedVariable,
             error.TookTooLong,
-            => @panic("unreachable?"),
+            => panic("unreachable? {s}", .{@errorName(err)}),
             // => return null,
         } orelse return null;
         const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(new_point, fnkbody.*, scratch, undo_stack);

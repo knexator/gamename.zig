@@ -47,8 +47,7 @@ pub const Sexpr = union(enum) {
         meta: struct {
             @"return": *const Sexpr = &Sexpr.doLit("return"),
             @"var": *const Sexpr = &Sexpr.doLit("var"),
-            // TODO: change this to "lit"
-            atom: *const Sexpr = &Sexpr.doLit("atom"),
+            lit: *const Sexpr = &Sexpr.doLit("lit"),
         } = .{},
     } = .{};
 
@@ -1650,10 +1649,10 @@ pub fn fnkFromSexpr(s: *const Sexpr, allocator_for_cases: std.mem.Allocator, poo
 }
 
 pub fn caseFromSexpr(cur: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPool(Sexpr)) !MatchCaseDefinition {
-    const pattern = try internalFromExternal(cur.getAt(&.{.left}) orelse return error.InvalidMetaFnk, pool);
+    const pattern = try internalFromExternal(cur.getAt(&.{ .left, .left }) orelse return error.InvalidMetaFnk, pool);
+    const template = try internalFromExternal(cur.getAt(&.{ .left, .right }) orelse return error.InvalidMetaFnk, pool);
     const fnk_name = cur.getAt(&.{ .right, .left }) orelse return error.InvalidMetaFnk;
-    const template = try internalFromExternal(cur.getAt(&.{ .right, .right, .left }) orelse return error.InvalidMetaFnk, pool);
-    const next = try fnkFromSexprHelper(cur.getAt(&.{ .right, .right, .right }) orelse return error.InvalidMetaFnk, arena, pool);
+    const next = try fnkFromSexprHelper(cur.getAt(&.{ .right, .right }) orelse return error.InvalidMetaFnk, arena, pool);
     return .{
         .pattern = pattern,
         .fnk_name = fnk_name,
@@ -1698,12 +1697,12 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
     }
 }
 
-// ((atom . aaa) . (var . bbb)) => (aaa . @bbb)
+// ((lit . aaa) . (var . bbb)) => (aaa . @bbb)
 fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     switch (s.*) {
         .atom_var, .atom_lit, .empty => return error.InvalidMetaFnk,
         .pair => |p| {
-            if (p.left.equals(Sexpr.builtin.meta.atom)) {
+            if (p.left.equals(Sexpr.builtin.meta.lit)) {
                 return p.right;
             } else if (p.left.equals(Sexpr.builtin.meta.@"var")) {
                 switch (p.right.*) {
@@ -1731,7 +1730,7 @@ fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr
 fn externalFromInternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     return switch (s.*) {
         .atom_var => |v| storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.@"var", try storeSexprInPool(pool, Sexpr.doLit(v.value)))),
-        .atom_lit, .empty => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.atom, s)),
+        .atom_lit, .empty => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.lit, s)),
         .pair => |p| storeSexprInPool(pool, Sexpr.doPair(
             try externalFromInternal(p.left, pool),
             try externalFromInternal(p.right, pool),
