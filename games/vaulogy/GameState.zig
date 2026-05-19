@@ -2251,7 +2251,7 @@ pub const Lego = struct {
     };
 
     pub fn handle(lego: *const Lego) ?Handle {
-        const radius: Handle.Size = switch (lego.specific) {
+        const kind: Handle.Kind = switch (lego.specific) {
             .bubble,
             .scorer,
             .scorer_row,
@@ -2284,8 +2284,8 @@ pub const Lego = struct {
             .scrollable_list_inbetween => .new_case,
             .garland => .garland,
             .lens => .lens,
-            .list_viewer => Handle.Size.default.scale(2),
-            .meta_viewer => Handle.Size.default.scale(2),
+            .list_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
+            .meta_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
             .fnkbox => |fnkbox| if (fnkbox.editable) .default else return null,
         };
         const enabled: bool = switch (lego.specific) {
@@ -2295,7 +2295,7 @@ pub const Lego = struct {
         return .{
             .point = lego.absolute_point.applyToLocalPoint(.{ .pos = lego.handleLocalOffset() }),
             .hot_t = lego.hot_t + lego.dropzone_t,
-            .radius = radius,
+            .kind = kind,
             .enabled = enabled,
         };
     }
@@ -2491,20 +2491,24 @@ pub const ApiFor = struct {
 
 pub const Handle = struct {
     point: Point,
-    radius: Size,
+    kind: Kind,
     hot_t: f32,
     enabled: bool,
+
+    pub const Kind = union(enum) {
+        circle: Size,
+
+        pub const default: Kind = .{ .circle = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 } };
+        pub const default_extrahitbox: Kind = .{ .circle = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } };
+        pub const new_case: Kind = .{ .circle = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 } };
+        pub const garland: Kind = .{ .circle = .{ .base = 0.3, .hot = 0.5, .hitbox = 1.0 } };
+        pub const lens: Kind = .{ .circle = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 } };
+    };
 
     pub const Size = extern struct {
         base: f32,
         hot: f32,
         hitbox: f32,
-
-        pub const default: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 };
-        pub const default_extrahitbox: Size = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 };
-        pub const new_case: Size = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 };
-        pub const garland: Size = .{ .base = 0.3, .hot = 0.5, .hitbox = 1.0 };
-        pub const lens: Size = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 };
 
         pub fn scale(original: Size, a: f32) Size {
             return .{
@@ -2517,14 +2521,20 @@ pub const Handle = struct {
 
     pub fn draw(handle: *const Handle, drawer: *Drawer, camera: Rect, alpha: f32) !void {
         if (handle.enabled) {
-            const r = std.math.lerp(handle.radius.base, handle.radius.hot, handle.hot_t);
-            drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
-            drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
+            switch (handle.kind) {
+                .circle => |radius| {
+                    const r = std.math.lerp(radius.base, radius.hot, handle.hot_t);
+                    drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
+                    drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
+                },
+            }
         }
     }
 
     pub fn overlapped(handle: *const Handle, pos: Vec2) bool {
-        return handle.enabled and pos.distTo(handle.point.pos) < handle.radius.hitbox * handle.point.scale;
+        return handle.enabled and switch (handle.kind) {
+            .circle => |radius| pos.distTo(handle.point.pos) < radius.hitbox * handle.point.scale,
+        };
     }
 };
 
