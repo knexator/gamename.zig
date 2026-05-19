@@ -1309,7 +1309,7 @@ test "with comptime" {
         \\  compileMap {
         \\      nil -> nil;
         \\      ((@key . @value) . @rest) -> compileMap: @rest {
-        \\          @rest_compiled -> ( ((atom . @key) identity (atom . @value) . return) . @rest_compiled );
+        \\          @rest_compiled -> ( (((lit . @key) . (lit . @value)) . (identity . return)) . @rest_compiled );
         \\      }
         \\  }
     , std.testing.allocator);
@@ -1405,7 +1405,7 @@ test "scoring with comptime" {
         \\  compileMap {
         \\      nil -> nil;
         \\      ((@key . @value) . @rest) -> compileMap: @rest {
-        \\          @rest_compiled -> ( ((atom . @key) identity (atom . @value) . return) . @rest_compiled );
+        \\          @rest_compiled -> ( (((lit . @key) . (lit . @value)) . (identity . return)) . @rest_compiled );
         \\      }
         \\  }
     , &mem);
@@ -1636,7 +1636,7 @@ pub fn sexprFromCase(case: MatchCaseDefinition, pool: *MemoryPool(Sexpr)) error{
     ));
 }
 
-pub fn sexprFromCases(cases: []MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*const Sexpr {
+pub fn sexprFromCases(cases: []const MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     if (cases.len == 0) return Sexpr.builtin.nil;
     return try storeSexprInPool(pool, Sexpr.doPair(
         try sexprFromCase(cases[0], pool),

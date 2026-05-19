@@ -1219,12 +1219,26 @@ pub const levels: []const Level = &.{
         .description = "Build a strand that always returns the given input",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
-                // TODO(game)
-                _ = k;
-                _ = pool;
-                _ = arena;
-                return null;
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                const value = if (k < 3)
+                    Vals.abc[k]
+                else if (k < 6)
+                    try store(pool, Sexpr.doPair(Vals.abc[k - 3], Vals.abc[@mod(k, 3)]))
+                else if (k < 20)
+                    try randomSexpr(pool, Vals.abc, random, 2, 4)
+                else
+                    return null;
+                const result = try core.sexprFromCases(&.{
+                    .{
+                        .pattern = Sexpr.builtin.empty,
+                        .template = value,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    },
+                }, pool);
+                return .{ .input = value, .expected = result };
             }
         }.generate_sample,
     },
@@ -1233,12 +1247,59 @@ pub const levels: []const Level = &.{
         .description = "Build a strand for the given hardcoded map",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
-                // TODO(game)
-                _ = k;
-                _ = pool;
-                _ = arena;
-                return null;
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                var pairs: std.ArrayListUnmanaged(Sample) = .empty;
+                switch (sample_index) {
+                    0 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                .input = Vals.abc[k],
+                                .expected = Vals.abc[@mod(k + 1, 3)],
+                            });
+                    },
+                    1 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                .input = Vals.abc[@mod(k + 1, 3)],
+                                .expected = Vals.abc[k],
+                            });
+                    },
+                    2 => {
+                        for (Vals.lowercase, Vals.uppercase) |a, b|
+                            try pairs.append(arena, .{
+                                .input = a,
+                                .expected = b,
+                            });
+                    },
+                    3...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                        const random = random_instance.random();
+                        const n_things = random.intRangeLessThan(usize, 2, if (sample_index < 50) 6 else 20);
+                        try pairs.ensureUnusedCapacity(arena, n_things);
+                        for (0..n_things) |_| {
+                            try pairs.append(arena, .{
+                                .input = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                                .expected = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                            });
+                        }
+                    },
+                    else => return null,
+                }
+                const cases = try arena.alloc(core.MatchCaseDefinition, pairs.items.len);
+                const inputs = try arena.alloc(*const Sexpr, pairs.items.len);
+                for (pairs.items, cases, inputs) |pair, *case, *input| {
+                    input.* = try store(pool, Sexpr.doPair(pair.input, pair.expected));
+                    case.* = .{
+                        .pattern = pair.input,
+                        .template = pair.expected,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    };
+                }
+                return .{
+                    .input = try toList(pool, inputs),
+                    .expected = try core.sexprFromCases(cases, pool),
+                };
             }
         }.generate_sample,
     },

@@ -6819,7 +6819,7 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         assert(workspace.valid(scratch));
 
-        tracy.plot(u32, "canvas frame arena capacity in mb", @intCast(@divFloor(drawer.?.canvas.frame_arena.queryCapacity(), 1024 * 1024)));
+        // tracy.plot(u32, "canvas frame arena capacity in mb", @intCast(@divFloor(drawer.?.canvas.frame_arena.queryCapacity(), 1024 * 1024)));
 
         var typing: bool = workspace.active_text_input != .nothing;
 
