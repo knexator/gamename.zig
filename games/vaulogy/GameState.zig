@@ -2286,7 +2286,7 @@ pub const Lego = struct {
             .lens => .lens,
             .list_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
             .meta_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
-            .fnkbox => |fnkbox| if (fnkbox.editable) .default else return null,
+            .fnkbox => |fnkbox| if (fnkbox.editable) .fnkbox_tab else return null,
         };
         const enabled: bool = switch (lego.specific) {
             else => true,
@@ -2348,7 +2348,7 @@ pub const Lego = struct {
 
     pub fn getGrabbedOffset(lego: *const Lego, absolute_needle: Vec2) Vec2 {
         return switch (lego.specific) {
-            .postit, .microscope => lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle),
+            .postit, .microscope, .fnkbox => lego.absolute_point.inverseApplyGetLocalPosition(absolute_needle),
             .scrollbar => |scrollbar| lego.absolute_point.applyToLocalPoint(.{ .pos = scrollbar.handleRectVisual().top_left }).inverseApplyGetLocalPosition(absolute_needle),
             else => .zero,
         };
@@ -2497,12 +2497,19 @@ pub const Handle = struct {
 
     pub const Kind = union(enum) {
         circle: Size,
+        fnkbox_tab,
 
         pub const default: Kind = .{ .circle = .{ .base = 0.2, .hot = 0.24, .hitbox = 0.24 } };
         pub const default_extrahitbox: Kind = .{ .circle = .{ .base = 0.2, .hot = 0.24, .hitbox = 1.0 } };
         pub const new_case: Kind = .{ .circle = .{ .base = 0.1, .hot = 0.4, .hitbox = 1.75 } };
         pub const garland: Kind = .{ .circle = .{ .base = 0.3, .hot = 0.5, .hitbox = 1.0 } };
         pub const lens: Kind = .{ .circle = .{ .base = 0.1, .hot = 0.2, .hitbox = 0.2 } };
+
+        // pub const fnkbox_tab_rect: Rect = .{ .top_left = .new(0, 0), .size = .new(Lego.Specific.FnkboxBox.relative_box.size.x / 2, 1) };
+        pub const fnkbox_tab_rect: Rect = Lego.Specific.FnkboxBox.relative_box
+            .moveRelative(.new(0, -1))
+            .withSize1d(.height, 1, .bottom_center)
+            .scaleNonUniform(.new(0.5, 1), .bottom_right);
     };
 
     pub const Size = extern struct {
@@ -2527,13 +2534,20 @@ pub const Handle = struct {
                     drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
                     drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
                 },
+                // TODO(game): improve
+                .fnkbox_tab => {
+                    const rect = handle.point.applyToLocalRect(Kind.fnkbox_tab_rect);
+                    drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(alpha));
+                    drawer.canvas.borderRect(camera, rect, std.math.lerp(0.05, 0.1, handle.hot_t) * handle.point.scale, .inner, .blackAlpha(alpha));
+                },
             }
         }
     }
 
     pub fn overlapped(handle: *const Handle, pos: Vec2) bool {
         return handle.enabled and switch (handle.kind) {
-            .circle => |radius| pos.distTo(handle.point.pos) < radius.hitbox * handle.point.scale,
+            .circle => |radius| handle.point.inRange(pos, radius.hitbox),
+            .fnkbox_tab => handle.point.applyToLocalRect(Kind.fnkbox_tab_rect).contains(pos),
         };
     }
 };
