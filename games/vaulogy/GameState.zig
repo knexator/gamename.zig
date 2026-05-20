@@ -2536,9 +2536,34 @@ pub const Handle = struct {
                 },
                 // TODO(game): improve
                 .fnkbox_tab => {
-                    const rect = handle.point.applyToLocalRect(Kind.fnkbox_tab_rect);
-                    drawer.canvas.fillRect(camera, rect, COLORS.bg.withAlpha(alpha));
-                    drawer.canvas.borderRect(camera, rect, std.math.lerp(0.05, 0.1, handle.hot_t) * handle.point.scale, .inner, .blackAlpha(alpha));
+                    const rect = handle.point.applyToLocalRect(Kind.fnkbox_tab_rect.move(.new(-0.05 / 2.0, 0.05 / 2.0)));
+                    // TODO(polish): remove this ugly line
+                    drawer.canvas.line(camera, &.{
+                        rect.get(.bottom_left),
+                        rect.get(.bottom_right),
+                    }, 0.05 * handle.point.scale, COLORS.bg.withAlpha(alpha));
+
+                    const rl = Kind.fnkbox_tab_rect; // rectlocal
+                    drawer.canvas.fillShape(camera, handle.point, .{
+                        .fill_shape_renderable = null,
+                        .fill_atom_renderable = null,
+                        .local_points = &.{
+                            rl.get(.bottom_left),
+                            rl.get(.top_left).addX(rl.size.y),
+                            rl.get(.top_right),
+                            rl.get(.bottom_right),
+                        },
+                        .triangles = &.{
+                            .{ 0, 1, 3 },
+                            .{ 1, 2, 3 },
+                        },
+                    }, COLORS.bg.withAlpha(alpha * 0.65));
+                    drawer.canvas.line(camera, &.{
+                        rect.get(.bottom_left),
+                        rect.get(.top_left).addX(rect.size.y),
+                        rect.get(.top_right),
+                        rect.get(.bottom_right),
+                    }, 0.05 * handle.point.scale, .blackAlpha(alpha));
                 },
             }
         }
@@ -9023,7 +9048,7 @@ const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
 const math = kommon.math;
 const tof32 = math.tof32;
-const Color = math.UColor;
+const UColor = math.UColor;
 const FColor = math.FColor;
 const Rect = math.Rect;
 const Bounds = math.Bounds;
