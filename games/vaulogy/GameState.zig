@@ -5625,17 +5625,20 @@ const Workspace = struct {
                     .fnkbox_description => |fnkbox_description| {
                         var best_index: usize = 0;
                         var best_dist: f32 = std.math.inf(f32);
+                        var found_something = false;
                         for (fnkbox_description.cursor_points.items) |cursor_point| {
-                            const p = lego.absolute_point
-                                .applyToLocalPoint(.{ .pos = cursor_point.relative_pos.addY(-cursor_point.relative_height) });
-                            const cur_dist = p.distSqTo(absolute_needle_pos);
+                            const p = lego.absolute_point.applyToLocalPoint(.{ .pos = cursor_point.relative_pos });
+                            const asdf = p.inverseApplyGetLocalPosition(absolute_needle_pos);
+                            // TODO(polish): ignore y position for already selected text
+                            if (asdf.y > 0 or asdf.y < -cursor_point.relative_height) continue;
+                            const cur_dist = @abs(asdf.x);
                             if (cur_dist < best_dist) {
                                 best_dist = cur_dist;
                                 best_index = cursor_point.index;
+                                found_something = true;
                             }
                         }
-                        // this 1 is kind of arbitrary
-                        if (best_dist < 1) {
+                        if (found_something) {
                             return .{ .hot = cur, .text_index = best_index, .over_background = root };
                         }
                     },
