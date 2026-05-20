@@ -2286,7 +2286,9 @@ pub const Lego = struct {
             .lens => .lens,
             .list_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
             .meta_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
-            .fnkbox => |fnkbox| if (fnkbox.editable) .fnkbox_tab else return null,
+            // TODO(game): maybe fnkbox tabs
+            .fnkbox => |fnkbox| if (fnkbox.editable) .default else return null,
+            // .fnkbox => |fnkbox| if (fnkbox.editable) .fnkbox_tab else return null,
         };
         const enabled: bool = switch (lego.specific) {
             else => true,
