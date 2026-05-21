@@ -5400,9 +5400,12 @@ const Workspace = struct {
 
         const undo_stack = &workspace.undo_stack;
 
-        const debug_all_bubbles_unlocked = workspace.debug_all_bubbles_unlocked;
-
         const all_fnks: core.FnkCollection, const all_fnks_hash = try workspace.getAllFnks(scratch);
+
+        const debug_all_bubbles_unlocked = workspace.debug_all_bubbles_unlocked;
+        // TODO(design): this wouldn't be needed if we stored sexprs in the level file
+        const debug_skip_has_sexpr_unlocks = all_fnks.count() > 0;
+
         for (toybox.all_legos.items) |*lego| {
             if (!lego.exists) continue;
             if (workspace.isFreefloating(lego.index)) continue;
@@ -5440,7 +5443,7 @@ const Workspace = struct {
                         }
                         break :blk true;
                     },
-                    .has_sexpr => |sexpr| blk: {
+                    .has_sexpr => |sexpr| debug_skip_has_sexpr_unlocks or blk: {
                         var it = Toybox.treeIterator(area, false);
                         while (it.next()) |step| {
                             if (step.children_already_visited) continue;
@@ -8662,9 +8665,11 @@ const Workspace = struct {
     //     if (version != 0) @panic("Unsupported file version");
     // }
 
+    const SavedTestcaseTag = enum(u8) { default, custom };
+
     /// only saves fnkboxes
     pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 2;
+        const version: u32 = 3;
         try out.writeInt(u32, version, ENDIANNESS);
 
         try out.writeStructEndian(workspace.main_area.get().local_point, ENDIANNESS);
@@ -8680,11 +8685,57 @@ const Workspace = struct {
             // write description
             try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.inner_text.items);
 
-            var tmp_out: std.ArrayList(u8) = .init(scratch);
-            defer tmp_out.deinit();
+            if (true) { // write testcases
+                const testcases_area = cur.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
+                var testcases: std.ArrayListUnmanaged(union(enum) {
+                    default: Lego.Specific.UnloadedTestcase.Source,
+                    custom: Lego.Specific.Testcase.Children,
+                }) = try .initCapacity(scratch, Toybox.childCount(testcases_area));
+                defer testcases.deinit(scratch);
+
+                var cur_testcase = testcases_area.get().tree.first;
+                while (cur_testcase != .nothing) : (cur_testcase = cur_testcase.get().tree.next) {
+                    switch (cur_testcase.get().specific) {
+                        else => unreachable,
+                        .button => |button| assert(button.action == .add_testcase),
+                        .unloaded_testcase => |unloaded| {
+                            testcases.appendAssumeCapacity(.{ .default = unloaded.source });
+                        },
+                        .testcase => |testcase| {
+                            const source = testcase.source;
+                            if (source == .nothing or
+                                source.get().specific.unloaded_testcase.source.input_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).input) or
+                                source.get().specific.unloaded_testcase.source.expected_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).expected))
+                            {
+                                testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
+                            } else {
+                                testcases.appendAssumeCapacity(.{ .default = source.get().specific.unloaded_testcase.source });
+                            }
+                        },
+                    }
+                }
+
+                try writeLen(out, testcases.items.len);
+                for (testcases.items) |testcase| {
+                    switch (testcase) {
+                        .default => |source| {
+                            try writeEnum(out, SavedTestcaseTag, .default, ENDIANNESS);
+                            try out.writeInt(u64, @intCast(source.level), ENDIANNESS);
+                            try out.writeInt(u64, @intCast(source.sample), ENDIANNESS);
+                        },
+                        .custom => |children| {
+                            try writeEnum(out, SavedTestcaseTag, .custom, ENDIANNESS);
+                            const input_sexpr = try Lego.Specific.Sexpr.toOldCoreValue(&children.input.get().specific.sexpr, scratch);
+                            const expected_sexpr = try Lego.Specific.Sexpr.toOldCoreValue(&children.expected.get().specific.sexpr, scratch);
+                            try writeFmt(out, scratch, "{any}\n", .{input_sexpr});
+                            try writeFmt(out, scratch, "{any}\n", .{expected_sexpr});
+                        },
+                    }
+                }
+            }
+
             const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
-            try tmp_out.writer().print("{any}\n", .{fnk});
-            try writeString(out, tmp_out.items);
+            try writeFmt(out, scratch, "{any}\n", .{fnk});
         }
     }
 
@@ -8694,13 +8745,15 @@ const Workspace = struct {
         const Config = struct {
             has_description: bool,
             starts_with_camera_point: bool,
+            includes_testcases: bool,
             is_text_based: bool = false,
         };
         const config: Config = switch (version) {
-            0 => .{ .has_description = false, .starts_with_camera_point = false },
-            1 => .{ .has_description = true, .starts_with_camera_point = false },
-            2 => .{ .has_description = true, .starts_with_camera_point = true },
-            text_magic => .{ .is_text_based = true, .has_description = undefined, .starts_with_camera_point = false },
+            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false },
+            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false },
+            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false },
+            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true },
+            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false },
             else => {
                 std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
                 return;
@@ -8750,8 +8803,45 @@ const Workspace = struct {
                     try readString(in, scratch)
                 else
                     "Custom Machine";
-                const ascii = try readString(in, dst.arena_for_atom_names.allocator());
+
                 var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+
+                var testcases: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                if (config.includes_testcases) {
+                    const n_testcases = try readLen(in);
+                    try testcases.ensureUnusedCapacity(scratch, n_testcases);
+                    for (0..n_testcases) |_| {
+                        const tag = try readEnum(in, SavedTestcaseTag, ENDIANNESS);
+                        defer _ = pool.reset(.retain_capacity);
+                        switch (tag) {
+                            .default => {
+                                const level_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
+                                const sample_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
+                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch)).?;
+
+                                testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .unloaded = .build(
+                                    level_index,
+                                    sample_index,
+                                    sample,
+                                ) }, null));
+                            },
+                            .custom => {
+                                const input_ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                                const expected_ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                                const input = try core.parsing.parseSingleSexpr(input_ascii, &pool);
+                                const expected = try core.parsing.parseSingleSexpr(expected_ascii, &pool);
+
+                                testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .existing = .{
+                                    .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, input, false, false, null),
+                                    .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, expected, false, false, null),
+                                    .unloaded = .nothing,
+                                } }, null));
+                            },
+                        }
+                    }
+                }
+
+                const ascii = try readString(in, dst.arena_for_atom_names.allocator());
                 const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
 
                 const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, null);
@@ -8760,7 +8850,7 @@ const Workspace = struct {
                     try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, null),
                     true,
                     description,
-                    &.{},
+                    testcases.items,
                     garland,
                     dst.gpa_for_text,
                     null,
@@ -8964,7 +9054,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (false and platform.keyboard.wasPressed(.KeyQ)) {
+    if (true and platform.keyboard.wasPressed(.KeyQ)) {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
@@ -9000,6 +9090,11 @@ pub fn writeEnum(out: std.io.AnyWriter, T: type, value: T, endian: std.builtin.E
     try out.writeInt(type_info.tag_type, @intFromEnum(value), endian);
 }
 
+pub fn readEnum(in: std.io.AnyReader, T: type, endian: std.builtin.Endian) !T {
+    const type_info = @typeInfo(T).@"enum";
+    return @enumFromInt(try in.readInt(type_info.tag_type, endian));
+}
+
 pub fn writeF32(out: std.io.AnyWriter, value: f32) !void {
     comptime assert(@import("builtin").target.cpu.arch.endian() == .little);
     try out.writeAll(std.mem.asBytes(&value));
@@ -9033,6 +9128,13 @@ pub fn readLen(in: std.io.AnyReader) !usize {
 pub fn writeString(out: std.io.AnyWriter, value: []const u8) !void {
     try writeLen(out, value.len);
     try out.writeAll(value);
+}
+
+pub fn writeFmt(out: std.io.AnyWriter, scratch: std.mem.Allocator, comptime format: []const u8, args: anytype) !void {
+    var tmp_out: std.ArrayList(u8) = .init(scratch);
+    defer tmp_out.deinit();
+    try tmp_out.writer().print(format, args);
+    try writeString(out, tmp_out.items);
 }
 
 pub fn readString(in: std.io.AnyReader, allocator: std.mem.Allocator) ![]u8 {
