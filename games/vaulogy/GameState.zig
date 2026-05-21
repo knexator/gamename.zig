@@ -1466,6 +1466,16 @@ pub const Lego = struct {
                 solved,
             };
 
+            pub fn hasExecutionOverTestcase(fnkbox: Fnkbox, testcase: Lego.Index) bool {
+                return if (fnkbox.execution) |e|
+                    switch (e.source) {
+                        .testcase => |x| x == testcase,
+                        .input => false,
+                    }
+                else
+                    false;
+            }
+
             pub fn fnkname(fnkbox: *const Fnkbox) Lego.Index {
                 return children(Lego.fromSpecificConst(.fnkbox, fnkbox).index).fnkname;
             }
@@ -8058,7 +8068,8 @@ const Workspace = struct {
                         assert(cur.get().specific.button.action == .add_testcase);
                         continue;
                     }
-                    const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null;
+                    const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null or
+                        fnkbox_index.get().specific.fnkbox.hasExecutionOverTestcase(cur);
                     if (is_visible) {
                         cur = try ensureLoadedTestcase(cur, scratch, undo_stack);
                     } else {
