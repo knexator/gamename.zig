@@ -5637,7 +5637,7 @@ const Workspace = struct {
                     },
                     .fnkbox_description => |fnkbox_description| {
                         var best_index: usize = 0;
-                        var best_dist: f32 = std.math.inf(f32);
+                        var best_dist: f32 = 1.0; // don't go too far, horizontally
                         var found_something = false;
                         for (fnkbox_description.cursor_points.items) |cursor_point| {
                             const p = lego.absolute_point.applyToLocalPoint(.{ .pos = cursor_point.relative_pos });
