@@ -1543,7 +1543,7 @@ pub const Lego = struct {
                                 error.BAD_INPUT => @panic("panic"),
                                 error.NoMatchingCase => unreachable,
                             };
-                            if (!actual_output.equals(actual_value) and fnkbox.execution == null) {
+                            if (!actual_output.equals(actual_value) and !fnkbox.hasExecutionOverTestcase(cur_testcase)) {
                                 Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(
                                     t.actual.get().local_point,
                                     actual_output,
