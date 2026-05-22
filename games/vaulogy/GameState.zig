@@ -7414,10 +7414,16 @@ const Workspace = struct {
             if (workspace.grabbing.index != .nothing)
                 if (workspace.grabbing.index.hasTag(.button))
                     .pointer
+                else if (workspace.grabbing.index.hasTag(.fnkbox_description))
+                    // TODO(polish): should be .text, but that looks buggy with the 50% gray bg color
+                    .pointer
                 else
                     .grabbing
             else if (hot_and_dropzone.hot != .nothing)
                 if (hot_and_dropzone.hot.hasTag(.button))
+                    .pointer
+                else if (hot_and_dropzone.hot.hasTag(.fnkbox_description))
+                    // TODO(polish): should be .text, but that looks buggy with the 50% gray bg color
                     .pointer
                 else
                     .could_grab

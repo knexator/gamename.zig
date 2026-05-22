@@ -261,7 +261,7 @@ async function getWasm() {
       memory: wasm_memory,
 
       setCursor: (k) => {
-        const cursors = ["default", "grab", "grabbing", "pointer"];
+        const cursors = ["default", "grab", "grabbing", "pointer", "text"];
         document.body.style.cursor = cursors[k];
       },
 
