@@ -5,6 +5,9 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 // Causes of bugs:
 // - functions that take a pointer and allocate memory might invalidate that pointer
 
+// TODO: save scorers!
+// TODO: max stack size in toOldCoreValue :((((
+
 const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
@@ -6190,6 +6193,9 @@ const Workspace = struct {
                         while (cur_element != .nothing) {
                             Toybox.setLocalPointSmooth(cur_element, .{ .pos = scrollable_list.base()
                                 .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() });
+                            // TODO(polish): this in fnkbox_testcases to avoid buggy looking updates
+                            // cur_element.get().local_point = .{ .pos = scrollable_list.base()
+                            //     .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() };
                             y += if (cur_element.hasTag(.scrollable_list_inbetween)) 0.5 * cur_element.get().dropzone_t else 1.0;
                             cur_element = Toybox.get(cur_element).tree.next;
                             height += 1;
