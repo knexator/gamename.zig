@@ -2865,8 +2865,8 @@ const CursorPoint = struct {
 };
 
 pub const Toybox = struct {
-    // TODO(optim-late): use a fancy arena thing
-    all_legos: std.ArrayListUnmanaged(Lego),
+    // TODO(optim-late): maybe use a plain arraylist + a fancy arena thing
+    all_legos: std.SegmentedList(Lego, 0),
     all_legos_arena: std.heap.ArenaAllocator,
     free_head: Lego.Index = .nothing,
 
@@ -2876,10 +2876,10 @@ pub const Toybox = struct {
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
         dst.* = .{
             .all_legos_arena = .init(gpa),
-            .all_legos = .empty,
+            .all_legos = .{},
         };
         // TODO(optim-late): tweak this number
-        try dst.all_legos.ensureUnusedCapacity(
+        try dst.all_legos.growCapacity(
             dst.all_legos_arena.allocator(),
             4096,
         );
@@ -2910,9 +2910,9 @@ pub const Toybox = struct {
             toybox.free_head = result.free_next;
             break :blk .{ result, result_index };
         } else blk: {
-            if (toybox.all_legos.items.len >= std.math.maxInt(i31)) OoM();
+            if (toybox.all_legos.count() >= std.math.maxInt(i31)) OoM();
             const result = toybox.all_legos.addOne(toybox.all_legos_arena.allocator()) catch OoM();
-            break :blk .{ result, @enumFromInt(toybox.all_legos.items.len - 1) };
+            break :blk .{ result, @enumFromInt(toybox.all_legos.count() - 1) };
         };
 
         result.* = .{
@@ -2934,7 +2934,7 @@ pub const Toybox = struct {
 
     pub fn getUnsafe(index: Lego.Index) *Lego {
         assert(index != .nothing);
-        return &toybox.all_legos.items[@intFromEnum(index)];
+        return toybox.all_legos.at(@intFromEnum(index));
     }
 
     pub fn safeGet(index: Lego.Index) ?*Lego {
@@ -5419,7 +5419,8 @@ const Workspace = struct {
         // TODO(design): this wouldn't be needed if we stored sexprs in the level file
         const debug_skip_has_sexpr_unlocks = all_fnks.count() > 0;
 
-        for (toybox.all_legos.items) |*lego| {
+        var lego_it = toybox.all_legos.iterator(0);
+        while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
@@ -5480,8 +5481,9 @@ const Workspace = struct {
     }
 
     pub fn deinit(workspace: *Workspace) void {
-        // TODO(design): remove this
-        for (toybox.all_legos.items) |*lego| {
+        // TODO(design): remove this loop
+        var it = toybox.all_legos.iterator(0);
+        while (it.next()) |lego| {
             if (!lego.exists) continue;
             if (lego.specific.as(.fnkbox_description)) |fnkbox_description| {
                 if (Toybox.findAncestor(lego.index, .fnkbox).get().specific.fnkbox.editable or
@@ -6859,7 +6861,10 @@ const Workspace = struct {
         if (true and @import("builtin").mode == .Debug) { // check that free_next pointers are unique
             var seen_indices: std.AutoHashMap(Lego.Index, void) = .init(scratch);
             defer seen_indices.deinit();
-            for (toybox.all_legos.items, 0..) |lego, k| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (lego.exists) {
                     assert(lego.free_next == .nothing);
@@ -6870,7 +6875,10 @@ const Workspace = struct {
         }
         // Disabled for now, since execution.old_testcase_actual_value and execution.original_garland are rootless
         if (false and @import("builtin").mode == .Debug) { // check that there are no unknown roots
-            for (toybox.all_legos.items, 0..) |lego, k| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (!lego.exists) continue;
                 const root = Toybox.oldestAncestor(lego.index);
@@ -6903,7 +6911,10 @@ const Workspace = struct {
         }
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
-            for (toybox.all_legos.items, 0..) |lego, k| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (!lego.exists) continue;
                 const root = Toybox.oldestAncestor(lego.index);
@@ -6925,19 +6936,25 @@ const Workspace = struct {
 
         if (true and platform.keyboard.wasPressed(.KeyQ)) {
             var alive_count: usize = 0;
-            for (toybox.all_legos.items, 0..) |lego, k| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (lego.exists) {
                     alive_count += 1;
                 }
             }
             std.log.debug("total alive legos: {d}", .{alive_count});
-            std.log.debug("total legos: {d}", .{toybox.all_legos.items.len});
+            std.log.debug("total legos: {d}", .{toybox.all_legos.count()});
         }
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
-            for (toybox.all_legos.items, 0..) |lego, k| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (!lego.exists) continue;
                 if (lego.specific.tag() == .fnkbox) {
@@ -6951,7 +6968,10 @@ const Workspace = struct {
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
-            for (toybox.all_legos.items, 0..) |lego, k| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
                 assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
                 if (lego.exists) {
                     std.log.debug("{d} \t{s} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d} \t rel: {any} \tabs: {any}", .{
@@ -6967,8 +6987,8 @@ const Workspace = struct {
                 }
             }
             std.log.debug("-----", .{});
-            for (workspace.undo_stack.commands.items, 0..) |cmd, k| {
-                std.log.debug("{d} \t{any}", .{ k, cmd });
+            for (workspace.undo_stack.commands.items, 0..) |cmd, k1| {
+                std.log.debug("{d} \t{any}", .{ k1, cmd });
             }
         }
 
@@ -7457,7 +7477,8 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
             defer zone.deinit();
 
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
 
                 var done = true;
@@ -7532,7 +7553,8 @@ const Workspace = struct {
         // }
 
         if (true) { // pills decay
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 switch (lego.specific) {
                     .pill => |*pill| {
@@ -7559,7 +7581,8 @@ const Workspace = struct {
                 .case, .garland => true,
                 else => false,
             };
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.garland)) |garland| {
                     garland.visible =
@@ -7579,7 +7602,8 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "move camera" });
             defer zone.deinit();
 
-            const over_scrollable_element: Lego.Index = for (toybox.all_legos.items) |lego| {
+            var lego_it = toybox.all_legos.constIterator(0);
+            const over_scrollable_element: Lego.Index = while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.tag() == .scrollable_list and lego.specific.scrollable_list.rect().contains(
                     lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
@@ -7765,7 +7789,8 @@ const Workspace = struct {
 
             assert(workspace.valid(scratch));
 
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
@@ -7919,7 +7944,8 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "executors animations" });
             defer zone.deinit();
 
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor| {
                     if (executor.controlled_by_parent_fnkbox) continue;
@@ -7932,7 +7958,8 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "enable/disable buttons" });
             defer zone.deinit();
 
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
@@ -7974,7 +8001,8 @@ const Workspace = struct {
                 map.putAssumeCapacityNoClobber(fnkname_hash, index);
             }
 
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 switch (lego.specific) {
                     .fnkname_holder => |*fnkname_holder| {
@@ -7992,7 +8020,8 @@ const Workspace = struct {
             defer zone.deinit();
 
             // TODO(optim): there must be better ways to do this
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.case)) |case| {
                     case.next_point_extra = .{};
@@ -8014,7 +8043,8 @@ const Workspace = struct {
         }
 
         if (true) { // update bindings names
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.tag() == .sexpr and lego.specific.sexpr.kind == .atom_var) {
                     const name = lego.specific.sexpr.atom_name;
@@ -8031,7 +8061,8 @@ const Workspace = struct {
         }
 
         if (true) { // update bindings_t
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor_asdf| {
                     const executor: *Lego.Specific.Executor = executor_asdf;
@@ -8124,7 +8155,8 @@ const Workspace = struct {
         defer assert(!undo_stack.anyChangesThisFrame());
 
         if (drawer) |drwr| { // recompute cursor_points
-            for (toybox.all_legos.items) |*lego| {
+            var lego_it = toybox.all_legos.iterator(0);
+            while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.tag() == .fnkbox_description) {
                     const cursor_points = &lego.specific.fnkbox_description.cursor_points;
@@ -8490,7 +8522,8 @@ const Workspace = struct {
     fn allFnkboxes(workspace: *Workspace, include_locked: bool, allocator: std.mem.Allocator) ![]const Lego.Index {
         var result: std.ArrayListUnmanaged(Lego.Index) = .empty;
 
-        for (toybox.all_legos.items) |*lego| {
+        var lego_it = toybox.all_legos.iterator(0);
+        while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
             if (lego.specific.tag() != .fnkbox) continue;
             // don't include fnkboxes that are part of a blueprint, or other strange situations
@@ -8888,7 +8921,8 @@ const Workspace = struct {
     pub fn canAutosaveNow(workspace: *const Workspace) bool {
         if (workspace.grabbing.index != .nothing) return false;
         // find any active animations at fnkboxes/executors
-        for (toybox.all_legos.items) |*lego| {
+        var lego_it = toybox.all_legos.iterator(0);
+        while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 if (fnkbox.execution != null) return false;
@@ -8903,7 +8937,10 @@ const Workspace = struct {
     pub fn debugLogState(workspace: *const Workspace) void {
         var alive_count: usize = 0;
         std.log.debug("free head: {d}", .{toybox.free_head.asI32()});
-        for (toybox.all_legos.items, 0..) |lego, k| {
+        var lego_it = toybox.all_legos.constIterator(0);
+        var k: usize = 0;
+        while (lego_it.next()) |lego| {
+            defer k += 1;
             assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
             if (lego.exists) {
                 alive_count += 1;
@@ -8924,8 +8961,8 @@ const Workspace = struct {
             }
         }
         std.log.debug("-----", .{});
-        for (workspace.undo_stack.commands.items, 0..) |cmd, k| {
-            std.log.debug("{d} \t{any}", .{ k, cmd });
+        for (workspace.undo_stack.commands.items, 0..) |cmd, k2| {
+            std.log.debug("{d} \t{any}", .{ k2, cmd });
         }
         std.log.debug("-----", .{});
         std.log.debug("{d} alive legos, {d} undo stack len", .{ alive_count, workspace.undo_stack.commands.items.len });
@@ -8957,7 +8994,8 @@ const Workspace = struct {
     }
 
     pub fn isFnknameTaken(workspace: *Workspace, fnkname: Lego.Index) bool {
-        for (toybox.all_legos.items) |*lego| {
+        var lego_it = toybox.all_legos.iterator(0);
+        while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
             if (lego.specific.tag() != .fnkbox) continue;
             if (workspace.isFreefloating(lego.index)) continue;
