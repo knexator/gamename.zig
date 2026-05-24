@@ -8725,12 +8725,13 @@ const Workspace = struct {
 
     /// only saves fnkboxes
     pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 3;
+        const version: u32 = 4;
         try out.writeInt(u32, version, ENDIANNESS);
 
         try out.writeStructEndian(workspace.main_area.get().local_point, ENDIANNESS);
 
         const fnkboxes = try workspace.allFnkboxes(false, scratch);
+        try writeLen(out, fnkboxes.len);
         for (fnkboxes) |cur| {
             const fnkname_value = try cur.children(.fnkbox).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
             const definition = try cur.children(.fnkbox).executor.children(.executor).garland.get().specific.garland.toOldCoreValue(scratch);
@@ -8801,15 +8802,17 @@ const Workspace = struct {
         const Config = struct {
             has_description: bool,
             starts_with_camera_point: bool,
+            knows_n_fnkboxes: bool,
             includes_testcases: bool,
             is_text_based: bool = false,
         };
         const config: Config = switch (version) {
-            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false },
-            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false },
-            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false },
-            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true },
-            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false },
+            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false },
+            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false },
+            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false, .knows_n_fnkboxes = false },
+            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = false },
+            4 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true },
+            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false },
             else => {
                 std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
                 return;
@@ -8850,11 +8853,16 @@ const Workspace = struct {
                 Toybox.addChildLast(dst.main_area, fnkbox, null);
             }
         } else {
-            while (true) {
-                const pos = in.readStructEndian(Vec2, ENDIANNESS) catch |err| switch (err) {
-                    error.EndOfStream => break,
-                    else => return err,
-                };
+            const n_fnkboxes: usize = if (config.knows_n_fnkboxes) try readLen(in) else std.math.maxInt(usize);
+            for (0..n_fnkboxes) |_| {
+                const pos = if (config.knows_n_fnkboxes)
+                    try in.readStructEndian(Vec2, ENDIANNESS)
+                else
+                    in.readStructEndian(Vec2, ENDIANNESS) catch |err| switch (err) {
+                        error.EndOfStream => break,
+                        else => return err,
+                    };
+
                 const description: []const u8 = if (config.has_description)
                     try readString(in, scratch)
                 else
