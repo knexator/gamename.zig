@@ -561,6 +561,7 @@ pub const Lego = struct {
         pub const ScorerRow = struct {
             level_index: usize,
             offset: ?Vec2,
+            magic_id: u32,
 
             pub const Children = struct {
                 create_fnkname_button: Lego.Index,
@@ -858,8 +859,8 @@ pub const Lego = struct {
                 const sexpr = index.get().specific.sexpr;
                 return switch (sexpr.kind) {
                     .empty => 0,
-                    .atom_lit => std.array_hash_map.hashString(sexpr.atom_name),
-                    .atom_var => std.hash.int(std.array_hash_map.hashString(sexpr.atom_name)),
+                    .atom_lit => hashString(sexpr.atom_name),
+                    .atom_var => std.hash.int(hashString(sexpr.atom_name)),
                     .pair => {
                         const l, const r = pairChildren(index);
                         var hasher = std.hash.Wyhash.init(0);
@@ -2260,6 +2261,12 @@ pub const Lego = struct {
                 },
                 .fnkslist => index.get().tree.next,
             };
+        }
+
+        pub fn isTheSexprLit(index: Index, lit: []const u8) bool {
+            if (!index.hasTag(.sexpr)) return false;
+            const sexpr = index.get().specific.sexpr;
+            return sexpr.kind == .atom_lit and std.mem.eql(u8, sexpr.atom_name, lit);
         }
     };
 
@@ -3818,8 +3825,16 @@ pub const Toybox = struct {
     pub fn buildScorer(point: Point, levels_indices: []const usize, create_at_offsets: []const ?Vec2, undo_stack: ?*UndoStack) !Lego.Index {
         const rows_holder = try Toybox.new(.{}, .scorer_rows, undo_stack);
         var y: f32 = 0;
+        const magic_id = if (levels_indices.len == 1)
+            hashString(levels[levels_indices[0]].fnk_name)
+        else
+            @panic("TODO");
         for (levels_indices, create_at_offsets) |level_index, offset| {
-            const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{ .level_index = level_index, .offset = offset } }, &.{
+            const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{
+                .level_index = level_index,
+                .offset = offset,
+                .magic_id = magic_id,
+            } }, &.{
                 try Toybox.new(.{}, .{ .button = .{ .local_rect = .fromCenterAndSize(.zero, .one), .action = .create_fnkbox_for_row } }, undo_stack),
                 try buildSexpr(.{ .pos = .new(0, -0.5), .scale = 0.5, .turns = 0.25 }, .empty, false, true, undo_stack),
             }, undo_stack);
@@ -6894,6 +6909,21 @@ const Workspace = struct {
                 }
             }
         }
+        if (true and @import("builtin").mode == .Debug) { // check that there are no repeated magic_id among scorers
+            var seen_magics: std.AutoHashMap(u32, void) = .init(scratch);
+            defer seen_magics.deinit();
+            var lego_it = toybox.all_legos.constIterator(0);
+            while (lego_it.next()) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() != .scorer_row) continue;
+                // don't include stuff in a blueprint
+                if (workspace.isFreefloating(lego.index)) continue;
+                if (seen_magics.get(lego.specific.scorer_row.magic_id) != null) {
+                    panic("unexpected repeated fnk {s} in scorer_rows", .{levels[lego.specific.scorer_row.level_index].fnk_name});
+                }
+                seen_magics.putNoClobber(lego.specific.scorer_row.magic_id, {}) catch std.debug.panic("OoM", .{});
+            }
+        }
         return true;
     }
 
@@ -8725,7 +8755,7 @@ const Workspace = struct {
 
     /// only saves fnkboxes
     pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 4;
+        const version: u32 = 5;
         try out.writeInt(u32, version, ENDIANNESS);
 
         try out.writeStructEndian(workspace.main_area.get().local_point, ENDIANNESS);
@@ -8794,6 +8824,26 @@ const Workspace = struct {
             const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
             try writeFmt(out, scratch, "{any}\n", .{fnk});
         }
+
+        if (true) { // store which fnk was used for each scorer
+            var scorers: std.ArrayListUnmanaged(struct { id: u32, fnkname: *const core.Sexpr }) = .empty;
+            defer scorers.deinit(scratch);
+            var lego_it = toybox.all_legos.constIterator(0);
+            while (lego_it.next()) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() != .scorer_row) continue;
+                // don't include stuff in a blueprint
+                if (workspace.isFreefloating(lego.index)) continue;
+                const magic_id = lego.specific.scorer_row.magic_id;
+                const fnkname = try Lego.Specific.Sexpr.toOldCoreValue(&lego.index.children(.scorer_row).fnkname.get().specific.sexpr, scratch);
+                try scorers.append(scratch, .{ .id = magic_id, .fnkname = fnkname });
+            }
+            try writeLen(out, scorers.items.len);
+            for (scorers.items) |s| {
+                try out.writeInt(u32, s.id, ENDIANNESS);
+                try writeFmt(out, scratch, "{any}\n", .{s.fnkname});
+            }
+        }
     }
 
     pub fn load(dst: *Workspace, in: std.io.AnyReader, scratch: std.mem.Allocator) !void {
@@ -8804,15 +8854,17 @@ const Workspace = struct {
             starts_with_camera_point: bool,
             knows_n_fnkboxes: bool,
             includes_testcases: bool,
+            includes_scorers: bool,
             is_text_based: bool = false,
         };
         const config: Config = switch (version) {
-            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false },
-            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false },
-            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false, .knows_n_fnkboxes = false },
-            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = false },
-            4 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true },
-            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false },
+            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
+            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
+            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
+            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = false, .includes_scorers = false },
+            4 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = false },
+            5 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = true },
+            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
             else => {
                 std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
                 return;
@@ -8921,6 +8973,39 @@ const Workspace = struct {
                 );
                 Toybox.addChildLast(dst.main_area, fnkbox, null);
             }
+
+            if (config.includes_scorers) {
+                var fnkname_from_scorer_row_magic_id: std.AutoHashMapUnmanaged(u32, *const core.Sexpr) = .empty;
+                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                defer pool.deinit();
+
+                const n_scorer_rows = try readLen(in);
+                try fnkname_from_scorer_row_magic_id.ensureUnusedCapacity(scratch, @intCast(n_scorer_rows));
+                for (0..n_scorer_rows) |_| {
+                    const scorer_row_magic_id = try in.readInt(u32, ENDIANNESS);
+                    const fnkbox_name = try readString(in, dst.arena_for_atom_names.allocator());
+                    const fnkbox_value = try core.parsing.parseSingleSexpr(fnkbox_name, &pool);
+                    fnkname_from_scorer_row_magic_id.putAssumeCapacityNoClobber(scorer_row_magic_id, fnkbox_value);
+                }
+
+                var lego_it = toybox.all_legos.constIterator(0);
+                while (lego_it.next()) |lego| {
+                    if (!lego.exists) continue;
+                    if (lego.specific.tag() != .scorer_row) continue;
+                    const fnkname = fnkname_from_scorer_row_magic_id.get(lego.specific.scorer_row.magic_id) orelse continue;
+                    const old_fnkname_element = lego.index.children(.scorer_row).fnkname;
+                    assert(old_fnkname_element.hasTag(.sexpr) and old_fnkname_element.get().specific.sexpr.kind == .empty);
+                    const new_fnkname_element = try Lego.Specific.Sexpr.buildFromOldCoreValue(
+                        old_fnkname_element.get().local_point,
+                        fnkname,
+                        old_fnkname_element.get().specific.sexpr.is_pattern,
+                        old_fnkname_element.get().specific.sexpr.is_fnkname,
+                        null,
+                    );
+                    Toybox.changeChild(old_fnkname_element, new_fnkname_element, null);
+                    Toybox.destroyFloating(old_fnkname_element, null);
+                }
+            }
         }
 
         try dst.canonizeAfterChanges(scratch);
@@ -9027,7 +9112,7 @@ const Workspace = struct {
         return fnkname;
     }
 
-    pub fn isFreefloating(workspace: *Workspace, index: Lego.Index) bool {
+    pub fn isFreefloating(workspace: *const Workspace, index: Lego.Index) bool {
         for (workspace.roots(.all).constSlice()) |root| {
             if (Toybox.isAncestor(root, index)) return false;
         } else return true;
@@ -9123,7 +9208,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (true and platform.keyboard.wasPressed(.KeyQ)) {
+    if (false and platform.keyboard.wasPressed(.KeyQ)) {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
@@ -9220,6 +9305,7 @@ const panic = std.debug.panic;
 
 const core = @import("core.zig");
 
+const hashString = std.array_hash_map.hashString;
 const kommon = @import("kommon");
 const Triangulator = kommon.Triangulator;
 const math = kommon.math;
