@@ -7665,10 +7665,9 @@ const Workspace = struct {
                 }
             }
 
-            // TODO(game): revise
-            // if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
-            //     p.pos.addInPlace(mouse.deltaPos().neg());
-            // }
+            if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
+                p.pos.addInPlace(mouse.deltaPos());
+            }
 
             workspace.refreshCamera();
         }
