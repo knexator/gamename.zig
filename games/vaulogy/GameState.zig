@@ -20,6 +20,7 @@ const SAVING_ENABLED = true;
 const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
+const OVERWRITING_SEXPRS_ENABLED = false;
 
 const Level = @import("levels_new.zig").Level;
 const levels = @import("levels_new.zig").levels;
@@ -5573,7 +5574,9 @@ const Workspace = struct {
                         {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root };
-                            } else if (grabbing != .nothing and !lego.immutable and Toybox.get(grabbing).specific.tag() == .sexpr) {
+                            } else if (grabbing != .nothing and !lego.immutable and Toybox.get(grabbing).specific.tag() == .sexpr and
+                                (OVERWRITING_SEXPRS_ENABLED or sexpr.kind == .empty or (sexpr.kind == .atom_var or grabbing.get().specific.sexpr.kind == .atom_var)))
+                            {
                                 return .{ .dropzone = cur, .over_background = root };
                             }
                         }
