@@ -24,14 +24,26 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 usual: kommon.Usual,
 board: kommon.Grid2D(TileState),
-prev_board: kommon.Grid2D(TileState),
-prev_board_changed_at: kommon.Grid2D(f32),
+visual_state: kommon.Grid2D(VisualTileState),
+sdf_style_simple: bool,
 
 const TileState = struct {
     has_bomb: bool,
     has_flag: bool,
     uncovered: bool,
     surrounding_bombs: u8,
+
+    pub const outside: TileState = .{
+        .has_bomb = false,
+        .has_flag = false,
+        .uncovered = false,
+        .surrounding_bombs = undefined,
+    };
+};
+
+const VisualTileState = struct {
+    has_flag_t: f32,
+    sdf_size_of_cover: [9]f32,
 };
 
 pub fn init(
@@ -59,9 +71,12 @@ pub fn init(
     }
     fixSurroundingBombsCount(&dst.board);
 
-    dst.prev_board = try dst.board.clone(gpa);
+    dst.visual_state = try .initFill(gpa, board_size, .{
+        .has_flag_t = 0.0,
+        .sdf_size_of_cover = @splat(1.0),
+    });
 
-    dst.prev_board_changed_at = try .initFill(gpa, board_size, -std.math.inf(f32));
+    dst.sdf_style_simple = true;
 }
 
 fn fixSurroundingBombsCount(board: *kommon.Grid2D(TileState)) void {
@@ -80,8 +95,7 @@ fn fixSurroundingBombsCount(board: *kommon.Grid2D(TileState)) void {
 // TODO: take gl parameter
 pub fn deinit(self: *GameState, gpa: std.mem.Allocator) void {
     self.board.deinit(gpa);
-    self.prev_board.deinit(gpa);
-    self.prev_board_changed_at.deinit(gpa);
+    self.visual_state.deinit(gpa);
     self.usual.deinit(undefined);
 }
 
@@ -96,6 +110,7 @@ pub fn afterHotReload(self: *GameState) !void {
 const COLORS: struct {
     bg: FColor = .black,
     numbers: FColor = .white,
+    bomb: FColor = .red,
     covered: FColor = .fromHsv(0.2, 0.6, 0.6),
     flag_bg: FColor = .gray(0.5),
     flag_icon: FColor = .black,
@@ -106,6 +121,10 @@ const COLORS: struct {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
     const canvas = &self.usual.canvas;
+
+    if (platform.keyboard.wasPressed(.KeyD)) {
+        self.sdf_style_simple = !self.sdf_style_simple;
+    }
 
     const board_rect: Rect = .{ .top_left = .zero, .size = self.board.size.tof32() };
     const camera: Rect = board_rect.withAspectRatio(platform.aspect_ratio, .grow, .center);
@@ -132,19 +151,42 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    // update state
     if (self.board.tileAt(mouse.cur.position, board_rect)) |pos_under_mouse| {
-        const old_tile = self.board.at2(pos_under_mouse);
-        if (mouse.wasPressed(.left) and !old_tile.uncovered) {
-            self.prev_board.set(pos_under_mouse, old_tile);
-            self.prev_board_changed_at.set(pos_under_mouse, platform.global_seconds);
-            self.board.getPtr(pos_under_mouse).uncovered = true;
-            self.board.getPtr(pos_under_mouse).has_flag = false;
+        const tile = self.board.getPtr(pos_under_mouse);
+        if (mouse.wasPressed(.left) and !tile.uncovered) {
+            tile.uncovered = true;
+            tile.has_flag = false;
         }
-        if (mouse.wasPressed(.right) and !old_tile.uncovered) {
-            self.prev_board.set(pos_under_mouse, old_tile);
-            self.prev_board_changed_at.set(pos_under_mouse, platform.global_seconds);
-            const tile = self.board.getPtr(pos_under_mouse);
+        if (mouse.wasPressed(.right) and !tile.uncovered) {
             tile.has_flag = !tile.has_flag;
+        }
+    }
+
+    if (true) { // update visual state
+        const delta_seconds = platform.delta_seconds * 0.5 * @as(f32, if (platform.keyboard.cur.isDown(.Space)) 0.1 else 1);
+        var it = self.board.iteratorSigned();
+        while (it.next()) |pos| {
+            const tile = self.board.atSigned(pos);
+            const tile_visuals = self.visual_state.getPtrSigned(pos);
+
+            if (tile.uncovered) {
+                math.lerpTowards(&tile_visuals.has_flag_t, 0, .slow, delta_seconds);
+                for (&tile_visuals.sdf_size_of_cover, 0..) |*dst, k| {
+                    if (k == 4) {
+                        math.lerpTowards(dst, 0.0, .slow, delta_seconds);
+                    } else {
+                        dst.* = 0;
+                    }
+                    // math.lerpTowards(dst, 0.0, .slow, delta_seconds);
+                }
+            } else {
+                math.lerpTowards(&tile_visuals.has_flag_t, if (tile.has_flag) 1.0 else 0.0, .slow, delta_seconds);
+                for (IVec2.local_3x3_directions, &tile_visuals.sdf_size_of_cover) |d, *dst| {
+                    const other: TileState = self.board.atSignedSafe(pos.add(d)) orelse .outside;
+                    math.lerpTowards(dst, if (tile.has_flag) tof32(!other.uncovered and other.has_flag) else tof32(!other.uncovered and !other.has_flag), .slow, delta_seconds);
+                }
+            }
         }
     }
 
@@ -155,39 +197,61 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             const tile = self.board.at2(pos);
             const rect = self.board.getTileRect(camera, pos);
             if (tile.has_bomb) {
-                try batch.addText("X", .centeredAt(rect.get(.center)), 1.0, COLORS.numbers);
+                try batch.addText("X", .centeredAt(rect.get(.center)), 0.8, COLORS.bomb);
             } else if (tile.surrounding_bombs > 0) {
-                try batch.addFmt("{d}", .{tile.surrounding_bombs}, .centeredAt(rect.get(.center)), 1.0, COLORS.numbers);
+                try batch.addFmt("{d}", .{tile.surrounding_bombs}, .centeredAt(rect.get(.center)), 0.8, COLORS.numbers);
             }
         }
         batch.draw(camera);
     }
 
-    // const mouse_over = rect.contains(mouse.cur.position);
-    // canvas.fillRect(camera, rect, try smooth.fcolor(
-    //     .fromFormat("bg {d}", .{key}),
-    //     if (g.lighted) .fromHex("#BBFF87") else .white,
-    // ));
-
     var it = self.board.iterator();
     while (it.next()) |pos| {
-        const rect = self.board.getTileRect(camera, pos);
-        const tile = self.board.at2(pos);
-        // const tile_prev = self.prev_board.at2(pos);
-        // const seconds_since_change = platform.global_seconds - self.prev_board_changed_at.at2(pos);
-
-        if (tile.uncovered) {
-            // nothing
-        } else {
-            if (tile.has_flag) {
-                canvas.fillRect(camera, rect.resizeRel(0.8, .center), COLORS.flag_bg);
-            } else {
-                canvas.fillRect(camera, rect, COLORS.covered);
-            }
-        }
+        drawSdfTile(
+            self.sdf_style_simple,
+            canvas,
+            camera,
+            self.board.getTileRect(camera, pos),
+            self.visual_state.at2(pos).sdf_size_of_cover,
+            .lerp(COLORS.covered, COLORS.flag_bg, self.visual_state.at2(pos).has_flag_t),
+        );
     }
 
     return false;
+}
+
+fn drawSdfTile(use_simple_version: bool, canvas: *Canvas, camera: Rect, tile_rect: Rect, sdf_size_of_cover: [9]f32, color: FColor) void {
+    // clamp the corners
+    var asdf = sdf_size_of_cover;
+    asdf[0] = @min(asdf[0], asdf[1], asdf[3]);
+    asdf[2] = @min(asdf[2], asdf[1], asdf[5]);
+    asdf[6] = @min(asdf[6], asdf[3], asdf[7]);
+    asdf[8] = @min(asdf[8], asdf[5], asdf[7]);
+
+    const center_size = math.lerp(0.0, 0.8, asdf[4]);
+    const slices_3x3 = Canvas.sliced3x3(tile_rect, (1.0 - center_size) / 2.0);
+
+    if (use_simple_version) {
+        for (slices_3x3, asdf) |rect, size| {
+            assert(size >= 0 and size <= 1);
+            canvas.fillRect(camera, rect.rect, color.withAlpha(size));
+        }
+    } else {
+        // complex version, not fully working, tries to simulate an SDF more closely
+        for (IVec2.local_3x3_directions, slices_3x3, asdf) |d, rect, size| {
+            assert(size >= 0 and size <= 1);
+            const pivot = d.neg().add(.one).tof32().scale(0.5);
+            const truncated_rect: Rect = .fromPivotAndSize(
+                rect.rect.getAt(pivot),
+                pivot,
+                rect.rect.size.mul(.new(
+                    if (d.x == 0) 1 else size,
+                    if (d.y == 0) 1 else size,
+                )),
+            );
+            canvas.fillRect(camera, truncated_rect, color);
+        }
+    }
 }
 
 const std = @import("std");
