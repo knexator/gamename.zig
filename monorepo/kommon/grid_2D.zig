@@ -54,6 +54,18 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             allocator.free(self.data);
         }
 
+        pub fn clone(self: Self, allocator: if (max_size != null) void else std.mem.Allocator) !Self {
+            if (max_size != null) {
+                return self;
+            } else {
+                const new_data = try allocator.dupe(T, self.data);
+                return .{
+                    .size = self.size,
+                    .data = new_data,
+                };
+            }
+        }
+
         // TODO: remove this method
         pub fn at(self: Self, i: usize, j: usize) T {
             return self.data[self.indexOf(.new(i, j))];
@@ -74,6 +86,10 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
 
         pub fn getPtr(self: if (max_size == null) Self else *Self, pos: UVec2) *T {
             return &self.data[self.indexOf(pos)];
+        }
+
+        pub fn getPtrSigned(self: if (max_size == null) Self else *Self, pos: IVec2) *T {
+            return &self.data[self.indexOfSigned(pos)];
         }
 
         pub fn set(self: if (max_size == null) Self else *Self, pos: UVec2, value: T) void {
