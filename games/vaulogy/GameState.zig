@@ -5421,6 +5421,17 @@ const Workspace = struct {
         assert(dst.valid(arena.allocator()));
         try dst.canonizeAfterChanges(arena.allocator());
         assert(dst.valid(arena.allocator()));
+
+        try updateNonInteractive(
+            dst,
+            Rect
+                .fromCenterAndSize(.zero, .both(2))
+                .withAspectRatio(stuff.metadata.desired_aspect_ratio, .grow, .center),
+            0,
+            .{ .over_background = dst.main_area },
+            null,
+            scratch.allocator(),
+        );
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
@@ -5916,7 +5927,7 @@ const Workspace = struct {
         }
     }
 
-    fn updateSprings(workspace: *Workspace, roots_in_draw_order: []const Lego.Index, absolute_mouse_pos: Vec2, interaction: HotAndDropzone, delta_seconds: f32) void {
+    fn updateSprings(workspace: *Workspace, roots_in_draw_order: []const Lego.Index, interaction: HotAndDropzone, delta_seconds: f32) void {
         const asdf = tracy.initZone(@src(), .{ .name = "updateSprings" });
         defer asdf.deinit();
 
@@ -5964,7 +5975,7 @@ const Workspace = struct {
                                     0,
                                 ), 0) };
                             Toybox.get(sexpr.emerging_value).local_point = lego.absolute_point.applyToLocalPoint(offset);
-                            updateSprings(workspace, &.{sexpr.emerging_value}, absolute_mouse_pos, interaction, delta_seconds);
+                            updateSprings(workspace, &.{sexpr.emerging_value}, interaction, delta_seconds);
                         }
                     },
                     .case => {
@@ -7504,8 +7515,64 @@ const Workspace = struct {
             delta_seconds,
         );
 
+        if (true) { // move camera and scroll stuff
+            const zone = tracy.initZone(@src(), .{ .name = "move camera" });
+            defer zone.deinit();
+
+            var lego_it = toybox.all_legos.constIterator(0);
+            const over_scrollable_element: Lego.Index = while (lego_it.next()) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.tag() == .scrollable_list and lego.specific.scrollable_list.rect().contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
+                if (lego.specific.tag() == .fnkslist and toolbar_fnks_rect.contains(
+                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
+                )) {
+                    break lego.index;
+                }
+            } else .nothing;
+
+            const p = &Toybox.get(workspace.main_area).local_point;
+            if (over_scrollable_element == .nothing) {
+                p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
+                    .none => 1.0,
+                    .up => 1.1,
+                    .down => 0.9,
+                });
+            } else {
+                Toybox.get(over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
+            }
+            inline for (KeyboardButton.directional_keys) |kv| {
+                for (kv.keys) |key| {
+                    if (platform.keyboard.cur.isDown(key) and !typing) {
+                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
+                    }
+                }
+            }
+
+            if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
+                p.pos.addInPlace(mouse.deltaPos());
+            }
+
+            workspace.refreshCamera();
+        }
+
+        try updateNonInteractive(workspace, absolute_camera, delta_seconds, hot_and_dropzone, drawer, scratch);
+
+        if (drawer) |d| {
+            try workspace.draw(platform, d);
+        }
+
+        assert(workspace.valid(scratch));
+    }
+
+    fn updateNonInteractive(workspace: *Workspace, absolute_camera: Rect, delta_seconds: f32, hot_and_dropzone: HotAndDropzone, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
         var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
+
+        const undo_stack = &workspace.undo_stack;
 
         if (true) { // update _t and other simple things that could be done in parallel
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
@@ -7630,50 +7697,6 @@ const Workspace = struct {
                         } else true);
                 }
             }
-        }
-
-        if (true) { // move camera and scroll stuff
-            const zone = tracy.initZone(@src(), .{ .name = "move camera" });
-            defer zone.deinit();
-
-            var lego_it = toybox.all_legos.constIterator(0);
-            const over_scrollable_element: Lego.Index = while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (lego.specific.tag() == .scrollable_list and lego.specific.scrollable_list.rect().contains(
-                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
-                )) {
-                    break lego.index;
-                }
-                if (lego.specific.tag() == .fnkslist and toolbar_fnks_rect.contains(
-                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
-                )) {
-                    break lego.index;
-                }
-            } else .nothing;
-
-            const p = &Toybox.get(workspace.main_area).local_point;
-            if (over_scrollable_element == .nothing) {
-                p.* = p.scaleAroundLocalPosition(p.inverseApplyGetLocalPosition(mouse.cur.position), switch (mouse.cur.scrolled) {
-                    .none => 1.0,
-                    .up => 1.1,
-                    .down => 0.9,
-                });
-            } else {
-                Toybox.get(over_scrollable_element).addScroll(mouse.cur.scrolled.toNumber() * delta_seconds * -20);
-            }
-            inline for (KeyboardButton.directional_keys) |kv| {
-                for (kv.keys) |key| {
-                    if (platform.keyboard.cur.isDown(key) and !typing) {
-                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
-                    }
-                }
-            }
-
-            if (mouse.cur.isDown(.middle) and mouse.prev.isDown(.middle)) {
-                p.pos.addInPlace(mouse.deltaPos());
-            }
-
-            workspace.refreshCamera();
         }
 
         if (true) { // open/close left toolbar, and regenerate its contents
@@ -8124,7 +8147,7 @@ const Workspace = struct {
         }
 
         // doesn't include dragging and snapping to dropzone, despite that being just the spring between the mouse cursor/dropzone and the grabbed thing
-        workspace.updateSprings(workspace.roots(.all).constSlice(), mouse.cur.position, hot_and_dropzone, delta_seconds);
+        workspace.updateSprings(workspace.roots(.all).constSlice(), hot_and_dropzone, delta_seconds);
 
         if (true) Toybox.refreshAbsolutePoints(workspace.roots(.all).constSlice());
 
@@ -8262,10 +8285,6 @@ const Workspace = struct {
                 target_lens.roots_to_draw = all_roots.items;
                 target_lens.roots_to_interact = all_roots_except_hand.items;
             }
-        }
-
-        if (drawer) |d| {
-            try workspace.draw(platform, d);
         }
 
         assert(workspace.valid(scratch));
@@ -8918,6 +8937,10 @@ const Workspace = struct {
                         else => return err,
                     };
 
+                if (std.math.isNan(pos.x) or std.math.isNan(pos.y)) {
+                    return error.BadSaveFile;
+                }
+
                 const description: []const u8 = if (config.has_description)
                     try readString(in, scratch)
                 else
@@ -9126,6 +9149,8 @@ const Menu = struct {
     showing: bool = true,
     // showing_t: f32 = 1,
 
+    hovered_t: f32 = 0,
+
     pub fn update(menu: *Menu, platform: PlatformGives, maybe_drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         _ = scratch;
 
@@ -9134,18 +9159,19 @@ const Menu = struct {
             .withAspectRatio(platform.aspect_ratio, .grow, .center);
 
         const mouse = platform.getMouse(camera);
+        const delta_seconds = platform.delta_seconds;
 
         const button_rect: Rect = .fromCenterAndSize(.zero, .one);
 
         const hovered = button_rect.contains(mouse.cur.position);
+        math.lerpTowards(&menu.hovered_t, if (hovered) 1 else 0, .slow, delta_seconds);
 
         if (hovered and mouse.wasPressed(.left)) {
             menu.showing = false;
         }
 
         if (maybe_drawer) |drawer| {
-            drawer.canvas.fillRect(camera, button_rect, if (hovered) .gray(0.3) else COLORS.bg);
-            drawer.canvas.borderRect(camera, button_rect, 0.05, .inner, .black);
+            drawer.canvas.borderRect(camera, button_rect.plusMargin(menu.hovered_t * 0.1), 0.05, .inner, .black);
             try drawer.canvas.drawText(0, camera, "play", .centeredAt(button_rect.getCenter()), 0.2, .black);
 
             try drawer.canvas.drawText(0, camera, "Vaulogy", .centeredAt(.new(0, -0.85)), 0.4, .black);
