@@ -1779,7 +1779,7 @@ pub const TextRenderer = struct {
         // gl.DeleteTextures(1, @ptrCast(&self.texture));
     }
 
-    fn kerningOf(self: TextRenderer, a: u21, b: u21) ?f32 {
+    pub fn kerningOf(self: TextRenderer, a: u21, b: u21) ?f32 {
         for (self.font_info.value.kerning) |entry| {
             if (entry.unicode1 == a and entry.unicode2 == b) return entry.advance;
         } else return null;
@@ -1827,7 +1827,7 @@ pub const TextRenderer = struct {
         var prev: ?u21 = null;
         while (utf8.nextCodepoint()) |codepoint| {
             if (prev) |p| {
-                cursor.x += self.kerningOf(p, codepoint) orelse 0;
+                cursor.x += em * (self.kerningOf(p, codepoint) orelse 0);
             }
             cursor, const quad = self.addLetter(cursor, codepoint, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
