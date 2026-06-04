@@ -9185,7 +9185,7 @@ pub fn afterHotReload(self: *GameState) !void {
 }
 
 var first_frame_done = false;
-var seconds_since_last_save: f32 = 0;
+var seconds_since_last_save: f32 = 30;
 
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {

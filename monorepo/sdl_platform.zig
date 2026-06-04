@@ -120,6 +120,10 @@ fn consumeTextInput() ?std.BoundedArray(u8, 4) {
     return pending_text_input.popFirst();
 }
 
+// TODO: reconsider
+var getitem_lastreader: std.io.FixedBufferStream([]const u8) = undefined;
+var getitem_lastreader_reader: std.io.FixedBufferStream([]const u8).Reader = undefined;
+
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_data: std.EnumArray(Sounds, Sound) = .initUndefined();
 var sound_queue: std.EnumSet(Sounds) = .initEmpty();
@@ -863,14 +867,34 @@ pub fn main() !void {
         // TODO
         .getItem = struct {
             pub fn anon(key: []const u8) ?std.io.AnyReader {
-                _ = key;
-                return null;
+                const base_path: [*c]u8 = errify(c.SDL_GetPrefPath(
+                    GameState.stuff.metadata.author,
+                    GameState.stuff.metadata.name,
+                )) catch std.debug.panic("couldn't get save folder, {s}", .{c.SDL_GetError()});
+                defer c.SDL_free(base_path);
+                const save_path = std.fmt.allocPrintZ(global_gpa_BAD, "{s}{s}.save", .{ base_path, key }) catch std.debug.panic("Out of Memory!?", .{});
+                defer global_gpa_BAD.free(save_path);
+
+                var datasize: usize = 0;
+                const dataptr: [*]u8 = @ptrCast(errify(c.SDL_LoadFile(save_path, &datasize)) catch return null);
+                const data: []const u8 = dataptr[0..datasize];
+
+                getitem_lastreader = std.io.fixedBufferStream(data);
+                getitem_lastreader_reader = getitem_lastreader.reader();
+                return getitem_lastreader_reader.any();
             }
         }.anon,
         .setItem = struct {
             pub fn anon(key: []const u8, value: []const u8) void {
-                _ = key;
-                _ = value;
+                const base_path: [*c]u8 = errify(c.SDL_GetPrefPath(
+                    GameState.stuff.metadata.author,
+                    GameState.stuff.metadata.name,
+                )) catch std.debug.panic("couldn't get save folder, {s}", .{c.SDL_GetError()});
+                defer c.SDL_free(base_path);
+                const save_path = std.fmt.allocPrintZ(global_gpa_BAD, "{s}{s}.save", .{ base_path, key }) catch std.debug.panic("Out of Memory!?", .{});
+                defer global_gpa_BAD.free(save_path);
+
+                errify(c.SDL_SaveFile(save_path, value.ptr, value.len)) catch std.debug.panic("error during saving", .{});
             }
         }.anon,
         // TODO
