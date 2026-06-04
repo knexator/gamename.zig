@@ -1779,7 +1779,7 @@ pub const TextRenderer = struct {
         // gl.DeleteTextures(1, @ptrCast(&self.texture));
     }
 
-    pub fn kerningOf(self: TextRenderer, a: u21, b: u21) ?f32 {
+    fn kerningOf(self: TextRenderer, a: u21, b: u21) ?f32 {
         for (self.font_info.value.kerning) |entry| {
             if (entry.unicode1 == a and entry.unicode2 == b) return entry.advance;
         } else return null;

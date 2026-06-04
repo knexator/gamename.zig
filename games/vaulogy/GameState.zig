@@ -286,6 +286,7 @@ usual: kommon.Usual,
 toybox_instance: Toybox,
 drawer: Drawer,
 workspace: Workspace,
+menu: Menu = .{},
 
 // used for hot reloading
 backup_point: ?Point = null,
@@ -9121,6 +9122,37 @@ const Workspace = struct {
     }
 };
 
+const Menu = struct {
+    showing: bool = true,
+    // showing_t: f32 = 1,
+
+    pub fn update(menu: *Menu, platform: PlatformGives, maybe_drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
+        _ = scratch;
+
+        const camera = Rect
+            .fromCenterAndSize(.new(0, -0.25), .both(2))
+            .withAspectRatio(platform.aspect_ratio, .grow, .center);
+
+        const mouse = platform.getMouse(camera);
+
+        const button_rect: Rect = .fromCenterAndSize(.zero, .one);
+
+        const hovered = button_rect.contains(mouse.cur.position);
+
+        if (hovered and mouse.wasPressed(.left)) {
+            menu.showing = false;
+        }
+
+        if (maybe_drawer) |drawer| {
+            drawer.canvas.fillRect(camera, button_rect, if (hovered) .gray(0.3) else COLORS.bg);
+            drawer.canvas.borderRect(camera, button_rect, 0.05, .inner, .black);
+            try drawer.canvas.drawText(0, camera, "play", .centeredAt(button_rect.getCenter()), 0.2, .black);
+
+            try drawer.canvas.drawText(0, camera, "Vaulogy", .centeredAt(.new(0, -0.85)), 0.4, .black);
+        }
+    }
+};
+
 pub fn init(
     dst: *GameState,
     runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
@@ -9230,8 +9262,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     seconds_since_last_save += platform.delta_seconds;
 
+    if (platform.keyboard.wasPressed(.Escape)) {
+        self.menu.showing = !self.menu.showing;
+    }
+
     platform.gl.clear(COLORS.bg);
-    try self.workspace.update(platform, &self.drawer, self.usual.mem.frame.allocator());
+    if (self.menu.showing) {
+        try self.menu.update(platform, &self.drawer, self.usual.mem.frame.allocator());
+    } else {
+        try self.workspace.update(platform, &self.drawer, self.usual.mem.frame.allocator());
+    }
 
     return false;
 }
