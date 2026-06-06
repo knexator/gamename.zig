@@ -660,8 +660,12 @@ document.addEventListener("contextmenu", (ev) => {
   return false;
 });
 
+window.addEventListener('blur', () => wasm_exports.clearAllPressedKeys());
+window.addEventListener('focus', () => wasm_exports.clearAllPressedKeys());
+
 document.addEventListener("keydown", (ev) => {
   if (ev.repeat) return;
+  console.log("keydown", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keydown(key_num);
@@ -670,6 +674,7 @@ document.addEventListener("keydown", (ev) => {
 
 document.addEventListener("keyup", (ev) => {
   if (ev.repeat) return;
+  console.log("keyup", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keyup(key_num);

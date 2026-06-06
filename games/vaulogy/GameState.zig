@@ -4784,7 +4784,7 @@ const Workspace = struct {
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{ "All assignments", "take and return", "a single vau" });
             postit_pos.addInPlace(.new(7.3, 0.3));
-            postit.addFromText(postit_pos, &.{ "But sometimes", "this isn't enough!" });
+            postit.addFromText(postit_pos, &.{ "But sometimes", "this isn't", "enough!" });
             postit_pos.addInPlace(.new(7.4, 0.2));
             postit.addFromText(postit_pos, &.{ "Luckily, we can", "encode any", "sequence of vaus", "into a single one" });
 
@@ -8786,10 +8786,15 @@ const Workspace = struct {
         try writeLen(out, fnkboxes.len);
         for (fnkboxes) |cur| {
             const fnkname_value = try cur.children(.fnkbox).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
-            const definition = try cur.children(.fnkbox).executor.children(.executor).garland.get().specific.garland.toOldCoreValue(scratch);
+            const garland = if (cur.get().specific.fnkbox.execution) |e|
+                e.original_garland
+            else
+                cur.children(.fnkbox).executor.children(.executor).garland;
+            const definition = try garland.get().specific.garland.toOldCoreValue(scratch);
 
             const local_point_from_mainarea = workspace.main_area.get().absolute_point.inverseApplyGetLocal(cur.get().absolute_point);
             try out.writeStructEndian(local_point_from_mainarea.pos, ENDIANNESS);
+            std.log.info("wrote pos: {any}", .{local_point_from_mainarea.pos});
 
             // write description
             try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.inner_text.items);
@@ -8940,6 +8945,8 @@ const Workspace = struct {
                 if (std.math.isNan(pos.x) or std.math.isNan(pos.y)) {
                     return error.BadSaveFile;
                 }
+
+                std.log.info("readed pos: {any}", .{pos});
 
                 const description: []const u8 = if (config.has_description)
                     try readString(in, scratch)
@@ -9290,6 +9297,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (platform.keyboard.wasPressed(.Escape)) {
         self.menu.showing = !self.menu.showing;
+        if (self.menu.showing) {
+            var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
+            defer asdf.deinit();
+            try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
+            platform.setItem("vaulogy_save", asdf.items);
+            seconds_since_last_save = 0;
+        }
     }
 
     platform.gl.clear(COLORS.bg);

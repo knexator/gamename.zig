@@ -1375,6 +1375,10 @@ export fn keyup(code: KeyCode) void {
     keychanged(code, false);
 }
 
+export fn clearAllPressedKeys() void {
+    keyboard.cur = .init;
+}
+
 fn keychanged(key: KeyCode, is_pressed: bool) void {
     switch (key) {
         inline else => |x| {
