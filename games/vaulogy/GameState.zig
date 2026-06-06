@@ -480,7 +480,7 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(scorer_index: Lego.Index, all_fnks: core.FnkCollection, scratch: std.mem.Allocator) !void {
+            pub fn updateStatus(scorer_index: Lego.Index, all_fnks: core.FnkCollection, all_fnks_hash: u32, scratch: std.mem.Allocator) !void {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for scorer" });
                 defer zone.deinit();
 
@@ -496,7 +496,22 @@ pub const Lego = struct {
                 } = .{ .time = 0, .max_stack = 0 };
                 var failed_any: bool = false;
                 for (rows) |row| {
-                    const fnkname = try row.children(.scorer_row).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
+                    const fnkname_index = row.children(.scorer_row).fnkname;
+                    const fnkname_hash = Lego.Specific.Sexpr.hash(fnkname_index);
+                    const row_asdf = &row.get().specific.scorer_row;
+                    if (fnkname_hash == row_asdf.solved_computed_at.fnkname_hash and
+                        all_fnks_hash == row_asdf.solved_computed_at.all_fnks_hash)
+                    {
+                        if (row_asdf.solved) {
+                            continue;
+                        } else {
+                            failed_any = true;
+                            break;
+                        }
+                    }
+
+                    const fnkname = try fnkname_index.get().specific.sexpr.toOldCoreValue(scratch);
+
                     const level_index = row.get().specific.scorer_row.level_index;
                     const level = levels[level_index];
                     var samples_it = level.samplesIterator();
@@ -546,6 +561,13 @@ pub const Lego = struct {
                             score.max_stack = @max(score.max_stack, exec.score.max_stack);
                         }
                     }
+
+                    row_asdf.solved = !failed_any;
+                    row_asdf.solved_computed_at = .{
+                        .all_fnks_hash = all_fnks_hash,
+                        .fnkname_hash = fnkname_hash,
+                    };
+
                     if (failed_any) break;
                 }
                 scorer_index.get().specific.scorer.score = if (failed_any)
@@ -564,6 +586,12 @@ pub const Lego = struct {
             level_index: usize,
             offset: ?Vec2,
             magic_id: u32,
+
+            solved: bool = false,
+            solved_computed_at: struct {
+                all_fnks_hash: u32,
+                fnkname_hash: u32,
+            } = .{ .all_fnks_hash = 0, .fnkname_hash = 0 },
 
             pub const Children = struct {
                 create_fnkname_button: Lego.Index,
@@ -5462,7 +5490,7 @@ const Workspace = struct {
                 try Lego.Specific.MetaViewer.canonize(lego.index, scratch, undo_stack);
             }
             if (lego.specific.tag() == .scorer) {
-                try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, scratch);
+                try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, all_fnks_hash, scratch);
             }
             if (lego.specific.tag() == .bubble) {
                 if (debug_all_bubbles_unlocked) {
