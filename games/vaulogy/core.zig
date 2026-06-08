@@ -47,8 +47,7 @@ pub const Sexpr = union(enum) {
         meta: struct {
             @"return": *const Sexpr = &Sexpr.doLit("return"),
             @"var": *const Sexpr = &Sexpr.doLit("var"),
-            // TODO: change this to "lit"
-            atom: *const Sexpr = &Sexpr.doLit("atom"),
+            lit: *const Sexpr = &Sexpr.doLit("lit"),
         } = .{},
     } = .{};
 
@@ -92,6 +91,7 @@ pub const Sexpr = union(enum) {
 
     pub fn isFullyResolved(x: *const Sexpr) bool {
         return switch (x.*) {
+            .empty => true,
             .atom_lit => true,
             .atom_var => false,
             .pair => |p| p.left.isFullyResolved() and p.right.isFullyResolved(),
@@ -143,7 +143,7 @@ pub const Sexpr = union(enum) {
         return switch (s.*) {
             .empty => 0,
             .atom_lit => |a| std.array_hash_map.hashString(a.value),
-            .atom_var => |a| std.hash.uint32(std.array_hash_map.hashString(a.value)),
+            .atom_var => |a| std.hash.int(std.array_hash_map.hashString(a.value)),
             .pair => |p| {
                 // return std.hash.uint32(hash(self, p.left.*)) ^ hash(self, p.right.*);
                 var hasher = std.hash.Wyhash.init(0);
@@ -168,6 +168,17 @@ pub const Sexpr = union(enum) {
             .atom_lit => true,
             else => false,
         };
+    }
+
+    pub fn isTheLit(this: *const Sexpr, lit: []const u8) bool {
+        return switch (this.*) {
+            .atom_lit => |atom| std.mem.eql(u8, atom.value, lit),
+            else => false,
+        };
+    }
+
+    pub fn isNil(this: *const Sexpr) bool {
+        return this.isTheLit("nil");
     }
 
     pub fn isPair(this: *const Sexpr) bool {
@@ -325,6 +336,14 @@ pub const FnkBody = struct {
         }
         return .{ .cases = cases };
     }
+
+    pub fn hash(self: FnkBody) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (self.cases.items) |case| {
+            hasher.update(std.mem.asBytes(&case.hash()));
+        }
+        return @truncate(hasher.final());
+    }
 };
 pub const MatchCases = std.ArrayListUnmanaged(MatchCaseDefinition);
 pub const MatchCaseDefinition = struct {
@@ -346,6 +365,22 @@ pub const MatchCaseDefinition = struct {
         } else {
             try writer.writeAll(";");
         }
+    }
+
+    pub fn hash(case: MatchCaseDefinition) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, struct {
+            pattern_hash: u32,
+            template_hash: u32,
+            fnkname_hash: u32,
+            next_hash: u32,
+        }{
+            .pattern_hash = case.pattern.hash(),
+            .template_hash = case.template.hash(),
+            .fnkname_hash = case.fnk_name.hash(),
+            .next_hash = if (case.next) |n| (FnkBody{ .cases = n }).hash() else 0,
+        });
+        return @truncate(hasher.final());
     }
 };
 
@@ -418,7 +453,13 @@ const builtin_fnks = [_]struct { name: *const Sexpr, fnk: fn (v: *const Sexpr) *
     .{ .name = Sexpr.builtin.empty, .fnk = builtin_fnk_identity },
     .{ .name = Sexpr.builtin.identity, .fnk = builtin_fnk_identity },
     .{ .name = Sexpr.builtin.@"eqAtoms?", .fnk = @"builtin_fnk_eqAtoms?" },
+    .{ .name = &Sexpr.doLit("debug"), .fnk = builtin_fnk_debug },
 };
+
+fn builtin_fnk_debug(v: *const Sexpr) *const Sexpr {
+    std.log.err("{any}", .{v});
+    return v;
+}
 
 fn builtin_fnk_identity(v: *const Sexpr) *const Sexpr {
     return v;
@@ -552,14 +593,15 @@ pub const ScoringRun = struct {
         if (owns_fnks) this.all_fnks.deinit();
     }
 
-    pub fn findFunktion(this: *ScoringRun, name: *const Sexpr) error{
+    pub fn findFunktion(this: *ScoringRun, name: *const Sexpr, config: ExecutionThread.Config) error{
         OutOfMemory,
         BAD_INPUT,
         FnkNotFound,
         NoMatchingCase,
         InvalidMetaFnk,
         UsedUndefinedVariable,
-    }!*const FnkBody {
+        TookTooLong,
+    }!?*const FnkBody {
         if (this.all_fnks.getPtr(name)) |fnk| {
             if (this.used_fnks.get(name) == null) {
                 try this.used_fnks.put(name, {});
@@ -568,14 +610,14 @@ pub const ScoringRun = struct {
             return fnk;
         } else switch (name.*) {
             .atom_lit, .atom_var, .empty => {
-                std.log.err("Fnk not found: {any}", .{name});
-                return error.FnkNotFound;
+                // std.log.err("Fnk not found: {any}", .{name});
+                return null;
             },
             .pair => |p| {
                 // try to compile it!
-                var exec = try ExecutionThread.init(p.right, p.left, this);
+                var exec = try ExecutionThread.init(p.right, p.left, this, config);
                 defer exec.deinit();
-                const asdf = try exec.getFinalResult(this);
+                const asdf = try exec.getFinalResultBoundedV2(this, config);
                 this.score.compile_time += exec.score.successful_matches;
                 const cases = try fnkFromSexpr(asdf, this.mem.arena_for_cases.allocator(), &this.mem.pool_for_sexprs);
                 if (DEBUG) {
@@ -594,7 +636,7 @@ pub const StackThing = struct {
     cur_cases: []const MatchCaseDefinition,
     cur_bindings: Bindings,
 
-    pub fn init(input: *const Sexpr, fn_name: *const Sexpr, scoring_run: *ScoringRun) !union(enum) {
+    pub fn init(input: *const Sexpr, fn_name: *const Sexpr, scoring_run: *ScoringRun, config: ExecutionThread.Config) !union(enum) {
         builtin: *const Sexpr,
         stack_thing: StackThing,
     } {
@@ -604,8 +646,21 @@ pub const StackThing = struct {
             }
         }
 
+        // const new_thing = StackThing.init(this.active_value, case.fnk_name, scoring_run) catch |err| switch (err) {
+        //     else => return err,
+        //     error.FnkNotFound => if (allow_undefined_fnks)
+        //         .{ .builtin = this.active_value }
+        //     else
+        //         return err,
+        // };
+
+        const fnkbody = (try scoring_run.findFunktion(fn_name, config)) orelse if (config.allow_undefined_fnks)
+            return .{ .builtin = input }
+        else
+            return error.FnkNotFound;
+
         const bindings = std.ArrayList(Binding).init(scoring_run.mem.arena_for_bindings.allocator());
-        const cases = (try scoring_run.findFunktion(fn_name)).*.cases.items;
+        const cases = fnkbody.*.cases.items;
         return .{ .stack_thing = StackThing{
             .cur_bindings = bindings,
             .cur_cases = cases,
@@ -673,9 +728,10 @@ pub const ExecutionThread = struct {
         input: *const Sexpr,
         fn_name: *const Sexpr,
         scoring_run: *ScoringRun,
+        config: Config,
     ) !ExecutionThread {
         var stack = std.ArrayList(StackThing).init(scoring_run.mem.allocator_for_stack);
-        switch (try StackThing.init(input, fn_name, scoring_run)) {
+        switch (try StackThing.init(input, fn_name, scoring_run, config)) {
             .builtin => |res| return ExecutionThread{
                 .active_value = res,
                 .stack = stack,
@@ -708,7 +764,7 @@ pub const ExecutionThread = struct {
         var permanent_stuff = scoring_run.mem;
         const fn_name = try parsing.parseSingleSexpr(fn_name_raw, &permanent_stuff.pool_for_sexprs);
         const input = try parsing.parseSingleSexpr(input_raw, &permanent_stuff.pool_for_sexprs);
-        return ExecutionThread.init(input, fn_name, scoring_run);
+        return ExecutionThread.init(input, fn_name, scoring_run, .old);
     }
 
     pub const Result = union(enum) {
@@ -820,21 +876,21 @@ pub const ExecutionThread = struct {
     }
 
     pub fn advanceStep(this: *ExecutionThread, scoring_run: *ScoringRun) !?*const Sexpr {
-        return try this.advanceStepV2(scoring_run, false, false);
+        return try this.advanceStepV2(scoring_run, .old);
     }
 
-    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, allow_no_cases: bool, allow_unbound_variables: bool) !?*const Sexpr {
+    pub fn advanceStepV2(this: *ExecutionThread, scoring_run: *ScoringRun, config: Config) !?*const Sexpr {
         var permanent_stuff = scoring_run.mem;
         if (this.stack.items.len > 0) {
             const last_stack_ptr: *StackThing = &this.stack.items[this.stack.items.len - 1];
             const initial_bindings_count = last_stack_ptr.cur_bindings.items.len;
             for (last_stack_ptr.cur_cases) |case| {
-                if (!(try generateBindingsV2(case.pattern, this.active_value, &last_stack_ptr.cur_bindings, allow_unbound_variables))) {
+                if (!(try generateBindingsV2(case.pattern, this.active_value, &last_stack_ptr.cur_bindings, config.allow_unbound_variables))) {
                     undoLastBindings(&last_stack_ptr.cur_bindings, initial_bindings_count);
                     continue;
                 }
                 const argument_fill = try partiallyFillTemplateV2(case.template, last_stack_ptr.cur_bindings.items, &permanent_stuff.pool_for_sexprs);
-                if (!argument_fill.complete and !allow_unbound_variables) {
+                if (!argument_fill.complete and !config.allow_unbound_variables) {
                     return error.UsedUndefinedVariable;
                 }
                 const argument = argument_fill.result;
@@ -848,7 +904,7 @@ pub const ExecutionThread = struct {
 
                 this.score.successful_matches += 1;
 
-                const new_thing = try StackThing.init(this.active_value, case.fnk_name, scoring_run);
+                const new_thing = try StackThing.init(this.active_value, case.fnk_name, scoring_run, config);
                 switch (new_thing) {
                     .stack_thing => |x| {
                         try this.stack.append(x);
@@ -861,7 +917,7 @@ pub const ExecutionThread = struct {
 
                 return null;
             }
-            if (allow_no_cases) {
+            if (config.allow_no_cases) {
                 _ = this.stack.pop();
                 return null;
             } else {
@@ -880,14 +936,32 @@ pub const ExecutionThread = struct {
         }
     }
 
-    pub fn getFinalResultBounded(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize) !*const Sexpr {
-        return this.getFinalResultBoundedV2(scoring_run, max_steps, true);
-    }
+    pub const Config = struct {
+        allow_no_cases: bool,
+        allow_unbound_variables: bool,
+        allow_undefined_fnks: bool,
+        max_steps: ?usize,
 
-    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, max_steps: ?usize, allow_no_cases: bool, allow_unbound_variables: bool) !*const Sexpr {
-        if (max_steps) |max| {
+        pub const new: Config = .{
+            .allow_no_cases = true,
+            .allow_unbound_variables = true,
+            .allow_undefined_fnks = true,
+            // TODO(game): increase
+            .max_steps = 10_000,
+        };
+
+        pub const old: Config = .{
+            .allow_no_cases = false,
+            .allow_unbound_variables = false,
+            .allow_undefined_fnks = false,
+            .max_steps = null,
+        };
+    };
+
+    pub fn getFinalResultBoundedV2(this: *ExecutionThread, scoring_run: *ScoringRun, config: Config) !*const Sexpr {
+        if (config.max_steps) |max| {
             for (0..max) |_| {
-                if (try this.advanceStepV2(scoring_run, allow_no_cases, allow_unbound_variables)) |res| {
+                if (try this.advanceStepV2(scoring_run, config)) |res| {
                     return res;
                 }
             } else return error.TookTooLong;
@@ -919,7 +993,7 @@ const SingleRunHelper = struct {
 
         const fn_name = try parsing.parseSingleSexpr(fn_name_raw, &result.permanent_stuff.pool_for_sexprs);
         const input = try parsing.parseSingleSexpr(input_raw, &result.permanent_stuff.pool_for_sexprs);
-        result.execution = try ExecutionThread.init(input, fn_name, &result.scoring_run);
+        result.execution = try ExecutionThread.init(input, fn_name, &result.scoring_run, .old);
     }
 
     pub fn deinit(this: *SingleRunHelper) void {
@@ -1214,7 +1288,7 @@ test "main test" {
     const expected = Sexpr.doLit("output");
     try expectEqualSexprs(&expected, actual);
 
-    var exec = try ExecutionThread.init(&Sexpr.doLit("input"), &Sexpr.doLit("fn_name"), &game.scoring_run);
+    var exec = try ExecutionThread.init(&Sexpr.doLit("input"), &Sexpr.doLit("fn_name"), &game.scoring_run, .old);
     defer exec.deinit();
     try expectEqualSexprs(&expected, try exec.getFinalResult(&game.scoring_run));
 }
@@ -1235,7 +1309,7 @@ test "with comptime" {
         \\  compileMap {
         \\      nil -> nil;
         \\      ((@key . @value) . @rest) -> compileMap: @rest {
-        \\          @rest_compiled -> ( ((atom . @key) identity (atom . @value) . return) . @rest_compiled );
+        \\          @rest_compiled -> ( (((lit . @key) . (lit . @value)) . (identity . return)) . @rest_compiled );
         \\      }
         \\  }
     , std.testing.allocator);
@@ -1331,7 +1405,7 @@ test "scoring with comptime" {
         \\  compileMap {
         \\      nil -> nil;
         \\      ((@key . @value) . @rest) -> compileMap: @rest {
-        \\          @rest_compiled -> ( ((atom . @key) identity (atom . @value) . return) . @rest_compiled );
+        \\          @rest_compiled -> ( (((lit . @key) . (lit . @value)) . (identity . return)) . @rest_compiled );
         \\      }
         \\  }
     , &mem);
@@ -1547,17 +1621,22 @@ pub fn toListPlusSentinel(values: []const *const Sexpr, sentinel: *const Sexpr, 
 }
 
 pub fn sexprFromCase(case: MatchCaseDefinition, pool: *MemoryPool(Sexpr)) error{OutOfMemory}!*const Sexpr {
-    return toListPlusSentinel(&.{
-        try externalFromInternal(case.pattern, pool),
-        case.fnk_name,
-        try externalFromInternal(case.template, pool),
-    }, if (case.next) |next|
-        try sexprFromCases(next.items, pool)
-    else
-        Sexpr.builtin.meta.@"return", pool);
+    return try storeSexprInPool(pool, Sexpr.doPair(
+        try storeSexprInPool(pool, Sexpr.doPair(
+            try externalFromInternal(case.pattern, pool),
+            try externalFromInternal(case.template, pool),
+        )),
+        try storeSexprInPool(pool, Sexpr.doPair(
+            case.fnk_name,
+            if (case.next) |next|
+                try sexprFromCases(next.items, pool)
+            else
+                Sexpr.builtin.nil,
+        )),
+    ));
 }
 
-pub fn sexprFromCases(cases: []MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*const Sexpr {
+pub fn sexprFromCases(cases: []const MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     if (cases.len == 0) return Sexpr.builtin.nil;
     return try storeSexprInPool(pool, Sexpr.doPair(
         try sexprFromCase(cases[0], pool),
@@ -1565,15 +1644,15 @@ pub fn sexprFromCases(cases: []MatchCaseDefinition, pool: *MemoryPool(Sexpr)) !*
     ));
 }
 
-fn fnkFromSexpr(s: *const Sexpr, allocator_for_cases: std.mem.Allocator, pool: *MemoryPool(Sexpr)) !FnkBody {
+pub fn fnkFromSexpr(s: *const Sexpr, allocator_for_cases: std.mem.Allocator, pool: *MemoryPool(Sexpr)) !FnkBody {
     return .{ .cases = (try fnkFromSexprHelper(s, allocator_for_cases, pool)).? };
 }
 
 pub fn caseFromSexpr(cur: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPool(Sexpr)) !MatchCaseDefinition {
-    const pattern = try internalFromExternal(cur.getAt(&.{.left}) orelse return error.InvalidMetaFnk, pool);
+    const pattern = try internalFromExternal(cur.getAt(&.{ .left, .left }) orelse return error.InvalidMetaFnk, pool);
+    const template = try internalFromExternal(cur.getAt(&.{ .left, .right }) orelse return error.InvalidMetaFnk, pool);
     const fnk_name = cur.getAt(&.{ .right, .left }) orelse return error.InvalidMetaFnk;
-    const template = try internalFromExternal(cur.getAt(&.{ .right, .right, .left }) orelse return error.InvalidMetaFnk, pool);
-    const next = try fnkFromSexprHelper(cur.getAt(&.{ .right, .right, .right }) orelse return error.InvalidMetaFnk, arena, pool);
+    const next = try fnkFromSexprHelper(cur.getAt(&.{ .right, .right }) orelse return error.InvalidMetaFnk, arena, pool);
     return .{
         .pattern = pattern,
         .fnk_name = fnk_name,
@@ -1585,8 +1664,13 @@ pub fn caseFromSexpr(cur: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryP
 fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPool(Sexpr)) error{ InvalidMetaFnk, OutOfMemory, BAD_INPUT }!?MatchCases {
     var cases = std.ArrayListUnmanaged(MatchCaseDefinition){};
     switch (s.*) {
-        .empty => @panic("TODO"),
-        .atom_lit => return if (s.equals(Sexpr.builtin.meta.@"return")) null else error.InvalidMetaFnk,
+        .empty => return error.InvalidMetaFnk,
+        .atom_lit => return if (s.equals(Sexpr.builtin.meta.@"return"))
+            null
+        else if (s.equals(Sexpr.builtin.nil))
+            .empty
+        else
+            error.InvalidMetaFnk,
         .atom_var => return error.BAD_INPUT,
         .pair => |p| {
             var cur_parent = p;
@@ -1613,12 +1697,12 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
     }
 }
 
-// ((atom . aaa) . (var . bbb)) => (aaa . @bbb)
+// ((lit . aaa) . (var . bbb)) => (aaa . @bbb)
 fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     switch (s.*) {
         .atom_var, .atom_lit, .empty => return error.InvalidMetaFnk,
         .pair => |p| {
-            if (p.left.equals(Sexpr.builtin.meta.atom)) {
+            if (p.left.equals(Sexpr.builtin.meta.lit)) {
                 return p.right;
             } else if (p.left.equals(Sexpr.builtin.meta.@"var")) {
                 switch (p.right.*) {
@@ -1646,7 +1730,7 @@ fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr
 fn externalFromInternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     return switch (s.*) {
         .atom_var => |v| storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.@"var", try storeSexprInPool(pool, Sexpr.doLit(v.value)))),
-        .atom_lit, .empty => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.atom, s)),
+        .atom_lit, .empty => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.lit, s)),
         .pair => |p| storeSexprInPool(pool, Sexpr.doPair(
             try externalFromInternal(p.left, pool),
             try externalFromInternal(p.right, pool),

@@ -35,8 +35,12 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
         }
     }
 
-    fn init(dst: *Self, gpa: std.mem.Allocator, sdl_gl: Gl, loaded_images: std.EnumArray(GameState.Images, *const anyopaque), random_seed: u64) !void {
-        try dst.state.init(gpa, sdl_gl, loaded_images, random_seed);
+    fn init(
+        dst: *Self,
+        runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+        comptime comptime_params: kommon.engine.InitComptimeParamsFor(GameState),
+    ) !void {
+        try dst.state.init(runtime_params, comptime_params);
     }
 
     fn deinit(self: *Self, gpa: std.mem.Allocator) void {
@@ -78,6 +82,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
     }
 } else GameState = undefined;
 
+var sdl_window: *c.SDL_Window = undefined;
+
 var window_size: UVec2 = Vec2.new(stuff.metadata.desired_aspect_ratio, 1).scale(512).toInt(usize);
 fn getWindowRect() Rect {
     return .{
@@ -95,6 +101,28 @@ var keyboard = Keyboard{ .cur = .init, .prev = .init, .cur_time = 0 };
 fn setKeyChanged(key: KeyboardButton) void {
     keyboard.setChanged(key);
 }
+var pending_text_input: kommon.CircularBuffer(
+    std.BoundedArray(u8, 4),
+    64,
+) = .empty;
+fn startTextInput(textinput_area_in_0101_coords: ?Rect) void {
+    if (textinput_area_in_0101_coords) |rect| {
+        // TODO(now): use the area
+        _ = rect;
+        // c.SDL_SetTextInputArea(sdl_window, .{ .x = ..., }, cursor: c_int ??)
+    }
+    errify(c.SDL_StartTextInput(sdl_window)) catch @panic("bad");
+}
+fn stopTextInput() void {
+    errify(c.SDL_StopTextInput(sdl_window)) catch @panic("bad");
+}
+fn consumeTextInput() ?std.BoundedArray(u8, 4) {
+    return pending_text_input.popFirst();
+}
+
+// TODO: reconsider
+var getitem_lastreader: std.io.FixedBufferStream([]const u8) = undefined;
+var getitem_lastreader_reader: std.io.FixedBufferStream([]const u8).Reader = undefined;
 
 const Sounds = std.meta.FieldEnum(@TypeOf(stuff.sounds));
 var sound_data: std.EnumArray(Sounds, Sound) = .initUndefined();
@@ -184,7 +212,7 @@ pub fn main() !void {
 
     try errify(c.SDL_GL_SetAttribute(c.SDL_GL_STENCIL_SIZE, 8));
 
-    const sdl_window: *c.SDL_Window = try errify(c.SDL_CreateWindow(
+    sdl_window = try errify(c.SDL_CreateWindow(
         stuff.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
@@ -260,6 +288,8 @@ pub fn main() !void {
             .useRenderable = useRenderable,
             .useRenderableWithExistingData = useRenderableWithExistingData,
             .buildTexture2D = buildTexture2D,
+            .buildRendertarget = buildRendertarget,
+            .setRendertarget = setRendertarget,
             .buildInstancedRenderable = buildInstancedRenderable,
             .useInstancedRenderable = useInstancedRenderable,
             .loadTextureDataFromBase64 = loadTextureDataFromBase64,
@@ -349,12 +379,13 @@ pub fn main() !void {
         }
 
         pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) Gl.Texture {
-            const image: *const zstbi.Image = @alignCast(@ptrCast(data));
+            const image: *const zstbi.Image = @ptrCast(@alignCast(data));
 
-            const has_alpha = switch (image.num_components) {
-                3 => false,
-                4 => true,
-                else => unreachable,
+            const format: c_uint = switch (image.num_components) {
+                2 => gl.RG,
+                3 => gl.RGB,
+                4 => gl.RGBA,
+                else => std.debug.panic("TODO: support components: {d}", .{image.num_components}),
             };
 
             var texture: c_uint = undefined;
@@ -363,14 +394,20 @@ pub fn main() !void {
             gl.TexImage2D(
                 gl.TEXTURE_2D,
                 0,
-                if (has_alpha) gl.RGBA else gl.RGB,
+                @intCast(format),
                 @intCast(image.width),
                 @intCast(image.height),
                 0,
-                if (has_alpha) gl.RGBA else gl.RGB,
+                format,
                 gl.UNSIGNED_BYTE,
                 image.data.ptr,
             );
+
+            if (image.num_components == 2) {
+                const swizzle: [4]gl.int = .{ gl.RED, gl.RED, gl.RED, gl.GREEN };
+                gl.TexParameteriv(gl.TEXTURE_2D, gl.TEXTURE_SWIZZLE_RGBA, &swizzle);
+            }
+
             if (pixelart) {
                 gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
                 gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -382,6 +419,52 @@ pub fn main() !void {
             }
 
             return .{ .id = texture, .resolution = .new(image.width, image.height) };
+        }
+
+        pub fn buildRendertarget(resolution: UVec2, pixelart: bool) Gl.Texture {
+            const has_alpha = false;
+
+            var framebuffer: c_uint = undefined;
+            gl.GenFramebuffers(1, @ptrCast(&framebuffer));
+            gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+
+            var texture: c_uint = undefined;
+            gl.GenTextures(1, @ptrCast(&texture));
+            gl.BindTexture(gl.TEXTURE_2D, texture);
+            gl.TexImage2D(
+                gl.TEXTURE_2D,
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                @intCast(resolution.x),
+                @intCast(resolution.y),
+                0,
+                if (has_alpha) gl.RGBA else gl.RGB,
+                gl.UNSIGNED_BYTE,
+                null,
+            );
+
+            if (pixelart) {
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            } else {
+                gl.GenerateMipmap(gl.TEXTURE_2D);
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                // TODO: let user choose quality
+                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            }
+
+            gl.FramebufferTexture(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, texture, 0);
+            const asdf: [1]gl.@"enum" = .{gl.COLOR_ATTACHMENT0};
+            gl.DrawBuffers(1, &asdf); // "1" is the size of asdf
+            if (gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) std.debug.panic("failed to create framebuffer", .{});
+
+            return .{ .id = framebuffer, .resolution = resolution };
+        }
+
+        pub fn setRendertarget(rendertarget: ?Gl.Texture) void {
+            gl.BindFramebuffer(gl.FRAMEBUFFER, if (rendertarget) |r| r.id else 0);
+            const resolution: UVec2 = if (rendertarget) |r| r.resolution else window_size;
+            gl.Viewport(0, 0, @intCast(resolution.x), @intCast(resolution.y));
         }
 
         pub fn buildRenderable(
@@ -762,6 +845,9 @@ pub fn main() !void {
         .keyboard = keyboard,
         .setKeyChanged = setKeyChanged,
         .setButtonChanged = setButtonChanged,
+        .startTextInput = startTextInput,
+        .stopTextInput = stopTextInput,
+        .consumeTextInput = consumeTextInput,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
         .global_seconds = 0,
@@ -785,6 +871,7 @@ pub fn main() !void {
         .gl = sdl_gl.vtable,
         // TODO
         .downloadAsFile = undefined,
+        .downloadActiveFramebuffer = undefined,
         .askUserForFile = undefined,
         .userUploadedFile = struct {
             pub fn anon() ?std.io.AnyReader {
@@ -795,14 +882,34 @@ pub fn main() !void {
         // TODO
         .getItem = struct {
             pub fn anon(key: []const u8) ?std.io.AnyReader {
-                _ = key;
-                return null;
+                const base_path: [*c]u8 = errify(c.SDL_GetPrefPath(
+                    GameState.stuff.metadata.author,
+                    GameState.stuff.metadata.name,
+                )) catch std.debug.panic("couldn't get save folder, {s}", .{c.SDL_GetError()});
+                defer c.SDL_free(base_path);
+                const save_path = std.fmt.allocPrintZ(global_gpa_BAD, "{s}{s}.save", .{ base_path, key }) catch std.debug.panic("Out of Memory!?", .{});
+                defer global_gpa_BAD.free(save_path);
+
+                var datasize: usize = 0;
+                const dataptr: [*]u8 = @ptrCast(errify(c.SDL_LoadFile(save_path, &datasize)) catch return null);
+                const data: []const u8 = dataptr[0..datasize];
+
+                getitem_lastreader = std.io.fixedBufferStream(data);
+                getitem_lastreader_reader = getitem_lastreader.reader();
+                return getitem_lastreader_reader.any();
             }
         }.anon,
         .setItem = struct {
             pub fn anon(key: []const u8, value: []const u8) void {
-                _ = key;
-                _ = value;
+                const base_path: [*c]u8 = errify(c.SDL_GetPrefPath(
+                    GameState.stuff.metadata.author,
+                    GameState.stuff.metadata.name,
+                )) catch std.debug.panic("couldn't get save folder, {s}", .{c.SDL_GetError()});
+                defer c.SDL_free(base_path);
+                const save_path = std.fmt.allocPrintZ(global_gpa_BAD, "{s}{s}.save", .{ base_path, key }) catch std.debug.panic("Out of Memory!?", .{});
+                defer global_gpa_BAD.free(save_path);
+
+                errify(c.SDL_SaveFile(save_path, value.ptr, value.len)) catch std.debug.panic("error during saving", .{});
             }
         }.anon,
         // TODO
@@ -820,7 +927,22 @@ pub fn main() !void {
 
     var seed: u64 = undefined;
     try std.posix.getrandom(std.mem.asBytes(&seed));
-    try my_game.init(sdl_platform.gpa, sdl_platform.gl, images_pointers, seed);
+    try my_game.init(
+        .{
+            .gpa = sdl_platform.gpa,
+            .gl = sdl_platform.gl,
+            .loaded_images = images_pointers,
+            .random_seed = seed,
+        },
+        .{
+            // TODO(platform): tweakable params for sdl backend
+            .tweakable = struct {
+                pub fn fcolor(_: []const u8, _: *FColor) void {}
+                pub fn float(_: []const u8, _: *f32, _: f32, _: f32) void {}
+                pub fn texture(_: []const u8, _: *Gl.Texture) void {}
+            },
+        },
+    );
     // TODO: gl on deinit
     defer my_game.deinit(sdl_platform.gpa);
 
@@ -864,6 +986,10 @@ pub fn main() !void {
                         else
                             .up;
                     },
+                    c.SDL_EVENT_TEXT_INPUT => {
+                        const text: []const u8 = std.mem.span(event.text.text);
+                        try pending_text_input.append(try .fromSlice(text));
+                    },
                     c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
                         if (hot_reloading and event.key.scancode == c.SDL_SCANCODE_F5) {
                             // TODO: complete reload, respawning the window etc
@@ -877,6 +1003,7 @@ pub fn main() !void {
                                 if (event.key.scancode == sdl_scancode) {
                                     @field(keyboard.cur.keys, @tagName(key)) = is_pressed;
                                     @field(keyboard.last_change_at, @tagName(key)) = sdl_platform.global_seconds;
+                                    @field(keyboard.manually_changed, @tagName(key)) = false;
                                     break;
                                 }
                             }
@@ -1129,6 +1256,7 @@ const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, Ke
     .{ c.SDL_SCANCODE_RETURN, .Enter },
     .{ c.SDL_SCANCODE_ESCAPE, .Escape },
     .{ c.SDL_SCANCODE_BACKSPACE, .Backspace },
+    .{ c.SDL_SCANCODE_DELETE, .Delete },
     .{ c.SDL_SCANCODE_TAB, .Tab },
     .{ c.SDL_SCANCODE_SPACE, .Space },
     .{ c.SDL_SCANCODE_MINUS, .Minus },
@@ -1158,6 +1286,8 @@ const sdl_scancode_to_keyboard_button = [_]std.meta.Tuple(&.{ c.SDL_Scancode, Ke
     .{ c.SDL_SCANCODE_F12, .F12 },
     .{ c.SDL_SCANCODE_LSHIFT, .ShiftLeft },
     .{ c.SDL_SCANCODE_RSHIFT, .ShiftRight },
+    .{ c.SDL_SCANCODE_LCTRL, .ControlLeft },
+    .{ c.SDL_SCANCODE_RCTRL, .ControlRight },
 };
 
 const std = @import("std");

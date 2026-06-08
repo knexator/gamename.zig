@@ -474,6 +474,7 @@ fn build_all_games_html(b: *std.Build) !void {
         "snakanake",
         "tres_undos",
         "cc25",
+        "minesweeper",
     }) |game_folder| {
         try html_index_contents.writer().print("<li><a href=\"{s}\">{s}</a></li>\n", .{ game_folder, game_folder });
         try _build_for_web(

@@ -11,6 +11,7 @@ pub const input = @import("input.zig");
 pub const BFS = @import("bfs.zig").BFS;
 pub const meta = @import("meta.zig");
 pub const CircularBuffer = @import("circular_buffer.zig").CircularBuffer;
+pub const RingBuffer = @import("circular_buffer.zig").RingBuffer;
 pub const Triangulator = @import("triangulator.zig").Triangulator;
 pub const Noise = @import("fastnoise.zig").Noise(f32);
 pub const Gl = @import("Gl.zig");
@@ -74,6 +75,12 @@ pub fn lastExplicit(T: type, arr: []const T) ?T {
     return arr[arr.len - 1];
 }
 
+pub fn sum(T: type, arr: []const T) T {
+    var result: T = 0;
+    for (arr) |x| result += x;
+    return result;
+}
+
 // pub fn last(arr: anytype) ?std.meta.Elem(@TypeOf(arr)) {
 //     const T = @TypeOf(arr);
 //     switch (@typeInfo(T)) {
@@ -92,5 +99,34 @@ pub fn lastExplicit(T: type, arr: []const T) ?T {
 //     }
 //     @compileError("Expected pointer, slice, array or vector type, found '" ++ @typeName(T) ++ "'");
 // }
+
+/// Removes the last UTF-8 codepoint from a buffer, returns the new length.
+pub fn unicodeEraseLastCodepoint(buf: []const u8) usize {
+    const len = buf.len;
+    if (len == 0) return 0;
+
+    var i = len;
+    // Walk back over continuation bytes (10xxxxxx)
+    while (i > 0 and (buf[i - 1] & 0xC0) == 0x80) {
+        i -= 1;
+    }
+    // Remove the leading byte too
+    if (i > 0) i -= 1;
+
+    return i;
+}
+
+pub fn AutoContextForIntKeys(comptime K: type) type {
+    comptime std.debug.assert(@typeInfo(K) == .int);
+    return struct {
+        const Context = @This();
+        pub fn eql(_: Context, a: K, b: K) bool {
+            return a == b;
+        }
+        pub fn hash(_: Context, key: K) u64 {
+            return @intCast(key);
+        }
+    };
+}
 
 const std = @import("std");

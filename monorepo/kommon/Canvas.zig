@@ -959,7 +959,7 @@ pub fn Drawable(
             assert(vertex_info.layout == .@"extern");
             var attributes: [vertex_info.fields.len]Gl.VertexInfo.In = undefined;
             inline for (&attributes, vertex_info.fields) |*dst, info| {
-                dst.* = .{ .name = info.name, .kind = .fromType(info.type) };
+                dst.* = .fromType(info.type, info.name);
             }
 
             const uniform_info = @typeInfo(UniformData).@"struct";
@@ -1075,16 +1075,17 @@ pub fn fillRect(
     rect: Rect,
     color: FColor,
 ) void {
+    const local_points: [4]Vec2 = .{
+        .new(0, 0),
+        .new(rect.size.x, 0),
+        .new(0, rect.size.y),
+        .new(rect.size.x, rect.size.y),
+    };
     self.fillShape(
         camera,
         .{ .pos = rect.top_left },
         .{
-            .local_points = &.{
-                .new(0, 0),
-                .new(rect.size.x, 0),
-                .new(0, rect.size.y),
-                .new(rect.size.x, rect.size.y),
-            },
+            .local_points = &local_points,
             .triangles = self.DEFAULT_SHAPES.square.triangles,
             .fill_shape_renderable = null,
             .fill_atom_renderable = null,
@@ -1429,6 +1430,7 @@ pub fn startFrame(self: *Canvas, gl: Gl) void {
 // TODO: baselines, etc
 pub const TextBatch = struct {
     quads: std.ArrayList(TextRenderer.Quad),
+    bgs: std.ArrayList(FilledRect),
     canvas: *Canvas,
     text_renderer: *TextRenderer,
 
@@ -1452,6 +1454,17 @@ pub const TextBatch = struct {
         em: f32,
         color: FColor,
     ) !void {
+        return self.addTextV2(.{}, text, pos, em, color);
+    }
+
+    pub fn addTextV2(
+        self: *TextBatch,
+        parent_point: Point,
+        text: []const u8,
+        pos: TextRenderer.TextPosition,
+        em: f32,
+        color: FColor,
+    ) !void {
         if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
         const info = try self.text_renderer.quadsForLineV2(text, em, color, self.canvas.frame_arena.allocator());
         const quads = info.quads;
@@ -1460,26 +1473,127 @@ pub const TextBatch = struct {
         // const delta = bounds.deltaToAchieve(pos);
         const delta = self.text_renderer.deltaToAchieve(pos, info.total_advance, em);
         try self.quads.ensureUnusedCapacity(quads.len);
-        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
+        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta).withParentPoint(parent_point));
+    }
+
+    /// returns the cursor's lower corner, if any
+    pub fn addEditableText(
+        self: *TextBatch,
+        parent_point: Point,
+        text: []const u8,
+        selection: ?TextSelection,
+        pos: TextRenderer.TextPosition,
+        em: f32,
+        color: FColor,
+        selected_bg_color: FColor,
+    ) !?Line {
+        if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
+        const info = try self.text_renderer.quadsForLineV2(text, em, color, self.canvas.frame_arena.allocator());
+        const quads = info.quads;
+        defer self.canvas.frame_arena.allocator().free(quads);
+        const delta = self.text_renderer.deltaToAchieve(pos, info.total_advance, em);
+        try self.quads.ensureUnusedCapacity(quads.len);
+        for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta).withParentPoint(parent_point));
+
+        const metrics = self.text_renderer.font_info.value.metrics;
+        assert(metrics.ascender < 0 and metrics.descender > 0);
+
+        if (selection) |s| {
+            try self.bgs.ensureUnusedCapacity(info.cursor_offsets.len -| 1);
+            for (s.min()..s.max()) |k| {
+                self.bgs.appendAssumeCapacity(.{
+                    .color = selected_bg_color,
+                    .pos = .fromTopLeftAndBottomRight(
+                        delta.addX(info.cursor_offsets[k].offset).addY(metrics.ascender * em),
+                        delta.addX(info.cursor_offsets[k + 1].offset).addY(metrics.descender * em),
+                    ),
+                });
+            }
+            const p = delta.addX(info.cursor_offsets[s.cursor].offset);
+            return .{ .a = p.addY(metrics.descender * em), .b = p.addY(metrics.ascender * em) };
+        } else return null;
     }
 
     pub fn draw(self: *TextBatch, camera: Rect) void {
+        self.canvas.fillRects(camera, self.bgs.items);
         self.text_renderer.drawQuads(self.canvas.gl, camera, self.quads.items, self.canvas.frame_arena.allocator());
         self.quads.clearAndFree();
+        self.bgs.clearAndFree();
+    }
+};
+
+pub const TextSelection = struct {
+    /// indexes into cursor_points
+    cursor: usize,
+    /// indexes into cursor_points
+    anchor: usize,
+
+    pub fn empty(text_selection: TextSelection) bool {
+        return text_selection.cursor == text_selection.anchor;
+    }
+
+    pub fn min(text_selection: TextSelection) usize {
+        return @min(text_selection.cursor, text_selection.anchor);
+    }
+
+    pub fn max(text_selection: TextSelection) usize {
+        return @max(text_selection.cursor, text_selection.anchor);
+    }
+
+    pub fn both(v: usize) TextSelection {
+        return .{ .cursor = v, .anchor = v };
     }
 };
 
 /// prefer .textBatch
 pub fn drawText(self: *Canvas, font_index: usize, camera: Rect, text: []const u8, pos: TextRenderer.TextPosition, em: f32, color: FColor) !void {
+    return self.drawTextV2(.{}, font_index, camera, text, pos, em, color);
+}
+
+/// prefer .textBatch
+pub fn drawTextV2(self: *Canvas, parent_point: Point, font_index: usize, camera: Rect, text: []const u8, pos: TextRenderer.TextPosition, em: f32, color: FColor) !void {
     var batch = self.textBatch(font_index);
-    try batch.addText(text, pos, em, color);
+    try batch.addTextV2(parent_point, text, pos, em, color);
     batch.draw(camera);
+}
+
+pub const Line = struct {
+    a: Vec2,
+    b: Vec2,
+};
+
+/// prefer .textBatch
+pub fn drawEditableText(
+    self: *Canvas,
+    parent_point: Point,
+    font_index: usize,
+    camera: Rect,
+    text: []const u8,
+    selection: ?TextSelection,
+    pos: TextRenderer.TextPosition,
+    em: f32,
+    color: FColor,
+    selected_bg_color: FColor,
+) !?Line {
+    var batch = self.textBatch(font_index);
+    const cursor_line = try batch.addEditableText(
+        parent_point,
+        text,
+        selection,
+        pos,
+        em,
+        color,
+        selected_bg_color,
+    );
+    batch.draw(camera);
+    return cursor_line;
 }
 
 pub fn textBatch(self: *Canvas, font_index: usize) TextBatch {
     return .{
         .canvas = self,
         .quads = .init(self.frame_arena.allocator()),
+        .bgs = .init(self.frame_arena.allocator()),
         .text_renderer = &self.text_renderers[font_index],
     };
 }
@@ -1695,24 +1809,35 @@ pub const TextRenderer = struct {
         }));
     }
 
+    const CursorPoint = struct {
+        offset: f32,
+        index: usize,
+    };
+
     pub fn quadsForLineV2(
         self: TextRenderer,
         text: []const u8,
         em: f32,
         color: FColor,
         target: std.mem.Allocator,
-    ) !struct { quads: []Quad, total_advance: f32 } {
+    ) !struct { quads: []Quad, cursor_offsets: []CursorPoint, total_advance: f32 } {
+        assert(std.mem.indexOf(u8, text, "\n") == null);
+
         var quads: std.ArrayList(Quad) = try .initCapacity(target, text.len);
+        var cursor_offsets: std.ArrayList(CursorPoint) = try .initCapacity(target, text.len + 1);
         var cursor: Vec2 = .zero;
 
         var utf8 = (try std.unicode.Utf8View.init(text)).iterator();
+        cursor_offsets.appendAssumeCapacity(.{ .offset = cursor.x, .index = utf8.i });
         var prev: ?u21 = null;
         while (utf8.nextCodepoint()) |codepoint| {
             if (prev) |p| {
-                cursor.x += self.kerningOf(p, codepoint) orelse 0;
+                cursor.x += em * (self.kerningOf(p, codepoint) orelse 0);
             }
             cursor, const quad = self.addLetter(cursor, codepoint, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
+            assert(cursor.y == 0);
+            cursor_offsets.appendAssumeCapacity(.{ .offset = cursor.x, .index = utf8.i });
             prev = codepoint;
         }
 
@@ -1725,7 +1850,11 @@ pub const TextRenderer = struct {
         // }
 
         assert(cursor.y == 0);
-        return .{ .quads = try quads.toOwnedSlice(), .total_advance = cursor.x };
+        return .{
+            .quads = try quads.toOwnedSlice(),
+            .total_advance = cursor.x,
+            .cursor_offsets = try cursor_offsets.toOwnedSlice(),
+        };
     }
 
     pub fn quadsForLine(
@@ -1795,10 +1924,18 @@ pub const TextRenderer = struct {
         pos: Rect,
         tex: Rect,
         color: FColor,
+        // TODO: this is hacky, remove
+        parent_point: Point = .{},
 
         pub fn translate(self: Quad, delta: Vec2) Quad {
             var res = self;
             res.pos.top_left.addInPlace(delta);
+            return res;
+        }
+
+        pub fn withParentPoint(self: Quad, parent_point: Point) Quad {
+            var res = self;
+            res.parent_point = parent_point;
             return res;
         }
     };
@@ -1811,7 +1948,7 @@ pub const TextRenderer = struct {
         for (sprites, 0..) |sprite, i| {
             for ([4]Vec2{ .zero, .e1, .e2, .one }, 0..4) |vertex, k| {
                 vertices[i * 4 + k] = .{
-                    .a_position = sprite.pos.applyToLocalPosition(vertex),
+                    .a_position = sprite.parent_point.applyToLocalPosition(sprite.pos.applyToLocalPosition(vertex)),
                     .a_texcoord = sprite.tex.applyToLocalPosition(vertex),
                     .a_color = sprite.color,
                 };

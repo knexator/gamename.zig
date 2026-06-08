@@ -1,0 +1,536 @@
+////
+
+changeLowercaseToNextCyclingOnC {
+    a -> b;
+    b -> c;
+    c -> a;
+}
+
+changeLowercaseToPrevCyclingOnC {
+    a -> c;
+    b -> a;
+    c -> b;
+}
+
+shiftTopHalf {
+    (@x . <empty>) -> changeLowercaseToNextCyclingOnC: @x;
+}
+
+shiftInUnknownDirection {
+    (a . @x) -> changeLowercaseToNextCyclingOnC: @x;
+    (b . @x) -> @x;
+    (c . @x) -> changeLowercaseToPrevCyclingOnC: @x;
+}
+
+uppercase {
+    a -> A;
+    b -> B;
+    c -> C;
+    d -> D;
+    e -> E;
+    f -> F;
+}
+
+lowercase {
+    A -> a;
+    B -> b;
+    C -> c;
+    D -> d;
+    E -> e;
+    F -> f;
+}
+
+isVowel {
+    A -> true;
+    E -> true;
+    a -> true;
+    e -> true;
+    @ -> false;
+}
+
+swap {
+    (@a . @b) -> (@b . @a);
+}
+
+firstAsUppercase {
+    (@a . @b) -> uppercase: @a;
+}
+
+startWithB {
+    (@a . @any) -> @a {
+        b -> true;
+        B -> true;
+        @else -> false;
+    }
+}
+
+uppercaseIfVowel {
+    @x -> isVowel: @x {
+        true -> uppercase: @x;
+        false -> @x;
+    }
+}
+
+withBottomUppercased {
+    (@a . @b) -> uppercase: @b {
+        @B -> (@a . @B);
+    }
+}
+
+withBottomShifted {
+    (@a . @b) -> changeLowercaseToNextCyclingOnC: @b {
+        @B -> (@a . @B);
+    }
+}
+
+pairToUppercase {
+    (@a . @b) -> uppercase: @a {
+        @A -> uppercase: @b {
+            @B -> (@A . @B);
+        }
+    }
+}
+
+shiftPair {
+    (@a . @b) -> changeLowercaseToNextCyclingOnC: @a {
+        @A -> changeLowercaseToNextCyclingOnC: @b {
+            @B -> (@A . @B);
+        }
+    }
+}
+
+last {
+    (@x . nil) -> @x;
+    (@x . @y) -> last: @y;
+}
+
+
+shiftAll {
+    (@a . @b) -> shiftAll: @a {
+        @A -> shiftAll: @b {
+            @B -> (@A . @B);
+        }
+    }
+    @x -> changeLowercaseToNextCyclingOnC: @x;
+}
+
+hasSomeB {
+    (@x . @y) -> hasSomeB: @x {
+        false -> hasSomeB: @y;
+    }
+    b -> true;
+    @other -> false;
+}
+
+second {
+    (@a . (@b . @rest)) -> @b;
+}
+
+listHasSomeB {
+    nil -> false;
+    (b . @any) -> true;
+    (@other . @rest) -> listHasSomeB: @rest;
+}
+
+uppercaseEachElement {
+    nil -> nil;
+    (@a . @rest) -> uppercaseEachElement: @rest {
+        @REST -> uppercase: @a {
+            @A -> (@A . @REST);
+        }
+    }
+}
+
+hasAnyVowel {
+    nil -> false;
+    (@x . @rest) -> isVowel: @x {
+        false -> hasAnyVowel: @rest;
+    }
+}
+
+// custom
+isUppercase {
+    A -> true;
+    B -> true;
+    C -> true;
+    D -> true;
+    E -> true;
+    F -> true;
+    @else -> false;
+}
+
+changeCase {
+    @x -> isUppercase: @x {
+        true -> lowercase: @x;
+        false -> uppercase: @x;
+    }
+}
+
+letterToBothCases {
+    @x -> isUppercase: @x {
+        true -> lowercase: @x {
+            @y -> (@y . @x);
+        }
+        false -> uppercase: @x {
+            @y -> (@x . @y);
+        }
+    }
+}
+
+biggestHalf {
+    ((@a . @b) . (@c . @d)) -> keepRemovingOne: ((@a . @b) . (@c . @d)) {
+        ((@x . @y) . @single) -> (@a . @b);
+        (@single . (@x . @y)) -> (@c . @d);
+    }
+    ((@x . @y) . @single) -> (@x . @y);
+    (@single . (@x . @y)) -> (@x . @y);
+}
+
+keepRemovingOne {
+    ((@a . @b) . (@c . @d)) -> removeOne: (@a . @b) {
+        @x -> removeOne: (@c . @d) {
+            @y -> keepRemovingOne: (@x . @y);
+        }
+    }
+}
+
+removeOne {
+    ((@x . @y) . @z) -> removeOne: (@x . @y) {
+        @r -> (@r . @z);
+    }
+    (@single . @z) -> @z;
+}
+
+// is there some 'clever' way to do this?
+deepestHalf {
+    (@a . @b) -> depthOf: @a {
+        @A -> depthOf: @b {
+            @B -> comparePeano: (@A . @B) {
+                smaller -> @b;
+                @greater_or_equal -> @a;
+            }
+        }
+    }
+}
+
+depthOf {
+    (@a . @b) -> depthOf: @a {
+        @A -> depthOf: @b {
+            @B -> maxPeano: (@A . @B) {
+                @C -> (true . @C);
+            }
+        }
+    }
+    @x -> nil;
+}
+
+// custom
+reverse_stackless {
+    (nil . @acc) -> @acc;
+    ((@a . @rest) . @acc) -> reverse_stackless: (@rest . (@a . @acc));
+}
+
+reverse {
+    @x -> reverse_stackless: (@x . nil);
+}
+
+// custom
+mostCommonBoolean_helper {
+    (nil . ( (true . @rest1) . (true . @rest2) )) -> mostCommonBoolean_helper: (nil . (@rest1 . @rest2));
+    (nil . ( (true . @rest1) . nil )) -> true;
+    (nil . ( nil . (true . @rest2) )) -> false;
+    ((true . @rest) . ( @r1 . @r2 )) -> mostCommonBoolean_helper: (@rest . ((true . @r1) . @r2));
+    ((false . @rest) . ( @r1 . @r2 )) -> mostCommonBoolean_helper: (@rest . (@r1 . (true . @r2)));
+}
+
+mostCommonBoolean {
+    @x -> mostCommonBoolean_helper: (@x . (nil . nil));
+}
+
+// TODO: use meta to recreate the mostCommonBoolean solution
+secondMostCommonLetter {
+    @x -> countEach: (@x . nil) {
+        @counts -> findTopTwo: (@counts . (nil . nil)) {
+            ((@a . @aa) . (@b . @bb)) -> @b;
+        }
+    }
+}
+
+// custom
+countEach {
+    (nil . @counts) -> @counts;
+    ( (@first . @rest) . @counts ) -> countEach_insert: (@first . @counts) {
+        @new_counts -> countEach: (@rest . @new_counts);
+    }
+}
+
+// custom
+countEach_insert {
+    (@element . nil) -> ((@element . nil) . nil);
+    (@element . ((@v1 . @vcount) . @rest)) -> eq?: (@element . @v1) {
+        true -> ((@v1 . (@v1 . @vcount)) . @rest);
+        false -> countEach_insert: (@element . @rest) {
+            @new_rest -> ((@v1 . @vcount) . @new_rest);
+        }
+    }
+}
+
+// custom
+// Fun! maybe this should be the level itself.
+findTopTwo {
+    (nil . (@1st . @2nd)) -> (@1st . @2nd);
+    ((@x . @rest) . (@1st . @2nd)) -> comparePeano: (@x . @1st) {
+        smaller -> comparePeano: (@x . @2nd) {
+            smaller -> findTopTwo: (@rest . (@1st . @2nd));
+            @greater_or_equal -> findTopTwo: (@rest . (@1st . @x));
+        }
+        @greater_or_equal -> findTopTwo: (@rest . (@x . @1st));
+    }
+}
+
+findSecondLongest {
+    @x -> findTopTwo: (@x . (nil . nil)) {
+        (@fst . @snd) -> @snd;
+    }
+}
+
+// custom
+comparePeano {
+    (nil . nil) -> equal;
+    ((@x . @rest) . nil) -> greater;
+    (nil . (@x . @rest)) -> smaller;
+    ((@a . @arest) . (@b . @brest)) -> comparePeano: (@arest . @brest);
+}
+
+// custom
+maxPeano {
+    (@a . @b) -> comparePeano: (@a . @b) {
+        smaller -> @b;
+        @greater_or_equal -> @a;
+    }
+}
+
+
+// TODO(game): sort
+
+// custom
+eq? {
+    ((@aa . @ab) . (@ba . @bb)) -> eq?: (@aa . @ba) {
+        true -> eq?: (@ab . @bb);
+    }
+    ((@aa . @ab) . @b) -> false;
+    (@a . (@ba . @bb)) -> false;
+    (@x . @y) -> eqAtoms?: (@x . @y);
+}
+
+// custom
+dictLookupWithDefault {
+    ((@key . @default_value) . nil) -> @default_value;
+    ((@key . @default_value) . ((@k1 . @v1) . @rest)) -> eq?: (@key . @k1) {
+        true -> @v1;
+        false -> dictLookupWithDefault: ((@key . @default_value) . @rest);
+    }
+}
+
+calculator {
+    @tree -> calculatorIntoPeano: @tree {
+        @peano -> peanoIntoCalculator: @peano;
+    }
+}
+
+peanoIntoCalculator {
+    (+ . (S . nil)) -> 1;
+    (+ . (S . (S . nil))) -> 2;
+    (+ . (S . (S . (S . nil)))) -> 3;
+    (+ . (S . (S .(S . (S . nil))))) -> 4;
+    (+ . (S . (S . (S .(S . (S . nil)))))) -> 5;
+    (+ . (S . (S . (S . (S .(S . (S . nil))))))) -> 6;
+    (+ . (S . (S . (S . (S . (S .(S . (S . nil)))))))) -> 7;
+    (+ . (S . (S . (S . (S . (S . (S .(S . (S . nil))))))))) -> 8;
+    (+ . (S . (S . (S . (S . (S . (S . (S .(S . (S . nil)))))))))) -> 9;
+    @else -> (ERROR_NumberNotInRange . @else);
+}
+
+calculatorIntoPeano {
+    1 -> (+ . (S . nil));
+    2 -> (+ . (S . (S . nil)));
+    3 -> (+ . (S . (S . (S . nil))));
+    4 -> (+ . (S . (S . (S . (S . nil)))));
+    5 -> (+ . (S . (S . (S . (S . (S . nil))))));
+    6 -> (+ . (S . (S . (S . (S . (S . (S . nil)))))));
+    7 -> (+ . (S . (S . (S . (S . (S . (S . (S . nil))))))));
+    8 -> (+ . (S . (S . (S . (S . (S . (S . (S . (S . nil)))))))));
+    9 -> (+ . (S . (S . (S . (S . (S . (S . (S . (S . (S . nil))))))))));
+    (@op . (@a . @b)) -> calculatorIntoPeano: @a {
+        @peanoA -> calculatorIntoPeano: @b {
+            @peanoB -> @op {
+                + -> peanoAdd: (@peanoA . @peanoB);
+                - -> peanoSub: (@peanoA . @peanoB);
+                * -> peanoMul: (@peanoA . @peanoB);
+            }
+        }
+    }
+}
+
+peanoAdd {
+    ((@sign . nil) . @y) -> @y;
+    ((+ . (@a . @b)) . (+ . @y)) -> peanoAdd: ((+ . @b) . (+ . (@a . @y)));
+    ((- . @x) . (- . @y)) -> peanoAdd: ((+ . @x) . (+ . @y)) {
+        (+ . @r) -> (- . @r);
+    }
+    ((- . @x) . (+ . @y)) -> peanoSub: ((+ . @y) . (+ . @x));
+    ((+ . @x) . (- . @y)) -> peanoSub: ((+ . @x) . (+ . @y));
+}
+
+peanoSub {
+    (@x . (@sign . nil)) -> @x;
+    ((@sign . nil) . (+ . @x)) -> (- . @x);
+    ((@sign . nil) . (- . @x)) -> (+ . @x);
+    ((+ . (@x . @xs)) . (+ . (@y . @ys))) -> peanoSub: ((+ . @xs) . (+ . @ys));
+    ((- . @x) . (- . @y)) -> peanoSub: ((+ . @y) . (+ . @x));
+    ((- . @x) . (+ . @y)) -> peanoAdd: ((- . @x) . (- . @y));
+    ((+ . @x) . (- . @y)) -> peanoAdd: ((+ . @x) . (+ . @y));
+}
+
+peanoMul {
+    ((@sign . nil) . @y) -> (+ . nil);
+    ((- . @x) . (- . @y)) -> peanoMul: ((+ . @x) . (+ . @y));
+    ((+ . @x) . (- . @y)) -> peanoMul: ((+ . @x) . (+ . @y)) {
+        (+ . @r) -> (- . @r);
+        (- . @r) -> (+ . @r);
+    }
+    ((- . @x) . (+ . @y)) -> peanoMul: ((+ . @x) . (+ . @y)) {
+        (+ . @r) -> (- . @r);
+        (- . @r) -> (+ . @r);
+    }
+    ((+ . (@a . @b)) . (+ . @y)) -> peanoMul: ((+ . @b) . (+ . @y)) {
+        @asdf -> peanoAdd: ((+ . @y) . @asdf);
+    }
+}
+
+// TODO(game): decide on a meta representation (variables with names vs variables are relative offsets)
+// this code assumes variables as relative offsets
+interpreter {
+    ((@fnk_name . @input) . @known_fnks) -> dictLookupWithDefault: ((@fnk_name . nil) . @known_fnks) {
+        @cases -> interpreter_applycases: (@cases . ((@input . nil) . @known_fnks));
+    }
+}
+
+// custom
+interpreter_applycases {
+    (nil                         . ((@input . @older_inputs) . @known_fnks)) -> @input;
+    ((@first_case . @rest_cases) . ((@input . @older_inputs) . @known_fnks)) -> @first_case {
+        (@pattern . (@fnk_name . (@template . @next))) -> interpreter_matches: (@pattern . @input) {
+            false -> interpreter_applycases: (@rest_cases . ((@input . @older_inputs) . @known_fnks));
+            true -> interpreter_fillvariables: (@template . (@input . @older_inputs)) {
+                @filled_template -> interpreter: ( (@fnk_name . @filled_template) . @known_fnks ) {
+                    @new_input -> interpreter_applycases: ( @next . ((@new_input . (@input . @older_inputs)) . @known_fnks) );
+                }
+            }
+        }
+    }
+}
+
+// custom
+interpreter_matches {
+    ((lit . @x) . @input) -> eq?: (@x . @input);
+    ((var . @x) . @input) -> true;
+    ((@pattern_left . @pattern_right) . (@input_left . @input_right)) -> interpreter_matches: (@pattern_left . @input_left) {
+        true -> interpreter_matches: (@pattern_right . @input_right);
+    }
+    ((@pattern_left . @pattern_right) . @input_atom) -> false;
+}
+
+// custom
+interpreter_fillvariables {
+    (@template . @inputs_history) -> @template {
+        (lit . @x) -> @x;
+        (var . (@depth . @address)) -> indexWithDefault: ((@depth . <empty>) . @inputs_history) {
+            @full_input -> addressWithDefault: ((@address . <empty>) . @full_input);
+        }
+        (@left . @right) -> interpreter_fillvariables: (@left . @inputs_history) {
+            @new_left -> interpreter_fillvariables: (@right . @inputs_history) {
+                @new_right -> (@new_left . @new_right);
+            }
+        }
+    }
+}
+
+// custom
+indexWithDefault {
+    ((@depth . @default_value) . nil) -> @default_value;
+    ((nil . @default_value) . (@first . @rest)) -> @first;
+    (((@x . @xs) . @default_value) . (@first . @rest)) -> indexWithDefault: ((@x . @default_value) . @rest);
+}
+
+// custom
+addressWithDefault {
+    ((nil . @default_value) . @value) -> @value;
+    (((left  . @rest) . @default_value) . (@left . @right)) -> @left;
+    (((right . @rest) . @default_value) . (@left . @right)) -> @right;
+    (((@any . @rest) . @default_value) . @atom) -> @default_value;
+}
+
+brainfuck {
+    (@instructions . @stdin) -> brainfuck_helper: (@instructions . ((@stdin . nil) . ((+ . nil) . (nil . nil)))) {
+        ((@stdin . @stdout) . @tape) -> reverse: @stdout;
+    }
+}
+
+// custom
+brainfuck_helper {
+    ((@inst_first . @inst_rest) . ((@stdin . @stdout) . (@tape_cur . @tape_rest))) -> @inst_first {
+        in -> @stdin {
+            (@first . @rest) -> calculatorIntoPeano: @first {
+                @in -> brainfuck_helper: (@inst_rest . ((@rest . @stdout) . (@in . @tape_rest)));
+            }
+        }
+        out -> peanoIntoCalculator: @tape_cur {
+            @out -> brainfuck_helper: (@inst_rest . ((@stdin . (@out . @stdout)) . (@tape_cur . @tape_rest)));
+        }
+        inc -> peanoAdd: (@tape_cur . (+ . (S . nil))) {
+            @new_cur -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . (@new_cur . @tape_rest)));
+        }
+        dec -> peanoSub: (@tape_cur . (+ . (S . nil))) {
+            @new_cur -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . (@new_cur . @tape_rest)));
+        }
+        next -> brainfuck_tape_move: (next . (@tape_cur . @tape_rest)) {
+            @new_tape -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . @new_tape));
+        }
+        prev -> brainfuck_tape_move: (prev . (@tape_cur . @tape_rest)) {
+            @new_tape -> brainfuck_helper: (@inst_rest . ((@stdin . @stdout) . @new_tape));
+        }
+        loop -> brainfuck_extract_loop: (@inst_rest . nil) {
+            (@loop . @remaining) -> brainfuck_helper: (@loop . ((@stdin . @stdout) . (@tape_cur . @tape_rest))) {
+                (@std . @tape) -> @tape {
+                    ((@sign . nil) . @rest) -> brainfuck_helper: (@remaining . (@std . @tape));
+                    @else -> brainfuck_helper: ((loop . @inst_rest) . (@std . @tape));
+                }
+            }
+        }
+    }
+    (nil . @state) -> @state;
+}
+
+brainfuck_tape_move {
+    (next . (@cur . (@prev . @next))) -> brainfuck_tape_extend: @next {
+        (@h . @r) -> (@h . ((@cur . @prev) . @r));
+    }
+    (prev . (@cur . (@prev . @next))) -> brainfuck_tape_extend: @prev {
+        (@h . @r) -> (@h . (@r . (@cur . @next)));
+    }
+}
+
+brainfuck_tape_extend {
+    nil -> ((+ . nil) . nil);
+    @else -> @else;
+}
+
+brainfuck_extract_loop {
+    ((end . @rest) . @loop) -> reverse: @loop {
+        @loop_good -> (@loop_good . @rest);
+    }
+    ((@other . @rest) . @loop) -> brainfuck_extract_loop: (@rest . (@other . @loop));
+}
+
+// my next goal: justify a map function

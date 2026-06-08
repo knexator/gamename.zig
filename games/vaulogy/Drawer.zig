@@ -3,10 +3,11 @@
 pub const Drawer = @This();
 pub const Gl = kommon.Gl;
 
-const DRAW_ATOMS_PLAINLY = true;
+const DRAW_ATOMS_PLAINLY = false;
 
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
+atom_testing: Gl.Texture,
 
 renderables: struct {
     uber: UberDrawable,
@@ -100,7 +101,7 @@ pub const UberDrawable = Canvas.DrawableV2(
     ,
 );
 
-pub fn init(usual: *kommon.Usual) !Drawer {
+pub fn init(usual: *kommon.Usual, atom_testing: *const anyopaque) !Drawer {
     try AtomVisuals.Geometry.initFixed(usual.mem.forever.allocator(), usual.canvas.gl);
     return .{
         .canvas = &usual.canvas,
@@ -108,6 +109,7 @@ pub fn init(usual: *kommon.Usual) !Drawer {
         .renderables = .{
             .uber = try .init(&usual.canvas),
         },
+        .atom_testing = usual.canvas.gl.buildTexture2D(atom_testing, false),
     };
 }
 
@@ -287,25 +289,35 @@ const AtomVisualCache = struct {
     visuals_cache: std.StringHashMap(AtomVisuals),
 
     const HardcodedAtomVisuals = struct {
-        profile: ?[]const Vec2,
-        color: ?FColor,
+        profile: ?[]const Vec2 = null,
+        color: ?FColor = null,
         noise_z: ?f32 = null,
         display: ?[]const u8 = null,
     };
-    const hardcoded_visuals = .{
-        .identity = HardcodedAtomVisuals{
+    const hardcoded_visuals: []const struct {
+        name: []const u8,
+        visuals: HardcodedAtomVisuals,
+
+        pub fn do(name: []const u8, visuals: HardcodedAtomVisuals) @This() {
+            return .{
+                .name = name,
+                .visuals = visuals,
+            };
+        }
+    } = &.{
+        .do("identity", .{
             .color = .white,
             .profile = &.{},
-        },
-        .nil = HardcodedAtomVisuals{
+        }),
+        .do("nil", .{
             .color = .new(0.45, 0.45, 0.45),
             .profile = &.{.new(0.75, -0.25)},
-        },
-        .input = HardcodedAtomVisuals{
+        }),
+        .do("input", .{
             .color = .new(0.1, 0.6, 0.6),
             .profile = &.{ .new(0.2, 0.2), .new(0.8, 0.2) },
-        },
-        .true = HardcodedAtomVisuals{
+        }),
+        .do("true", .{
             .color = .new(0.5, 0.9, 0.5),
             .profile = &blk: {
                 const N = 10;
@@ -317,12 +329,12 @@ const AtomVisualCache = struct {
                 const res = buffer;
                 break :blk res;
             },
-        },
-        .false = HardcodedAtomVisuals{
+        }),
+        .do("false", .{
             .color = .new(0.9, 0.5, 0.5),
             .profile = &.{ .new(1.0 / 6.0, 0.2), .new(0.5, -0.2), .new(5.0 / 6.0, 0.2) },
-        },
-        .A = HardcodedAtomVisuals{
+        }),
+        .do("A", .{
             .color = .fromHex("#FA00FF"),
             .profile = &.{
                 .new(1.224892e-1, 1.97281936e-1),
@@ -332,8 +344,8 @@ const AtomVisualCache = struct {
                 .new(8.53909e-1, -3.479591e-2),
             },
             .display = "A",
-        },
-        .a = HardcodedAtomVisuals{
+        }),
+        .do("a", .{
             .color = .fromHex("#FF8EEC"),
             .profile = &.{
                 .new(0.10995328, 0.09992044),
@@ -349,8 +361,8 @@ const AtomVisualCache = struct {
                 .new(0.93121342, -0.02669808),
             },
             .display = "a",
-        },
-        .B = HardcodedAtomVisuals{
+        }),
+        .do("B", .{
             .color = .fromHex("#FFB600"),
             .profile = &.{
                 .new(0.1434, 0.1898),
@@ -361,8 +373,8 @@ const AtomVisualCache = struct {
                 .new(0.8648, -0.1829),
             },
             .display = "B",
-        },
-        .b = HardcodedAtomVisuals{
+        }),
+        .do("b", .{
             .color = .fromHex("#FFE18E"),
             .profile = &.{
                 .new(0.7142284e-1, 1.6622247e-1),
@@ -379,8 +391,8 @@ const AtomVisualCache = struct {
                 .new(9.332106e-1, -1.6913065e-1),
             },
             .display = "b",
-        },
-        .C = HardcodedAtomVisuals{
+        }),
+        .do("C", .{
             .color = .fromHex("#00E5FF"),
             .profile = &.{
                 .new(0.2628, -0.0853),
@@ -390,8 +402,8 @@ const AtomVisualCache = struct {
                 .new(0.9278, -0.0660),
             },
             .display = "C",
-        },
-        .c = HardcodedAtomVisuals{
+        }),
+        .do("c", .{
             .color = .fromHex("#9EFFF2"),
             .profile = &.{
                 .new(0.2433, -0.1498),
@@ -403,8 +415,8 @@ const AtomVisualCache = struct {
                 .new(0.9522, -0.1181),
             },
             .display = "c",
-        },
-        .D = HardcodedAtomVisuals{
+        }),
+        .do("D", .{
             .color = .fromHex("#97F200"),
             .profile = &.{
                 .new(0.0477, 0.1012),
@@ -415,8 +427,8 @@ const AtomVisualCache = struct {
                 .new(0.8471, -0.1488),
             },
             .display = "D",
-        },
-        .d = HardcodedAtomVisuals{
+        }),
+        .do("d", .{
             .color = .fromHex("#C8ED8F"),
             .profile = &.{
                 .new(0.0419, -0.0446),
@@ -437,8 +449,8 @@ const AtomVisualCache = struct {
                 .new(0.8992, -0.0767),
             },
             .display = "d",
-        },
-        .E = HardcodedAtomVisuals{
+        }),
+        .do("E", .{
             .color = .fromHex("#AD32FF"),
             .profile = &.{
                 .new(0.17830753, -0.13791077),
@@ -448,8 +460,8 @@ const AtomVisualCache = struct {
                 .new(0.86495407, -0.10338914),
             },
             .display = "E",
-        },
-        .e = HardcodedAtomVisuals{
+        }),
+        .do("e", .{
             .color = .fromHex("#D18EFF"),
             .profile = &.{
                 .new(0.10608470, -0.06664436),
@@ -462,8 +474,8 @@ const AtomVisualCache = struct {
                 .new(0.93807962, -0.09639150),
             },
             .display = "e",
-        },
-        .F = HardcodedAtomVisuals{
+        }),
+        .do("F", .{
             .color = .fromHex("#39af97"),
             .profile = &.{
                 .new(0.18635559, -0.04046786),
@@ -474,8 +486,8 @@ const AtomVisualCache = struct {
                 .new(0.81552447, -0.01316329),
             },
             .display = "F",
-        },
-        .f = HardcodedAtomVisuals{
+        }),
+        .do("f", .{
             .color = .fromHex("#7FB5B0"),
             .profile = &.{
                 .new(0.12697715, -0.02727234),
@@ -491,36 +503,56 @@ const AtomVisualCache = struct {
                 .new(0.79141130, -0.03685517),
             },
             .display = "f",
-        },
-        .firstAsUppercase = HardcodedAtomVisuals{
+        }),
+        .do("firstAsUppercase", .{
             .color = .fromHex("#99BBFF"),
             .profile = null,
-        },
-        .up = HardcodedAtomVisuals{
+        }),
+        .do("up", .{
             .color = .fromHex("#00ffff"),
             .profile = null,
-        },
-        .down = HardcodedAtomVisuals{
+        }),
+        .do("down", .{
             .color = .fromHex("#ff9900"),
             .profile = null,
-        },
-        .left = HardcodedAtomVisuals{
+        }),
+        .do("left", .{
             .color = .fromHex("#99ff00"),
             .profile = null,
-        },
-        .right = HardcodedAtomVisuals{
+        }),
+        .do("right", .{
             .color = .fromHex("#ffff00"),
             .profile = null,
-        },
-        .letter = HardcodedAtomVisuals{
+        }),
+        .do("letter", .{
             .color = .fromHex("#123456"),
             .profile = null,
-        },
+        }),
+        .do("1", .{ .display = "1" }),
+        .do("2", .{ .display = "2" }),
+        .do("3", .{ .display = "3" }),
+        .do("4", .{ .display = "4" }),
+        .do("5", .{ .display = "5" }),
+        .do("6", .{ .display = "6" }),
+        .do("7", .{ .display = "7" }),
+        .do("8", .{ .display = "8" }),
+        .do("9", .{ .display = "9" }),
+        .do("+", .{ .display = "+" }),
+        .do("*", .{ .display = "x" }),
+        .do("-", .{ .display = "-" }),
+        .do("prev", .{ .display = "prev" }),
+        .do("next", .{ .display = "prev" }),
+        .do("inc", .{ .display = "inc" }),
+        .do("dec", .{ .display = "dec" }),
+        .do("in", .{ .display = "in" }),
+        .do("out", .{ .display = "out" }),
+        .do("loop", .{ .display = "loop" }),
+        .do("end", .{ .display = "end" }),
         // TODO: the debug web build crashes without this!
-        .other = HardcodedAtomVisuals{
+        .do("other", .{
             .color = .fromHex("#9955ff"),
             .profile = null,
-        },
+        }),
     };
 
     pub fn init(arena: std.mem.Allocator, gl: Gl) !AtomVisualCache {
@@ -529,9 +561,9 @@ const AtomVisualCache = struct {
             .arena = arena,
         };
 
-        inline for (std.meta.fields(@TypeOf(hardcoded_visuals))) |field| {
-            const atom_name = field.name;
-            const input = @field(hardcoded_visuals, field.name);
+        for (hardcoded_visuals) |x| {
+            const atom_name = x.name;
+            const input = x.visuals;
             const atom_visuals: AtomVisuals = try .build(arena, .{
                 .color = input.color orelse newAtomColor(atom_name),
                 .noise_z = input.noise_z orelse newAtomNoiseZ(atom_name),
@@ -860,10 +892,10 @@ fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVi
                 .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
                 .{ .name = "u_point", .value = .{ .Point = point } },
                 .{ .name = "u_camera", .value = .{ .Rect = camera } },
-                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                // .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
                 .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(0, 0) } },
             },
-            null,
+            drawer.atom_testing,
         );
 
         try drawer.drawShapeV3(
@@ -949,10 +981,10 @@ fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVis
                 .{ .name = "u_color", .value = .{ .FColor = visuals.color.timesAlpha(alpha) } },
                 .{ .name = "u_point", .value = .{ .Point = point } },
                 .{ .name = "u_camera", .value = .{ .Rect = camera } },
-                .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
+                // .{ .name = "u_noise_z", .value = .{ .f32 = visuals.noise_z } },
                 .{ .name = "u_pos_offset", .value = .{ .Vec2 = .new(3, 0) } },
             },
-            null,
+            drawer.atom_testing,
         );
 
         try drawer.drawShapeV3(
@@ -1110,6 +1142,39 @@ pub fn drawTemplateWildcardLinesNonRecursiveV2(
     }
 }
 
+pub fn drawTemplateWildcardLinesNonRecursiveV3(
+    drawer: *Drawer,
+    camera: Rect,
+    left_names_unbound: []const []const u8,
+    left_names_all: []const []const u8,
+    right_names_unbound: []const []const u8,
+    right_names_all: []const []const u8,
+    binding_t: f32,
+    point: Point,
+    alpha: f32,
+) !void {
+    const use_all = binding_t < 0.4;
+
+    {
+        // TODO: these numbers are not exact, issues when zooming in
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 + 0.25 / 2.0, 0.75, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, 0.25)));
+            }
+        }.anon, point)), if (use_all) left_names_all else left_names_unbound, alpha);
+
+        try drawer.drawWildcardsCable(camera, &([1]Vec2{
+            point.applyToLocalPosition(.new(-0.5, 0)),
+        } ++ funk.fromCountAndCtx(32, struct {
+            pub fn anon(k: usize, p: Point) Vec2 {
+                return p.applyToLocalPosition(Vec2.fromTurns(math.lerp(0.5 - 0.25 / 2.0, 0.25, math.tof32(k) / 32)).scale(0.75).add(.new(0.25, -0.25)));
+            }
+        }.anon, point)), if (use_all) right_names_all else right_names_unbound, alpha);
+    }
+}
+
 pub fn drawPatternWildcardLinesNonRecursive(
     drawer: *Drawer,
     camera: Rect,
@@ -1171,8 +1236,8 @@ pub fn strokeRect(
     rect: Rect,
     width: f32,
     color: FColor,
-) void {
-    drawer.line(
+) !void {
+    try drawer.line(
         camera,
         &.{
             rect.top_left,
@@ -1244,16 +1309,17 @@ pub fn fillRect(
     rect: Rect,
     color: FColor,
 ) !void {
+    const local_points: [4]Vec2 = .{
+        .new(0, 0),
+        .new(rect.size.x, 0),
+        .new(0, rect.size.y),
+        .new(rect.size.x, rect.size.y),
+    };
     try self.fillShape(
         camera,
         .{ .pos = rect.top_left },
         .{
-            .local_points = &.{
-                .new(0, 0),
-                .new(rect.size.x, 0),
-                .new(0, rect.size.y),
-                .new(rect.size.x, rect.size.y),
-            },
+            .local_points = &local_points,
             .triangles = self.canvas.DEFAULT_SHAPES.square.triangles,
             .fill_shape_renderable = null,
             .fill_atom_renderable = null,
@@ -1324,6 +1390,10 @@ pub fn fillShapeWithVertexColors(
 }
 
 pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const u8, pos: Canvas.TextRenderer.TextPosition, em: f32, color: FColor) !void {
+    return drawer.drawTextV2(.{}, font_index, camera, text, pos, em, color);
+}
+
+pub fn drawTextV2(drawer: *Drawer, parent_point: Point, font_index: usize, camera: Rect, text: []const u8, pos: Canvas.TextRenderer.TextPosition, em: f32, color: FColor) !void {
     if (font_index != 0) @panic("TODO(platform): only font_index==0 is supported now (since we call setUniforms only once)");
     if (std.mem.indexOf(u8, text, "\n") != null) std.debug.panic("unexpected line break in addText: {s}", .{text});
     const text_renderer = &drawer.canvas.text_renderers[font_index];
@@ -1337,7 +1407,7 @@ pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const 
     // for (quads) |q| self.quads.appendAssumeCapacity(q.translate(delta));
 
     for (quads) |raw_q| {
-        const q = raw_q.translate(delta);
+        const q = raw_q.translate(delta).withParentPoint(parent_point);
         try drawer.uber_batch.add(&.{
             .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
             .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
@@ -1352,6 +1422,25 @@ pub fn drawText(drawer: *Drawer, font_index: usize, camera: Rect, text: []const 
         //     std.log.debug("top left ndc: {any},\tbl: {any}", .{ asdf, asdf2 });
         // }
     }
+}
+
+pub fn drawEditableText(
+    drawer: *Drawer,
+    parent_point: Point,
+    font_index: usize,
+    camera: Rect,
+    text: []const u8,
+    selection: ?Canvas.TextSelection,
+    pos: Canvas.TextRenderer.TextPosition,
+    em: f32,
+    color: FColor,
+    selected_bg_color: FColor,
+) !?Canvas.Line {
+    // TODO
+    try drawer.drawTextV2(parent_point, font_index, camera, text, pos, em, color);
+    _ = selection;
+    _ = selected_bg_color;
+    return null;
 }
 
 pub fn strokeCircle(

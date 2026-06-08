@@ -18,6 +18,25 @@ pub fn CApiFor(comptime GameState: type) type {
     };
 }
 
+pub fn InitRuntimeParamsFor(comptime GameState: type) type {
+    return struct {
+        gpa: std.mem.Allocator,
+        gl: Gl,
+        loaded_images: std.EnumArray(GameState.Images, *const anyopaque),
+        random_seed: u64,
+    };
+}
+
+pub fn InitComptimeParamsFor(comptime GameState: type) type {
+    _ = GameState;
+    return struct {
+        tweakable: type,
+        // tweakable: struct {
+        //     fcolor: fn (name: []const u8, value: *FColor) void,
+        // },
+    };
+}
+
 pub fn PlatformGivesFor(comptime GameState: type) type {
     const stuff = GameState.stuff;
     const sounds = stuff.sounds;
@@ -39,6 +58,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         enqueueSamples: *const fn (src: []const f32) void,
         queuedSeconds: *const fn () f32,
         gl: Gl,
+        downloadActiveFramebuffer: *const fn (resolution: kommon.math.UVec2) void,
         downloadAsFile: *const fn (filename: []const u8, contents: []const u8) void,
         askUserForFile: *const fn () void,
         userUploadedFile: *const fn () ?std.io.AnyReader,
@@ -48,6 +68,9 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         setItem: *const fn (key: []const u8, value: []const u8) void,
         setCursor: *const fn (cursor: Mouse.Cursor) void,
         recording_log: ?std.io.AnyWriter,
+        startTextInput: *const fn (textinput_area_in_0101_coords: ?Rect) void,
+        stopTextInput: *const fn () void,
+        consumeTextInput: *const fn () ?std.BoundedArray(u8, 4),
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
             var result = self.mouse;
@@ -59,12 +82,19 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
             return result;
         }
 
-        pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32) bool {
+        pub fn wasKeyPressedOrRetriggered(self: @This(), key: KeyboardButton, retrigger_time: f32, first_retrigger_time: ?f32) bool {
             if (self.keyboard.wasPressed(key)) return true;
-            if (self.keyboard.cur.isDown(key) and self.keyboard.timeSinceChange(key) > retrigger_time) {
+
+            const t = if (first_retrigger_time == null or self.keyboard.alreadyRetriggered(key))
+                retrigger_time
+            else
+                first_retrigger_time.?;
+
+            if (self.keyboard.cur.isDown(key) and self.keyboard.timeSinceChange(key) > t) {
                 self.setKeyChanged(key);
                 return true;
             }
+
             return false;
         }
 
@@ -86,4 +116,5 @@ const Rect = kommon.math.Rect;
 const Mouse = kommon.input.Mouse;
 const Keyboard = kommon.input.Keyboard;
 const KeyboardButton = kommon.input.KeyboardButton;
+const TextInput = kommon.input.TextInput;
 const Gl = kommon.Gl;

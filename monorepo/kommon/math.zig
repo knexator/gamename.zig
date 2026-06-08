@@ -220,6 +220,12 @@ pub fn ZVec2(T: type) type {
 
         pub const eight_directions = cardinal_directions ++ diagonal_directions;
 
+        pub const local_3x3_directions: [9]IVec2 = .{
+            .new(-1, -1), .new(0, -1), .new(1, -1),
+            .new(-1, 0),  .new(0, 0),  .new(1, 0),
+            .new(-1, 1),  .new(0, 1),  .new(1, 1),
+        };
+
         pub fn isCardinalDirection(v: Self) bool {
             return (v.x == 0 and @abs(v.y) == 1) or
                 (v.y == 0 and @abs(v.x) == 1);
@@ -697,6 +703,10 @@ pub const Vec2 = extern struct {
         try expectApproxEqAbs(.new(4, 2), Vec2.new(4, 3).withAspectRatio(2, .shrink), 0.0001);
     }
 
+    pub fn min(v: Vec2) f32 {
+        return @min(v.x, v.y);
+    }
+
     pub fn minEach(a: Vec2, b: Vec2) Vec2 {
         return .new(
             @min(a.x, b.x),
@@ -709,6 +719,16 @@ pub const Vec2 = extern struct {
             @max(a.x, b.x),
             @max(a.y, b.y),
         );
+    }
+
+    pub fn approxEqAbs(a: Vec2, b: Vec2, tolerance: Scalar) bool {
+        return std.math.approxEqAbs(Scalar, a.x, b.x, tolerance) and
+            std.math.approxEqAbs(Scalar, a.y, b.y, tolerance);
+    }
+
+    pub fn approxEqRel(a: Vec2, b: Vec2, tolerance: Scalar) bool {
+        return std.math.approxEqRel(Scalar, a.x, b.x, tolerance) and
+            std.math.approxEqRel(Scalar, a.y, b.y, tolerance);
     }
 
     pub fn expectApproxEqRel(expected: Vec2, actual: Vec2, tolerance: anytype) !void {
@@ -1599,6 +1619,13 @@ pub const Rect = extern struct {
         return .fromPivotAndSize(original.get(keep), keep.asPivot(), size);
     }
 
+    pub fn withSize1d(original: Rect, which: enum { width, height }, size: f32, keep: MeasureKind) Rect {
+        return original.withSize(switch (which) {
+            .width => .new(size, original.size.y),
+            .height => .new(original.size.x, size),
+        }, keep);
+    }
+
     pub fn withCenter(original: Rect, center: Vec2) Rect {
         return .fromPivotAndSize(center, MeasureKind.center.asPivot(), original.size);
     }
@@ -2120,6 +2147,10 @@ pub const Point = extern struct {
         return center.inverseApplyGetLocalPosition(needle_pos).magSq() <= (local_inclusive_dist * local_inclusive_dist);
     }
 
+    pub fn distSqTo(center: Point, needle_pos: Vec2) f32 {
+        return center.inverseApplyGetLocalPosition(needle_pos).magSq();
+    }
+
     pub fn plusTurns(original: Point, extra_turns: f32) Point {
         return .{ .pos = original.pos, .turns = original.turns + extra_turns, .scale = original.scale };
     }
@@ -2133,7 +2164,6 @@ pub const Point = extern struct {
         };
     }
 
-    // TODO: rename camelcase
     pub fn lerp_towards(self: *Point, goal: Point, ratio: f32, delta_seconds: f32) void {
         lerp_towards_float(&self.pos.x, goal.pos.x, ratio, delta_seconds);
         lerp_towards_float(&self.pos.y, goal.pos.y, ratio, delta_seconds);
@@ -2141,12 +2171,18 @@ pub const Point = extern struct {
         lerp_towards_float(&self.scale, goal.scale, ratio, delta_seconds);
     }
 
+    pub fn lerpTowards(self: *Point, goal: Point, speed: LerpSpeed, delta_seconds: f32) void {
+        self.* = self.lerpTowardsPure(goal, speed, delta_seconds);
+    }
+
     pub fn lerpTowardsPure(current: Point, goal: Point, speed: LerpSpeed, delta_seconds: f32) Point {
         return .{
-            lerpTowardsPureF32(current.pos.x, goal.pos.x, speed, delta_seconds),
-            lerpTowardsPureF32(current.pos.y, goal.pos.y, speed, delta_seconds),
-            lerpTowardsPureF32(current.turns, goal.turns, speed, delta_seconds),
-            lerpTowardsPureF32(current.scale, goal.scale, speed, delta_seconds),
+            .pos = .new(
+                lerpTowardsPureF32(current.pos.x, goal.pos.x, speed, delta_seconds),
+                lerpTowardsPureF32(current.pos.y, goal.pos.y, speed, delta_seconds),
+            ),
+            .turns = lerpTowardsPureF32(current.turns, goal.turns, speed, delta_seconds),
+            .scale = lerpTowardsPureF32(current.scale, goal.scale, speed, delta_seconds),
         };
     }
 
@@ -2206,15 +2242,15 @@ pub const Point = extern struct {
     }
 
     pub fn equalsRel(a: Point, b: Point, tolerance: anytype) bool {
-        if (expectApproxEqRel(a, b, tolerance)) {
-            return true;
-        } else |_| return false;
+        return std.math.approxEqRel(f32, a.scale, b.scale, tolerance) and
+            std.math.approxEqRel(f32, a.turns, b.turns, tolerance) and
+            Vec2.approxEqRel(a.pos, b.pos, tolerance);
     }
 
     pub fn equalsAbs(a: Point, b: Point, tolerance: anytype) bool {
-        if (expectApproxEqAbs(a, b, tolerance)) {
-            return true;
-        } else |_| return false;
+        return std.math.approxEqAbs(f32, a.scale, b.scale, tolerance) and
+            std.math.approxEqAbs(f32, a.turns, b.turns, tolerance) and
+            Vec2.approxEqAbs(a.pos, b.pos, tolerance);
     }
 
     // TODO: document these
@@ -2243,6 +2279,11 @@ pub const Point = extern struct {
         try expectApproxEqAbs(.{ .pos = .new(0, 2), .scale = 2, .turns = 0.25 }, applied, 0.0001);
         try expectApproxEqAbs(parent, applied.inverseApplyToLocalPoint(local), 0.0001);
         try expectApproxEqAbs(local, parent.inverseApplyGetLocal(applied), 0.0001);
+    }
+
+    test "inverse apply with identity local is just the same" {
+        const point: Point = .{ .pos = .zero, .scale = 2, .turns = 0.25 };
+        try expectApproxEqAbs(point, point.inverseApplyToLocalPoint(.{}), 0.0001);
     }
 
     pub fn inverseApplyGetLocalPosition(parent: Point, applied: Vec2) Vec2 {
@@ -2441,6 +2482,12 @@ pub const Random = struct {
                 v.* = this.rnd.int(u8);
             }
         }
+    }
+
+    pub fn uintBetween(this: Random, comptime T: type, at_least: T, less_than: T) T {
+        const result = this.rnd.uintLessThan(T, less_than - at_least) + at_least;
+        assert(at_least <= result and result < less_than);
+        return result;
     }
 
     pub fn between(this: Random, at_least: f32, less_than: f32) f32 {

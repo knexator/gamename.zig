@@ -27,6 +27,13 @@ buildTexture2D: *const fn (
     pixelart: bool,
 ) Texture,
 
+buildRendertarget: *const fn (
+    resolution: UVec2,
+    pixelart: bool,
+) Texture,
+
+setRendertarget: *const fn (rendertarget: ?Texture) void,
+
 buildRenderable: *const fn (
     /// without preamble!
     vertex_src: [:0]const u8,
@@ -304,6 +311,8 @@ const Stub = struct {
         .setRenderableData = setRenderableData,
         .useRenderableWithExistingData = useRenderableWithExistingData,
         .buildTexture2D = buildTexture2D,
+        .buildRendertarget = buildRendertarget,
+        .setRendertarget = setRendertarget,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
@@ -337,6 +346,14 @@ const Stub = struct {
     }
 
     pub fn buildTexture2D(_: *const anyopaque, _: bool) Gl.Texture {
+        return undefined;
+    }
+
+    pub fn buildRendertarget(_: UVec2, _: bool) Gl.Texture {
+        return undefined;
+    }
+
+    pub fn setRendertarget(_: ?Texture) void {
         return undefined;
     }
 

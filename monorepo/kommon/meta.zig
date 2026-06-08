@@ -140,6 +140,46 @@ pub fn isPlainOldData(T: type) bool {
     };
 }
 
+// pub fn assumeUnreachable(result: anytype, comptime excluded: anyerror) @TypeOf(result) {
+//     return result catch |err| if (err == excluded) unreachable else err;
+// }
+
+// pub fn WithoutError(comptime T: type, comptime excluded: type) type {
+//     switch (@typeInfo(T)) {
+//         else => comptime unreachable,
+//         .error_union => |error_union| {
+//             const original_error_set = @typeInfo(error_union.error_set).error_set.?;
+//             // @typeInfo(excluded).error_set.?;
+//             // @Type(.{ .error_set =  })
+//         },
+//     }
+// }
+
+fn RemoveErrors(comptime T: type, comptime errs: anytype) type {
+    const info = @typeInfo(T).error_union;
+    const errors = @typeInfo(info.error_set).error_set orelse
+        @compileError("cannot narrow anyerror");
+
+    comptime var new_errors: []const std.builtin.Type.Error = &.{};
+    outer: for (errors) |e| {
+        for (errs) |excluded| {
+            if (std.mem.eql(u8, e.name, @errorName(excluded))) continue :outer;
+        }
+        new_errors = new_errors ++ &[_]std.builtin.Type.Error{e};
+    }
+
+    return @Type(.{ .error_set = new_errors })!info.payload;
+}
+
+pub fn removeErrors(result: anytype, comptime errs: anytype) RemoveErrors(@TypeOf(result), errs) {
+    return result catch |e| {
+        inline for (errs) |excluded| {
+            if (e == excluded) unreachable;
+        }
+        return @errorCast(e);
+    };
+}
+
 const std = @import("std");
 const assert = std.debug.assert;
 

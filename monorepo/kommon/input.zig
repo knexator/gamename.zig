@@ -67,7 +67,7 @@ pub const Mouse = struct {
     last_change_at: kommon.meta.StructFromEnum(MouseButton, f32, false) = undefined,
     cur_time: f32,
 
-    pub const Cursor = enum(u8) { default, could_grab, grabbing, pointer };
+    pub const Cursor = enum(u8) { default, could_grab, grabbing, pointer, text };
 
     pub fn deltaPos(self: Mouse) Vec2 {
         return self.cur.position.sub(self.prev.position);
@@ -114,6 +114,10 @@ pub fn CustomKeyboardState(CustomKeyboardButton: type) type {
         pub fn isShiftDown(self: @This()) bool {
             return self.isDown(.ShiftLeft) or self.isDown(.ShiftRight);
         }
+
+        pub fn isControlDown(self: @This()) bool {
+            return self.isDown(.ControlLeft) or self.isDown(.ControlRight);
+        }
     };
 }
 
@@ -122,11 +126,18 @@ pub fn CustomKeyboard(CustomKeyboardButton: type) type {
         cur: CustomKeyboardState(CustomKeyboardButton),
         prev: CustomKeyboardState(CustomKeyboardButton),
         last_change_at: kommon.meta.StructFromEnum(CustomKeyboardButton, f32, false) = undefined,
+        manually_changed: kommon.meta.StructFromEnum(CustomKeyboardButton, bool, false) = undefined,
         cur_time: f32,
 
         pub fn lastChangeAt(self: @This(), button: CustomKeyboardButton) f32 {
             return switch (button) {
                 inline else => |x| @field(self.last_change_at, @tagName(x)),
+            };
+        }
+
+        pub fn alreadyRetriggered(self: @This(), button: CustomKeyboardButton) bool {
+            return switch (button) {
+                inline else => |x| @field(self.manually_changed, @tagName(x)),
             };
         }
 
@@ -136,7 +147,10 @@ pub fn CustomKeyboard(CustomKeyboardButton: type) type {
 
         pub fn setChanged(self: *@This(), button: CustomKeyboardButton) void {
             return switch (button) {
-                inline else => |x| @field(self.last_change_at, @tagName(x)) = self.cur_time,
+                inline else => |x| {
+                    @field(self.last_change_at, @tagName(x)) = self.cur_time;
+                    @field(self.manually_changed, @tagName(x)) = true;
+                },
             };
         }
 

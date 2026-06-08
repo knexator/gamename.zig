@@ -13,7 +13,7 @@ fn safeAt(arr: []const *const Sexpr, index: usize) ?*const Sexpr {
 }
 
 pub const Level = struct {
-    fnk_name: *const Sexpr,
+    fnk_name: []const u8,
     description: []const u8,
     initial_definition: ?core.FnkBodyV2,
     generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample,
@@ -57,11 +57,55 @@ const Helpers = struct {
             return hasSomeB(in.pair.left) or hasSomeB(in.pair.right);
         } else return isB(in);
     }
+
+    fn last(in: *const Sexpr) *const Sexpr {
+        return switch (in.*) {
+            else => @panic("bad input"),
+            .pair => |pair| if (pair.right.isNil())
+                pair.left
+            else
+                last(pair.right),
+        };
+    }
+
+    fn shift(in: *const Sexpr) ?*const Sexpr {
+        for (0..3) |k| {
+            if (in.equals(Vals.abc[k])) {
+                return Vals.abc[@mod(k + 1, 3)];
+            }
+        } else return null;
+    }
+
+    fn shiftAll(pool: *SexprPool, in: *const Sexpr) !*const Sexpr {
+        return switch (in.*) {
+            else => in,
+            .atom_lit => shift(in) orelse in,
+            .pair => |pair| try store(pool, Sexpr.doPair(
+                try shiftAll(pool, pair.left),
+                try shiftAll(pool, pair.right),
+            )),
+        };
+    }
+
+    fn atomsCount(in: *const Sexpr) usize {
+        return switch (in.*) {
+            .empty, .atom_var => 0,
+            .atom_lit => 1,
+            .pair => |pair| atomsCount(pair.left) + atomsCount(pair.right),
+        };
+    }
+
+    fn maxDepth(in: *const Sexpr) usize {
+        return switch (in.*) {
+            .empty, .atom_var, .atom_lit => 0,
+            .pair => |pair| 1 + @max(maxDepth(pair.left), maxDepth(pair.right)),
+        };
+    }
 };
 
 pub const levels: []const Level = &.{
     // .{
-    //     .fnk_name = &Sexpr.doLit("changeAtoBandBtoA"),
+    //     .fnk_name = "changeAtoBandBtoA",
     //     .description = "Turn 'a' into 'b', and 'b' into 'a'",
     //     .initial_definition = .{ .cases = &.{
     //         .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -78,69 +122,40 @@ pub const levels: []const Level = &.{
     //     }.generate_sample,
     // },
     .{
-        .fnk_name = &Sexpr.doLit("uppercase"),
-        .description = "Get the uppercase version of each atom",
+        .fnk_name = "changeLowercaseToNextCyclingOnC",
+        .description = "Shift 'a' into 'b', 'b' into 'c', 'c' into 'a'.",
         .initial_definition = .{ .cases = &.{
-            .{ .pattern = Vals.lowercase[0], .template = Vals.uppercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[1], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[2], .template = Vals.uppercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[3], .template = Vals.uppercase[3], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[4], .template = Vals.uppercase[4], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[5], .template = Vals.uppercase[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[2], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                const order: [Vals.lowercase.len]usize = .{ 2, 0, 3, 5, 4, 1 };
-                if (kommon.safeAt(usize, &order, k)) |k2| {
-                    return .{ .input = Vals.lowercase[k2], .expected = Vals.uppercase[k2] };
+                if (k < 3) {
+                    return .{ .input = Vals.lowercase[k], .expected = Vals.lowercase[@mod(k + 1, 3)] };
                 } else return null;
             }
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("lowercase"),
-        .description = "Get the lowercase version of each atom",
+        .fnk_name = "changeLowercaseToPrevCyclingOnC",
+        .description = "Shift back: c into b, b into a, a into c.",
         .initial_definition = .{ .cases = &.{
-            .{ .pattern = Vals.uppercase[0], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[1], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.uppercase[2], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.uppercase[3], .template = Vals.lowercase[3], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Sexpr.builtin.empty, .template = Vals.lowercase[4], .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.uppercase[5], .template = Vals.lowercase[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[2], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                const order: [Vals.lowercase.len]usize = .{ 2, 0, 3, 5, 4, 1 };
-                if (kommon.safeAt(usize, &order, k)) |k2| {
-                    return .{ .input = Vals.uppercase[k2], .expected = Vals.lowercase[k2] };
+                if (k < 3) {
+                    return .{ .input = Vals.lowercase[@mod(k + 1, 3)], .expected = Vals.lowercase[k] };
                 } else return null;
             }
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("isVowel"),
-        .description = "Return true if the input letter is a vowel",
-        .initial_definition = .{ .cases = &.{
-            .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.uppercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = Vals.lowercase[4], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
-            .{ .pattern = &Sexpr.doVar("other"), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
-        } },
-        .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                const both = Vals.lowercase ++ Vals.uppercase;
-                if (k < both.len) {
-                    return .{
-                        .input = both[k],
-                        .expected = Solutions.isVowel(both[k]),
-                    };
-                } else return null;
-            }
-        }.generate_sample,
-    },
-    .{
-        .fnk_name = &Sexpr.doLit("swap"),
-        .description = "Swap both values",
+        .fnk_name = "swap",
+        .description = "Swap both vau halves",
         .initial_definition = .{ .cases = &.{.{
             .pattern = &.doPair(Sexpr.builtin.empty, Vals.vars.down),
             .template = &.doPair(Vals.vars.down, Vals.vars.up),
@@ -176,8 +191,8 @@ pub const levels: []const Level = &.{
                 } else if (k < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                     const random = random_instance.random();
-                    const left = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, if (k < 10) 2 else 4);
-                    const right = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, if (k < 10) 2 else 4);
+                    const left = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 0, if (k < 10) 2 else 4);
+                    const right = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 0, if (k < 10) 2 else 4);
                     return .{
                         .input = try store(pool, Sexpr.doPair(left, right)),
                         .expected = try store(pool, Sexpr.doPair(right, left)),
@@ -187,7 +202,109 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("firstAsUppercase"),
+        .fnk_name = "shiftTopHalf",
+        .description = "Shift the pair's top half",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const k1 = @mod(k, Vals.abc.len);
+                const k2 = @divFloor(k, Vals.abc.len);
+                if (k2 < Vals.abc.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(Vals.abc[k1], Vals.abc[k2])),
+                        .expected = Vals.abc[@mod(k1 + 1, Vals.abc.len)],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "shiftInUnknownDirection",
+        .description = "Shift the lower half depending on the top",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const k1 = @mod(k, Vals.abc.len);
+                const k2 = @divFloor(k, Vals.abc.len);
+                if (k2 < Vals.abc.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(Vals.abc[k2], Vals.abc[k1])),
+                        .expected = Vals.abc[
+                            switch (k2) {
+                                0 => @mod(k1 + 1, Vals.abc.len),
+                                1 => k1,
+                                2 => @mod(k1 + Vals.abc.len - 1, Vals.abc.len),
+                                else => unreachable,
+                            }
+                        ],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "uppercase",
+        .description = "Get the uppercase version of each atom",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = Vals.lowercase[0], .template = Vals.uppercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[1], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[2], .template = Vals.uppercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[3], .template = Vals.uppercase[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[4], .template = Vals.uppercase[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[5], .template = Vals.uppercase[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const order: [Vals.lowercase.len]usize = .{ 2, 0, 3, 5, 4, 1 };
+                if (kommon.safeAt(usize, &order, k)) |k2| {
+                    return .{ .input = Vals.lowercase[k2], .expected = Vals.uppercase[k2] };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "lowercase",
+        .description = "Get the lowercase version of each atom",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = Vals.uppercase[0], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[1], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.uppercase[2], .template = Vals.uppercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.uppercase[3], .template = Vals.lowercase[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Sexpr.builtin.empty, .template = Vals.lowercase[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.uppercase[5], .template = Vals.lowercase[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const order: [Vals.lowercase.len]usize = .{ 2, 0, 3, 5, 4, 1 };
+                if (kommon.safeAt(usize, &order, k)) |k2| {
+                    return .{ .input = Vals.uppercase[k2], .expected = Vals.lowercase[k2] };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "isVowel",
+        .description = "Return true if the input letter is a vowel",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.uppercase[0], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = Vals.lowercase[4], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &Sexpr.doVar("other"), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const both = Vals.lowercase ++ Vals.uppercase;
+                if (k < both.len) {
+                    return .{
+                        .input = both[k],
+                        .expected = Solutions.isVowel(both[k]),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "firstAsUppercase",
         .description = "Get the pair's top half in uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
@@ -217,8 +334,8 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("startWithB"),
-        .description = "Check if pair's top half is a B.",
+        .fnk_name = "startWithB",
+        .description = "Check if the top half is 'b'",
         .initial_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("left"), Sexpr.builtin.empty),
@@ -226,13 +343,19 @@ pub const levels: []const Level = &.{
                 .fnk_name = Sexpr.builtin.empty,
                 .next = &.{
                     .{
+                        .pattern = Vals.lowercase[0],
+                        .template = Sexpr.builtin.false,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                    .{
                         .pattern = Vals.lowercase[1],
                         .template = Sexpr.builtin.true,
                         .fnk_name = Sexpr.builtin.empty,
                         .next = null,
                     },
                     .{
-                        .pattern = &.doVar("else"),
+                        .pattern = Vals.lowercase[2],
                         .template = Sexpr.builtin.false,
                         .fnk_name = Sexpr.builtin.empty,
                         .next = null,
@@ -242,7 +365,7 @@ pub const levels: []const Level = &.{
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                const both = Vals.lowercase ++ Vals.uppercase;
+                const both = Vals.abc;
                 const k1 = @mod(k, both.len);
                 const k2 = @divFloor(k, both.len);
                 if (k2 < both.len) {
@@ -255,7 +378,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("uppercaseIfVowel"),
+        .fnk_name = "uppercaseIfVowel",
         .description = "Change only the vowels to uppercase.",
         .initial_definition = .{ .cases = &.{
             .{
@@ -294,7 +417,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("withBottomUppercased"),
+        .fnk_name = "withBottomUppercased",
         .description = "Change the bottom half to be uppercase.",
         .initial_definition = null,
         // .{ .cases = &.{
@@ -345,7 +468,57 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("pairToUppercase"),
+        .fnk_name = "withBottomShifted",
+        .description = "Same pair but with the lower half shifted",
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = &.doPair(&.doVar("upper"), &.doVar("lower")),
+                .template = &.doVar("lower"),
+                .fnk_name = &.doLit("changeLowercaseToNextCyclingOnC"),
+                .next = &.{
+                    .{
+                        .pattern = &.doVar("result"),
+                        .template = &.doPair(&.doVar("upper"), &.doVar("result")),
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                },
+            },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                const k1 = @mod(k, values.len);
+                const k2 = @divFloor(k, values.len);
+                if (k2 < values.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(values[k1], values[k2])),
+                        .expected = try store(pool, Sexpr.doPair(values[k1], values[@mod(k2 + 1, values.len)])),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "shiftPair",
+        .description = "Shift both halves",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                const k1 = @mod(k, values.len);
+                const k2 = @divFloor(k, values.len);
+                if (k2 < values.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(values[k1], values[k2])),
+                        .expected = try store(pool, Sexpr.doPair(values[@mod(k1 + 1, values.len)], values[@mod(k2 + 1, values.len)])),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "pairToUppercase",
         .description = "Make both halves into uppercase.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -361,9 +534,8 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-
     .{
-        .fnk_name = &Sexpr.doLit("hasSomeB"),
+        .fnk_name = "hasSomeB",
         // intro to recursion
         .description = "Check if the input has a 'B' anywhere.",
         .initial_definition = .{ .cases = &.{
@@ -388,20 +560,28 @@ pub const levels: []const Level = &.{
         } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                if (k < 100) {
-                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
-                    const random = random_instance.random();
-                    const input = try randomSexpr(pool, &Vals.lowercase, random, 5);
-                    return .{
-                        .input = input,
-                        .expected = Sexpr.fromBool(Helpers.hasSomeB(input)),
-                    };
-                } else return null;
+                switch (k) {
+                    0...2 => return .{
+                        .input = Vals.abc[k],
+                        .expected = Sexpr.fromBool(Helpers.hasSomeB(Vals.abc[k])),
+                    },
+                    3...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        const use_b = @mod(k, 2) == 1;
+                        const input = try randomSexpr(pool, if (use_b) Vals.abc else &.{ Vals.lowercase[0], Vals.lowercase[2] }, random, 1, if (k < 6) 1 else 5);
+                        return .{
+                            .input = input,
+                            .expected = Sexpr.fromBool(Helpers.hasSomeB(input)),
+                        };
+                    },
+                    else => return null,
+                }
             }
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("second"),
+        .fnk_name = "second",
         // simplest intro to lists
         .description = "Get the second element of the list.",
         .initial_definition = .{ .cases = &.{
@@ -476,9 +656,9 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("listHasSomeB"),
+        .fnk_name = "listHasSomeB",
         // real intro to lists
-        .description = "Check if the given list has a plain 'B' element.",
+        .description = "Check if the given list has a 'b' element.",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
@@ -507,7 +687,7 @@ pub const levels: []const Level = &.{
                         const v = if (random.float(f32) < 0.05)
                             Vals.lowercase[1]
                         else
-                            try randomSexpr(pool, &Vals.lowercase, random, 3);
+                            try randomSexpr(pool, &Vals.lowercase, random, 0, 3);
                         has_b = has_b or Helpers.isB(v);
                         input = try store(pool, Sexpr.doPair(v, input));
                     }
@@ -520,7 +700,102 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("uppercaseEachElement"),
+        .fnk_name = "last",
+        // simplest intro to lists
+        .description = "Get the last element of the list.",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                switch (k) {
+                    0...3 => return .{
+                        .input = try toList(pool, Vals.lowercase[0 .. 2 + k]),
+                        .expected = Vals.lowercase[1 + k],
+                    },
+                    4...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        const list = try randomList(pool, &Vals.lowercase, random, random.intRangeAtMost(usize, 1, 12));
+                        return .{
+                            .input = list,
+                            .expected = Helpers.last(list),
+                        };
+                    },
+                    else => return null,
+                }
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "shiftAll",
+        .description = "Shift each letter",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    const input = try randomSexpr(pool, values, random, if (k < 10) 1 else 2, 5);
+                    return .{
+                        .input = input,
+                        .expected = try Helpers.shiftAll(pool, input),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "biggestHalf",
+        .description = "Return the half with more letters",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    while (true) {
+                        const left = try randomSexpr(pool, values, random, 1, if (k < 5) 2 else 5);
+                        const right = try randomSexpr(pool, values, random, 1, if (k < 5) 2 else 5);
+                        const ln = Helpers.atomsCount(left);
+                        const rn = Helpers.atomsCount(right);
+                        if (ln == rn) continue;
+                        return .{
+                            .input = try store(pool, .doPair(left, right)),
+                            .expected = if (ln > rn) left else right,
+                        };
+                    }
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "deepestHalf",
+        .description = "Return the half with deeper nesting",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    while (true) {
+                        const left = try randomSexpr(pool, values, random, 1, if (k < 5) 3 else 5);
+                        const right = try randomSexpr(pool, values, random, 1, if (k < 5) 3 else 5);
+                        const ln = Helpers.maxDepth(left);
+                        const rn = Helpers.maxDepth(right);
+                        if (ln == rn) continue;
+                        return .{
+                            .input = try store(pool, .doPair(left, right)),
+                            .expected = if (ln > rn) left else right,
+                        };
+                    }
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "uppercaseEachElement",
         .description = "Uppercase each element in the list.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -552,7 +827,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("hasAnyVowel"),
+        .fnk_name = "hasAnyVowel",
         .description = "Return true if the list contains any vowel",
         .initial_definition = null,
         .generate_sample = struct {
@@ -584,7 +859,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("changeCase"),
+        .fnk_name = "changeCase",
         .description = "Change the casing of the given letter.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -604,7 +879,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("letterToBothCases"),
+        .fnk_name = "letterToBothCases",
         .description = "Get the lowercase and uppercase versions of the given letter.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -625,7 +900,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("reverse"),
+        .fnk_name = "reverse",
         .description = "Reverse the given list.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -670,8 +945,8 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = &Sexpr.doLit("mostCommonBoolean"),
-        .description = "Return the most common element of the list.",
+        .fnk_name = "mostCommonBoolean",
+        .description = "Return the most common element",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
@@ -732,17 +1007,158 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
-};
-
-// TODO(game): include these
-pub const future_levels: []const Level = &.{
     .{
-        .fnk_name = &Sexpr.doLit("brainfuck"),
+        .fnk_name = "findSecondLongest",
+        .description = "Return the second-longest list",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    var elements_count = 3 + random.uintLessThan(usize, if (sample_index < 5) 1 else 12);
+                    // long samples
+                    if (sample_index > 90) elements_count += 20;
+                    const counts = try arena.alloc(usize, elements_count);
+                    counts[0] = 1 + random.uintLessThan(usize, if (sample_index < 3) 1 else 10);
+                    for (counts[1..], 0..) |*dst, n| {
+                        dst.* = counts[n] + 1 + random.uintLessThan(usize, 6);
+                    }
+                    const elements = try arena.alloc(*const Sexpr, elements_count);
+                    for (counts, elements) |count, *dst| {
+                        dst.* = try randomList(pool, &Vals.lowercase, random, count);
+                    }
+                    const result = elements[elements_count - 2];
+                    random.shuffle(*const Sexpr, elements);
+                    return .{
+                        .input = try toList(pool, elements),
+                        .expected = result,
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        // TODO(game): change to "secondMostCommonValue" to avoid boring solutions, maybe
+        .fnk_name = "secondMostCommonLetter",
+        .description = "Return the second most common element of the list.",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const a, const b, const c, _, _, _ = Vals.lowercase;
+                const premade_samples: []const struct { input: []const *const Sexpr, expected: *const Sexpr } = &.{
+                    .{
+                        .input = &.{ a, b, b },
+                        .expected = a,
+                    },
+                    .{
+                        .input = &.{ a, b, a },
+                        .expected = b,
+                    },
+                    .{
+                        .input = &.{ a, b, c, b, a, b },
+                        .expected = a,
+                    },
+                };
+                if (sample_index < premade_samples.len) {
+                    return .{
+                        .input = try toList(pool, premade_samples[sample_index].input),
+                        .expected = premade_samples[sample_index].expected,
+                    };
+                } else if (sample_index < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    const rnd: kommon.math.Random = .init(random);
+                    var max_count = 3 + random.uintLessThan(usize, 20);
+                    // long samples
+                    if (sample_index > 90) max_count += 50;
+                    const MAX_KINDS = Vals.lowercase.len;
+                    const n_kinds = rnd.uintBetween(usize, 2, MAX_KINDS);
+                    max_count = @max(max_count, @divExact(n_kinds * (n_kinds + 1), 2));
+                    var counts_buf: [MAX_KINDS]usize = @splat(1);
+                    const counts = counts_buf[0..n_kinds];
+                    const count = randomCounts(counts, max_count, random);
+                    const all_elements = try arena.alloc(*const Sexpr, count);
+                    var mapping_buf = Vals.lowercase;
+                    random.shuffle(*const Sexpr, &mapping_buf);
+                    const mapping = mapping_buf[0..n_kinds];
+                    var n: usize = 0;
+                    for (counts, 0..) |k_count, k| {
+                        @memset(all_elements[n..][0..k_count], mapping[k]);
+                        n += k_count;
+                    }
+                    assert(n == count);
+                    random.shuffle(*const Sexpr, all_elements);
+                    return .{
+                        .input = try toList(pool, all_elements),
+                        .expected = mapping[1],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "calculator",
+        .description = "Calculator!",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const premade_samples: []const struct { input: []const u8, expected: []const u8 } = &.{
+                    .{
+                        .input = "(+ 2 . 2)",
+                        .expected = "4",
+                    },
+                    .{
+                        .input = "(- 5 . 3)",
+                        .expected = "2",
+                    },
+                    .{
+                        .input = "(* 2 . 3)",
+                        .expected = "6",
+                    },
+                    .{
+                        .input = "(* (+ 1 . 2) . (+ 1 . 2))",
+                        .expected = "9",
+                    },
+                    .{
+                        .input = "(* (- 1 . 3) . (- 2 . 5))",
+                        .expected = "6",
+                    },
+                };
+                if (sample_index < premade_samples.len) {
+                    return .{
+                        .input = try core.parsing.parseSingleSexpr(premade_samples[sample_index].input, pool),
+                        .expected = try core.parsing.parseSingleSexpr(premade_samples[sample_index].expected, pool),
+                    };
+                } else if (sample_index < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    var loop_fuel: usize = 10_000;
+                    const tree, const result = while (loop_fuel > 0) : (loop_fuel -= 1) {
+                        const tree = try randomCalculatorTree(pool, &Vals.calculator_ops, &Vals.naive_numbers, random, 1, 5);
+                        const result = evaluateCalculatorTree(tree) catch |err| switch (err) {
+                            error.Overflow => -1,
+                            error.BadCalculatorTree => unreachable,
+                        };
+                        if (kommon.math.inRangeClosed(result, 1, 9)) {
+                            break .{ tree, result };
+                        }
+                    } else return generate_sample(0, pool, undefined);
+                    return .{
+                        .input = tree,
+                        .expected = toNaiveNumber(result) catch unreachable,
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "brainfuck",
         .description = "Implement a BrainF*ck interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                // TODO: infinite samples
+                // TODO(game): infinite samples
                 const prev = Vals.BF.prev;
                 const next = Vals.BF.next;
                 const inc = Vals.BF.inc;
@@ -753,8 +1169,8 @@ pub const future_levels: []const Level = &.{
                 const end = Vals.BF.end;
                 const premade_samples: []const struct {
                     code: []const *const Sexpr,
-                    stdin: []const usize,
-                    output: []const usize,
+                    stdin: []const i32,
+                    output: []const i32,
                 } = &.{ .{
                     .code = &.{ in, in, out, in, out },
                     .stdin = &.{ 1, 2, 3, 4 },
@@ -787,17 +1203,109 @@ pub const future_levels: []const Level = &.{
                     return .{
                         .input = try store(pool, Sexpr.doPair(
                             try toList(pool, sample.code),
-                            try toListOfPeano(pool, sample.stdin),
+                            try kommon.meta.removeErrors(
+                                toListOfNaiveNumbers(pool, sample.stdin),
+                                .{error.UnrepresentableNaiveNumber},
+                            ),
                         )),
-                        .expected = try toListOfPeano(pool, sample.output),
+                        .expected = try kommon.meta.removeErrors(toListOfNaiveNumbers(pool, sample.output), .{error.UnrepresentableNaiveNumber}),
                     };
                 } else return null;
             }
         }.generate_sample,
     },
     .{
+        .fnk_name = "meta_constant",
+        .description = "Build a strand that always returns the given input",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                const value = if (k < 3)
+                    Vals.abc[k]
+                else if (k < 6)
+                    try store(pool, Sexpr.doPair(Vals.abc[k - 3], Vals.abc[@mod(k, 3)]))
+                else if (k < 20)
+                    try randomSexpr(pool, Vals.abc, random, 2, 4)
+                else
+                    return null;
+                const result = try core.sexprFromCases(&.{
+                    .{
+                        .pattern = Sexpr.builtin.empty,
+                        .template = value,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    },
+                }, pool);
+                return .{ .input = value, .expected = result };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "meta_hardcoded_map",
+        .description = "Build a strand for the given hardcoded map",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                var pairs: std.ArrayListUnmanaged(Sample) = .empty;
+                switch (sample_index) {
+                    0 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                .input = Vals.abc[k],
+                                .expected = Vals.abc[@mod(k + 1, 3)],
+                            });
+                    },
+                    1 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                .input = Vals.abc[@mod(k + 1, 3)],
+                                .expected = Vals.abc[k],
+                            });
+                    },
+                    2 => {
+                        for (Vals.lowercase, Vals.uppercase) |a, b|
+                            try pairs.append(arena, .{
+                                .input = a,
+                                .expected = b,
+                            });
+                    },
+                    3...100 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                        const random = random_instance.random();
+                        const n_things = random.intRangeLessThan(usize, 2, if (sample_index < 50) 6 else 20);
+                        try pairs.ensureUnusedCapacity(arena, n_things);
+                        for (0..n_things) |_| {
+                            try pairs.append(arena, .{
+                                .input = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                                .expected = try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                            });
+                        }
+                    },
+                    else => return null,
+                }
+                const cases = try arena.alloc(core.MatchCaseDefinition, pairs.items.len);
+                const inputs = try arena.alloc(*const Sexpr, pairs.items.len);
+                for (pairs.items, cases, inputs) |pair, *case, *input| {
+                    input.* = try store(pool, Sexpr.doPair(pair.input, pair.expected));
+                    case.* = .{
+                        .pattern = pair.input,
+                        .template = pair.expected,
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    };
+                }
+                return .{
+                    .input = try toList(pool, inputs),
+                    .expected = try core.sexprFromCases(cases, pool),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
         // TODO
-        .fnk_name = &Sexpr.doLit("interpreter"),
+        .fnk_name = "interpreter",
         .description = "Implement a Vaulogy interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
@@ -831,11 +1339,11 @@ pub const future_levels: []const Level = &.{
                 ));
                 return .{
                     .input = try store(pool, Sexpr.doPair(
-                        input,
                         try store(pool, Sexpr.doPair(
                             fnk_name,
-                            try toList(pool, &.{fnk_def_sexpr}),
+                            input,
                         )),
+                        try toList(pool, &.{fnk_def_sexpr}),
                     )),
                     .expected = output,
                 };
@@ -870,11 +1378,26 @@ fn toPeano(pool: *SexprPool, n: usize) !*const Sexpr {
     return result;
 }
 
+fn toNaiveNumber(n: i32) error{UnrepresentableNaiveNumber}!*const Sexpr {
+    if (kommon.math.inRangeClosed(n, 1, 9)) {
+        return Vals.naive_numbers[@intCast(n - 1)];
+    } else return error.UnrepresentableNaiveNumber;
+}
+
 fn toListOfPeano(pool: *SexprPool, ns: []const usize) !*const Sexpr {
     var result = Sexpr.builtin.nil;
     for (0..ns.len) |k| {
         const n = ns[ns.len - k - 1];
         result = try store(pool, Sexpr.doPair(try toPeano(pool, n), result));
+    }
+    return result;
+}
+
+fn toListOfNaiveNumbers(pool: *SexprPool, ns: []const i32) !*const Sexpr {
+    var result = Sexpr.builtin.nil;
+    for (0..ns.len) |k| {
+        const n = ns[ns.len - k - 1];
+        result = try store(pool, Sexpr.doPair(try toNaiveNumber(n), result));
     }
     return result;
 }
@@ -894,19 +1417,154 @@ fn randomChoice(options: []const *const Sexpr, random: std.Random) *const Sexpr 
     return options[random.uintLessThan(usize, options.len)];
 }
 
-fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random, max_depth: usize) !*const Sexpr {
-    if (max_depth == 0 or random.float(f32) < 0.3) {
+fn randomSexpr(pool: *SexprPool, atoms: []const *const Sexpr, random: std.Random, min_depth: usize, max_depth: usize) !*const Sexpr {
+    assert(min_depth <= max_depth);
+    if (max_depth == 0 or (min_depth == 0 and random.float(f32) < 0.3)) {
         return randomChoice(atoms, random);
     } else {
         return try store(pool, Sexpr.doPair(
-            try randomSexpr(pool, atoms, random, max_depth - 1),
-            try randomSexpr(pool, atoms, random, max_depth - 1),
+            try randomSexpr(pool, atoms, random, min_depth -| 1, max_depth - 1),
+            try randomSexpr(pool, atoms, random, min_depth -| 1, max_depth - 1),
         ));
+    }
+}
+
+fn randomCalculatorTree(pool: *SexprPool, ops: []const *const Sexpr, leafs: []const *const Sexpr, random: std.Random, min_depth: usize, max_depth: usize) !*const Sexpr {
+    assert(min_depth <= max_depth);
+    if (max_depth == 0 or (min_depth == 0 and random.float(f32) < 0.3)) {
+        return randomChoice(leafs, random);
+    } else {
+        return try store(pool, Sexpr.doPair(
+            randomChoice(ops, random),
+            try store(pool, Sexpr.doPair(
+                try randomCalculatorTree(pool, ops, leafs, random, min_depth -| 1, max_depth - 1),
+                try randomCalculatorTree(pool, ops, leafs, random, min_depth -| 1, max_depth - 1),
+            )),
+        ));
+    }
+}
+
+fn evaluateCalculatorTree(tree: *const Sexpr) error{ BadCalculatorTree, Overflow }!i32 {
+    const on_error = error.BadCalculatorTree;
+    switch (tree.*) {
+        else => return on_error,
+        .atom_lit => |atom| {
+            const n = std.fmt.parseInt(i32, atom.value, 10) catch return on_error;
+            return n;
+        },
+        .pair => |pair| {
+            const op: enum { plus, minus, multiply } = if (pair.left.isTheLit("+"))
+                .plus
+            else if (pair.left.isTheLit("-"))
+                .minus
+            else if (pair.left.isTheLit("*"))
+                .multiply
+            else
+                return on_error;
+            if (!pair.right.isPair()) return on_error;
+            const a = try evaluateCalculatorTree(pair.right.pair.left);
+            const b = try evaluateCalculatorTree(pair.right.pair.right);
+            return switch (op) {
+                .plus => try std.math.add(i32, a, b),
+                .minus => try std.math.sub(i32, a, b),
+                .multiply => try std.math.mul(i32, a, b),
+            };
+        },
+    }
+}
+
+/// fills output with a strictly-decreasing list of numbers, returns the actual sum
+fn randomCounts(output: []usize, sum: usize, random: std.Random) usize {
+    const n = output.len;
+    assert(n > 0);
+
+    // Need at least 1+2+...+n = n*(n+1)/2 for strictly decreasing positive integers
+    const min_sum = n * (n + 1) / 2;
+    if (sum < min_sum) {
+        std.debug.panic("Sum {d} is too small to create strictly decreasing positive integers with len {d}", .{ sum, n });
+    }
+
+    // Generate random decreasing sequence using stars and bars with constraints
+    var remaining_sum = sum;
+
+    // Generate values from largest to smallest
+    for (0..n) |i| {
+        const remaining_positions = n - i;
+
+        // Minimum value needed for remaining positions if strictly decreasing
+        // If current position is x, remaining need at least (remaining_positions-1), (remaining_positions-2), ..., 1
+        const min_for_remaining = if (remaining_positions > 1)
+            (remaining_positions - 1) * remaining_positions / 2
+        else
+            0;
+
+        // Maximum possible for current position (keeping remaining_positions-1 strictly decreasing values)
+        // Need to ensure we can fit decreasing numbers after this
+        const max_current = remaining_sum - min_for_remaining;
+
+        // Minimum possible for current position (must be at least remaining_positions to maintain strictly decreasing)
+        // If this is the last position, minimum is 1
+        const min_current = if (i == n - 1) 1 else remaining_positions;
+
+        // If this isn't the first position, must be less than previous value
+        const actual_max = if (i > 0) @min(max_current, output[i - 1] - 1) else max_current;
+
+        // Generate random value within bounds
+        if (actual_max < min_current) {
+            @panic("Failed to generate valid sequence - constraints too tight");
+        }
+
+        const value = if (actual_max == min_current)
+            min_current
+        else
+            random.intRangeLessThan(usize, min_current, actual_max + 1);
+
+        output[i] = value;
+        remaining_sum -= value;
+    }
+
+    // Verify the result
+    var sum_check: usize = 0;
+    for (output) |v| {
+        sum_check += v;
+    }
+    assert(sum_check <= sum);
+    assert(sum_check + remaining_sum == sum);
+
+    // Verify strictly decreasing
+    for (1..n) |i| {
+        assert(output[i - 1] > output[i]);
+    }
+
+    return sum - remaining_sum;
+}
+
+test "randomCounts" {
+    var random_instance: std.Random.DefaultPrng = .init(std.testing.random_seed);
+    const random = random_instance.random();
+    const n_kinds = 1 + random.uintAtMost(usize, 10);
+    const output = try std.testing.allocator.alloc(usize, n_kinds);
+    defer std.testing.allocator.free(output);
+    const count: usize = @divExact(n_kinds * (n_kinds + 1), 2) + random.uintAtMost(usize, 50);
+    const actual_count = randomCounts(output, count, random);
+
+    const total_sum = blk: {
+        var r: usize = 0;
+        for (output) |x| r += x;
+        break :blk r;
+    };
+    try std.testing.expectEqual(actual_count, total_sum);
+    try std.testing.expect(actual_count <= count);
+
+    for (output[0 .. output.len - 1], output[1..]) |a, b| {
+        try std.testing.expect(a > b);
     }
 }
 
 const Vals = struct {
     const peano_succ: *const Sexpr = &Sexpr.doLit("N");
+
+    const abc = lowercase[0..3];
 
     const lowercase: [6]*const Sexpr = .{
         &Sexpr.doLit("a"),
@@ -923,6 +1581,24 @@ const Vals = struct {
         &Sexpr.doLit("D"),
         &Sexpr.doLit("E"),
         &Sexpr.doLit("F"),
+    };
+
+    const naive_numbers: [9]*const Sexpr = .{
+        &Sexpr.doLit("1"),
+        &Sexpr.doLit("2"),
+        &Sexpr.doLit("3"),
+        &Sexpr.doLit("4"),
+        &Sexpr.doLit("5"),
+        &Sexpr.doLit("6"),
+        &Sexpr.doLit("7"),
+        &Sexpr.doLit("8"),
+        &Sexpr.doLit("9"),
+    };
+
+    const calculator_ops: [3]*const Sexpr = .{
+        &Sexpr.doLit("+"),
+        &Sexpr.doLit("-"),
+        &Sexpr.doLit("*"),
     };
 
     const vars: struct {

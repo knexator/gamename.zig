@@ -85,11 +85,13 @@ const Change = struct { pos: IVec2, t: i32, time_reversed: bool };
 
 pub fn init(
     dst: *GameState,
-    gpa: std.mem.Allocator,
-    gl: Gl,
-    loaded_images: std.EnumArray(Images, *const anyopaque),
-    random_seed: u64,
+    runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+    comptime _: kommon.engine.InitComptimeParamsFor(GameState),
 ) !void {
+    const gpa = runtime_params.gpa;
+    const gl = runtime_params.gl;
+    const loaded_images = runtime_params.loaded_images;
+    const random_seed = runtime_params.random_seed;
     dst.* = .{
         .rnd_instance = .init(random_seed),
         .canvas = try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}),
@@ -119,8 +121,8 @@ pub fn init(
             \\}
         ,
             .{ .attribs = &.{
-                .{ .name = "a_position", .kind = .Vec2 },
-                .{ .name = "a_texcoord", .kind = .Vec2 },
+                .fromType(Vec2, "a_position"),
+                .fromType(Vec2, "a_texcoord"),
             } },
             &.{},
         ),

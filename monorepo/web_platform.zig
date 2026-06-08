@@ -50,10 +50,14 @@ const js = struct {
         extern fn preloadImageFromBase64Data(base64_ptr: [*]const u8, base64_len: usize) usize;
         extern fn imageWidth(image_id: usize) usize;
         extern fn imageHeight(image_id: usize) usize;
+        extern fn activeFramebufferToImage(width: usize, height: usize) usize;
+        extern fn downloadImage(image_id: usize) void;
+        extern fn copyImage(image_id: usize) void;
     };
 
     // current direction: closely matching the webgl2 API
     pub const webgl2 = struct {
+        extern fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) void;
         extern fn colorMask(red: GLboolean, green: GLboolean, blue: GLboolean, alpha: GLboolean) void;
         extern fn clearColor(r: f32, g: f32, b: f32, a: f32) void;
         extern fn clearStencil(s: GLint) void;
@@ -157,7 +161,24 @@ const js = struct {
             /// index of a ImageData, HTMLImageElement, HTMLCanvasElement, HTMLVideoElement, or ImageBitmap.
             pixels: usize,
         ) void;
+        extern fn texImage2D_withSize(
+            target: TextureBindPointSpecific,
+            level: GLint,
+            // TODO
+            internalformat: enum(GLenum) { RGBA = 0x1908, RGB = 0x1907 },
+            width: GLsizei,
+            height: GLsizei,
+            border: GLint,
+            // TODO
+            format: enum(GLenum) { RGBA = 0x1908, RGB = 0x1907 },
+            type: enum(GLenum) { UNSIGNED_BYTE = 0x1401 },
+            /// index of a ImageData, HTMLImageElement, HTMLCanvasElement, HTMLVideoElement, or ImageBitmap.
+            pixels: usize,
+        ) void;
         extern fn generateMipmap(target: TextureBindPointGeneral) void;
+        extern fn createFramebuffer() Framebuffer;
+        extern fn bindFramebuffer(target: FramebufferBindPoint, framebuffer: Framebuffer) void;
+        extern fn framebufferTexture2D(target: FramebufferBindPoint, attachment: FramebufferTextureAttachmentPoint, texttarget: TextureBindPointSpecific, texture: Texture, level: GLint) void;
         extern fn stencilFunc(
             func: enum(GLenum) {
                 // TODO
@@ -254,6 +275,7 @@ const js = struct {
         const Buffer = enum(GLObject) { null = 0, _ };
         const UniformLocation = enum(GLObject) { _ };
         const Texture = enum(GLObject) { null = 0, _ };
+        const Framebuffer = enum(GLObject) { null = 0, _ };
 
         pub const Capability = enum(GLenum) {
             BLEND = 0x0BE2,
@@ -376,6 +398,34 @@ const js = struct {
             // TEXTURE_CUBE_MAP_NEGATIVE_Z = 0x0000,
         };
 
+        pub const FramebufferBindPoint = enum(GLenum) {
+            FRAMEBUFFER = 0x8D40,
+            READ_FRAMEBUFFER = 0x8CA8,
+            DRAW_FRAMEBUFFER = 0x8CA9,
+        };
+
+        pub const FramebufferTextureAttachmentPoint = enum(GLenum) {
+            COLOR_ATTACHMENT0 = 0x8CE0,
+            DEPTH_ATTACHMENT = 0x8D00,
+            STENCIL_ATTACHMENT = 0x8D20,
+            DEPTH_STENCIL_ATTACHMENT = 0x821A,
+            COLOR_ATTACHMENT1 = 0x8CE1,
+            COLOR_ATTACHMENT2 = 0x8CE2,
+            COLOR_ATTACHMENT3 = 0x8CE3,
+            COLOR_ATTACHMENT4 = 0x8CE4,
+            COLOR_ATTACHMENT5 = 0x8CE5,
+            COLOR_ATTACHMENT6 = 0x8CE6,
+            COLOR_ATTACHMENT7 = 0x8CE7,
+            COLOR_ATTACHMENT8 = 0x8CE8,
+            COLOR_ATTACHMENT9 = 0x8CE9,
+            COLOR_ATTACHMENT10 = 0x8CEA,
+            COLOR_ATTACHMENT11 = 0x8CEB,
+            COLOR_ATTACHMENT12 = 0x8CEC,
+            COLOR_ATTACHMENT13 = 0x8CED,
+            COLOR_ATTACHMENT14 = 0x8CEE,
+            COLOR_ATTACHMENT15 = 0x8CEF,
+        };
+
         pub const TexParameter = enum(GLenum) {
             TEXTURE_MAG_FILTER = 0x2800,
             TEXTURE_MIN_FILTER = 0x2801,
@@ -430,6 +480,14 @@ const js = struct {
         /// returns bytes readed
         extern fn readInto(file_index: usize, dst_ptr: [*]u8, dst_len: usize) usize;
     };
+
+    pub const text_input = struct {
+        // TODO(platform): rect
+        extern fn startTextInput() void;
+        extern fn stopTextInput() void;
+        /// returns the amount of bytes filled
+        extern fn consumeTextInput(buf_ptr: [*]u8, buf_len: usize) usize;
+    };
 };
 
 const js_better = struct {
@@ -464,6 +522,16 @@ const js_better = struct {
                 js.images.imageWidth(image_id),
                 js.images.imageHeight(image_id),
             );
+        }
+
+        pub fn activeFramebufferToImage(res: UVec2) usize {
+            return js.images.activeFramebufferToImage(res.x, res.y);
+        }
+        pub fn downloadImage(image_id: usize) void {
+            return js.images.downloadImage(image_id);
+        }
+        pub fn copyImage(image_id: usize) void {
+            return js.images.copyImage(image_id);
         }
     };
 
@@ -504,6 +572,25 @@ const js_better = struct {
             js.storage.setItem(key.ptr, key.len, value.ptr, value.len);
         }
     };
+
+    pub const text_input = struct {
+        pub fn startTextInput(rect_in_0101_coords: ?Rect) void {
+            // TODO(platform): use rect
+            _ = rect_in_0101_coords;
+            js.text_input.startTextInput();
+        }
+
+        pub fn stopTextInput() void {
+            js.text_input.stopTextInput();
+        }
+
+        pub fn consumeTextInput() ?std.BoundedArray(u8, 4) {
+            var result: std.BoundedArray(u8, 4) = .{};
+            result.len = js.text_input.consumeTextInput(&result.buffer, result.buffer.len);
+            if (result.len == 0) return null;
+            return result;
+        }
+    };
 };
 
 const GameState = @import("GameState");
@@ -534,6 +621,9 @@ var web_platform: PlatformGives = .{
     .keyboard = undefined,
     .setKeyChanged = setKeyChanged,
     .setButtonChanged = setButtonChanged,
+    .startTextInput = js_better.text_input.startTextInput,
+    .stopTextInput = js_better.text_input.stopTextInput,
+    .consumeTextInput = js_better.text_input.consumeTextInput,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,
@@ -543,6 +633,13 @@ var web_platform: PlatformGives = .{
     .enqueueSamples = js_better.audio.enqueueSamples,
     .queuedSeconds = js_better.audio.queuedSeconds,
     .gl = web_gl.vtable,
+    .downloadActiveFramebuffer = struct {
+        fn anon(resolution: UVec2) void {
+            const image_id = js_better.images.activeFramebufferToImage(resolution);
+            js_better.images.downloadImage(image_id);
+            js_better.images.copyImage(image_id);
+        }
+    }.anon,
     .downloadAsFile = struct {
         fn anon(filename: []const u8, contents: []const u8) void {
             return js_better.storage.downloadAsFile(filename, .txt, contents);
@@ -640,6 +737,8 @@ const web_gl = struct {
         .useRenderable = useRenderable,
         .useRenderableWithExistingData = useRenderableWithExistingData,
         .buildTexture2D = buildTexture2D,
+        .buildRendertarget = buildRendertarget,
+        .setRendertarget = setRendertarget,
         .buildInstancedRenderable = buildInstancedRenderable,
         .useInstancedRenderable = useInstancedRenderable,
         .loadTextureDataFromBase64 = loadTextureDataFromBase64,
@@ -717,7 +816,7 @@ const web_gl = struct {
     }
 
     pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) Gl.Texture {
-        const image_id: *const usize = @alignCast(@ptrCast(data));
+        const image_id: *const usize = @ptrCast(@alignCast(data));
 
         // TODO
         // const has_alpha = ...;
@@ -744,6 +843,48 @@ const web_gl = struct {
         }
 
         return .{ .id = @intFromEnum(texture), .resolution = js_better.images.resolution(image_id.*) };
+    }
+
+    pub fn buildRendertarget(resolution: UVec2, pixelart: bool) Gl.Texture {
+        const has_alpha = false;
+
+        const framebuffer = js.webgl2.createFramebuffer();
+        js.webgl2.bindFramebuffer(.FRAMEBUFFER, framebuffer);
+
+        const texture = js.webgl2.createTexture();
+        js.webgl2.bindTexture(.TEXTURE_2D, texture);
+        js.webgl2.texImage2D_withSize(
+            .TEXTURE_2D,
+            0,
+            if (has_alpha) .RGBA else .RGB,
+            @intCast(resolution.x),
+            @intCast(resolution.y),
+            0,
+            if (has_alpha) .RGBA else .RGB,
+            .UNSIGNED_BYTE,
+            0,
+        );
+
+        if (pixelart) {
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .NEAREST);
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST);
+        } else {
+            js.webgl2.generateMipmap(.TEXTURE_2D);
+            // TODO: let user choose quality
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MAG_FILTER, .LINEAR);
+            // js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .NEAREST_MIPMAP_LINEAR);
+            js.webgl2.texParameteri(.TEXTURE_2D, .TEXTURE_MIN_FILTER, .LINEAR_MIPMAP_LINEAR);
+        }
+
+        js.webgl2.framebufferTexture2D(.FRAMEBUFFER, .COLOR_ATTACHMENT0, .TEXTURE_2D, texture, 0);
+
+        return .{ .id = @intFromEnum(framebuffer), .resolution = resolution };
+    }
+
+    pub fn setRendertarget(rendertarget: ?Gl.Texture) void {
+        js.webgl2.bindFramebuffer(.FRAMEBUFFER, if (rendertarget) |r| @enumFromInt(r.id) else .null);
+        const resolution: UVec2 = if (rendertarget) |r| r.resolution else js_better.canvas.getSize();
+        js.webgl2.viewport(0, 0, @intCast(resolution.x), @intCast(resolution.y));
     }
 
     pub fn buildRenderable(
@@ -1130,40 +1271,32 @@ export fn init(random_seed: u32) void {
     tweakable_floats = .init(web_platform.gpa);
     tweakable_textures = .init(web_platform.gpa);
 
-    switch (@typeInfo(@TypeOf(GameState.init)).@"fn".params.len) {
-        5 => my_game.init(
-            gpa,
-            web_platform.gl,
-            images_pointers,
-            @intCast(random_seed),
-        ) catch unreachable,
-        6 => my_game.init(
-            gpa,
-            web_platform.gl,
-            images_pointers,
-            @intCast(random_seed),
-            struct {
-                pub fn fcolor(name: []const u8, ptr: *FColor) void {
-                    const index = tweakable_fcolors.items.len;
-                    tweakable_fcolors.append(ptr) catch std.debug.panic("OoM", .{});
-                    js.tweak.addTweakableFColor(index, name.ptr, name.len, ptr.r, ptr.g, ptr.b);
-                }
+    my_game.init(.{
+        .gpa = gpa,
+        .gl = web_platform.gl,
+        .loaded_images = images_pointers,
+        .random_seed = @intCast(random_seed),
+    }, .{
+        .tweakable = struct {
+            pub fn fcolor(name: []const u8, ptr: *FColor) void {
+                const index = tweakable_fcolors.items.len;
+                tweakable_fcolors.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableFColor(index, name.ptr, name.len, ptr.r, ptr.g, ptr.b);
+            }
 
-                pub fn float(name: []const u8, ptr: *f32, min: f32, max: f32) void {
-                    const index = tweakable_floats.items.len;
-                    tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
-                    js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
-                }
+            pub fn float(name: []const u8, ptr: *f32, min: f32, max: f32) void {
+                const index = tweakable_floats.items.len;
+                tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
+            }
 
-                pub fn texture(name: []const u8, ptr: *Gl.Texture) void {
-                    const index = tweakable_textures.items.len;
-                    tweakable_textures.append(ptr) catch std.debug.panic("OoM", .{});
-                    js.tweak.addTweakableTexture(index, name.ptr, name.len);
-                }
-            },
-        ) catch unreachable,
-        else => comptime unreachable,
-    }
+            pub fn texture(name: []const u8, ptr: *Gl.Texture) void {
+                const index = tweakable_textures.items.len;
+                tweakable_textures.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableTexture(index, name.ptr, name.len);
+            }
+        },
+    }) catch std.debug.panic("error during init", .{});
 }
 
 export fn update(delta_seconds: f32) void {
@@ -1268,11 +1401,16 @@ export fn keyup(code: KeyCode) void {
     keychanged(code, false);
 }
 
+export fn clearAllPressedKeys() void {
+    keyboard.cur = .init;
+}
+
 fn keychanged(key: KeyCode, is_pressed: bool) void {
     switch (key) {
         inline else => |x| {
             @field(keyboard.cur.keys, @tagName(x)) = is_pressed;
             @field(keyboard.last_change_at, @tagName(x)) = web_platform.global_seconds;
+            @field(keyboard.manually_changed, @tagName(x)) = false;
         },
     }
 }

@@ -2,6 +2,8 @@ pub const GameState = @This();
 pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
+pub const tracy = @import("tracy");
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -36,6 +38,7 @@ var COLORS: struct {
 
 var CONFIG: struct {
     grid_width: f32 = 0.05,
+    screenshot_resolution: f32 = 32,
     use_motes_texture: bool = true,
     quantum_salt: bool = false,
     time: struct {
@@ -43,6 +46,38 @@ var CONFIG: struct {
         fast: f32 = 0.2,
     } = .{},
 } = .{};
+
+test "simulations" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+
+    try testSimulation(2,
+        \\V3
+        \\grid:
+        \\:+ + +
+    ,
+        \\V3
+        \\grid:
+        \\.+.+:+
+    , arena.allocator());
+}
+
+fn testSimulation(steps: usize, start: []const u8, end: []const u8, scratch: std.mem.Allocator) !void {
+    var expected_board: BoardState = undefined;
+    try BoardState.init(&expected_board, scratch);
+    defer expected_board.deinit();
+    try expected_board.fromText(scratch, end);
+
+    var actual_board: BoardState = undefined;
+    try BoardState.init(&actual_board, scratch);
+    defer actual_board.deinit();
+    try actual_board.fromText(scratch, start);
+    for (0..steps) |_| {
+        try actual_board.next(scratch);
+    }
+
+    try std.testing.expect(actual_board.equals(expected_board));
+}
 
 const MoteType = enum {
     fire,
@@ -52,6 +87,9 @@ const MoteType = enum {
     sulfur,
     quicksilver,
     salt,
+    truesaltA,
+    truesaltB,
+    truesaltC,
 
     pub const all: [@typeInfo(MoteType).@"enum".fields.len]MoteType = .{
         .fire,
@@ -61,6 +99,9 @@ const MoteType = enum {
         .salt,
         .sulfur,
         .quicksilver,
+        .truesaltA,
+        .truesaltB,
+        .truesaltC,
     };
 
     // a bit hacky :(
@@ -72,15 +113,11 @@ const MoteType = enum {
         .salt,
         .sulfur,
         .quicksilver,
+        .truesaltA,
+        .truesaltB,
+        .truesaltC,
         null,
     };
-
-    // TODO: delete
-    pub fn text(self: MoteType) []const u8 {
-        return switch (self) {
-            inline else => |x| &.{comptime x.toChar()},
-        };
-    }
 
     pub fn toChar(self: MoteType) u8 {
         return switch (self) {
@@ -91,6 +128,9 @@ const MoteType = enum {
             .sulfur => 'o',
             .quicksilver => '?',
             .salt => '*',
+            .truesaltA => 'A',
+            .truesaltB => 'B',
+            .truesaltC => 'C',
         };
     }
 
@@ -99,6 +139,20 @@ const MoteType = enum {
         inline for (all) |c| {
             if (char == c.toChar()) return c;
         } else return error.BadText;
+    }
+
+    // ensure that toChar-fromChar loop around
+    comptime {
+        for (MoteType.all) |t| {
+            assert(t == (fromChar(t.toChar()) catch unreachable) orelse unreachable);
+        }
+    }
+
+    pub fn hasTexture(t: MoteType) bool {
+        return switch (t) {
+            .truesaltA, .truesaltB, .truesaltC => false,
+            else => true,
+        };
     }
 
     /// this gets added to the cell's vertical pos
@@ -117,6 +171,7 @@ const MoteType = enum {
             '*' => 1.3,
             '-' => 1.5,
             '?', '~' => 1.0,
+            'A', 'B', 'C' => 0.75,
             else => 1.3,
         };
     }
@@ -232,14 +287,14 @@ const Cell = struct {
         pub fn addMotes(batch: *Batch, cell: Cell, pos: IVec2) !void {
             inline for (MoteType.all, 0..) |t, k| {
                 if (cell.motes.get(t) > 0) {
-                    if (CONFIG.use_motes_texture) {
+                    if (CONFIG.use_motes_texture and t.hasTexture()) {
                         batch.sprite_batch.add(.{ .texcoord = .{
                             .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
                             .size = .both(1.0 / 3.0),
                         }, .point = .{ .pos = pos.tof32() }, .tint = cell.state.textColorOver() });
                     } else {
                         try batch.text_batch.addText(
-                            t.text(),
+                            &.{t.toChar()},
                             .centeredAt(pos.tof32().add(.half).addY(t.verticalCorrection())),
                             t.sizeCorrection(),
                             cell.state.textColorOver(),
@@ -254,7 +309,7 @@ const Cell = struct {
             const scale = 1.0 / bounds.size.y;
             inline for (MoteType.all, 0..) |t, k| {
                 if (cell.motes.get(t) > 0) {
-                    if (CONFIG.use_motes_texture) {
+                    if (CONFIG.use_motes_texture and t.hasTexture()) {
                         batch.sprite_batch.add(.{ .texcoord = .{
                             .top_left = IVec2.new(@mod(k, 3), @divFloor(k, 3)).tof32().scale(1.0 / 3.0),
                             .size = .both(1.0 / 3.0),
@@ -264,7 +319,7 @@ const Cell = struct {
                         }, .tint = cell.state.textColorOver() });
                     } else {
                         try batch.text_batch.addText(
-                            t.text(),
+                            &.{t.toChar()},
                             .centeredAt(button_pos.applyToLocalPosition(pos.tof32().sub(offset).add(.half).addY(t.verticalCorrection()).scale(scale))),
                             scale * t.sizeCorrection() * button_pos.size.y,
                             cell.state.textColorOver(),
@@ -345,16 +400,21 @@ const Signal = struct {
     };
 
     pub fn send(signals: *Signals, signal: Signal, source: IVec2, destination: IVec2) !void {
-        const target = try signals.getPtr(destination);
+        var signal_with_offsets: Signal = signal;
+        const delta = destination.sub(source);
+        signal_with_offsets.on_offset = delta.scale(signal.fire + signal.sulfur + signal.earth);
+        signal_with_offsets.off_offset = delta.scale(signal.water);
+        try send_with_offsets(signals, signal_with_offsets, destination);
+    }
 
+    pub fn send_with_offsets(signals: *Signals, signal: Signal, destination: IVec2) !void {
+        const target = try signals.getPtr(destination);
         target.fire += signal.fire;
         target.earth += signal.earth;
         target.sulfur += signal.sulfur;
         target.water += signal.water;
-
-        const delta = destination.sub(source);
-        target.on_offset.addInPlace(delta.scale(signal.fire + signal.sulfur + signal.earth));
-        target.off_offset.addInPlace(delta.scale(signal.water));
+        target.on_offset.addInPlace(signal.on_offset);
+        target.off_offset.addInPlace(signal.off_offset);
         target.push.addInPlace(signal.push);
     }
 
@@ -446,8 +506,8 @@ fn lightConnectedSulfur(board: *BoardState, pre_light: BoardState, initial_posit
 
 const Toolbar = struct {
     painting: bool = false,
-    active_state: Cell.State = .bright,
-    active_type: ?MoteType = .fire,
+    active_state: ?Cell.State = .bright,
+    active_type: ??MoteType = .fire,
     selected_rect_inner_corner1: IVec2 = .zero,
     selected_rect_inner_corner2: IVec2 = .zero,
     rect_tool_state: union(enum) {
@@ -456,16 +516,22 @@ const Toolbar = struct {
         moving: kommon.Grid2D(Cell),
     } = .none,
     rect_tool_moving_include_blank: bool = true,
+    screenshot_rect_inner_corner1: IVec2 = .zero,
+    screenshot_rect_inner_corner2: IVec2 = .zero,
+    screenshot_rect_tool_state: union(enum) {
+        none,
+        selecting,
+    } = .none,
     catalogue_index: usize = 0,
     catalogue_view_offset: f32 = 0,
     zoom: Zoom = .free,
     clock: Clock = .stopped,
 
     active_tool: Tool,
-    /// only defined when active tool is catalogue
+    /// only defined when active tool is catalogue or screenshot_rect
     prev_tool: Tool = undefined,
 
-    const Tool = enum { paint_state, paint_type, rect, catalogue, panning };
+    const Tool = enum { paint, rect, catalogue, panning, screenshot_rect };
 
     const Clock = struct {
         state: State,
@@ -527,6 +593,10 @@ const Toolbar = struct {
         self.selected_rect_inner_corner1.addInPlace(delta);
         self.selected_rect_inner_corner2.addInPlace(delta);
     }
+
+    pub fn screenshotRect(self: Toolbar) math.IBounds {
+        return math.IBounds.empty.bounding(self.screenshot_rect_inner_corner1).bounding(self.screenshot_rect_inner_corner2);
+    }
 };
 
 const BoardState = struct {
@@ -571,74 +641,79 @@ const BoardState = struct {
         }
 
         // step 2a: air motes extend the reach of all signals they receive.
-        // this step repeats until a steady state is reached.
+        // this step repeats until no more signals are forwarded to new cells.
         var air_received: Signals = .init(scratch);
-        var air_sent: Signals = try .clone(signals);
-        while (!Signals.equals(air_received, air_sent)) {
-            air_received = air_sent;
-            air_sent = .init(scratch);
+        var done: bool = false;
+        while (!done) {
+            done = true;
+            air_received = signals;
+            signals = .init(scratch);
             cell_it.reset();
             while (cell_it.next()) |kv| {
                 const pos = kv.key_ptr.*;
                 const cell = kv.value_ptr.*;
-                if (cell.motes.get(.air) == 0) continue;
+                const air = cell.motes.get(.air);
                 const received = air_received.at(pos);
-                if (cell.state == .off and received.water != 0) {
-                    try Signal.send(&signals, .{
-                        .fire = 0,
-                        .water = received.water * cell.motes.get(.air),
-                        .earth = 0,
-                        .sulfur = 0,
-                        .push = .zero,
-                        .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.off_offset), pos.add(received.off_offset));
-                    try Signal.send(&air_sent, .{
-                        .fire = 0,
-                        .water = received.water * cell.motes.get(.air),
-                        .earth = 0,
-                        .sulfur = 0,
-                        .push = .zero,
-                        .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.off_offset), pos.add(received.off_offset));
-                } else if (cell.state != .off and (received.fire != 0 or received.earth != 0 or received.sulfur != 0)) {
-                    try Signal.send(&signals, .{
-                        .fire = received.fire * cell.motes.get(.air),
-                        .water = 0,
-                        .earth = received.earth * cell.motes.get(.air),
-                        .sulfur = received.sulfur * cell.motes.get(.air),
-                        .push = received.push.scale(cell.motes.get(.air)),
-                        .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.on_offset), pos.add(received.on_offset));
-                    try Signal.send(&air_sent, .{
-                        .fire = received.fire * cell.motes.get(.air),
-                        .water = 0,
-                        .earth = received.earth * cell.motes.get(.air),
-                        .sulfur = received.sulfur * cell.motes.get(.air),
-                        .push = received.push.scale(cell.motes.get(.air)),
-                        .on_offset = .zero,
-                        .off_offset = .zero,
-                    }, pos.sub(received.on_offset), pos.add(received.on_offset));
+                if (air == 0) {
+                    try Signal.send_with_offsets(&signals, received, pos);
+                    continue;
                 }
+                var on: Signal = .{
+                    .fire = received.fire,
+                    .water = 0,
+                    .earth = received.earth,
+                    .sulfur = received.sulfur,
+                    .push = received.push,
+                    .on_offset = received.on_offset,
+                    .off_offset = .zero,
+                };
+                var off: Signal = .{
+                    .fire = 0,
+                    .water = received.water,
+                    .earth = 0,
+                    .sulfur = 0,
+                    .push = .zero,
+                    .on_offset = .zero,
+                    .off_offset = received.off_offset,
+                };
+                var on_offset: IVec2 = .zero;
+                var off_offset: IVec2 = .zero;
+                if (cell.state == .off) {
+                    off.water *= air;
+                    off.off_offset = off.off_offset.scale(air * (received.water + 1));
+                    off_offset = received.off_offset;
+                    if (off.water > 0 and !off_offset.equals(.zero))
+                        done = false;
+                } else {
+                    on.fire *= air;
+                    on.earth *= air;
+                    on.sulfur *= air;
+                    on.push = on.push.scale(air);
+                    on.on_offset = on.on_offset.scale(air * (received.fire + received.earth + received.sulfur + 1));
+                    on_offset = received.on_offset;
+                    if ((on.fire > 0 or on.earth > 0 or on.sulfur > 0) and !on_offset.equals(.zero))
+                        done = false;
+                }
+                try Signal.send_with_offsets(&signals, on, pos.add(on_offset));
+                try Signal.send_with_offsets(&signals, off, pos.add(off_offset));
             }
         }
 
-        // step 2b: if a cell receives new signals in the steady state, it will
-        // receive an infinite amount.  for now, add 1000 as a reasonably big number.
+        // step 2b: if a cell sent more signal then it received, then eventually
+        // it will send an infinite amount.  for now, add 1000 as a reasonably
+        // big number.
         var air_received_it = air_received.values.iterator();
         while (air_received_it.next()) |kv| {
             const pos = kv.key_ptr.*;
             const received = kv.value_ptr.*;
-            if (received.fire != 0 or received.water != 0 or received.earth != 0 or received.sulfur != 0) {
+            const sent = try signals.getPtr(pos);
+            if (sent.fire > received.fire or sent.water > received.water or sent.earth > received.earth or sent.sulfur > received.sulfur) {
                 std.log.warn("infinite signal at {any}!\n", .{pos});
-                const signal = try signals.getPtr(pos);
-                signal.fire += 1000 * received.fire;
-                signal.water += 1000 * received.water;
-                signal.earth += 1000 * received.earth;
-                signal.sulfur += 1000 * received.sulfur;
-                signal.push.addInPlace(received.push.scale(1000));
+                sent.fire += 1000 * (sent.fire - received.fire);
+                sent.water += 1000 * (sent.water - received.water);
+                sent.earth += 1000 * (sent.earth - received.earth);
+                sent.sulfur += 1000 * (sent.sulfur - received.sulfur);
+                sent.push.addInPlace(sent.push.sub(received.push).scale(1000));
             }
         }
 
@@ -731,7 +806,7 @@ const BoardState = struct {
         }
 
         // step 8: motes are pushed according to the accumulated push signal.
-        // quicksilver motes and lit air motes are not pushed.
+        // quicksilver motes are not pushed.
         const pre_push = try board.cloneWithAllocator(scratch);
         var signals_it = signals.values.iterator();
         while (signals_it.next()) |kv| {
@@ -743,13 +818,9 @@ const BoardState = struct {
             const dest_pos = pos.add(signal.push);
             const b = try board.cellPtrAt(pos);
             const d = try board.cellPtrAt(dest_pos);
-            inline for ([_]MoteType{ .fire, .water, .earth, .sulfur, .salt }) |t| {
+            inline for ([_]MoteType{ .fire, .water, .air, .earth, .sulfur, .salt }) |t| {
                 b.motes.getPtr(t).* -= cell.motes.get(t);
                 d.motes.getPtr(t).* += cell.motes.get(t);
-            }
-            if (cell.state == .off) {
-                b.motes.getPtr(.air).* -= cell.motes.get(.air);
-                d.motes.getPtr(.air).* += cell.motes.get(.air);
             }
         }
 
@@ -855,11 +926,19 @@ const BoardState = struct {
     }
 
     pub fn toText(self: BoardState, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        try out.writeAll("V2\n");
+        try out.writeAll("V3\n");
 
         var motes_legend: std.AutoArrayHashMap(MoteCollection, u8) = .init(scratch);
         {
-            const valid_legends = "ABCDEFGHIJKLMNPQRSTUVWXYZ" ++ "abcdefghijklmnpqrstuvwxyz";
+            const valid_legends = "abcdefghijklmnpqrstuvwxyz" ++ "1234567890";
+
+            // ensure that those characters are not already used by a mote
+            comptime {
+                for (MoteType.all) |t| {
+                    assert(std.mem.indexOfScalar(u8, valid_legends, t.toChar()) == null);
+                }
+            }
+
             var legend_index: u8 = 0;
             var it = self.cells.iterator();
             while (it.next()) |kv| {
@@ -913,7 +992,16 @@ const BoardState = struct {
     pub fn fromText(dst: *BoardState, scratch: std.mem.Allocator, text: []const u8) !void {
         dst.cells.clearRetainingCapacity();
         const contents = std.mem.trim(u8, text, &std.ascii.whitespace);
-        if (std.mem.startsWith(u8, contents, "V1\n")) {
+        const version: u8 = if (std.mem.startsWith(u8, contents, "V1\n"))
+            1
+        else if (std.mem.startsWith(u8, contents, "V2\n"))
+            2
+        else if (std.mem.startsWith(u8, contents, "V3\n"))
+            3
+        else
+            return error.BadText;
+
+        if (version == 1) {
             const raw_ascii = try kommon.Grid2D([2]u8).fromAsciiWide(2, scratch, std.mem.trimRight(u8, contents["V1\n".len..], &std.ascii.whitespace));
             defer raw_ascii.deinit(scratch);
             var it = raw_ascii.iteratorSigned();
@@ -929,13 +1017,19 @@ const BoardState = struct {
                 const cell: Cell = .fromStateAndMote(cell_state, cell_mote);
                 if (!cell.equals(.empty)) try dst.cells.put(p, cell);
             }
-        } else if (std.mem.startsWith(u8, contents, "V2\n")) {
-            var remaining = contents["V2\n".len..];
+        } else if (version == 2 or version == 3) {
+            var remaining = contents["Vx\n".len..];
             var motes_legend: std.AutoHashMap(u8, MoteCollection) = .init(scratch);
             inline for (MoteType.all) |t| {
-                var single_mote: MoteCollection = .initFill(0);
-                single_mote.set(t, 1);
-                try motes_legend.putNoClobber(t.toChar(), single_mote);
+                const ignore_mote = (version == 2 and switch (t) {
+                    inline .truesaltA, .truesaltB, .truesaltC => true,
+                    else => false,
+                });
+                if (!ignore_mote) {
+                    var single_mote: MoteCollection = .initFill(0);
+                    single_mote.set(t, 1);
+                    try motes_legend.putNoClobber(t.toChar(), single_mote);
+                }
             }
             try motes_legend.putNoClobber('.', .initFill(0));
             while (true) {
@@ -1008,7 +1102,7 @@ const BoardState = struct {
 };
 
 const LevelState = struct {
-    toolbar: Toolbar = .{ .active_tool = .paint_state },
+    toolbar: Toolbar = .{ .active_tool = .paint },
     camera: Rect = .{ .top_left = .both(-6), .size = .both(15) },
     saved_states: std.ArrayList(*const BoardState),
     board: *BoardState,
@@ -1061,16 +1155,16 @@ textures: struct {
 
 pub fn init(
     dst: *GameState,
-    gpa: std.mem.Allocator,
-    gl: Gl,
-    loaded_images: std.EnumArray(Images, *const anyopaque),
-    random_seed: u64,
-    tweakable: type,
-    // tweakable: struct {
-    //     fcolor: fn (name: []const u8, value: *FColor) void,
-    // },
+    runtime_params: kommon.engine.InitRuntimeParamsFor(GameState),
+    comptime comptime_params: kommon.engine.InitComptimeParamsFor(GameState),
 ) !void {
     dst.* = kommon.meta.initDefaultFields(GameState);
+
+    const gpa = runtime_params.gpa;
+    const gl = runtime_params.gl;
+    const loaded_images = runtime_params.loaded_images;
+    const random_seed = runtime_params.random_seed;
+    const tweakable = comptime_params.tweakable;
 
     dst.usual.init(
         gpa,
@@ -1099,6 +1193,9 @@ pub fn init(
 
     tweakable.float("slow tick", &CONFIG.time.slow, 0.5, 3.0);
     tweakable.float("fast tick", &CONFIG.time.fast, 0.01, 1.0);
+
+    // TODO: tweakable int
+    tweakable.float("screenshot resolution", &CONFIG.screenshot_resolution, 1, 64);
 
     inline for (std.meta.fields(@FieldType(GameState, "textures"))) |field| {
         @field(dst.textures, field.name) = gl.buildTexture2D(
@@ -1196,6 +1293,45 @@ pub fn afterHotReload(self: *GameState) !void {
     _ = self;
 }
 
+pub fn drawCellsAndMotes(self: *GameState, camera: Rect, state: *const BoardState, config: struct {
+    include_motes: bool,
+}) !void {
+    var batch: Cell.Batch = .init(self);
+    defer batch.draw(camera, &self.usual.canvas);
+    const cam_bounds: math.IBounds = .fromRect(camera.plusMargin(1.1));
+
+    var it = state.cells.iterator();
+    while (it.next()) |kv| {
+        const pos = kv.key_ptr.*;
+        const cell = kv.value_ptr.*;
+        if (!cam_bounds.contains(pos)) continue;
+        if (cell.state != .off) {
+            try batch.addBg(cell, pos);
+        }
+        if (config.include_motes) {
+            try batch.addMotes(cell, pos);
+        }
+    }
+}
+
+pub fn drawBoardLines(self: *GameState, camera: Rect) !void {
+    var segments: std.ArrayList(Canvas.Segment) = .init(self.usual.mem.frame.allocator());
+    {
+        var x = @floor(camera.top_left.x);
+        while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
+            try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = COLORS.grid });
+        }
+    }
+    {
+        var y = @floor(camera.top_left.y);
+        while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
+            try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = COLORS.grid });
+        }
+    }
+
+    self.usual.canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
@@ -1243,6 +1379,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const ui_cam: Rect = if (self.cur_level == null) camera else (Rect{ .top_left = .zero, .size = .new(16, 12) })
         .withAspectRatio(platform.aspect_ratio, .grow, .center);
     const ui_mouse = platform.getMouse(ui_cam);
+
+    const toolbar_bgs: [2]Rect = .{
+        ui_cam.withSize1d(.width, 2, .top_left),
+        ui_cam.withSize1d(.width, 2, .top_right),
+    };
+
     var ui_buttons: std.ArrayList(struct {
         pos: Rect,
         color: ?FColor,
@@ -1270,20 +1412,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         var toolbar = &cur_level.toolbar;
         const cell_under_mouse = mouse.cur.position.toInt(isize);
 
+        const top_left_button: Rect = .fromPivotAndSize(ui_cam.get(.top_left), Rect.MeasureKind.top_left.asPivot(), .one);
+
         // paint cell states
         for ([3]Cell.State{ .off, .dim, .bright }, 0..) |c, k| {
-            const button: Rect = (Rect{ .top_left = Vec2.zero.add(.new(0, tof32(k))), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_left_button.move(.new(0, tof32(k))).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = c.color(),
                 .text = null,
-                .radio_selected = toolbar.active_tool == .paint_state and (c == toolbar.active_state),
+                .radio_selected = toolbar.active_tool == .paint and (c == toolbar.active_state),
             });
             if (button.contains(ui_mouse.cur.position)) {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
+                    if (c == toolbar.active_state) {
+                        toolbar.active_type = null;
+                    }
                     toolbar.active_state = c;
-                    toolbar.active_tool = .paint_state;
+                    toolbar.active_tool = .paint;
                     toolbar.painting = false;
                 }
             }
@@ -1292,19 +1439,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         // paint cell types
         if (self.is_editor) {
             for (MoteType.all_and_empty, 0..) |t, k| {
-                const button: Rect = (Rect{ .top_left = .new(tof32(@mod(k, 2)), tof32(5 + @mod(@divFloor(k, 2), 4))), .size = .one }).plusMargin(-0.1);
+                const button: Rect = top_left_button.move(.new(tof32(@mod(k, 2)), tof32(4 + @divFloor(k, 2)))).plusMargin(-0.1);
                 try ui_buttons.append(.{
                     .pos = button,
                     .color = null,
                     .text = null,
                     .mote = t,
-                    .radio_selected = toolbar.active_tool == .paint_type and (t == toolbar.active_type),
+                    .radio_selected = toolbar.active_tool == .paint and (t == toolbar.active_type),
                 });
                 if (button.contains(ui_mouse.cur.position)) {
                     mouse_over_ui = true;
                     if (mouse.wasPressed(.left)) {
+                        if (t == toolbar.active_type) {
+                            toolbar.active_state = null;
+                        }
                         toolbar.active_type = t;
-                        toolbar.active_tool = .paint_type;
+                        toolbar.active_tool = .paint;
                         toolbar.painting = false;
                     }
                 }
@@ -1313,7 +1463,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // rect select/move mode
         if (self.is_editor) {
-            const button: Rect = (Rect{ .top_left = .new(0, 3), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_left_button.move(.new(0, 3)).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
@@ -1330,7 +1480,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // panning mode
         if (self.is_editor or toolbar.zoom.allowsMove()) {
-            const button: Rect = (Rect{ .top_left = .new(1, 3), .size = .one }).plusMargin(-0.1);
+            const button: Rect = top_left_button.move(.new(1, 3)).plusMargin(-0.1);
             try ui_buttons.append(.{
                 .pos = button,
                 .color = null,
@@ -1394,6 +1544,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 mouse_over_ui = true;
                 if (mouse.wasPressed(.left)) {
                     try cur_level.setCurrentStateAsInitial(&self.pool_boardstate);
+                }
+            }
+        }
+
+        // screenshot
+        if (self.is_editor) {
+            const button: Rect = top_right_button.move(.new(0, 2)).withSize(.new(2, 1), .top_right).plusMargin(-0.1);
+            const hot = button.contains(ui_mouse.cur.position);
+            try ui_buttons.append(.{
+                .pos = button,
+                .color = null,
+                .text = "screenshot",
+                .text_scale = 0.5,
+                .radio_selected = hot or toolbar.active_tool == .screenshot_rect,
+            });
+            if (hot) {
+                mouse_over_ui = true;
+                if (mouse.wasPressed(.left)) {
+                    toolbar.prev_tool = toolbar.active_tool;
+                    toolbar.active_tool = .screenshot_rect;
+                    toolbar.screenshot_rect_tool_state = .none;
                 }
             }
         }
@@ -1643,13 +1814,27 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (!mouse_over_ui) {
             platform.setCursor(.default);
             switch (toolbar.active_tool) {
-                .paint_state => {
+                .paint => {
                     if (toolbar.painting) {
                         if (!mouse.cur.isDown(.left)) {
                             toolbar.painting = false;
-                        } else {
-                            if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
-                                try cur_level.board.setStateAt(cell_under_mouse, toolbar.active_state);
+                        } else if (for (toolbar_bgs) |r| {
+                            if (r.contains(ui_mouse.cur.position)) break false;
+                        } else true) {
+                            if (toolbar.active_state) |active_state| {
+                                if (self.is_editor or cur_level.board.userBounds().contains(cell_under_mouse)) {
+                                    try cur_level.board.setStateAt(cell_under_mouse, active_state);
+                                }
+                            }
+                            if (toolbar.active_type) |active_type| {
+                                if (platform.keyboard.cur.isShiftDown()) {
+                                    if (active_type) |t| {
+                                        (try cur_level.board.cellPtrAt(cell_under_mouse)).motes.getPtr(t).* += 1;
+                                        toolbar.painting = false;
+                                    }
+                                } else {
+                                    try cur_level.board.setSingleMoteAt(cell_under_mouse, active_type);
+                                }
                             }
                         }
                     } else {
@@ -1658,29 +1843,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         }
                         if (mouse.wasPressed(.right)) {
                             toolbar.active_state = cur_level.board.cellAt(cell_under_mouse).state;
-                        }
-                    }
-                },
-                .paint_type => {
-                    if (toolbar.painting) {
-                        if (!mouse.cur.isDown(.left)) {
-                            toolbar.painting = false;
-                        } else {
-                            if (platform.keyboard.cur.isShiftDown()) {
-                                if (toolbar.active_type) |t| {
-                                    (try cur_level.board.cellPtrAt(cell_under_mouse)).motes.getPtr(t).* += 1;
-                                    toolbar.painting = false;
-                                }
-                            } else {
-                                try cur_level.board.setSingleMoteAt(cell_under_mouse, toolbar.active_type);
+                            if (self.is_editor) {
+                                toolbar.active_type = cur_level.board.cellAt(cell_under_mouse).getSingleMote();
                             }
-                        }
-                    } else {
-                        if (mouse.wasPressed(.left)) {
-                            toolbar.painting = true;
-                        }
-                        if (mouse.wasPressed(.right)) {
-                            toolbar.active_type = cur_level.board.cellAt(cell_under_mouse).getSingleMote();
                         }
                     }
                 },
@@ -1733,6 +1898,41 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         },
                     }
                 },
+                .screenshot_rect => {
+                    platform.setCursor(.could_grab);
+                    switch (toolbar.screenshot_rect_tool_state) {
+                        .none => {
+                            if (mouse.wasPressed(.left)) {
+                                toolbar.screenshot_rect_tool_state = .selecting;
+                                toolbar.screenshot_rect_inner_corner1 = cell_under_mouse;
+                                toolbar.screenshot_rect_inner_corner2 = cell_under_mouse;
+                            }
+                        },
+                        .selecting => {
+                            if (mouse.cur.isDown(.left)) {
+                                toolbar.screenshot_rect_inner_corner2 = cell_under_mouse;
+                            } else {
+                                toolbar.screenshot_rect_tool_state = .none;
+                                toolbar.active_tool = toolbar.prev_tool;
+
+                                const bounds = toolbar.screenshotRect();
+                                const resolution: UVec2 = bounds.inner_size.scale(@intFromFloat(@round(CONFIG.screenshot_resolution)));
+                                const rt = platform.gl.buildRendertarget(resolution, false);
+                                platform.gl.setRendertarget(rt);
+                                defer platform.gl.setRendertarget(null);
+                                defer platform.downloadActiveFramebuffer(resolution);
+
+                                platform.gl.clear(Cell.State.off.color());
+                                try self.drawCellsAndMotes(bounds.asRect(), cur_level.board, .{ .include_motes = true });
+                                try self.drawBoardLines(bounds.asRect());
+                                if (toolbar.active_tool == .rect) {
+                                    const rect = toolbar.selectedRect().asRect();
+                                    canvas.strokeRect(bounds.asRect(), rect, 0.1, COLORS.rect_selection_border);
+                                }
+                            }
+                        },
+                    }
+                },
                 .catalogue => {
                     if (mouse.wasPressed(.left) or mouse.wasPressed(.right)) {
                         toolbar.active_tool = toolbar.prev_tool;
@@ -1754,28 +1954,40 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         // tool keyboard interactions
         switch (toolbar.active_tool) {
-            .paint_state => {
-                for (&[_]Cell.State{ .off, .dim, .bright }, 0..) |t, k| {
-                    if (platform.keyboard.wasPressed(.digit(k + 1))) {
-                        toolbar.active_state = t;
+            .paint => {
+                if (platform.keyboard.wasPressed(.Space)) {
+                    if (platform.keyboard.cur.isShiftDown()) {
+                        toolbar.active_state = if (toolbar.active_state) |s| switch (s) {
+                            .off => null,
+                            .dim => Cell.State.off,
+                            .bright => Cell.State.dim,
+                        } else Cell.State.bright;
+                    } else {
+                        toolbar.active_state = if (toolbar.active_state) |s| switch (s) {
+                            .off => Cell.State.dim,
+                            .dim => Cell.State.bright,
+                            .bright => null,
+                        } else Cell.State.off;
                     }
                 }
-                if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
-                    toolbar.active_tool = .paint_type;
-                }
-            },
-            .paint_type => {
-                for (&MoteType.all, 0..) |t, k| {
-                    if (platform.keyboard.wasPressed(.digit(k + 1))) {
-                        toolbar.active_type = t;
+                if (self.is_editor) {
+                    for (&(MoteType.all ++ @as([1]?MoteType, .{null})), 0..) |t, k| {
+                        if (k + 1 < 10 and platform.keyboard.wasPressed(.digit(k + 1))) {
+                            toolbar.active_type = t;
+                        }
                     }
-                }
-                if (platform.keyboard.wasPressed(.Backquote) or platform.keyboard.wasPressed(.Space)) {
-                    toolbar.active_tool = .paint_state;
+                    if (platform.keyboard.wasPressed(.digit(0))) {
+                        toolbar.active_type = null;
+                    }
                 }
             },
             .rect => switch (toolbar.rect_tool_state) {
                 else => {},
+                .none => {
+                    if (platform.keyboard.wasPressed(.Backspace) or platform.keyboard.wasPressed(.Delete)) {
+                        try cur_level.board.clearSubrect(toolbar.selectedRect());
+                    }
+                },
                 .moving => |*r| {
                     if (platform.keyboard.wasPressed(.KeyV)) {
                         r.mirrorVertically();
@@ -1792,7 +2004,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     }
                 },
             },
-            .catalogue, .panning => {},
+            .catalogue, .panning, .screenshot_rect => {},
         }
 
         // always available: move camera
@@ -1843,24 +2055,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
         const visible_board = ghost_board orelse cur_level.board;
 
-        if (true) {
-            var batch: Cell.Batch = .init(self);
-            defer batch.draw(camera, canvas);
-
-            const cam_bounds: math.IBounds = .fromRect(cur_level.camera.plusMargin(1.1));
-            var it = visible_board.cells.iterator();
-            while (it.next()) |kv| {
-                const pos = kv.key_ptr.*;
-                const cell = kv.value_ptr.*;
-                if (!cam_bounds.contains(pos)) continue;
-                if (cell.state != .off) {
-                    try batch.addBg(cell, pos);
-                }
-                if (toolbar.zoom != .bounds_lit) {
-                    try batch.addMotes(cell, pos);
-                }
-            }
-        }
+        // cells and motes
+        try self.drawCellsAndMotes(camera, visible_board, .{
+            .include_motes = toolbar.zoom != .bounds_lit,
+        });
 
         if (std.meta.activeTag(toolbar.rect_tool_state) == .moving) {
             const values = toolbar.rect_tool_state.moving;
@@ -1890,41 +2088,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
 
         // board lines
-        if (true) {
-            var segments: std.ArrayList(Canvas.Segment) = .init(mem.frame.allocator());
-            {
-                var x = @floor(camera.top_left.x);
-                while (x <= camera.top_left.x + camera.size.x) : (x += 1) {
-                    try segments.append(.{ .a = .new(x, camera.top_left.y), .b = .new(x, camera.top_left.y + camera.size.y), .color = COLORS.grid });
-                }
-            }
-            {
-                var y = @floor(camera.top_left.y);
-                while (y <= camera.top_left.y + camera.size.y) : (y += 1) {
-                    try segments.append(.{ .a = .new(camera.top_left.x, y), .b = .new(camera.top_left.x + camera.size.x, y), .color = COLORS.grid });
-                }
-            }
-
-            canvas.instancedSegments(camera, segments.items, CONFIG.grid_width);
-        }
+        try self.drawBoardLines(camera);
 
         if (toolbar.active_tool == .rect) {
             const rect = toolbar.selectedRect().asRect();
             canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
         }
 
-        // hide non-square part of the board
-        if (true) {
-            canvas.fillRect(
-                .{ .top_left = .zero, .size = .new(4, 3) },
-                .{ .top_left = .zero, .size = .new(0.5, 3) },
-                Cell.State.off.color(),
-            );
-            canvas.fillRect(
-                .{ .top_left = .zero, .size = .new(4, 3) },
-                .from(.{ .{ .bottom_right = .new(4, 3) }, .{ .size = .new(0.5, 3) } }),
-                Cell.State.off.color(),
-            );
+        if (toolbar.active_tool == .screenshot_rect) {
+            if (toolbar.prev_tool == .rect) {
+                const rect = toolbar.selectedRect().asRect();
+                canvas.strokeRect(camera, rect, 0.1, COLORS.rect_selection_border);
+            }
+            if (toolbar.screenshot_rect_tool_state == .selecting) {
+                const rect = toolbar.screenshotRect().asRect();
+                canvas.strokeRect(camera, rect, 0.1, .red);
+            }
         }
     } else {
         var level_to_destroy: ?usize = null;
@@ -2031,6 +2210,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             var logo_text = canvas.textBatch(0);
             try logo_text.addText("GoL", .centeredAt(.new(2, 0.5)), 0.5, .white);
             logo_text.draw(camera);
+        }
+    }
+
+    // ui bgs
+    if (self.cur_level != null) {
+        for (toolbar_bgs) |r| {
+            canvas.fillRect(ui_cam, r, Cell.State.off.color());
         }
     }
 

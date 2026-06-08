@@ -45,6 +45,48 @@ function resizeCanvas() {
   gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
+let text_input_active = false;
+const text_input_element = document.createElement("input");
+let pending_text_input = [];
+if (true) {
+  text_input_element.setAttribute("type", "text");
+  text_input_element.setAttribute("autocomplete", "off");
+  text_input_element.setAttribute("autocorrect", "off");
+  text_input_element.setAttribute("autocapitalize", "off");
+  text_input_element.setAttribute("spellcheck", "false");
+
+  Object.assign(text_input_element.style, {
+    position:    "fixed",
+    width:       "1px",       // must have some size to be focusable
+    height:      "1px",       // — but small enough to be invisible
+    minWidth:    "0",
+    padding:     "0",
+    border:      "none",
+    outline:     "none",
+    background:  "transparent",
+    color:       "transparent",
+    caretColor:  "transparent",
+    fontSize:    "16px",      // ≥16px prevents iOS Safari from auto-zooming
+    opacity:     "0",
+    pointerEvents: "none",
+    zIndex:      "-1",
+    // Default off-screen until SDL_SetTextInputRect is called
+    top:  "-9999px",
+    left: "-9999px",
+  });
+
+  document.body.appendChild(text_input_element);
+
+  text_input_element.addEventListener("input", (e) => {
+    if (!text_input_active || !e.data) return;
+    if (!e.isComposing) {
+      Array.from(e.data).forEach(char => {
+        pending_text_input.push(char);
+      });
+    }
+    text_input_element.value = "";
+  });
+}
 
 var readers = [null];
 
@@ -77,7 +119,7 @@ class JsReader {
 }
 
 
-const image_promises = [];
+const image_promises = [new Promise(res => res(null))];
 
 // from https://www.fabiofranchino.com/log/load-an-image-with-javascript-using-await/
 function imageFromUrl(url) {
@@ -219,7 +261,7 @@ async function getWasm() {
       memory: wasm_memory,
 
       setCursor: (k) => {
-        const cursors = ["default", "grab", "grabbing", "pointer"];
+        const cursors = ["default", "grab", "grabbing", "pointer", "text"];
         document.body.style.cursor = cursors[k];
       },
 
@@ -296,6 +338,40 @@ async function getWasm() {
         image_promises.push(imageFromBase64(getString(base64_ptr, base64_len)));
         return image_promises.length - 1;
       },
+      activeFramebufferToImage: (width, height) => {
+        const pixels = new Uint8Array(width * height * 4);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+        const local_canvas = document.createElement('canvas');
+        local_canvas.width = width; local_canvas.height = height;
+        const ctx = local_canvas.getContext('2d');
+        const imageData = ctx.createImageData(width, height);
+        // Y-flip
+        for (let y = 0; y < height; y++) {
+          const src = (height - 1 - y) * width * 4;
+          imageData.data.set(pixels.subarray(src, src + width * 4), y * width * 4);
+        }
+        ctx.putImageData(imageData, 0, 0);
+        images.push(local_canvas);
+        console.log(local_canvas);
+        return images.length - 1;
+      },
+      downloadImage: (image) => {
+        images[image].toBlob((blob) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'texture.png';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+      },
+      copyImage: (image) => {
+        images[image].toBlob(async (blob) => {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ]);
+        });
+      },
 
       // sound
       loadSound: (url_ptr, url_len) => {
@@ -355,6 +431,7 @@ async function getWasm() {
       },
 
       // webgl2
+      viewport: (x, y, width, height) => gl.viewport(x, y, width, height),
       createShader: (type) => storeGlObject(gl.createShader(type)),
       shaderSource: (shader, source_ptr, source_len) => gl.shaderSource(gl_objects[shader], "#version 300 es\n\n" + getString(source_ptr, source_len)),
       compileShader: (shader) => gl.compileShader(gl_objects[shader]),
@@ -401,7 +478,11 @@ async function getWasm() {
       bindTexture: (target, texture) => gl.bindTexture(target, gl_objects[texture]),
       texParameteri: (target, pname, param) => gl.texParameteri(target, pname, param),
       texImage2D_basic: (target, level, internalformat, format, type, pixels) => gl.texImage2D(target, level, internalformat, format, type, images[pixels]),
+      texImage2D_withSize: (target, level, internalformat, width, height, border, format, type, pixels) => gl.texImage2D(target, level, internalformat, width, height, border, format, type, images[pixels]),
       generateMipmap: (target) => gl.generateMipmap(target),
+      createFramebuffer: () => storeGlObject(gl.createFramebuffer()),
+      bindFramebuffer: (target, framebuffer) => gl.bindFramebuffer(target, gl_objects[framebuffer]),
+      framebufferTexture2D: (target, attachment, texttarget, texture, level) => gl.framebufferTexture2D(target, attachment, texttarget, gl_objects[texture], level),
       stencilFunc: (func, ref, mask) => gl.stencilFunc(func, ref, mask),
       stencilOp: (fail, zfail, zpass) => gl.stencilOp(fail, zfail, zpass),
 
@@ -488,6 +569,23 @@ async function getWasm() {
       isLoaded: (reader_index) => readers[reader_index].loaded,
       isNull: (reader_index) => readers[reader_index].isNull(),
       readInto: (reader_index, buf_ptr, buf_len) => readers[reader_index].readInto(buf_ptr, buf_len),
+
+      // text input
+      startTextInput: () => {
+        text_input_active = true;
+        text_input_element.value = "";
+        text_input_element.focus();
+        // TODO(platform): rect
+      },
+      stopTextInput: () => {
+        text_input_active = false;
+        text_input_element.blur();
+      },
+      consumeTextInput: (buf_ptr, buf_len) => {
+        if (pending_text_input.length == 0) return 0;
+        const char = pending_text_input.shift();
+        return text_encoder.encodeInto(char, getBytes(buf_ptr, buf_len)).written;
+      },
     },
   });
   return wasm_module.instance.exports;
@@ -563,8 +661,12 @@ document.addEventListener("contextmenu", (ev) => {
   return false;
 });
 
+window.addEventListener('blur', () => wasm_exports.clearAllPressedKeys());
+window.addEventListener('focus', () => wasm_exports.clearAllPressedKeys());
+
 document.addEventListener("keydown", (ev) => {
   if (ev.repeat) return;
+  console.log("keydown", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keydown(key_num);
@@ -573,6 +675,7 @@ document.addEventListener("keydown", (ev) => {
 
 document.addEventListener("keyup", (ev) => {
   if (ev.repeat) return;
+  console.log("keyup", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keyup(key_num);
