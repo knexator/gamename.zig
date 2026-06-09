@@ -359,6 +359,29 @@ pub const Lego = struct {
             /// resets each frame
             cursor_points: std.ArrayListUnmanaged(CursorPoint) = .empty,
 
+            config: Config,
+            const Config = struct {
+                local_position: Canvas.TextRenderer.TextPosition,
+                em: f32,
+                text_if_empty: []const u8,
+
+                pub const fnkbox_description: Config = .{
+                    .local_position = .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
+                    .em = 0.8,
+                    .text_if_empty = "<no description>",
+                };
+
+                pub const searchbox: Config = .{
+                    .local_position = .{
+                        .hor = .left,
+                        .ver = .baseline,
+                        .pos = .new(2.1, 0.9),
+                    },
+                    .em = 0.5,
+                    .text_if_empty = "Search...",
+                };
+            };
+
             pub fn text(this: @This()) ?[]const u8 {
                 return if (this.inner_text.items.len > 0)
                     this.inner_text.items
@@ -1938,7 +1961,7 @@ pub const Lego = struct {
                     .listviewer_sexprs => .new(5, -1.75 - 0.05),
                     // .listviewer_sexprs => .new(4.5, -1.25 - 0 * 0.125),
                     .fnkbox_testcases => Lego.Specific.FnkboxBox.relative_top_testcase_pos.addY(2),
-                    .fnkslist => .zero,
+                    .fnkslist => .new(0, Workspace.toolbar_fnks_searchbox_height),
                 };
             }
 
@@ -3756,6 +3779,7 @@ pub const Toybox = struct {
         const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
             try Toybox.new(.{}, .{ .editable_textline = .{
                 .inner_text = .fromOwnedSlice(try text_allocator.dupe(u8, text)),
+                .config = .fnkbox_description,
             } }, undo_stack),
             try new(.{}, .{ .button = .{
                 .local_rect = FnkboxBox.status_bar_goal,
@@ -3994,6 +4018,7 @@ const Workspace = struct {
 
     pub const toolbar_left_rect: Rect = .{ .top_left = .zero, .size = .new(6, 15) };
     pub const toolbar_fnks_rect: Rect = .{ .top_left = .zero, .size = .new(12, 15) };
+    pub const toolbar_fnks_searchbox_height = 1.0;
 
     const UndoableCommand = union(enum) {
         fence,
@@ -5534,15 +5559,18 @@ const Workspace = struct {
     }
 
     pub fn deinit(workspace: *Workspace) void {
-        // TODO(design): remove this loop
-        var it = toybox.all_legos.iterator(0);
-        while (it.next()) |lego| {
-            if (!lego.exists) continue;
-            if (lego.specific.as(.editable_textline)) |editable_textline| {
-                if (Toybox.findAncestor(lego.index, .fnkbox).get().specific.fnkbox.editable or
-                    workspace.isFreefloating(lego.index))
-                {
-                    editable_textline.inner_text.deinit(workspace.gpa_for_text);
+        // TODO(bug?): this loop doesn't seem to be necessary anymore...?
+        if (false) {
+            // TODO(design): remove this loop
+            var it = toybox.all_legos.iterator(0);
+            while (it.next()) |lego| {
+                if (!lego.exists) continue;
+                if (lego.specific.as(.editable_textline)) |editable_textline| {
+                    if (Toybox.findAncestor(lego.index, .fnkbox).get().specific.fnkbox.editable or
+                        workspace.isFreefloating(lego.index))
+                    {
+                        editable_textline.inner_text.deinit(workspace.gpa_for_text);
+                    }
                 }
             }
         }
@@ -6715,10 +6743,10 @@ const Workspace = struct {
                                 .{},
                                 0,
                                 camera_relative,
-                                editable_textline.text() orelse "",
+                                editable_textline.text() orelse editable_textline.config.text_if_empty,
                                 if (cur == active_text_input) active_text_selection else null,
-                                .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
-                                0.8,
+                                editable_textline.config.local_position,
+                                editable_textline.config.em,
                                 .black,
                                 FColor.cyan.withAlpha(0.5),
                             )) |cursor_line| {
@@ -6959,6 +6987,11 @@ const Workspace = struct {
         // tracy.plot(u32, "canvas frame arena capacity in mb", @intCast(@divFloor(drawer.?.canvas.frame_arena.queryCapacity(), 1024 * 1024)));
 
         var typing: bool = workspace.active_text_input != .nothing;
+        if (typing and if (workspace.active_text_input.getSafe()) |a| a.specific.tag() != .editable_textline else true) {
+            typing = false;
+            workspace.active_text_input = .nothing;
+            platform.stopTextInput();
+        }
 
         workspace.display_fps = !typing and platform.keyboard.cur.isDown(.KeyF);
         workspace.debug_nodraw = !typing and platform.keyboard.cur.isDown(.KeyV);
@@ -7810,18 +7843,22 @@ const Workspace = struct {
                     cur = original_tree.next;
                 }
             } else if (old_t <= 0.01) { // regenerate children
-                // const searchbox = try Toybox.new(.{}, .{ .editable_textline = .{ .inner_text = .empty } }, undo_stack);
+                const searchbox = try Toybox.new(.{}, .{ .editable_textline = .{
+                    .inner_text = .empty,
+                    .config = .searchbox,
+                } }, undo_stack);
                 const scrollbar = Lego.Specific.Scrollbar.build(
                     toolbar_fnks_rect
-                        .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
+                        .plusMargin3(.top, -toolbar_fnks_searchbox_height)
+                        .withSize1d(.width, 0.5, .top_right),
                     0,
-                    toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
+                    (toolbar_fnks_rect.size.y - toolbar_fnks_searchbox_height) / Lego.Specific.FnkslistElement.height,
                     undo_stack,
                 );
                 const fnkslist = try Toybox.new(.{}, .{ .scrollable_list = .{ .kind = .fnkslist } }, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
-                // Toybox.addChildLast(workspace.toolbar_fnks, searchbox, undo_stack);
+                Toybox.addChildLast(workspace.toolbar_fnks, searchbox, undo_stack);
 
                 const fnkboxes = try workspace.allFnkboxes(false, scratch);
                 for (fnkboxes, 0..) |index, k| {
@@ -8224,13 +8261,14 @@ const Workspace = struct {
                 if (lego.specific.tag() == .editable_textline) {
                     const cursor_points = &lego.specific.editable_textline.cursor_points;
                     assert(cursor_points.items.len == 0);
-                    const text = lego.specific.editable_textline.inner_text.items;
+                    const config = lego.specific.editable_textline.config;
+                    const text = lego.specific.editable_textline.text();
 
                     const text_renderer = &drwr.canvas.text_renderers[0];
                     const metrics = text_renderer.font_info.value.metrics;
-                    const em = 0.8;
-                    const pos: Canvas.TextRenderer.TextPosition = .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0));
-                    const info = try text_renderer.quadsForLineV2(text, em, undefined, scratch);
+                    const em = config.em;
+                    const pos: Canvas.TextRenderer.TextPosition = config.local_position;
+                    const info = try text_renderer.quadsForLineV2(text orelse config.text_if_empty, em, undefined, scratch);
                     const delta = text_renderer.deltaToAchieve(pos, info.total_advance, em);
 
                     try cursor_points.ensureTotalCapacityPrecise(
@@ -8241,7 +8279,7 @@ const Workspace = struct {
                     for (info.cursor_offsets) |asdf| {
                         cursor_points.appendAssumeCapacity(.{
                             .relative_pos = delta.addX(asdf.offset).addY(metrics.descender * em),
-                            .index = asdf.index,
+                            .index = if (text == null) 0 else asdf.index,
                             .relative_height = (metrics.descender - metrics.ascender) * em,
                         });
                     }
