@@ -7,6 +7,8 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
 // TODO: max stack size in toOldCoreValue :((((
 
+// TODO(polish): undo for text changes
+
 const Drawer = @import("Drawer.zig");
 
 pub const tracy = @import("tracy");
@@ -1953,6 +1955,15 @@ pub const Lego = struct {
                 return switch (this.kind) {
                     .listviewer_sexprs => true,
                     .fnkbox_testcases, .fnkslist => false,
+                };
+            }
+
+            pub fn instantUpdates(this: @This()) bool {
+                return switch (this.kind) {
+                    .listviewer_sexprs, .fnkbox_testcases => false,
+                    // TODO(polish): this is true just because they get recreated each frame,
+                    //  i would much rather this function always return false
+                    .fnkslist => true,
                 };
             }
 
@@ -5469,8 +5480,6 @@ const Workspace = struct {
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         assert(dst.valid(arena.allocator()));
-        try dst.canonizeAfterChanges(arena.allocator());
-        assert(dst.valid(arena.allocator()));
 
         try updateNonInteractive(
             dst,
@@ -5482,6 +5491,8 @@ const Workspace = struct {
             null,
             scratch.allocator(),
         );
+
+        assert(dst.valid(arena.allocator()));
     }
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
@@ -6274,11 +6285,15 @@ const Workspace = struct {
                         var cur_element: Lego.Index = lego.tree.first;
                         var y: f32 = -scroll_visual;
                         while (cur_element != .nothing) {
-                            Toybox.setLocalPointSmooth(cur_element, .{ .pos = scrollable_list.base()
-                                .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() });
-                            // TODO(polish): this in fnkbox_testcases to avoid buggy looking updates
-                            // cur_element.get().local_point = .{ .pos = scrollable_list.base()
-                            //     .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() };
+                            if (scrollable_list.instantUpdates()) {
+                                // TODO(polish): this in fnkbox_testcases to avoid buggy looking scrolling,
+                                //  but still avoid popping when adding/removing testcases
+                                cur_element.get().local_point = .{ .pos = scrollable_list.base()
+                                    .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() };
+                            } else {
+                                Toybox.setLocalPointSmooth(cur_element, .{ .pos = scrollable_list.base()
+                                    .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() });
+                            }
                             y += if (cur_element.hasTag(.scrollable_list_inbetween)) 0.5 * cur_element.get().dropzone_t else 1.0;
                             cur_element = Toybox.get(cur_element).tree.next;
                             height += 1;
@@ -7859,16 +7874,47 @@ const Workspace = struct {
                 Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, searchbox, undo_stack);
+            }
 
-                const fnkboxes = try workspace.allFnkboxes(false, scratch);
-                for (fnkboxes, 0..) |index, k| {
-                    Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
-                        k,
-                        index,
-                        null,
-                    ), null);
+            if (workspace.toolbar_fnks.get().tree.first != .nothing) { // filter out functions by search
+                // TODO(perf): avoid recomputing this when nothing has changed
+                const zone = tracy.initZone(@src(), .{ .name = "recomputing fnkslist" });
+                defer zone.deinit();
+
+                const scrollbar, const fnkslist, const searchbox = Toybox.getChildrenExact(3, workspace.toolbar_fnks);
+                const filter_text = searchbox.get().specific.editable_textline.text();
+
+                if (true) { // destroy old
+                    var cur = fnkslist.get().tree.first;
+                    while (cur != .nothing) {
+                        const original_tree = Toybox.get(cur).tree;
+                        Toybox.pop(cur, undo_stack);
+                        Toybox.destroyFloating(cur, undo_stack);
+                        cur = original_tree.next;
+                    }
                 }
-                fnkslist.scrollbar(.scrollable_list).get().specific.scrollbar.total_length = tof32(fnkboxes.len);
+
+                var k: usize = 0;
+                const fnkboxes = try workspace.allFnkboxes(false, scratch);
+                for (fnkboxes) |index| {
+                    // TODO(polish): highlight the matched parts
+                    const passed = if (filter_text) |filter|
+                        fuzzyFilter(
+                            filter,
+                            index.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.editable_textline.text() orelse "<empty description>",
+                        )
+                    else
+                        true;
+                    if (passed) {
+                        Toybox.addChildLast(fnkslist, try Lego.Specific.FnkslistElement.build(
+                            k,
+                            index,
+                            null,
+                        ), null);
+                        k += 1;
+                    }
+                }
+                scrollbar.get().specific.scrollbar.total_length = tof32(k);
             }
 
             const rect = toolbar_fnks_rect;
@@ -9086,7 +9132,16 @@ const Workspace = struct {
             }
         }
 
-        try dst.canonizeAfterChanges(scratch);
+        try updateNonInteractive(
+            dst,
+            Rect
+                .fromCenterAndSize(.zero, .both(2))
+                .withAspectRatio(stuff.metadata.desired_aspect_ratio, .grow, .center),
+            0,
+            .{ .over_background = dst.main_area },
+            null,
+            scratch,
+        );
     }
 
     pub fn canAutosaveNow(workspace: *const Workspace) bool {
@@ -9196,6 +9251,31 @@ const Workspace = struct {
         } else return true;
     }
 };
+
+test fuzzyFilter {
+    try std.testing.expect(fuzzyFilter("foo", "foobar"));
+    try std.testing.expect(!fuzzyFilter("foo", "xoobar"));
+}
+
+fn fuzzyFilter(query: []const u8, haystack: []const u8) bool {
+    // TODO(polish): support unicode, main obstacle is not having a .tolowercase there
+    var remaining_description = haystack;
+    var remaining_filter = query;
+
+    while (remaining_filter.len > 0) {
+        const first = std.ascii.toLower(remaining_filter[0]);
+        remaining_filter = remaining_filter[1..];
+
+        while (remaining_description.len > 0) {
+            const x = std.ascii.toLower(remaining_description[0]);
+            remaining_description = remaining_description[1..];
+            if (x == first) {
+                break;
+            }
+        } else return false;
+    }
+    return true;
+}
 
 const Menu = struct {
     showing: bool = true,
