@@ -358,16 +358,16 @@ pub const Lego = struct {
 
         // TODO(design): try to simplify these
         garland_newcases: void,
-        fnkbox_description: struct {
+        editable_textline: struct {
             inner_text: std.ArrayListUnmanaged(u8),
             /// resets each frame
             cursor_points: std.ArrayListUnmanaged(CursorPoint) = .empty,
 
-            pub fn text(this: @This()) []const u8 {
+            pub fn text(this: @This()) ?[]const u8 {
                 return if (this.inner_text.items.len > 0)
                     this.inner_text.items
                 else
-                    "<empty description>";
+                    null;
             }
         },
         fnkslist_element: FnkslistElement,
@@ -624,7 +624,7 @@ pub const Lego = struct {
             }
 
             pub fn text(this: @This()) []const u8 {
-                return this.fnkbox.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.text();
+                return this.fnkbox.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.editable_textline.text() orelse "<empty description>";
             }
         };
 
@@ -1029,7 +1029,7 @@ pub const Lego = struct {
 
             pub fn text(this: @This()) ?[]const u8 {
                 if (this.fnkbox.getSafe() == null) return null;
-                return this.fnkbox.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.text();
+                return this.fnkbox.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.editable_textline.text();
             }
         };
 
@@ -2312,7 +2312,7 @@ pub const Lego = struct {
             .button,
             .scrollbar,
             .fnkbox_box,
-            .fnkbox_description,
+            .editable_textline,
             .scrollable_list,
             .fnkslist,
             .fnkslist_element,
@@ -2435,7 +2435,7 @@ pub const Lego = struct {
             .executor_controls,
             .microscope,
             .fnkbox_box,
-            .fnkbox_description,
+            .editable_textline,
             .scrollable_list,
             .fnkslist,
             .fnkslist_element,
@@ -2477,7 +2477,7 @@ pub const Lego = struct {
             .executor_controls,
             .microscope,
             .fnkbox_box,
-            .fnkbox_description,
+            .editable_textline,
             .scrollable_list,
             .scrollable_list_inbetween,
             .fnkslist,
@@ -3757,7 +3757,7 @@ pub const Toybox = struct {
             }, undo_stack);
 
         const box = try Toybox.createWithChildren(.{}, .{ .fnkbox_box = .{} }, &.{
-            try Toybox.new(.{}, .{ .fnkbox_description = .{
+            try Toybox.new(.{}, .{ .editable_textline = .{
                 .inner_text = .fromOwnedSlice(try text_allocator.dupe(u8, text)),
             } }, undo_stack),
             try new(.{}, .{ .button = .{
@@ -5541,11 +5541,11 @@ const Workspace = struct {
         var it = toybox.all_legos.iterator(0);
         while (it.next()) |lego| {
             if (!lego.exists) continue;
-            if (lego.specific.as(.fnkbox_description)) |fnkbox_description| {
+            if (lego.specific.as(.editable_textline)) |editable_textline| {
                 if (Toybox.findAncestor(lego.index, .fnkbox).get().specific.fnkbox.editable or
                     workspace.isFreefloating(lego.index))
                 {
-                    fnkbox_description.inner_text.deinit(workspace.gpa_for_text);
+                    editable_textline.inner_text.deinit(workspace.gpa_for_text);
                 }
             }
         }
@@ -5698,11 +5698,11 @@ const Workspace = struct {
                         //  or that the culling isn't working
                         panic("unexpected unloaded testcase while interacting!", .{});
                     },
-                    .fnkbox_description => |fnkbox_description| {
+                    .editable_textline => |editable_textline| {
                         var best_index: usize = 0;
                         var best_dist: f32 = 1.0; // don't go too far, horizontally
                         var found_something = false;
-                        for (fnkbox_description.cursor_points.items) |cursor_point| {
+                        for (editable_textline.cursor_points.items) |cursor_point| {
                             const p = lego.absolute_point.applyToLocalPoint(.{ .pos = cursor_point.relative_pos });
                             const asdf = p.inverseApplyGetLocalPosition(absolute_needle_pos);
                             // TODO(polish): ignore y position for already selected text
@@ -5756,7 +5756,7 @@ const Workspace = struct {
                             .sexpr,
                             .area,
                             .microscope,
-                            .fnkbox_description,
+                            .editable_textline,
                             .scrollable_list,
                             .fnkslist,
                             .fnkslist_element,
@@ -5945,7 +5945,7 @@ const Workspace = struct {
                     math.towards(&crank.value, target_t, delta_seconds * 5);
                     executor.animation.?.t = crank.value;
                 },
-                .fnkbox_description => {
+                .editable_textline => {
                     if (interaction.text_index) |i| {
                         active_text_selection.cursor = i;
                     }
@@ -6301,7 +6301,7 @@ const Workspace = struct {
                     .microscope,
                     .lens,
                     .button,
-                    .fnkbox_description,
+                    .editable_textline,
                     .postit,
                     .postit_text,
                     .postit_drawing,
@@ -6726,12 +6726,12 @@ const Workspace = struct {
                                 lego.absolute_point.applyToLocalPosition(.new(0, newcase.length())),
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
                         },
-                        .fnkbox_description => |fnkbox_description| {
+                        .editable_textline => |editable_textline| {
                             if (try drawer.canvas.drawEditableText(
                                 .{},
                                 0,
                                 camera_relative,
-                                fnkbox_description.text(),
+                                editable_textline.text() orelse "",
                                 if (cur == active_text_input) active_text_selection else null,
                                 .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
                                 0.8,
@@ -7107,12 +7107,12 @@ const Workspace = struct {
         assert(workspace.valid(scratch));
 
         if (typing) {
-            const fnkbox_description = &workspace.active_text_input.get().specific.fnkbox_description;
+            const editable_textline = &workspace.active_text_input.get().specific.editable_textline;
             var textedit: TextManipulation = .{
                 .selection = &workspace.active_text_selection,
-                .text = &fnkbox_description.inner_text,
+                .text = &editable_textline.inner_text,
                 .alloc_text = workspace.gpa_for_text,
-                .cursor_points = &fnkbox_description.cursor_points,
+                .cursor_points = &editable_textline.cursor_points,
                 .alloc_cursor_points = workspace.arena_for_oneframe_data.allocator(),
             };
 
@@ -7268,7 +7268,7 @@ const Workspace = struct {
                     // continue with Case A.3
                     grabbed_element_index = hot_index;
                     plucked = false;
-                } else if (hot_index.hasTag(.fnkbox_description)) {
+                } else if (hot_index.hasTag(.editable_textline)) {
                     // Special case: edit text
                     platform.startTextInput(null);
                     workspace.active_text_input = hot_index;
@@ -7513,7 +7513,7 @@ const Workspace = struct {
             if (workspace.grabbing.index != .nothing)
                 if (workspace.grabbing.index.hasTag(.button))
                     .pointer
-                else if (workspace.grabbing.index.hasTag(.fnkbox_description))
+                else if (workspace.grabbing.index.hasTag(.editable_textline))
                     // TODO(polish): should be .text, but that looks buggy with the 50% gray bg color
                     .pointer
                 else
@@ -7521,7 +7521,7 @@ const Workspace = struct {
             else if (hot_and_dropzone.hot != .nothing)
                 if (hot_and_dropzone.hot.hasTag(.button))
                     .pointer
-                else if (hot_and_dropzone.hot.hasTag(.fnkbox_description))
+                else if (hot_and_dropzone.hot.hasTag(.editable_textline))
                     // TODO(polish): should be .text, but that looks buggy with the 50% gray bg color
                     .pointer
                 else
@@ -7647,7 +7647,7 @@ const Workspace = struct {
                     .microscope,
                     .lens,
                     .fnkbox,
-                    .fnkbox_description,
+                    .editable_textline,
                     .fnkbox_box,
                     .scrollable_list,
                     .scrollable_list_inbetween,
@@ -7833,6 +7833,7 @@ const Workspace = struct {
                     cur = original_tree.next;
                 }
             } else if (old_t <= 0.01) { // regenerate children
+                // const searchbox = try Toybox.new(.{}, .{ .editable_textline = .{ .inner_text = .empty } }, undo_stack);
                 const scrollbar = Lego.Specific.Scrollbar.build(
                     toolbar_fnks_rect
                         .withSize(.new(0.5, toolbar_fnks_rect.size.y), .top_right),
@@ -7841,6 +7842,7 @@ const Workspace = struct {
                     undo_stack,
                 );
                 const fnkslist = try Toybox.new(.{}, .{ .fnkslist = .{} }, undo_stack);
+                // Toybox.addChildLast(workspace.toolbar_fnks, searchbox, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
 
@@ -8118,8 +8120,8 @@ const Workspace = struct {
                     sexpr.bindings_all = .empty;
                     sexpr.bindings_unbound = .empty;
                 }
-                if (lego.specific.as(.fnkbox_description)) |fnkbox_description| {
-                    fnkbox_description.cursor_points = .empty;
+                if (lego.specific.as(.editable_textline)) |editable_textline| {
+                    editable_textline.cursor_points = .empty;
                 }
             }
 
@@ -8242,10 +8244,10 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
-                if (lego.specific.tag() == .fnkbox_description) {
-                    const cursor_points = &lego.specific.fnkbox_description.cursor_points;
+                if (lego.specific.tag() == .editable_textline) {
+                    const cursor_points = &lego.specific.editable_textline.cursor_points;
                     assert(cursor_points.items.len == 0);
-                    const text = lego.specific.fnkbox_description.inner_text.items;
+                    const text = lego.specific.editable_textline.inner_text.items;
 
                     const text_renderer = &drwr.canvas.text_renderers[0];
                     const metrics = text_renderer.font_info.value.metrics;
@@ -8825,7 +8827,7 @@ const Workspace = struct {
             std.log.info("wrote pos: {any}", .{local_point_from_mainarea.pos});
 
             // write description
-            try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.fnkbox_description.inner_text.items);
+            try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.editable_textline.inner_text.items);
 
             if (true) { // write testcases
                 const testcases_area = cur.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
