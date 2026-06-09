@@ -5,7 +5,6 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 // Causes of bugs:
 // - functions that take a pointer and allocate memory might invalidate that pointer
 
-// TODO: save scorers!
 // TODO: max stack size in toOldCoreValue :((((
 
 const Drawer = @import("Drawer.zig");
@@ -352,9 +351,6 @@ pub const Lego = struct {
             kind: enum { listviewer_sexprs },
         },
         scrollable_list: ScrollableList,
-
-        // TODO(design): delete these and merge with
-        fnkslist: struct {},
 
         // TODO(design): try to simplify these
         garland_newcases: void,
@@ -1889,7 +1885,7 @@ pub const Lego = struct {
         };
 
         pub const ScrollableList = struct {
-            kind: enum { listviewer_sexprs, fnkbox_testcases },
+            kind: enum { listviewer_sexprs, fnkbox_testcases, fnkslist },
 
             pub fn insertElement(inbetween: Lego.Index, new_element: Lego.Index, undo_stack: ?*UndoStack) !void {
                 assert(Toybox.isFloating(new_element));
@@ -1933,7 +1929,7 @@ pub const Lego = struct {
             pub fn canPluckElements(this: @This()) bool {
                 return switch (this.kind) {
                     .listviewer_sexprs => true,
-                    .fnkbox_testcases => false,
+                    .fnkbox_testcases, .fnkslist => false,
                 };
             }
 
@@ -1941,15 +1937,15 @@ pub const Lego = struct {
                 return switch (this.kind) {
                     .listviewer_sexprs => .new(5, -1.75 - 0.05),
                     // .listviewer_sexprs => .new(4.5, -1.25 - 0 * 0.125),
-                    // TODO(now)
                     .fnkbox_testcases => Lego.Specific.FnkboxBox.relative_top_testcase_pos.addY(2),
+                    .fnkslist => .zero,
                 };
             }
 
             pub fn elementScale(this: @This()) f32 {
                 return switch (this.kind) {
                     .listviewer_sexprs => 0.5,
-                    .fnkbox_testcases => 1,
+                    .fnkbox_testcases, .fnkslist => 1,
                 };
             }
 
@@ -1957,6 +1953,7 @@ pub const Lego = struct {
                 return switch (this.kind) {
                     .listviewer_sexprs => 1.25,
                     .fnkbox_testcases => 2.5,
+                    .fnkslist => Lego.Specific.FnkslistElement.height,
                 };
             }
 
@@ -1964,6 +1961,7 @@ pub const Lego = struct {
                 return switch (this.kind) {
                     .listviewer_sexprs => .fromCenterAndSize(.new(5.75 - 0.125, 0), .new(2.25, 5)),
                     .fnkbox_testcases => Specific.FnkboxBox.testcases_box,
+                    .fnkslist => Workspace.toolbar_fnks_rect,
                 };
             }
 
@@ -1971,6 +1969,7 @@ pub const Lego = struct {
                 return switch (this.kind) {
                     .listviewer_sexprs => true,
                     .fnkbox_testcases => true,
+                    .fnkslist => false,
                 };
             }
         };
@@ -2286,10 +2285,11 @@ pub const Lego = struct {
             return switch (specific) {
                 else => comptime unreachable,
                 .scrollable_list => switch (index.get().specific.scrollable_list.kind) {
-                    .listviewer_sexprs => index.get().tree.prev,
-                    .fnkbox_testcases => index.get().tree.prev,
+                    .listviewer_sexprs,
+                    .fnkbox_testcases,
+                    .fnkslist,
+                    => index.get().tree.prev,
                 },
-                .fnkslist => index.get().tree.next,
             };
         }
 
@@ -2314,7 +2314,6 @@ pub const Lego = struct {
             .fnkbox_box,
             .editable_textline,
             .scrollable_list,
-            .fnkslist,
             .fnkslist_element,
             .executor,
             .testcase,
@@ -2389,7 +2388,7 @@ pub const Lego = struct {
     pub fn addScroll(lego: *Lego, amount: f32) void {
         switch (lego.specific) {
             else => unreachable,
-            inline .fnkslist, .scrollable_list => |_, t| {
+            inline .scrollable_list => |_, t| {
                 lego.index.scrollbar(t).get().specific.scrollbar.scroll_target += amount;
             },
             .scrollbar => |*scrollbar| {
@@ -2437,7 +2436,6 @@ pub const Lego = struct {
             .fnkbox_box,
             .editable_textline,
             .scrollable_list,
-            .fnkslist,
             .fnkslist_element,
             .newcase,
             .area,
@@ -2480,7 +2478,6 @@ pub const Lego = struct {
             .editable_textline,
             .scrollable_list,
             .scrollable_list_inbetween,
-            .fnkslist,
             .fnkslist_element,
             .newcase,
             .area,
@@ -5728,7 +5725,6 @@ const Workspace = struct {
                     .executor,
                     .fnkbox,
                     .fnkbox_box,
-                    .fnkslist,
                     .fnkslist_element,
                     .testcase,
                     .pill,
@@ -5758,7 +5754,6 @@ const Workspace = struct {
                             .microscope,
                             .editable_textline,
                             .scrollable_list,
-                            .fnkslist,
                             .fnkslist_element,
                             .button,
                             .scrollbar,
@@ -6263,17 +6258,6 @@ const Workspace = struct {
 
                         if (scrollable_list.kind == .fnkbox_testcases) {
                             cur.scrollbar(.scrollable_list).get().specific.scrollbar.total_length = height;
-                        }
-                    },
-                    .fnkslist => {
-                        const scroll_visual = lego.index.scrollbar(.fnkslist).get().specific.scrollbar.scroll_visual;
-
-                        var k: usize = 0;
-                        var cur_element: Lego.Index = lego.tree.first;
-                        while (cur_element != .nothing) {
-                            Toybox.get(cur_element).local_point = .{ .pos = .new(0, Lego.Specific.FnkslistElement.height * (tof32(k) - scroll_visual)) };
-                            k += 1;
-                            cur_element = Toybox.get(cur_element).tree.next;
                         }
                     },
                     .scrollbar => |*scrollbar| {
@@ -6898,7 +6882,6 @@ const Workspace = struct {
                             // panic("unexpected unloaded testcase while drawing!", .{});
                         },
                         .scrollable_list_inbetween,
-                        .fnkslist,
                         .executor_controls,
                         .garland_newcases,
                         .executor,
@@ -7555,11 +7538,6 @@ const Workspace = struct {
                 )) {
                     break lego.index;
                 }
-                if (lego.specific.tag() == .fnkslist and toolbar_fnks_rect.contains(
-                    lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
-                )) {
-                    break lego.index;
-                }
             } else .nothing;
 
             const p = &Toybox.get(workspace.main_area).local_point;
@@ -7651,7 +7629,6 @@ const Workspace = struct {
                     .fnkbox_box,
                     .scrollable_list,
                     .scrollable_list_inbetween,
-                    .fnkslist,
                     .fnkslist_element,
                     .button,
                     .scrollbar,
@@ -7841,10 +7818,10 @@ const Workspace = struct {
                     toolbar_fnks_rect.size.y / Lego.Specific.FnkslistElement.height,
                     undo_stack,
                 );
-                const fnkslist = try Toybox.new(.{}, .{ .fnkslist = .{} }, undo_stack);
-                // Toybox.addChildLast(workspace.toolbar_fnks, searchbox, undo_stack);
-                Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
+                const fnkslist = try Toybox.new(.{}, .{ .scrollable_list = .{ .kind = .fnkslist } }, undo_stack);
                 Toybox.addChildLast(workspace.toolbar_fnks, scrollbar, undo_stack);
+                Toybox.addChildLast(workspace.toolbar_fnks, fnkslist, undo_stack);
+                // Toybox.addChildLast(workspace.toolbar_fnks, searchbox, undo_stack);
 
                 const fnkboxes = try workspace.allFnkboxes(false, scratch);
                 for (fnkboxes, 0..) |index, k| {
@@ -7854,7 +7831,7 @@ const Workspace = struct {
                         null,
                     ), null);
                 }
-                fnkslist.scrollbar(.fnkslist).get().specific.scrollbar.total_length = tof32(fnkboxes.len);
+                fnkslist.scrollbar(.scrollable_list).get().specific.scrollbar.total_length = tof32(fnkboxes.len);
             }
 
             const rect = toolbar_fnks_rect;
