@@ -6392,6 +6392,9 @@ const Workspace = struct {
 
                 const camera_relative = camera.reparentCamera(lego.absolute_point);
                 if (step.children_already_visited) {
+                    const zone2 = tracy.initZone(@src(), .{ .name = "draw going up" });
+                    defer zone2.deinit();
+
                     if (false and lego.specific.tag() == .sexpr) { // draw numbers
                         try drawer.drawText(
                             0,
@@ -6415,6 +6418,11 @@ const Workspace = struct {
                         else => {},
                     }
                 } else {
+                    const zone2 = switch (lego.specific) {
+                        inline else => |_, t| tracy.initZone(@src(), .{ .name = "draw_" ++ @tagName(t) }),
+                    };
+                    defer zone2.deinit();
+
                     const point = lego.absolute_point;
                     switch (lego.specific) {
                         .case => {
