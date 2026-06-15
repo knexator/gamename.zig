@@ -17,6 +17,7 @@ pub const Noise = @import("fastnoise.zig").Noise(f32);
 pub const Gl = @import("Gl.zig");
 pub const Canvas = @import("Canvas.zig");
 pub const renderer = @import("renderer.zig");
+pub const Renderer = @import("renderer_v2.zig");
 pub const engine = @import("engine.zig");
 pub const Mem = @import("Mem.zig");
 pub const LazyState = @import("lazystate.zig").LazyState;

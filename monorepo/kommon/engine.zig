@@ -21,7 +21,6 @@ pub fn CApiFor(comptime GameState: type) type {
 pub fn InitRuntimeParamsFor(comptime GameState: type) type {
     return struct {
         gpa: std.mem.Allocator,
-        gl: Gl,
         loaded_images: std.EnumArray(GameState.Images, *const anyopaque),
         random_seed: u64,
     };
@@ -57,6 +56,7 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         sample_rate: f32,
         enqueueSamples: *const fn (src: []const f32) void,
         queuedSeconds: *const fn () f32,
+        renderer: Renderer.VTable,
         gl: Gl,
         downloadActiveFramebuffer: *const fn (resolution: kommon.math.UVec2) void,
         downloadAsFile: *const fn (filename: []const u8, contents: []const u8) void,
@@ -118,3 +118,4 @@ const Keyboard = kommon.input.Keyboard;
 const KeyboardButton = kommon.input.KeyboardButton;
 const TextInput = kommon.input.TextInput;
 const Gl = kommon.Gl;
+const Renderer = kommon.Renderer;

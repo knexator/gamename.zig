@@ -399,6 +399,14 @@ pub const Vec2 = extern struct {
         };
     }
 
+    pub fn as2f(v: Self) [2]Scalar {
+        return .{ v.x, v.y };
+    }
+
+    pub fn from2f(v: [2]Scalar) Self {
+        return .new(v[0], v[1]);
+    }
+
     pub fn setInPlace(v: *Self, which: Coord, value: Scalar) void {
         switch (which) {
             .x => v.x = value,

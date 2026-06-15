@@ -2,6 +2,8 @@ pub const GameState = @This();
 pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 
+pub const tracy = @import("tracy");
+
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -58,10 +60,10 @@ pub fn init(
     comptime _: kommon.engine.InitComptimeParamsFor(GameState),
 ) !void {
     const gpa = runtime_params.gpa;
-    const gl = runtime_params.gl;
-    const loaded_images = runtime_params.loaded_images;
+    // const loaded_images = runtime_params.loaded_images;
     const random_seed = runtime_params.random_seed;
-    dst.usual.init(gpa, random_seed, try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
+    // dst.usual.init(gpa, random_seed, try .init(undefined, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
+    dst.usual.init(gpa, random_seed);
     dst.board = try .fromAsciiAndMap(gpa, raw_puzzle, struct {
         pub fn anon(c: u8) TileState {
             return switch (c) {
@@ -152,16 +154,42 @@ const Tile = struct {
     }
 };
 
+// TODO: improve, obviously
+pub fn fillRect(renderer: kommon.Renderer.VTable, camera: Rect, rect: Rect, color: FColor) void {
+    renderer.addDrawable(.{
+        .camera_center = .{ -1, 1 },
+        .camera_axis_x = .{ 2, 0 },
+        .camera_axis_y = .{ 0, -2 },
+        .color = color.toArray(),
+        .texture_id = 0,
+        .material_id = 0,
+    }, renderer.addModel(&.{
+        .{ .relative_pos = camera.localFromWorldPosition(rect.getAt(.new(0, 0))).as2f(), .uv = .{ 0, 0 } },
+        .{ .relative_pos = camera.localFromWorldPosition(rect.getAt(.new(1, 0))).as2f(), .uv = .{ 1, 0 } },
+        .{ .relative_pos = camera.localFromWorldPosition(rect.getAt(.new(0, 1))).as2f(), .uv = .{ 0, 1 } },
+        .{ .relative_pos = camera.localFromWorldPosition(rect.getAt(.new(1, 1))).as2f(), .uv = .{ 1, 1 } },
+    }, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } }));
+
+    // const quad = renderer.addModel(&.{
+    //     .{ .relative_pos = .{ 0, 0 }, .uv = .{ 0, 0 } },
+    //     .{ .relative_pos = .{ 1, 0 }, .uv = .{ 1, 0 } },
+    //     .{ .relative_pos = .{ 0, 1 }, .uv = .{ 0, 1 } },
+    //     .{ .relative_pos = .{ 1, 1 }, .uv = .{ 1, 1 } },
+    // }, &.{ .{ 0, 1, 2 }, .{ 3, 2, 1 } });
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
-    const mem = &self.usual.mem;
+    // const mem = &self.usual.mem;
     const smooth = &self.usual.smooth;
-    const canvas = &self.usual.canvas;
+    // const canvas = &self.usual.canvas;
+
+    const renderer = platform.renderer;
 
     const camera: Rect = .{ .top_left = .zero, .size = .both(4) };
     const mouse = platform.getMouse(camera);
-    platform.gl.clear(.gray(0.5));
+    // platform.gl.clear(.gray(0.5));
 
     var it = self.board.iterator();
     while (it.next()) |pos| {
@@ -170,28 +198,30 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const tile: *TileState = self.board.getPtr(pos);
         switch (tile.*) {
             .block => |b| {
-                canvas.fillRect(camera, rect, .black);
-                if (b) |v|
-                    try canvas.text_renderers[0].drawLine(
-                        platform.gl,
-                        camera,
-                        .{ .center = rect.get(.center) },
-                        switch (v) {
-                            0 => "0",
-                            1 => "1",
-                            2 => "2",
-                            3 => "3",
-                            4 => "4",
-                            else => unreachable,
-                        },
-                        rect.size.y,
-                        .white,
-                        mem.frame.allocator(),
-                    );
+                fillRect(renderer, camera, rect, .black);
+                if (b) |v| {
+                    _ = v;
+                    // try canvas.text_renderers[0].drawLine(
+                    //     platform.gl,
+                    //     camera,
+                    //     .{ .center = rect.get(.center) },
+                    //     switch (v) {
+                    //         0 => "0",
+                    //         1 => "1",
+                    //         2 => "2",
+                    //         3 => "3",
+                    //         4 => "4",
+                    //         else => unreachable,
+                    //     },
+                    //     rect.size.y,
+                    //     .white,
+                    //     mem.frame.allocator(),
+                    // );
+                }
             },
             .gap => |*g| {
                 const mouse_over = rect.contains(mouse.cur.position);
-                canvas.fillRect(camera, rect, try smooth.fcolor(
+                fillRect(renderer, camera, rect, try smooth.fcolor(
                     .fromFormat("bg {d}", .{key}),
                     if (g.lighted) .fromHex("#BBFF87") else .white,
                 ));
@@ -205,25 +235,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (mouse_over and is_active) 1.0 else 0.0,
                 );
                 if (g.mark != .none) {
-                    try canvas.text_renderers[0].drawLine(
-                        platform.gl,
-                        camera,
-                        .{ .center = rect.get(.center) },
-                        switch (g.mark) {
-                            .none => unreachable,
-                            .lamp => "o",
-                            .cross => ".",
-                        },
-                        rect.size.y,
-                        switch (g.mark) {
-                            .none => unreachable,
-                            .lamp => .fromHex("#007F61"),
-                            .cross => .fromHex("#00A11B"),
-                        },
-                        mem.frame.allocator(),
-                    );
+                    // try canvas.text_renderers[0].drawLine(
+                    //     platform.gl,
+                    //     camera,
+                    //     .{ .center = rect.get(.center) },
+                    //     switch (g.mark) {
+                    //         .none => unreachable,
+                    //         .lamp => "o",
+                    //         .cross => ".",
+                    //     },
+                    //     rect.size.y,
+                    //     switch (g.mark) {
+                    //         .none => unreachable,
+                    //         .lamp => .fromHex("#007F61"),
+                    //         .cross => .fromHex("#00A11B"),
+                    //     },
+                    //     mem.frame.allocator(),
+                    // );
                 }
-                canvas.fillRect(camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
+                fillRect(renderer, camera, rect, FColor.gray(0.5).withAlpha(hot_t * 0.4 - active_t * 0.2));
 
                 switch (self.focus) {
                     .none => {
@@ -321,6 +351,7 @@ const Triangulator = kommon.Triangulator;
 const math = kommon.math;
 const tof32 = math.tof32;
 const Color = math.UColor;
+const UColor = math.UColor;
 const FColor = math.FColor;
 const Camera = math.Camera;
 const Rect = math.Rect;

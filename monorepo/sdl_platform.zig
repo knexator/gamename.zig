@@ -83,6 +83,8 @@ var my_game: if (@import("build_options").game_dynlib_path) |game_dynlib_path| s
 } else GameState = undefined;
 
 var sdl_window: *c.SDL_Window = undefined;
+var sdl_device: *c.SDL_GPUDevice = undefined;
+var sdl_renderer: SdlRenderer = undefined;
 
 var window_size: UVec2 = Vec2.new(stuff.metadata.desired_aspect_ratio, 1).scale(512).toInt(usize);
 fn getWindowRect() Rect {
@@ -195,30 +197,23 @@ pub fn main() !void {
 
     errify(c.SDL_SetHint(c.SDL_HINT_RENDER_VSYNC, "1")) catch {};
 
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_MAJOR_VERSION, gl.info.version_major));
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_MINOR_VERSION, gl.info.version_minor));
-    if (gl.info.profile) |profile| try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_PROFILE_MASK, switch (profile) {
-        .core => c.SDL_GL_CONTEXT_PROFILE_CORE,
-        else => @compileError("TODO"),
-    }));
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_CONTEXT_FLAGS, c.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG));
-
-    if (@import("builtin").os.tag != .linux) {
-        try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLEBUFFERS, 1));
-        try errify(c.SDL_GL_SetAttribute(c.SDL_GL_MULTISAMPLESAMPLES, 16));
-    } else {
-        std.log.err("TODO: don't skip multisampling on Linux", .{});
-    }
-
-    try errify(c.SDL_GL_SetAttribute(c.SDL_GL_STENCIL_SIZE, 8));
+    sdl_device = try errify(c.SDL_CreateGPUDevice(
+        c.SDL_GPU_SHADERFORMAT_SPIRV,
+        @import("builtin").mode == .Debug,
+        null,
+    ));
+    defer c.SDL_DestroyGPUDevice(sdl_device);
 
     sdl_window = try errify(c.SDL_CreateWindow(
         stuff.metadata.name,
         @intCast(window_size.x),
         @intCast(window_size.y),
-        c.SDL_WINDOW_OPENGL | c.SDL_WINDOW_RESIZABLE | (if (true and hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
+        c.SDL_WINDOW_RESIZABLE | (if (true and hot_reloading) c.SDL_WINDOW_ALWAYS_ON_TOP else 0),
     ));
     defer c.SDL_DestroyWindow(sdl_window);
+
+    try errify(c.SDL_ClaimWindowForGPUDevice(sdl_device, sdl_window));
+    defer c.SDL_ReleaseWindowFromGPUDevice(sdl_device, sdl_window);
 
     try errify(c.SDL_SetWindowAspectRatio(
         sdl_window,
@@ -226,17 +221,24 @@ pub fn main() !void {
         stuff.metadata.desired_aspect_ratio,
     ));
 
-    const gl_context = try errify(c.SDL_GL_CreateContext(sdl_window));
-    defer errify(c.SDL_GL_DestroyContext(gl_context)) catch {};
-    try errify(c.SDL_GL_MakeCurrent(sdl_window, gl_context));
-    defer errify(c.SDL_GL_MakeCurrent(sdl_window, null)) catch {};
-    if (!gl_procs.init(c.SDL_GL_GetProcAddress)) return error.GlInitFailed;
-    gl.makeProcTableCurrent(&gl_procs);
-    defer gl.makeProcTableCurrent(null);
+    sdl_renderer = try .init(sdl_device, sdl_window);
+    defer sdl_renderer.deinit(sdl_device);
 
-    gl.Viewport(0, 0, @intCast(window_size.x), @intCast(window_size.y));
-    gl.Enable(gl.BLEND);
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    for (0..SdlRenderer.texture_count) |k| {
+        try sdl_renderer.setTexture(sdl_device, k + 1, .{ .w = 2, .h = 2, .pixels = &.{
+            .{ 255, 255, 255, 255 },
+            .{ 255, 0, 0, 255 },
+            .{ 0, 255, 0, 255 },
+            .{ 0, 0, 255, 255 },
+        } }, &.{
+            .min_filter = c.SDL_GPU_FILTER_NEAREST,
+            .mag_filter = c.SDL_GPU_FILTER_NEAREST,
+            .mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+            .address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            .address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            .address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        });
+    }
 
     // TODO: defer unloading
     inline for (comptime std.enums.values(Sounds)) |sound| {
@@ -280,555 +282,18 @@ pub fn main() !void {
         images_pointers.set(image, preloaded_images.getPtrConst(image));
     }
 
-    const sdl_gl = struct {
-        pub const vtable: Gl = .{
-            .clear = clear,
-            .buildRenderable = buildRenderable,
-            .setRenderableData = setRenderableData,
-            .useRenderable = useRenderable,
-            .useRenderableWithExistingData = useRenderableWithExistingData,
-            .buildTexture2D = buildTexture2D,
-            .buildRendertarget = buildRendertarget,
-            .setRendertarget = setRendertarget,
-            .buildInstancedRenderable = buildInstancedRenderable,
-            .useInstancedRenderable = useInstancedRenderable,
-            .loadTextureDataFromBase64 = loadTextureDataFromBase64,
-            .loadTextureDataFromFilename = loadTextureDataFromFilename,
-            .startStencil = startStencil,
-            .whiteStencil = whiteStencil,
-            .blackStencil = blackStencil,
-            .doneStencil = doneStencil,
-            .stopStencil = stopStencil,
-            .stencilFunc = stencilFunc,
-            .stencilOp = stencilOp,
-            .colorMask = colorMask,
-        };
-
-        fn startStencil() void {
-            gl.ClearStencil(0);
-            gl.Clear(gl.STENCIL_BUFFER_BIT);
-            gl.Enable(gl.STENCIL_TEST);
-            gl.ColorMask(gl.FALSE, gl.FALSE, gl.FALSE, gl.FALSE);
-            whiteStencil();
-        }
-
-        fn whiteStencil() void {
-            gl.StencilFunc(gl.ALWAYS, 1, 0xFF);
-            gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-        }
-
-        fn blackStencil() void {
-            gl.StencilFunc(gl.ALWAYS, 0, 0xFF);
-            gl.StencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-        }
-
-        fn doneStencil() void {
-            gl.ColorMask(gl.TRUE, gl.TRUE, gl.TRUE, gl.TRUE);
-            gl.StencilFunc(gl.EQUAL, 1, 0xFF);
-            gl.StencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        }
-
-        fn stopStencil() void {
-            gl.Disable(gl.STENCIL_TEST);
-        }
-
-        fn stencilFunc(func: Gl.StencilFunc, ref: i32) void {
-            gl.StencilFunc(switch (func) {
-                .ALWAYS => gl.ALWAYS,
-                .EQUAL => gl.EQUAL,
-            }, ref, 0xFF);
-        }
-
-        fn stencilOp(fail: Gl.StencilOp, zfail: Gl.StencilOp, zpass: Gl.StencilOp) void {
-            gl.StencilOp(
-                @intFromEnum(fail),
-                @intFromEnum(zfail),
-                @intFromEnum(zpass),
-            );
-        }
-
-        fn colorMask(red: bool, green: bool, blue: bool, alpha: bool) void {
-            gl.ColorMask(
-                if (red) gl.TRUE else gl.FALSE,
-                if (green) gl.TRUE else gl.FALSE,
-                if (blue) gl.TRUE else gl.FALSE,
-                if (alpha) gl.TRUE else gl.FALSE,
-            );
-        }
-
-        pub fn clear(color: FColor) void {
-            gl.ClearBufferfv(gl.COLOR, 0, &color.toArray());
-        }
-
-        pub fn loadTextureDataFromBase64(base64: []const u8) *const anyopaque {
-            var decoder = std.base64.standard.Decoder;
-            const size = decoder.calcSizeForSlice(base64) catch |err| switch (err) {
-                else => @panic("TODO"),
-            };
-            const data = global_gpa_BAD.alloc(u8, size) catch @panic("TODO");
-            decoder.decode(data, base64) catch @panic("TODO");
-            const image = zstbi.Image.loadFromMemory(data, 4) catch @panic("TODO");
-            other_images.append(global_gpa_BAD, image) catch @panic("TODO");
-            return other_images.at(other_images.len - 1);
-        }
-
-        pub fn loadTextureDataFromFilename(path: [:0]const u8) *const anyopaque {
-            const image = zstbi.Image.loadFromFile(path, 0) catch @panic(path);
-            other_images.append(global_gpa_BAD, image) catch @panic("TODO");
-            return other_images.at(other_images.len - 1);
-        }
-
-        pub fn buildTexture2D(data: *const anyopaque, pixelart: bool) Gl.Texture {
-            const image: *const zstbi.Image = @ptrCast(@alignCast(data));
-
-            const format: c_uint = switch (image.num_components) {
-                2 => gl.RG,
-                3 => gl.RGB,
-                4 => gl.RGBA,
-                else => std.debug.panic("TODO: support components: {d}", .{image.num_components}),
-            };
-
-            var texture: c_uint = undefined;
-            gl.GenTextures(1, @ptrCast(&texture));
-            gl.BindTexture(gl.TEXTURE_2D, texture);
-            gl.TexImage2D(
-                gl.TEXTURE_2D,
-                0,
-                @intCast(format),
-                @intCast(image.width),
-                @intCast(image.height),
-                0,
-                format,
-                gl.UNSIGNED_BYTE,
-                image.data.ptr,
-            );
-
-            if (image.num_components == 2) {
-                const swizzle: [4]gl.int = .{ gl.RED, gl.RED, gl.RED, gl.GREEN };
-                gl.TexParameteriv(gl.TEXTURE_2D, gl.TEXTURE_SWIZZLE_RGBA, &swizzle);
+    // TODO: error instead of panic
+    const sdl_renderer_vtable: kommon.Renderer.VTable = .{
+        .addModel = struct {
+            fn anon(vertices: []const kommon.Renderer.Vertex, indices: []const [3]u16) kommon.Renderer.ModelInfo {
+                return sdl_renderer.addModel(vertices, indices) catch @panic("TODO");
             }
-
-            if (pixelart) {
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            } else {
-                gl.GenerateMipmap(gl.TEXTURE_2D);
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                // TODO: let user choose quality
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        }.anon,
+        .addDrawable = struct {
+            fn anon(drawable: kommon.Renderer.Drawable, model_info: kommon.Renderer.ModelInfo) void {
+                return sdl_renderer.addDrawable(drawable, model_info) catch @panic("TODO");
             }
-
-            return .{ .id = texture, .resolution = .new(image.width, image.height) };
-        }
-
-        pub fn buildRendertarget(resolution: UVec2, pixelart: bool) Gl.Texture {
-            const has_alpha = false;
-
-            var framebuffer: c_uint = undefined;
-            gl.GenFramebuffers(1, @ptrCast(&framebuffer));
-            gl.BindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-
-            var texture: c_uint = undefined;
-            gl.GenTextures(1, @ptrCast(&texture));
-            gl.BindTexture(gl.TEXTURE_2D, texture);
-            gl.TexImage2D(
-                gl.TEXTURE_2D,
-                0,
-                if (has_alpha) gl.RGBA else gl.RGB,
-                @intCast(resolution.x),
-                @intCast(resolution.y),
-                0,
-                if (has_alpha) gl.RGBA else gl.RGB,
-                gl.UNSIGNED_BYTE,
-                null,
-            );
-
-            if (pixelart) {
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            } else {
-                gl.GenerateMipmap(gl.TEXTURE_2D);
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                // TODO: let user choose quality
-                gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-            }
-
-            gl.FramebufferTexture(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, texture, 0);
-            const asdf: [1]gl.@"enum" = .{gl.COLOR_ATTACHMENT0};
-            gl.DrawBuffers(1, &asdf); // "1" is the size of asdf
-            if (gl.CheckFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) std.debug.panic("failed to create framebuffer", .{});
-
-            return .{ .id = framebuffer, .resolution = resolution };
-        }
-
-        pub fn setRendertarget(rendertarget: ?Gl.Texture) void {
-            gl.BindFramebuffer(gl.FRAMEBUFFER, if (rendertarget) |r| r.id else 0);
-            const resolution: UVec2 = if (rendertarget) |r| r.resolution else window_size;
-            gl.Viewport(0, 0, @intCast(resolution.x), @intCast(resolution.y));
-        }
-
-        pub fn buildRenderable(
-            vertex_src: [:0]const u8,
-            fragment_src: [:0]const u8,
-            attributes: Gl.VertexInfo.Collection,
-            uniforms: []const Gl.UniformInfo.In,
-        ) !Gl.Renderable {
-            const program = try (ProgramInfo{
-                .vertex = vertex_src,
-                .fragment = fragment_src,
-            }).load();
-
-            var vao: c_uint = undefined;
-            gl.GenVertexArrays(1, @ptrCast(&vao));
-
-            gl.BindVertexArray(vao);
-
-            var vbo: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&vbo));
-            var ebo: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&ebo));
-
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-            defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-
-            gl.BindBuffer(gl.ARRAY_BUFFER, vbo);
-            defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-            defer gl.BindVertexArray(0);
-
-            for (attributes.attribs, 0..) |attribute, k| {
-                const maybe_index = gl.GetAttribLocation(program, attribute.name);
-                if (maybe_index == -1) {
-                    std.log.err("Attribute not found: {s}", .{attribute.name});
-                    return error.AttributeLocationError;
-                }
-                const index: gl.uint = @intCast(maybe_index);
-                gl.EnableVertexAttribArray(index);
-                if (attribute.integer) {
-                    gl.VertexAttribIPointer(
-                        index,
-                        attribute.count,
-                        @intFromEnum(attribute.data_type),
-                        @intCast(attributes.getStride()),
-                        attributes.getOffset(k),
-                    );
-                } else {
-                    gl.VertexAttribPointer(
-                        index,
-                        attribute.count,
-                        @intFromEnum(attribute.data_type),
-                        if (attribute.normalized) gl.TRUE else gl.FALSE,
-                        // TODO: check in debugger if this is computed once
-                        @intCast(attributes.getStride()),
-                        attributes.getOffset(k),
-                    );
-                }
-            }
-
-            var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
-            for (uniforms) |uniform| {
-                const location = gl.GetUniformLocation(program, uniform.name);
-                if (location == -1) return error.UniformLocationError;
-                uniforms_data.append(.{
-                    .location = location,
-                    .name = uniform.name,
-                    .kind = uniform.kind,
-                }) catch return error.TooManyUniforms;
-            }
-
-            return .{
-                .program = @enumFromInt(program),
-                .vao = @enumFromInt(vao),
-                .vbo = @enumFromInt(vbo),
-                .ebo = @enumFromInt(ebo),
-                .uniforms = uniforms_data,
-            };
-        }
-
-        pub fn setRenderableData(
-            renderable: Gl.Renderable,
-            vertices_ptr: *const anyopaque,
-            vertices_len_bytes: usize,
-            triangles: []const [3]Gl.IndexType,
-            mode: Gl.UsageMode,
-        ) void {
-            gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo));
-            gl.BufferData(
-                gl.ARRAY_BUFFER,
-                @intCast(vertices_len_bytes),
-                @ptrCast(vertices_ptr),
-                switch (mode) {
-                    .static => gl.STATIC_DRAW,
-                    .dynamic => gl.DYNAMIC_DRAW,
-                },
-            );
-            gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
-            gl.BufferData(
-                gl.ELEMENT_ARRAY_BUFFER,
-                @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
-                triangles.ptr,
-                switch (mode) {
-                    .static => gl.STATIC_DRAW,
-                    .dynamic => gl.DYNAMIC_DRAW,
-                },
-            );
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-        }
-
-        pub fn useRenderable(
-            renderable: Gl.Renderable,
-            vertices_ptr: *const anyopaque,
-            vertices_len_bytes: usize,
-            // vertices: []const anyopaque,
-            // TODO: make triangles optional, since they could be precomputed
-            triangles: []const [3]Gl.IndexType,
-            uniforms: []const Gl.UniformInfo.Runtime,
-            // TODO: multiple textures
-            texture: ?Gl.Texture,
-        ) void {
-            setRenderableData(renderable, vertices_ptr, vertices_len_bytes, triangles, .dynamic);
-            useRenderableWithExistingData(renderable, triangles.len, uniforms, texture);
-        }
-
-        pub fn useRenderableWithExistingData(
-            renderable: Gl.Renderable,
-            n_triangles: usize,
-            uniforms: []const Gl.UniformInfo.Runtime,
-            // TODO: multiple textures
-            texture: ?Gl.Texture,
-        ) void {
-            if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t.id);
-            defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
-
-            gl.BindVertexArray(@intFromEnum(renderable.vao));
-            defer gl.BindVertexArray(0);
-
-            gl.UseProgram(@intFromEnum(renderable.program));
-            defer gl.UseProgram(0);
-
-            for (uniforms) |uniform| {
-                // const u = uniform.location;
-                // TODO
-                const u = blk: {
-                    for (renderable.uniforms.slice()) |u| {
-                        if (std.mem.eql(u8, u.name, uniform.name)) break :blk u.location;
-                    } else unreachable;
-                };
-                switch (uniform.value) {
-                    .FColor => |v| gl.Uniform4f(u, v.r, v.g, v.b, v.a),
-                    .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
-                    .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
-                    .f32 => |v| gl.Uniform1f(u, v),
-                    .Vec2 => |v| gl.Uniform2f(u, v.x, v.y),
-                }
-            }
-
-            gl.DrawElements(gl.TRIANGLES, @intCast(3 * n_triangles), switch (Gl.IndexType) {
-                u16 => gl.UNSIGNED_SHORT,
-                u32 => gl.UNSIGNED_INT,
-                else => @compileError("not implemented"),
-            }, 0);
-        }
-
-        pub fn buildInstancedRenderable(
-            vertex_src: [:0]const u8,
-            fragment_src: [:0]const u8,
-            per_vertex_attributes: Gl.VertexInfo.Collection,
-            per_instance_attributes: Gl.VertexInfo.Collection,
-            uniforms: []const Gl.UniformInfo.In,
-        ) !Gl.InstancedRenderable {
-            const program = try (ProgramInfo{
-                .vertex = vertex_src,
-                .fragment = fragment_src,
-            }).load();
-
-            var vao: c_uint = undefined;
-            gl.GenVertexArrays(1, @ptrCast(&vao));
-
-            gl.BindVertexArray(vao);
-
-            // TODO: single GenBuffers call
-            var vbo_vertices: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&vbo_vertices));
-            var vbo_instances: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&vbo_instances));
-            var ebo: c_uint = undefined;
-            gl.GenBuffers(1, @ptrCast(&ebo));
-
-            gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-            // defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-
-            defer gl.BindVertexArray(0);
-
-            // https://webgl2fundamentals.org/webgl/lessons/webgl-instanced-drawing.html
-
-            {
-                gl.BindBuffer(gl.ARRAY_BUFFER, vbo_vertices);
-                // defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-                const attributes = per_vertex_attributes;
-                for (attributes.attribs, 0..) |attribute, k| {
-                    const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
-                    if (index == -1) return error.AttributeLocationError;
-                    gl.EnableVertexAttribArray(index);
-                    if (attribute.integer) {
-                        gl.VertexAttribIPointer(
-                            index,
-                            attribute.count,
-                            @intFromEnum(attribute.data_type),
-                            @intCast(attributes.getStride()),
-                            attributes.getOffset(k),
-                        );
-                    } else {
-                        gl.VertexAttribPointer(
-                            index,
-                            attribute.count,
-                            @intFromEnum(attribute.data_type),
-                            if (attribute.normalized) gl.TRUE else gl.FALSE,
-                            // TODO: check in debugger if this is computed once
-                            @intCast(attributes.getStride()),
-                            attributes.getOffset(k),
-                        );
-                    }
-                }
-            }
-
-            {
-                gl.BindBuffer(gl.ARRAY_BUFFER, vbo_instances);
-                // defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-
-                const attributes = per_instance_attributes;
-                for (attributes.attribs, 0..) |attribute, k| {
-                    const index: gl.uint = @intCast(gl.GetAttribLocation(program, attribute.name));
-                    if (index == -1) return error.AttributeLocationError;
-                    gl.EnableVertexAttribArray(index);
-                    if (attribute.integer) {
-                        gl.VertexAttribIPointer(
-                            index,
-                            attribute.count,
-                            @intFromEnum(attribute.data_type),
-                            @intCast(attributes.getStride()),
-                            attributes.getOffset(k),
-                        );
-                    } else {
-                        gl.VertexAttribPointer(
-                            index,
-                            attribute.count,
-                            @intFromEnum(attribute.data_type),
-                            if (attribute.normalized) gl.TRUE else gl.FALSE,
-                            // TODO: check in debugger if this is computed once
-                            @intCast(attributes.getStride()),
-                            attributes.getOffset(k),
-                        );
-                    }
-                    gl.VertexAttribDivisor(index, 1);
-                }
-            }
-
-            var uniforms_data = std.BoundedArray(Gl.UniformInfo, 8).init(0) catch unreachable;
-            for (uniforms) |uniform| {
-                const location = gl.GetUniformLocation(program, uniform.name);
-                if (location == -1) return error.UniformLocationError;
-                uniforms_data.append(.{
-                    .location = location,
-                    .name = uniform.name,
-                    .kind = uniform.kind,
-                }) catch return error.TooManyUniforms;
-            }
-
-            return .{
-                .program = @enumFromInt(program),
-                .vao = @enumFromInt(vao),
-                .vbo_vertices = @enumFromInt(vbo_vertices),
-                .vbo_instances = @enumFromInt(vbo_instances),
-                .ebo = @enumFromInt(ebo),
-                .uniforms = uniforms_data,
-            };
-        }
-
-        pub fn useInstancedRenderable(
-            renderable: Gl.InstancedRenderable,
-            // TODO: make the vertex data optional, since it could be precomputed
-            vertex_data_ptr: *const anyopaque,
-            vertex_data_len_bytes: usize,
-            // TODO: make triangles optional, since they could be precomputed
-            triangles: []const [3]Gl.IndexType,
-            instance_data_ptr: *const anyopaque,
-            instance_data_len_bytes: usize,
-            instance_count: usize,
-            uniforms: []const Gl.UniformInfo.Runtime,
-            // TODO: multiple textures
-            texture: ?Gl.Texture,
-        ) void {
-            {
-                gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo_vertices));
-                gl.BufferData(
-                    gl.ARRAY_BUFFER,
-                    @intCast(vertex_data_len_bytes),
-                    @ptrCast(vertex_data_ptr),
-                    gl.DYNAMIC_DRAW,
-                );
-                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-            }
-
-            {
-                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, @intFromEnum(renderable.ebo));
-                gl.BufferData(
-                    gl.ELEMENT_ARRAY_BUFFER,
-                    @intCast(@sizeOf([3]Gl.IndexType) * triangles.len),
-                    triangles.ptr,
-                    gl.DYNAMIC_DRAW,
-                );
-                gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-            }
-
-            {
-                gl.BindBuffer(gl.ARRAY_BUFFER, @intFromEnum(renderable.vbo_instances));
-                gl.BufferData(
-                    gl.ARRAY_BUFFER,
-                    @intCast(instance_data_len_bytes),
-                    @ptrCast(instance_data_ptr),
-                    gl.DYNAMIC_DRAW,
-                );
-                gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-            }
-
-            // TODO
-            assert(texture == null);
-            // if (texture) |t| gl.BindTexture(gl.TEXTURE_2D, t.id);
-            // defer if (texture) |_| gl.BindTexture(gl.TEXTURE_2D, 0);
-
-            gl.BindVertexArray(@intFromEnum(renderable.vao));
-            defer gl.BindVertexArray(0);
-
-            gl.UseProgram(@intFromEnum(renderable.program));
-            defer gl.UseProgram(0);
-
-            for (uniforms) |uniform| {
-                // const u = uniform.location;
-                // TODO
-                const u = blk: {
-                    for (renderable.uniforms.slice()) |u| {
-                        if (std.mem.eql(u8, u.name, uniform.name)) break :blk u.location;
-                    } else unreachable;
-                };
-                switch (uniform.value) {
-                    .FColor => |v| gl.Uniform4f(u, v.r, v.g, v.b, v.a),
-                    .Rect => |v| gl.Uniform4f(u, v.top_left.x, v.top_left.y, v.size.x, v.size.y),
-                    .Point => |v| gl.Uniform4f(u, v.pos.x, v.pos.y, v.turns, v.scale),
-                    .f32 => |v| gl.Uniform1f(u, v),
-                    .Vec2 => |v| gl.Uniform2f(u, v.x, v.y),
-                }
-            }
-
-            gl.DrawElementsInstanced(gl.TRIANGLES, @intCast(3 * triangles.len), switch (Gl.IndexType) {
-                u16 => gl.UNSIGNED_SHORT,
-                u32 => gl.UNSIGNED_INT,
-                else => @compileError("not implemented"),
-            }, null, @intCast(instance_count));
-        }
+        }.anon,
     };
 
     const recording_log_file: ?std.fs.File = if (@import("builtin").mode == .Debug)
@@ -868,7 +333,8 @@ pub fn main() !void {
                 _ = src;
             }
         }.anon,
-        .gl = sdl_gl.vtable,
+        .renderer = sdl_renderer_vtable,
+        .gl = undefined,
         // TODO
         .downloadAsFile = undefined,
         .downloadActiveFramebuffer = undefined,
@@ -930,7 +396,7 @@ pub fn main() !void {
     try my_game.init(
         .{
             .gpa = sdl_platform.gpa,
-            .gl = sdl_platform.gl,
+            // .gl = sdl_platform.gl,
             .loaded_images = images_pointers,
             .random_seed = seed,
         },
@@ -959,7 +425,8 @@ pub fn main() !void {
                             @intCast(event.window.data1),
                             @intCast(event.window.data2),
                         );
-                        gl.Viewport(0, 0, @intCast(window_size.x), @intCast(window_size.y));
+                        // TODO?
+                        // gl.Viewport(0, 0, @intCast(window_size.x), @intCast(window_size.y));
                     },
                     c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_EVENT_MOUSE_BUTTON_UP => {
                         const is_pressed = event.button.down;
@@ -1014,8 +481,16 @@ pub fn main() !void {
             }
         }
 
+        const cmdbuf = try errify(c.SDL_AcquireGPUCommandBuffer(sdl_device));
+
         // Update & Draw
         {
+            var maybe_swapchain_texture: ?*c.SDL_GPUTexture = undefined;
+            var w: u32, var h: u32 = .{ undefined, undefined };
+            try errify(c.SDL_WaitAndAcquireGPUSwapchainTexture(cmdbuf, sdl_window, &maybe_swapchain_texture, &w, &h));
+
+            try sdl_renderer.startFrame(sdl_device);
+            errdefer sdl_renderer.undoStartFrame(sdl_device);
             keyboard.cur_time = sdl_platform.global_seconds;
             mouse.cur_time = sdl_platform.global_seconds;
             const ns_since_last_frame = timer.lap();
@@ -1026,6 +501,11 @@ pub fn main() !void {
             sdl_platform.keyboard = keyboard;
             sdl_platform.sound_queue.* = .initEmpty();
             if (try my_game.update(sdl_platform)) break :main_loop;
+
+            if (maybe_swapchain_texture) |swapchain_texture| {
+                try sdl_renderer.endFrame(sdl_device, cmdbuf, swapchain_texture);
+            }
+
             mouse.prev = mouse.cur;
             mouse.cur.scrolled = .none;
             keyboard.prev = keyboard.cur;
@@ -1064,7 +544,7 @@ pub fn main() !void {
             }
         }
 
-        try errify(c.SDL_GL_SwapWindow(sdl_window));
+        try errify(c.SDL_SubmitGPUCommandBuffer(cmdbuf));
         tracy.frameMark();
     }
 }
@@ -1315,4 +795,391 @@ const zstbi = @import("zstbi");
 pub const std_options: std.Options = .{
     // TODO: remove before final release
     .log_level = .debug,
+};
+
+fn loadShader(
+    comptime name: []const u8,
+    sampler_count: u32,
+    uniform_buffer_count: u32,
+    storage_buffer_count: u32,
+    storage_texture_count: u32,
+) !*c.SDL_GPUShader {
+    const stage = comptime if (std.mem.endsWith(u8, name, "vert"))
+        c.SDL_GPU_SHADERSTAGE_VERTEX
+    else if (std.mem.endsWith(u8, name, "frag"))
+        c.SDL_GPU_SHADERSTAGE_FRAGMENT
+    else
+        unreachable;
+
+    // TODO
+    // const code = @embedFile(name);
+    const code = @embedFile("kommon/shaders_v2/" ++ name ++ ".spv");
+    const shader_info: c.SDL_GPUShaderCreateInfo = .{
+        .code = code.ptr,
+        .code_size = code.len,
+        .entrypoint = "main",
+        .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
+        .stage = stage,
+        .num_samplers = sampler_count,
+        .num_uniform_buffers = uniform_buffer_count,
+        .num_storage_buffers = storage_buffer_count,
+        .num_storage_textures = storage_texture_count,
+    };
+    return errify(c.SDL_CreateGPUShader(sdl_device, &shader_info));
+}
+
+fn Buffer(T: type) type {
+    return struct {
+        const Self = @This();
+
+        total_count: usize,
+        mapped_ptr: ?[*]T,
+        pushed_count: usize,
+
+        sdl_buffer: *c.SDL_GPUBuffer,
+        sdl_transfer_buffer: *c.SDL_GPUTransferBuffer,
+
+        pub fn init(device: *c.SDL_GPUDevice, total_count: u32, usage: enum { vertex, index, indirect, storage }) !Self {
+            const total_size: u32 = @sizeOf(T) * total_count;
+
+            const sdl_buffer = try errify(c.SDL_CreateGPUBuffer(device, &.{
+                .usage = switch (usage) {
+                    .indirect => c.SDL_GPU_BUFFERUSAGE_INDIRECT,
+                    .index => c.SDL_GPU_BUFFERUSAGE_INDEX,
+                    .vertex => c.SDL_GPU_BUFFERUSAGE_VERTEX,
+                    .storage => c.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+                },
+                .size = total_size,
+            }));
+            errdefer c.SDL_ReleaseGPUBuffer(device, sdl_buffer);
+
+            const sdl_transfer_buffer: *c.SDL_GPUTransferBuffer = try errify(c.SDL_CreateGPUTransferBuffer(
+                device,
+                &.{
+                    .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+                    .size = total_size,
+                },
+            ));
+            errdefer c.SDL_ReleaseGPUTransferBuffer(device, sdl_transfer_buffer);
+
+            return .{
+                .total_count = total_count,
+                .mapped_ptr = null,
+                .pushed_count = 0,
+                .sdl_buffer = sdl_buffer,
+                .sdl_transfer_buffer = sdl_transfer_buffer,
+            };
+        }
+
+        pub fn deinit(self: *Self, device: *c.SDL_GPUDevice) void {
+            c.SDL_ReleaseGPUTransferBuffer(device, self.sdl_transfer_buffer);
+            c.SDL_ReleaseGPUBuffer(device, self.sdl_buffer);
+        }
+
+        pub fn startMap(self: *Self, device: *c.SDL_GPUDevice) !void {
+            const tb = self.sdl_transfer_buffer;
+            self.mapped_ptr = @ptrCast(@alignCast(try errify(
+                c.SDL_MapGPUTransferBuffer(device, tb, true),
+            )));
+            self.pushed_count = 0;
+        }
+
+        pub fn endMap(self: *Self, device: *c.SDL_GPUDevice) void {
+            c.SDL_UnmapGPUTransferBuffer(device, self.sdl_transfer_buffer);
+            self.mapped_ptr = null;
+        }
+
+        pub fn push(self: *Self, items: []const T) !void {
+            if (self.mapped_ptr == null) @panic("can only push between .startMap and .endMap");
+            if (items.len > (self.total_count - self.pushed_count)) return error.RanOutOfBuffer;
+            @memcpy(self.mapped_ptr.?[0..items.len], items);
+            self.mapped_ptr.? += items.len;
+            self.pushed_count += items.len;
+        }
+
+        pub fn upload(self: *Self, copy_pass: *c.SDL_GPUCopyPass) void {
+            if (self.mapped_ptr != null) @panic("can't upload between .startMap and .endMap");
+            if (self.pushed_count == 0) return;
+            c.SDL_UploadToGPUBuffer(copy_pass, &.{
+                .transfer_buffer = self.sdl_transfer_buffer,
+                .offset = 0,
+            }, &.{
+                .buffer = self.sdl_buffer,
+                .offset = 0,
+                .size = @intCast(@sizeOf(T) * self.pushed_count),
+            }, true);
+        }
+    };
+}
+
+const SdlRenderer = struct {
+    const Vertex = kommon.Renderer.Vertex;
+    const Drawable = kommon.Renderer.Drawable;
+    const ModelInfo = kommon.Renderer.ModelInfo;
+    const Texture = kommon.Renderer.Texture;
+
+    pipeline: *c.SDL_GPUGraphicsPipeline,
+    vertex_buffer: Buffer(Vertex),
+    index_buffer: Buffer([3]u16),
+    drawable_buffer: Buffer(Drawable),
+    drawcall_buffer: Buffer(c.SDL_GPUIndexedIndirectDrawCommand),
+
+    textures: [texture_count]?*c.SDL_GPUTexture,
+    samplers: [texture_count]?*c.SDL_GPUSampler,
+    const texture_count = 2;
+
+    const max_vertex_count = std.math.maxInt(u16);
+    const max_drawables_count = std.math.maxInt(u16);
+    comptime { // make sure i didn't confuse the power of two
+        assert(65_000 < max_vertex_count and max_vertex_count < 66_000);
+    }
+
+    pub fn init(device: *c.SDL_GPUDevice, window: *c.SDL_Window) !SdlRenderer {
+        var result: SdlRenderer = undefined;
+
+        result.textures = @splat(null);
+        result.samplers = @splat(null);
+
+        result.pipeline = blk: {
+            const vertex_shader = try loadShader(
+                "RendererUber.vert",
+                0,
+                0,
+                1,
+                0,
+            );
+            defer c.SDL_ReleaseGPUShader(device, vertex_shader);
+
+            const fragment_shader = try loadShader(
+                "RendererUber.frag",
+                texture_count,
+                0,
+                0,
+                0,
+            );
+            defer c.SDL_ReleaseGPUShader(device, fragment_shader);
+
+            const vertex_attributes: [@typeInfo(Vertex).@"struct".fields.len]c.SDL_GPUVertexAttribute = .{
+                .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "relative_pos") },
+                .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
+            };
+            const vertex_buffer_descriptions: [1]c.SDL_GPUVertexBufferDescription = .{
+                .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX, .instance_step_rate = 0 },
+            };
+
+            const pipeline_create_info: c.SDL_GPUGraphicsPipelineCreateInfo = .{
+                .target_info = .{
+                    .num_color_targets = 1,
+                    .color_target_descriptions = &.{
+                        .format = c.SDL_GetGPUSwapchainTextureFormat(device, window),
+                        .blend_state = .{
+                            .enable_blend = true,
+                            // TODO: revise
+                            .src_color_blendfactor = c.SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+                            .dst_color_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                            .color_blend_op = c.SDL_GPU_BLENDOP_ADD,
+                            .src_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE,
+                            .dst_alpha_blendfactor = c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                            .alpha_blend_op = c.SDL_GPU_BLENDOP_ADD,
+                        },
+                    },
+                },
+                .vertex_input_state = .{
+                    .num_vertex_buffers = vertex_buffer_descriptions.len,
+                    .vertex_buffer_descriptions = &vertex_buffer_descriptions,
+                    .num_vertex_attributes = vertex_attributes.len,
+                    .vertex_attributes = &vertex_attributes,
+                },
+                .primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+                .vertex_shader = vertex_shader,
+                .fragment_shader = fragment_shader,
+            };
+
+            break :blk try errify(c.SDL_CreateGPUGraphicsPipeline(device, &pipeline_create_info));
+        };
+        errdefer c.SDL_ReleaseGPUGraphicsPipeline(device, result.pipeline);
+
+        result.vertex_buffer = try .init(device, max_vertex_count, .vertex);
+        errdefer result.vertex_buffer.deinit(device);
+
+        result.index_buffer = try .init(device, max_vertex_count, .index);
+        errdefer result.index_buffer.deinit(device);
+
+        result.drawable_buffer = try .init(device, max_drawables_count, .storage);
+        errdefer result.drawable_buffer.deinit(device);
+
+        result.drawcall_buffer = try .init(device, max_drawables_count, .indirect);
+        errdefer result.drawcall_buffer.deinit(device);
+
+        return result;
+    }
+
+    pub fn deinit(self: *SdlRenderer, device: *c.SDL_GPUDevice) void {
+        for (self.textures) |p| if (p != null) c.SDL_ReleaseGPUTexture(device, p.?);
+        for (self.samplers) |p| if (p != null) c.SDL_ReleaseGPUSampler(device, p.?);
+        self.drawcall_buffer.deinit(device);
+        self.drawable_buffer.deinit(device);
+        self.index_buffer.deinit(device);
+        self.vertex_buffer.deinit(device);
+        c.SDL_ReleaseGPUGraphicsPipeline(device, self.pipeline);
+    }
+
+    pub fn startFrame(self: *SdlRenderer, device: *c.SDL_GPUDevice) !void {
+        try self.vertex_buffer.startMap(device);
+        try self.index_buffer.startMap(device);
+        try self.drawable_buffer.startMap(device);
+        try self.drawcall_buffer.startMap(device);
+    }
+
+    fn undoStartFrame(self: *SdlRenderer, device: *c.SDL_GPUDevice) void {
+        self.vertex_buffer.endMap(device);
+        self.index_buffer.endMap(device);
+        self.drawable_buffer.endMap(device);
+        self.drawcall_buffer.endMap(device);
+    }
+
+    pub fn endFrame(self: *SdlRenderer, device: *c.SDL_GPUDevice, cmdbuf: *c.SDL_GPUCommandBuffer, swapchain_texture: *c.SDL_GPUTexture) !void {
+        self.vertex_buffer.endMap(device);
+        self.index_buffer.endMap(device);
+        self.drawable_buffer.endMap(device);
+        self.drawcall_buffer.endMap(device);
+
+        if (self.drawcall_buffer.pushed_count == 0) return;
+
+        const copy_pass = try errify(c.SDL_BeginGPUCopyPass(cmdbuf));
+        self.vertex_buffer.upload(copy_pass);
+        self.index_buffer.upload(copy_pass);
+        self.drawable_buffer.upload(copy_pass);
+        self.drawcall_buffer.upload(copy_pass);
+        c.SDL_EndGPUCopyPass(copy_pass);
+
+        const color_target_info: c.SDL_GPUColorTargetInfo = .{
+            .texture = swapchain_texture,
+            // TODO: configurable
+            .clear_color = .{ .r = 0.3, .g = 0.4, .b = 0.5, .a = 1.0 },
+            .load_op = c.SDL_GPU_LOADOP_CLEAR,
+            .store_op = c.SDL_GPU_STOREOP_STORE,
+        };
+
+        const render_pass = c.SDL_BeginGPURenderPass(cmdbuf, &color_target_info, 1, null);
+
+        c.SDL_BindGPUGraphicsPipeline(render_pass, self.pipeline);
+        c.SDL_BindGPUVertexBuffers(render_pass, 0, &.{
+            .buffer = self.vertex_buffer.sdl_buffer,
+            .offset = 0,
+        }, 1);
+        c.SDL_BindGPUIndexBuffer(render_pass, &.{
+            .buffer = self.index_buffer.sdl_buffer,
+            .offset = 0,
+        }, c.SDL_GPU_INDEXELEMENTSIZE_16BIT);
+        c.SDL_BindGPUVertexStorageBuffers(render_pass, 0, &[1]*c.SDL_GPUBuffer{
+            self.drawable_buffer.sdl_buffer,
+        }, 1);
+
+        var sampler_bindings: [texture_count]c.SDL_GPUTextureSamplerBinding = undefined;
+        for (&sampler_bindings, self.textures, self.samplers) |*binding, texture, sampler| {
+            binding.* = .{ .texture = texture, .sampler = sampler };
+        }
+        c.SDL_BindGPUFragmentSamplers(render_pass, 0, &sampler_bindings, texture_count);
+
+        c.SDL_DrawGPUIndexedPrimitivesIndirect(
+            render_pass,
+            self.drawcall_buffer.sdl_buffer,
+            0,
+            @intCast(self.drawcall_buffer.pushed_count),
+        );
+
+        c.SDL_EndGPURenderPass(render_pass);
+    }
+
+    pub fn setTextureFromBmp(self: *SdlRenderer, device: *c.SDL_GPUDevice, id: usize, comptime bmp_path: []const u8, sampler_info: *const c.SDL_GPUSamplerCreateInfo) !void {
+        const bmp_bytes = @embedFile(bmp_path);
+        const bmp_io = try errify(c.SDL_IOFromConstMem(bmp_bytes.ptr, bmp_bytes.len));
+        const bmp_surface = try errify(c.SDL_LoadBMP_IO(bmp_io, true));
+        defer c.SDL_DestroySurface(bmp_surface);
+
+        try self.setTexture(device, id, .{
+            .w = @intCast(bmp_surface.*.w),
+            .h = @intCast(bmp_surface.*.h),
+            .pixels = @as([*]const [4]u8, @ptrCast(bmp_surface.*.pixels))[0..@intCast(bmp_surface.*.w * bmp_surface.*.h)],
+        }, sampler_info);
+    }
+
+    pub fn setTexture(self: *SdlRenderer, device: *c.SDL_GPUDevice, id: usize, data: Texture, sampler_info: *const c.SDL_GPUSamplerCreateInfo) !void {
+        assert(0 < id and id <= texture_count);
+        assert(data.w * data.h == data.pixels.len);
+
+        const sampler = try errify(c.SDL_CreateGPUSampler(device, sampler_info));
+        errdefer c.SDL_ReleaseGPUSampler(device, sampler);
+
+        const texture = try errify(c.SDL_CreateGPUTexture(device, &.{
+            .type = c.SDL_GPU_TEXTURETYPE_2D,
+            .format = c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+            .width = data.w,
+            .height = data.h,
+            .layer_count_or_depth = 1,
+            .num_levels = 1,
+            .usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER,
+        }));
+        errdefer c.SDL_ReleaseGPUTexture(device, texture);
+
+        const transfer_buffer = try errify(c.SDL_CreateGPUTransferBuffer(device, &.{
+            .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = data.w * data.h * 4,
+        }));
+        defer c.SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
+
+        const ptr: [*][4]u8 = @ptrCast(@alignCast(try errify(
+            c.SDL_MapGPUTransferBuffer(device, transfer_buffer, false),
+        )));
+        @memcpy(ptr[0 .. data.w * data.h], data.pixels);
+        c.SDL_UnmapGPUTransferBuffer(device, transfer_buffer);
+
+        const upload_cmd_buf = try errify(c.SDL_AcquireGPUCommandBuffer(device));
+
+        const copy_pass = try errify(c.SDL_BeginGPUCopyPass(upload_cmd_buf));
+        c.SDL_UploadToGPUTexture(copy_pass, &.{
+            .transfer_buffer = transfer_buffer,
+            .offset = 0,
+        }, &.{
+            .texture = texture,
+            .w = data.w,
+            .h = data.h,
+            .d = 1,
+        }, false);
+        c.SDL_EndGPUCopyPass(copy_pass);
+
+        try errify(c.SDL_SubmitGPUCommandBuffer(upload_cmd_buf));
+
+        if (self.textures[id - 1] != null or self.samplers[id - 1] != null) @panic("TODO");
+        self.textures[id - 1] = texture;
+        self.samplers[id - 1] = sampler;
+    }
+
+    pub fn addModel(self: *SdlRenderer, vertices: []const Vertex, indices: []const [3]u16) !ModelInfo {
+        const result: ModelInfo = .{
+            .num_indices = @intCast(indices.len * 3),
+            .first_index = @intCast(self.index_buffer.pushed_count * 3),
+            .vertex_offset = @intCast(self.vertex_buffer.pushed_count),
+        };
+
+        try self.vertex_buffer.push(vertices);
+        try self.index_buffer.push(indices);
+
+        return result;
+    }
+
+    pub fn addDrawable(self: *SdlRenderer, drawable: Drawable, model_info: ModelInfo) !void {
+        assert(self.drawable_buffer.pushed_count == self.drawcall_buffer.pushed_count);
+        const drawable_id = self.drawcall_buffer.pushed_count;
+
+        try self.drawable_buffer.push(&.{drawable});
+        try self.drawcall_buffer.push(&.{.{
+            .num_indices = model_info.num_indices,
+            .num_instances = 1,
+            .first_index = model_info.first_index,
+            .vertex_offset = model_info.vertex_offset,
+            .first_instance = @intCast(drawable_id),
+        }});
+    }
 };
