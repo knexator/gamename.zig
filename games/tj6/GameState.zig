@@ -37,6 +37,12 @@ const levels_ascii: []const []const u8 = &.{
     \\#K.F#
     \\#####
     ,
+    \\#####
+    \\#..C#
+    \\@..C#
+    \\#..##
+    \\#FDK#
+    \\#####
 };
 
 const LevelState = struct {
@@ -54,12 +60,24 @@ const LevelState = struct {
         solved: bool,
 
         fn animalAt(self: Snapshot, pos: IVec2) ?usize {
-            for (self.animals, 0..) |animal, k| {
+            return animalAt2(self.animals, pos);
+        }
+
+        fn animalAt2(animals: []const Animal, pos: IVec2) ?usize {
+            for (animals, 0..) |animal, k| {
                 if (animal.pos.equals(pos)) return k;
             } else return null;
         }
 
-        fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !struct {
+        fn surroundingAnimals(self: Snapshot, pos: IVec2) std.BoundedArray(Animal.Kind, 4) {
+            var result: std.BoundedArray(Animal.Kind, 4) = .{};
+            for (IVec2.cardinal_directions) |dir| {
+                if (self.animalAt(pos.add(dir))) |a| result.appendAssumeCapacity(self.animals[a].kind);
+            }
+            return result;
+        }
+
+        fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, scratch: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !struct {
             message: ?[]const []const u8,
             new_state: ?Snapshot,
 
@@ -69,16 +87,70 @@ const LevelState = struct {
             }
         } {
             if (old_pos.sub(new_pos).taxiMag() != 1) return .empty;
-            if (old_state.animalAt(new_pos) != null) return .empty;
             if (info.walls.atSigned(new_pos)) return .empty;
             const grabbed = old_state.animalAt(old_pos) orelse return .empty;
             const animal_kind = old_state.animals[grabbed].kind;
             if (animal_kind == .firefly) {
                 return .badMove(&.{ "Ouch! These fireflies are", "too hot to handle" });
             }
+
+            if (animal_kind != .catslime and
+                old_state.animalAt(new_pos) != null)
+            {
+                return .empty;
+            }
+
             const new_animals = try allocator.dupe(Animal, old_state.animals);
-            new_animals[grabbed].pos = new_pos;
-            return .{ .new_state = .{ .animals = new_animals, .solved = false }, .message = null };
+            const move = try moveAndPush(new_animals, info, scratch, old_pos, new_pos.sub(old_pos));
+            if (!move.valid or !move.changed) return .empty;
+
+            var result: Snapshot = .{ .animals = new_animals, .solved = old_state.solved };
+
+            if (true) { // validate rule: all sundragons next to a firefly
+                for (new_animals) |animal| {
+                    if (animal.kind != .sundragon) continue;
+                    const any_firefly = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
+                        if (k == .firefly) break true;
+                    } else false;
+                    if (!any_firefly) return .badMove(&.{ "Sundragon must always", "be next to a firefly" });
+                }
+            }
+
+            return .{ .new_state = result, .message = null };
+        }
+
+        /// returns false if the move failed
+        fn moveAndPush(
+            animals: []Animal,
+            info: Constant,
+            scratch: std.mem.Allocator,
+            pos: IVec2,
+            dir: IVec2,
+        ) !struct {
+            valid: bool,
+            changed: bool,
+        } {
+            if (info.walls.atSignedSafe(pos) orelse true) return .{ .valid = false, .changed = false };
+            const animal_index = animalAt2(animals, pos) orelse return .{ .valid = true, .changed = false };
+            const animal_kind = animals[animal_index].kind;
+
+            const chained_move = try moveAndPush(animals, info, scratch, pos.add(dir), dir);
+            const can_push = false;
+            if ((can_push and chained_move.valid) or
+                (!can_push and chained_move.valid and !chained_move.changed))
+            {
+                animals[animal_index].pos.addInPlace(dir);
+            } else {
+                return .{ .changed = true, .valid = chained_move.changed };
+            }
+
+            if (animal_kind == .catslime) {
+                for (IVec2.cardinal_directions) |d| {
+                    if (d.equals(dir)) continue;
+                    _ = try moveAndPush(animals, info, scratch, pos.add(d), dir);
+                }
+            }
+            return .{ .changed = true, .valid = true };
         }
     };
 
@@ -99,6 +171,8 @@ const LevelState = struct {
             const kind: Animal.Kind = switch (char) {
                 'k' => .beetlekey,
                 'f' => .firefly,
+                'd' => .sundragon,
+                'c' => .catslime,
                 else => continue,
             };
             try initial_state.append(allocator, .{
@@ -130,6 +204,8 @@ const Animal = struct {
     const Kind = enum {
         beetlekey,
         firefly,
+        sundragon,
+        catslime,
     };
 };
 
@@ -207,8 +283,10 @@ const Drawer = struct {
 
     pub fn animal(self: *Drawer, animal_: Animal) void {
         self.sprite(animal_.pos, switch (animal_.kind) {
-            .beetlekey => 4,
+            .catslime => 0,
             .firefly => 1,
+            .beetlekey => 4,
+            .sundragon => 6,
         });
     }
 };
@@ -218,6 +296,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
     const mem = &self.usual.mem;
     // const smooth = &self.usual.smooth;
+
+    if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
+        self.cur_level += 1;
+        self.cur_level %= self.levels.len;
+    }
+    if (platform.keyboard.wasPressed(.KeyA) or platform.keyboard.wasPressed(.ArrowLeft)) {
+        self.cur_level += self.levels.len - 1;
+        self.cur_level %= self.levels.len;
+    }
 
     const level = &self.levels[self.cur_level];
 
@@ -249,7 +336,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (!mouse.cur.isDown(.left)) {
             self.started_grabbing_at = null;
         } else if (active_tile != null) {
-            const result = try level.cur().doMove(level.info, mem.gpa, self.started_grabbing_at.?, active_tile.?);
+            const result = try level.cur().doMove(level.info, mem.gpa, mem.frame.allocator(), self.started_grabbing_at.?, active_tile.?);
             message = result.message;
             if (result.new_state) |new_state| {
                 try level.states_history.append(mem.gpa, new_state);
