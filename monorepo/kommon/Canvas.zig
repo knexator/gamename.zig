@@ -577,6 +577,7 @@ pub fn fillSquare(
 pub const SpriteSheet = struct {
     count: UVec2,
     margin_px: usize,
+    /// total resolution!
     resolution: UVec2,
 
     pub fn at(self: SpriteSheet, k: usize) Rect {

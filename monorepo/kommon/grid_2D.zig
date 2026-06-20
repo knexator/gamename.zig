@@ -312,6 +312,13 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             } else return null;
         }
 
+        pub fn tileSignedAt(self: Self, pos: kommon.math.Vec2, whole_rect: Rect) ?IVec2 {
+            return if (self.tileAt(pos, whole_rect)) |x|
+                x.cast(isize)
+            else
+                null;
+        }
+
         pub fn inBoundsSigned(self: Self, pos: IVec2) bool {
             return pos.x >= 0 and pos.y >= 0 and self.inBoundsUnsigned(pos.cast(usize));
         }

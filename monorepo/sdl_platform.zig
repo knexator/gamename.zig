@@ -816,7 +816,7 @@ pub fn main() !void {
         }
     };
 
-    const recording_log_file: ?std.fs.File = if (@import("builtin").mode == .Debug)
+    const recording_log_file: ?std.fs.File = if (false and @import("builtin").mode == .Debug)
         try std.fs.cwd().createFile("recording.txt", .{})
     else
         null;

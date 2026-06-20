@@ -303,6 +303,10 @@ pub fn ZVec2(T: type) type {
             return new(a.x, a.y + b);
         }
 
+        pub fn taxiMag(v: Self) usize {
+            return @abs(v.x) + @abs(v.y);
+        }
+
         pub fn magSq(v: Self) Scalar {
             return dot(v, v);
         }
