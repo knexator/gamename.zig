@@ -468,6 +468,7 @@ fn build_all_games_html(b: *std.Build) !void {
         // TODO: audio stuff
         // "loopmouse",
         "akari",
+        "tj6",
         "alchemy",
         "hexditor",
         "octopus",
