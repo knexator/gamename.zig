@@ -59,14 +59,26 @@ const LevelState = struct {
             } else return null;
         }
 
-        fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !?Snapshot {
-            if (old_pos.sub(new_pos).taxiMag() != 1) return null;
-            if (old_state.animalAt(new_pos) != null) return null;
-            if (info.walls.atSigned(new_pos)) return null;
-            const grabbed = old_state.animalAt(old_pos) orelse return null;
+        fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !struct {
+            message: ?[]const []const u8,
+            new_state: ?Snapshot,
+
+            const empty: @This() = .{ .message = null, .new_state = null };
+            fn badMove(msg: []const []const u8) @This() {
+                return .{ .new_state = null, .message = msg };
+            }
+        } {
+            if (old_pos.sub(new_pos).taxiMag() != 1) return .empty;
+            if (old_state.animalAt(new_pos) != null) return .empty;
+            if (info.walls.atSigned(new_pos)) return .empty;
+            const grabbed = old_state.animalAt(old_pos) orelse return .empty;
+            const animal_kind = old_state.animals[grabbed].kind;
+            if (animal_kind == .firefly) {
+                return .badMove(&.{ "Ouch! These fireflies are", "too hot to handle" });
+            }
             const new_animals = try allocator.dupe(Animal, old_state.animals);
             new_animals[grabbed].pos = new_pos;
-            return .{ .animals = new_animals, .solved = false };
+            return .{ .new_state = .{ .animals = new_animals, .solved = false }, .message = null };
         }
     };
 
@@ -215,12 +227,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         _ = level.states_history.pop();
     }
 
-    const camera: Rect = .withAspectRatio(.plusMargin(.{
+    const camera: Rect = .withAspectRatio(.plusMargin3(.plusMargin(.{
         .top_left = .zero,
         .size = level.info.size.tof32(),
-    }, 0.5), platform.aspect_ratio, .grow, .center);
+    }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
     const active_tile = level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size.tof32() });
+
+    var message: ?[]const []const u8 = null;
 
     if (self.started_grabbing_at == null) {
         platform.setCursor(if (active_tile != null and level.cur().animalAt(active_tile.?) != null)
@@ -235,7 +249,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (!mouse.cur.isDown(.left)) {
             self.started_grabbing_at = null;
         } else if (active_tile != null) {
-            if (try level.cur().doMove(level.info, mem.gpa, self.started_grabbing_at.?, active_tile.?)) |new_state| {
+            const result = try level.cur().doMove(level.info, mem.gpa, self.started_grabbing_at.?, active_tile.?);
+            message = result.message;
+            if (result.new_state) |new_state| {
                 try level.states_history.append(mem.gpa, new_state);
                 self.started_grabbing_at = active_tile.?;
             }
@@ -262,6 +278,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     drawer.end(camera);
+
+    if (message) |msg| {
+        try self.usual.canvas.drawTextLines(
+            0,
+            camera,
+            .center,
+            .{ .center = level.info.size.tof32().mul(.new(0.5, 1)).addY(1) },
+            msg,
+            0.5,
+            1.1,
+            .white,
+        );
+    }
 
     return false;
 }
