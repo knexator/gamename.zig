@@ -296,6 +296,17 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             }.anon);
         }
 
+        pub fn plusMargin(original: Self, allocator: std.mem.Allocator, margin: usize, default: T) !Self {
+            var result: Self = try .initFill(allocator, original.size.add(.both(margin * 2)), default);
+
+            var it = original.iterator();
+            while (it.next()) |pos| {
+                result.set(pos.add(.both(margin)), original.at2(pos));
+            }
+
+            return result;
+        }
+
         pub fn cropped(original: Self, allocator: std.mem.Allocator, rect: kommon.math.URect) !Self {
             var result: Self = try .initUndefined(allocator, rect.inner_size.add(.both(1)));
 
