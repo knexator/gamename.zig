@@ -521,9 +521,9 @@ const Drawer = struct {
     batch: Canvas.SpriteBatch,
 
     const sheet: Canvas.SpriteSheet = .{
-        .count = .both(8),
+        .count = .new(6, 3),
         .margin_px = 1,
-        .resolution = .both((16 + 2 * 1) * 8),
+        .resolution = .new(6 * 18, 3 * 18),
     };
 
     pub fn start(canvas: *Canvas, atlas: Gl.Texture) Drawer {
@@ -547,20 +547,20 @@ const Drawer = struct {
 
     pub fn wall(self: *Drawer, pos: UVec2) void {
         // self.canvas.fillRect(camera, .{ .top_left = pos.tof32(), .size = .one }, .fromHex("#885522"));
-        self.sprite(pos.cast(isize), 7);
+        self.sprite(pos.cast(isize), 0);
     }
 
     pub fn lock(self: *Drawer, pos: IVec2) void {
         // self.canvas.fillRect(camera, .{ .top_left = pos.tof32(), .size = .one }, .cyan);
-        self.sprite(pos, 5);
+        self.sprite(pos, 1);
     }
 
     pub fn animal(self: *Drawer, animal_: Animal) void {
         self.sprite(animal_.pos, switch (animal_.kind) {
-            .catslime => 0,
-            .firefly => 1,
-            .beetlekey => 4,
-            .sundragon => 6,
+            .catslime => 10,
+            .firefly => 3,
+            .beetlekey => 6,
+            .sundragon => 4,
         });
     }
 };
