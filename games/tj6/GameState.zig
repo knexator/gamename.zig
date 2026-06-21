@@ -184,6 +184,42 @@ test "catslime" {
         \\.FD
         \\...
     , .new(2, 2), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\@.......
+        \\...#....
+        \\.CCCCC..
+        \\.FDKKK..
+    ,
+        \\@.......
+        \\.CC#....
+        \\.FDCCC..
+        \\...KKK..
+    , .new(2, 2), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\@.......
+        \\....#...
+        \\.CCCCC..
+        \\.FDKKK..
+    ,
+        \\@.......
+        \\.CCC#...
+        \\.FDKCC..
+        \\....KK..
+    , .new(1, 2), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\@.......
+        \\..#.....
+        \\.CCCCC..
+        \\.FDKKK..
+    ,
+        \\@.......
+        \\..#CCC..
+        \\.CCKKK..
+        \\.FD.....
+    , .new(5, 2), .new(0, -1));
 }
 
 const LevelState = struct {
@@ -235,15 +271,87 @@ const LevelState = struct {
                 return .badMove(&.{ "Ouch! These fireflies are", "too hot to handle" });
             }
 
-            if (animal_kind != .catslime and
-                old_state.animalAt(new_pos) != null)
-            {
-                return .empty;
+            const dir = new_pos.sub(old_pos);
+            const animals = old_state.animals;
+
+            // all animals connected to the current one, via catslimes
+            const in_group = try scratch.alloc(bool, animals.len);
+            @memset(in_group, false);
+            in_group[grabbed] = true;
+            var stack: std.ArrayListUnmanaged(usize) = .empty;
+            try stack.append(scratch, grabbed);
+            var cursor: usize = 0;
+            while (cursor < stack.items.len) : (cursor += 1) {
+                const source_index = stack.items[cursor];
+                for (IVec2.cardinal_directions) |d| {
+                    const target_index = animalAt2(animals, animals[source_index].pos.add(d)) orelse continue;
+                    if (in_group[target_index]) continue;
+                    if (animals[source_index].kind == .catslime or animals[target_index].kind == .catslime) {
+                        in_group[target_index] = true;
+                        try stack.append(scratch, target_index);
+                    }
+                }
             }
 
-            const new_animals = try allocator.dupe(Animal, old_state.animals);
-            const move = try moveAndPush(new_animals, info, scratch, old_pos, new_pos.sub(old_pos));
-            if (!move.valid or !move.changed) return .empty;
+            // remove any animals blocked by a wall, and those reachable through it
+            const moving = try scratch.dupe(bool, in_group);
+            const reachable = try scratch.alloc(bool, animals.len);
+            while (true) {
+                var changed = false;
+
+                // A member blocked by a wall or a stationary animal stops.
+                for (animals, 0..) |animal, idx| {
+                    if (!moving[idx]) continue;
+                    const dest = animal.pos.add(dir);
+                    const blocked_by_wall = info.walls.atSignedSafe(dest) orelse true;
+                    const blocked_by_animal = if (animalAt2(animals, dest)) |j|
+                        !moving[j]
+                    else
+                        false;
+
+                    if (blocked_by_wall or blocked_by_animal) {
+                        moving[idx] = false;
+                        changed = true;
+                    }
+                }
+
+                // Only animals still reachable from the grabbed one, through
+                // members that are themselves moving, keep being dragged.
+                @memset(reachable, false);
+                if (moving[grabbed]) {
+                    reachable[grabbed] = true;
+                    stack.clearRetainingCapacity();
+                    try stack.append(scratch, grabbed);
+                    var c: usize = 0;
+                    while (c < stack.items.len) : (c += 1) {
+                        const idx = stack.items[c];
+                        for (IVec2.cardinal_directions) |d| {
+                            const j = animalAt2(animals, animals[idx].pos.add(d)) orelse continue;
+                            if (reachable[j] or !moving[j]) continue;
+                            if (animals[idx].kind == .catslime or animals[j].kind == .catslime) {
+                                reachable[j] = true;
+                                try stack.append(scratch, j);
+                            }
+                        }
+                    }
+                }
+                for (moving, 0..) |*m, idx| {
+                    if (m.* and !reachable[idx]) {
+                        m.* = false;
+                        changed = true;
+                    }
+                }
+
+                if (!changed) break;
+            }
+
+            // Nothing happens if the grabbed animal itself can't move.
+            if (!moving[grabbed]) return .empty;
+
+            const new_animals = try allocator.dupe(Animal, animals);
+            for (new_animals, 0..) |*animal, idx| {
+                if (moving[idx]) animal.pos.addInPlace(dir);
+            }
 
             var result: Snapshot = .{ .animals = new_animals, .solved = old_state.solved };
 
@@ -261,40 +369,6 @@ const LevelState = struct {
             }
 
             return .{ .new_state = result, .message = null };
-        }
-
-        /// returns false if the move failed
-        fn moveAndPush(
-            animals: []Animal,
-            info: Constant,
-            scratch: std.mem.Allocator,
-            pos: IVec2,
-            dir: IVec2,
-        ) !struct {
-            valid: bool,
-            changed: bool,
-        } {
-            if (info.walls.atSignedSafe(pos) orelse true) return .{ .valid = false, .changed = false };
-            const animal_index = animalAt2(animals, pos) orelse return .{ .valid = true, .changed = false };
-            const animal_kind = animals[animal_index].kind;
-
-            const chained_move = try moveAndPush(animals, info, scratch, pos.add(dir), dir);
-            const can_push = false;
-            if ((can_push and chained_move.valid) or
-                (!can_push and chained_move.valid and !chained_move.changed))
-            {
-                animals[animal_index].pos.addInPlace(dir);
-            } else {
-                return .{ .changed = true, .valid = chained_move.changed };
-            }
-
-            if (animal_kind == .catslime) {
-                for (IVec2.cardinal_directions) |d| {
-                    if (d.equals(dir)) continue;
-                    _ = try moveAndPush(animals, info, scratch, pos.add(d), dir);
-                }
-            }
-            return .{ .changed = true, .valid = true };
         }
 
         fn toAscii(self: Snapshot, info: Constant, allocator: std.mem.Allocator) ![]const u8 {
