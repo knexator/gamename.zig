@@ -924,6 +924,7 @@ pub fn main() !void {
             .tweakable = struct {
                 pub fn fcolor(_: []const u8, _: *FColor) void {}
                 pub fn float(_: []const u8, _: *f32, _: f32, _: f32) void {}
+                pub fn string(_: []const u8, _: []u8, _: usize) void {}
                 pub fn texture(_: []const u8, _: *Gl.Texture) void {}
             },
         },

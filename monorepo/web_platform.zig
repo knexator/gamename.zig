@@ -32,6 +32,7 @@ const js = struct {
         extern fn addTweakableFColor(index: usize, name_ptr: [*]const u8, name_len: usize, starting_r: f32, starting_g: f32, starting_b: f32) void;
         extern fn addTweakableFloat(index: usize, name_ptr: [*]const u8, name_len: usize, starting_v: f32, min: f32, max: f32) void;
         extern fn addTweakableTexture(index: usize, name_ptr: [*]const u8, name_len: usize) void;
+        extern fn addTweakableString(index: usize, name_ptr: [*]const u8, name_len: usize, starting_ptr: [*]const u8, starting_len: usize, max_len: usize) void;
     };
 
     pub const debug = struct {
@@ -719,6 +720,7 @@ var other_images: std.SegmentedList(usize, 16) = .{};
 
 var tweakable_fcolors: std.ArrayList(*FColor) = undefined;
 var tweakable_floats: std.ArrayList(*f32) = undefined;
+var tweakable_strings: std.ArrayList([]u8) = undefined;
 var tweakable_textures: std.ArrayList(*Gl.Texture) = undefined;
 
 const web_gl = struct {
@@ -1244,6 +1246,7 @@ export fn init(random_seed: u32) void {
     tweakable_fcolors = .init(web_platform.gpa);
     tweakable_floats = .init(web_platform.gpa);
     tweakable_textures = .init(web_platform.gpa);
+    tweakable_strings = .init(web_platform.gpa);
 
     my_game.init(.{
         .gpa = gpa,
@@ -1262,6 +1265,12 @@ export fn init(random_seed: u32) void {
                 const index = tweakable_floats.items.len;
                 tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
                 js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
+            }
+
+            pub fn string(name: []const u8, ptr: []u8, max_len: usize) void {
+                const index = tweakable_strings.items.len;
+                tweakable_strings.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableString(index, name.ptr, name.len, ptr.ptr, ptr.len, max_len);
             }
 
             pub fn texture(name: []const u8, ptr: *Gl.Texture) void {

@@ -280,6 +280,14 @@ async function getWasm() {
           wasm_exports.setTweakableFloat(index, value);
         });
       },
+      addTweakableString: (index, name_ptr, name_len, starting_ptr, starting_len, max_len) => {
+        const name = getString(name_ptr, name_len);
+        TWEAKABLE[name] = getString(starting_ptr, starting_len);
+        gui.add(TWEAKABLE, name).onChange(value => {
+          // TODO: is starting_ptr a stable pointer?
+          storeString(value, starting_ptr, max_len);
+        });
+      },
       addTweakableTexture: (index, name_ptr, name_len) => {
         // TODO: display initial texture
         const name = getString(name_ptr, name_len);
