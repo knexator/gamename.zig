@@ -146,6 +146,18 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             return try ascii_grid.map(allocator, T, map_fn);
         }
 
+        pub fn toAscii(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+            if (T != u8) @compileError("toAscii only works on Grid2D(u8)");
+            var result: std.ArrayListUnmanaged(u8) = try .initCapacity(allocator, (self.size.x + 1) * self.size.y);
+
+            for (0..self.size.y) |row_index| {
+                result.appendSliceAssumeCapacity(self.data[row_index * self.size.x .. (row_index + 1) * self.size.x]);
+                result.appendAssumeCapacity('\n');
+            }
+
+            return try result.toOwnedSlice(allocator);
+        }
+
         pub fn fromAscii(allocator: std.mem.Allocator, ascii: []const u8) !Self {
             if (T != u8) @compileError("fromAscii only works on Grid2D(u8)");
             // TODO: windows line endings

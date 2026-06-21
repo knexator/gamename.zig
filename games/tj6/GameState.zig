@@ -45,6 +45,147 @@ const levels_ascii: []const []const u8 = &.{
     \\#####
 };
 
+fn testMove(
+    allocator: std.mem.Allocator,
+    start_ascii: []const u8,
+    expected_ascii: []const u8,
+    pos: IVec2,
+    dir: IVec2,
+) !void {
+    var arena: std.heap.ArenaAllocator = .init(allocator);
+    defer arena.deinit();
+    var start: LevelState = try .fromAscii(allocator, start_ascii);
+    defer start.deinit(allocator);
+    const actual = try start.states_history.getLast().doMove(start.info, allocator, arena.allocator(), pos, pos.add(dir));
+    try std.testing.expect(actual.new_state != null);
+    defer allocator.free(actual.new_state.?.animals);
+    const actual_ascii = try actual.new_state.?.toAscii(start.info, allocator);
+    defer allocator.free(actual_ascii);
+
+    try std.testing.expectEqualStrings(
+        std.mem.trim(u8, expected_ascii, &std.ascii.whitespace),
+        std.mem.trim(u8, actual_ascii, &std.ascii.whitespace),
+    );
+}
+
+test "simple move" {
+    try testMove(std.testing.allocator,
+        \\#####
+        \\#...#
+        \\@.F.#
+        \\#F..#
+        \\#K.F#
+        \\#####
+    ,
+        \\#####
+        \\#...#
+        \\@.F.#
+        \\#F..#
+        \\#.KF#
+        \\#####
+    , .new(1, 4), .new(1, 0));
+}
+
+test "catslime" {
+    try testMove(std.testing.allocator,
+        \\C.@
+        \\K..
+    ,
+        \\.C@
+        \\.K.
+    , .zero, .new(1, 0));
+
+    try testMove(std.testing.allocator,
+        \\CC....@
+        \\K......
+    ,
+        \\.CC...@
+        \\.K.....
+    , .zero, .new(1, 0));
+
+    try testMove(std.testing.allocator,
+        \\CC....@
+        \\K......
+    ,
+        \\.CC...@
+        \\.K.....
+    , .new(1, 0), .new(1, 0));
+
+    try testMove(std.testing.allocator,
+        \\.......
+        \\CC....@
+        \\K......
+    ,
+        \\CC.....
+        \\K.....@
+        \\.......
+    , .new(0, 1), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\.......
+        \\CC....@
+        \\K......
+    ,
+        \\CC.....
+        \\K.....@
+        \\.......
+    , .new(1, 1), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\.......
+        \\CC....@
+        \\DF.....
+    ,
+        \\CC.....
+        \\DF....@
+        \\.......
+    , .new(1, 1), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\.......
+        \\CC#...@
+        \\DFK....
+    ,
+        \\CC.....
+        \\DF#...@
+        \\..K....
+    , .new(1, 1), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\.......
+        \\CC#...@
+        \\DFK....
+    ,
+        \\CC.....
+        \\DF#...@
+        \\..K....
+    , .new(0, 1), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\....
+        \\@...
+        \\.CC#
+        \\.FDK
+    ,
+        \\....
+        \\@CC.
+        \\.FD#
+        \\...K
+    , .new(1, 2), .new(0, -1));
+
+    try testMove(std.testing.allocator,
+        \\...
+        \\@..
+        \\.CC
+        \\.FD
+    ,
+        \\...
+        \\@CC
+        \\.FD
+        \\...
+    , .new(2, 2), .new(0, -1));
+}
+
 const LevelState = struct {
     states_history: std.ArrayListUnmanaged(Snapshot),
     info: Constant,
@@ -112,7 +253,10 @@ const LevelState = struct {
                     const any_firefly = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
                         if (k == .firefly) break true;
                     } else false;
-                    if (!any_firefly) return .badMove(&.{ "Sundragon must always", "be next to a firefly" });
+                    if (!any_firefly) {
+                        allocator.free(new_animals);
+                        return .badMove(&.{ "Sundragon must always", "be next to a firefly" });
+                    }
                 }
             }
 
@@ -152,29 +296,54 @@ const LevelState = struct {
             }
             return .{ .changed = true, .valid = true };
         }
+
+        fn toAscii(self: Snapshot, info: Constant, allocator: std.mem.Allocator) ![]const u8 {
+            const ascii_grid: Grid2D(u8) = try info.walls.map(allocator, u8, struct {
+                fn anon(is_wall: bool) u8 {
+                    return if (is_wall) '#' else '.';
+                }
+            }.anon);
+            defer ascii_grid.deinit(allocator);
+
+            ascii_grid.setSigned(info.lock, '@');
+            for (self.animals) |animal| {
+                ascii_grid.setSigned(animal.pos, animal.kind.toAscii());
+            }
+
+            return ascii_grid.toAscii(allocator);
+        }
     };
 
     pub fn cur(self: LevelState) Snapshot {
         return self.states_history.getLast();
     }
 
+    pub fn deinit(self: *LevelState, allocator: std.mem.Allocator) void {
+        self.info.walls.deinit(allocator);
+        for (self.states_history.items) |snapshot| {
+            allocator.free(snapshot.animals);
+        }
+        self.states_history.deinit(allocator);
+    }
+
     pub fn fromAscii(allocator: std.mem.Allocator, ascii: []const u8) !LevelState {
         const ascii_grid: Grid2D(u8) = try .fromAscii(allocator, ascii);
         defer ascii_grid.deinit(allocator);
+
+        if (true) { // validate input
+            for (ascii_grid.data) |char| {
+                if (char == '#' or char == '.' or char == '@') continue;
+                if (Animal.Kind.fromAscii(char) != null) continue;
+                return error.BadData;
+            }
+        }
 
         var states_history: std.ArrayListUnmanaged(Snapshot) = .empty;
 
         var initial_state: std.ArrayListUnmanaged(Animal) = .empty;
         var it = ascii_grid.iteratorSigned();
         while (it.next()) |pos| {
-            const char = std.ascii.toLower(ascii_grid.atSigned(pos));
-            const kind: Animal.Kind = switch (char) {
-                'k' => .beetlekey,
-                'f' => .firefly,
-                'd' => .sundragon,
-                'c' => .catslime,
-                else => continue,
-            };
+            const kind = Animal.Kind.fromAscii(ascii_grid.atSigned(pos)) orelse continue;
             try initial_state.append(allocator, .{
                 .kind = kind,
                 .pos = pos,
@@ -206,6 +375,22 @@ const Animal = struct {
         firefly,
         sundragon,
         catslime,
+
+        fn toAscii(kind: Kind) u8 {
+            return switch (kind) {
+                .beetlekey => 'K',
+                .firefly => 'F',
+                .sundragon => 'D',
+                .catslime => 'C',
+            };
+        }
+
+        fn fromAscii(char: u8) ?Kind {
+            inline for (@typeInfo(Kind).@"enum".fields) |field| {
+                const cur: Kind = @enumFromInt(field.value);
+                if (toAscii(cur) == std.ascii.toUpper(char)) return cur;
+            } else return null;
+        }
     };
 };
 
