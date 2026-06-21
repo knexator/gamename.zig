@@ -238,7 +238,12 @@ const LevelState = struct {
 
     const Snapshot = struct {
         animals: []const Animal,
-        solved: bool,
+
+        fn solved(self: Snapshot, info: Constant) bool {
+            for (self.animals) |a| {
+                if (a.kind == .beetlekey and a.pos.equals(info.lock)) return true;
+            } else return false;
+        }
 
         fn animalAt(self: Snapshot, pos: IVec2) ?usize {
             return animalAt2(self.animals, pos);
@@ -273,6 +278,9 @@ const LevelState = struct {
             const animal_kind = old_state.animals[grabbed].kind;
             if (animal_kind == .firefly and !CONFIG.can_grab_fireflies) {
                 return .badMove(&.{ "Ouch! These fireflies are", "too hot to handle" });
+            }
+            if (animal_kind == .stonefish) {
+                return .badMove(&.{"Too heavy to move"});
             }
 
             const dir = new_pos.sub(old_pos);
@@ -323,12 +331,13 @@ const LevelState = struct {
                     if (!moving[idx]) continue;
                     const dest = animal.pos.add(dir);
                     const blocked_by_wall = info.walls.atSignedSafe(dest) orelse true;
+                    const blocked_by_lock = info.lock.equals(dest) and animal.kind != .beetlekey;
                     const blocked_by_animal = if (animalAt2(animals, dest)) |j|
                         !moving[j]
                     else
                         false;
 
-                    if (blocked_by_wall or blocked_by_animal) {
+                    if (blocked_by_wall or blocked_by_lock or blocked_by_animal) {
                         moving[idx] = false;
                         changed = true;
                     }
@@ -385,7 +394,7 @@ const LevelState = struct {
                 if (moving[idx]) animal.pos.addInPlace(dir);
             }
 
-            var result: Snapshot = .{ .animals = new_animals, .solved = old_state.solved };
+            var result: Snapshot = .{ .animals = new_animals };
 
             if (true) { // validate rule: all sundragons next to a firefly
                 for (new_animals) |animal| {
@@ -460,7 +469,7 @@ const LevelState = struct {
                 .pos = pos,
             });
         }
-        try states_history.append(allocator, .{ .animals = try initial_state.toOwnedSlice(allocator), .solved = false });
+        try states_history.append(allocator, .{ .animals = try initial_state.toOwnedSlice(allocator) });
 
         return .{
             .states_history = states_history,
@@ -632,6 +641,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         _ = level.states_history.pop();
     }
 
+    if (platform.keyboard.wasPressed(.KeyR) and
+        level.states_history.items.len > 1)
+    {
+        try level.states_history.append(mem.gpa, level.states_history.items[0]);
+    }
+
     if (self.editing) {
         if (platform.keyboard.wasPressed(.KeyI)) {
             const new_walls = try level.info.walls.plusMargin(mem.gpa, 1, false);
@@ -645,7 +660,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 mem.gpa.free(state.animals);
             }
             level.states_history.clearRetainingCapacity();
-            level.states_history.appendAssumeCapacity(.{ .solved = false, .animals = new_animals });
+            level.states_history.appendAssumeCapacity(.{ .animals = new_animals });
         }
 
         if (platform.keyboard.wasPressed(.KeyO)) {
@@ -682,7 +697,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 mem.gpa.free(state.animals);
             }
             level.states_history.clearRetainingCapacity();
-            level.states_history.appendAssumeCapacity(.{ .solved = false, .animals = new_animals });
+            level.states_history.appendAssumeCapacity(.{ .animals = new_animals });
         }
 
         if (platform.keyboard.wasPressed(.KeyC)) {
@@ -716,7 +731,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (level.cur().animalAt(active_tile.?)) |animal_id| {
             var new_animals: std.ArrayListUnmanaged(Animal) = .fromOwnedSlice(try mem.gpa.dupe(Animal, level.cur().animals));
             _ = new_animals.swapRemove(animal_id);
-            try level.states_history.append(mem.gpa, .{ .animals = try new_animals.toOwnedSlice(mem.gpa), .solved = false });
+            try level.states_history.append(mem.gpa, .{ .animals = try new_animals.toOwnedSlice(mem.gpa) });
         } else {
             level.info.walls.setSigned(active_tile.?, !level.info.walls.atSigned(active_tile.?));
         }
@@ -731,7 +746,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     _ = new_animals.swapRemove(old);
                 }
                 try new_animals.append(mem.gpa, .{ .pos = active_tile.?, .kind = @enumFromInt(field.value) });
-                try level.states_history.append(mem.gpa, .{ .animals = try new_animals.toOwnedSlice(mem.gpa), .solved = false });
+                try level.states_history.append(mem.gpa, .{ .animals = try new_animals.toOwnedSlice(mem.gpa) });
             }
         }
     }
@@ -758,7 +773,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     if (level.cur().animalAt(self.started_grabbing_at.?)) |grabbed| {
                         const new_animals = try mem.gpa.dupe(Animal, level.cur().animals);
                         new_animals[grabbed].pos = active_tile.?;
-                        try level.states_history.append(mem.gpa, .{ .animals = new_animals, .solved = false });
+                        try level.states_history.append(mem.gpa, .{ .animals = new_animals });
                         self.started_grabbing_at = active_tile.?;
                     } else if (level.info.lock.equals(self.started_grabbing_at.?)) {
                         level.info.lock = active_tile.?;
@@ -771,6 +786,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (result.new_state) |new_state| {
                     try level.states_history.append(mem.gpa, new_state);
                     self.started_grabbing_at = active_tile.?;
+                    if (new_state.solved(level.info)) {
+                        if (self.cur_level + 1 < self.levels.len) {
+                            self.cur_level += 1;
+                        }
+                    }
                 }
             }
         }
@@ -796,7 +816,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             }
         }
     }
-    if (!level.cur().solved) {
+    if (!level.cur().solved(level.info)) {
         drawer.lock(level.info.lock);
     }
     for (level.cur().animals) |animal| {
