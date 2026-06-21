@@ -5,6 +5,7 @@ pub const tracy = @import("tracy");
 
 const CONFIG: struct {
     can_grab_fireflies: bool = true,
+    multipush: bool = true,
 } = .{};
 
 // TODO: type
@@ -78,6 +79,14 @@ test "simple move" {
     , .new(1, 4), .new(1, 0));
 }
 
+test "multipush" {
+    try testMove(std.testing.allocator,
+        \\KF..@
+    ,
+        \\.KF.@
+    , .new(0, 0), .new(1, 0));
+}
+
 test "catslime" {
     try testMove(std.testing.allocator,
         \\C.@
@@ -126,30 +135,30 @@ test "catslime" {
     try testMove(std.testing.allocator,
         \\.......
         \\CC....@
-        \\DF.....
+        \\SF.....
     ,
         \\CC.....
-        \\DF....@
+        \\SF....@
         \\.......
     , .new(1, 1), .new(0, -1));
 
     try testMove(std.testing.allocator,
         \\.......
         \\CC#...@
-        \\DFK....
+        \\SFK....
     ,
         \\CC.....
-        \\DF#...@
+        \\SF#...@
         \\..K....
     , .new(1, 1), .new(0, -1));
 
     try testMove(std.testing.allocator,
         \\.......
         \\CC#...@
-        \\DFK....
+        \\SFK....
     ,
         \\CC.....
-        \\DF#...@
+        \\SF#...@
         \\..K....
     , .new(0, 1), .new(0, -1));
 
@@ -157,11 +166,11 @@ test "catslime" {
         \\....
         \\@...
         \\.CC#
-        \\.FDK
+        \\.FSK
     ,
         \\....
         \\@CC.
-        \\.FD#
+        \\.FS#
         \\...K
     , .new(1, 2), .new(0, -1));
 
@@ -169,11 +178,11 @@ test "catslime" {
         \\...
         \\@..
         \\.CC
-        \\.FD
+        \\.FS
     ,
         \\...
         \\@CC
-        \\.FD
+        \\.FS
         \\...
     , .new(2, 2), .new(0, -1));
 
@@ -181,11 +190,11 @@ test "catslime" {
         \\@.......
         \\...#....
         \\.CCCCC..
-        \\.FDKKK..
+        \\.FSKKK..
     ,
         \\@.......
         \\.CC#....
-        \\.FDCCC..
+        \\.FSCCC..
         \\...KKK..
     , .new(2, 2), .new(0, -1));
 
@@ -193,11 +202,11 @@ test "catslime" {
         \\@.......
         \\....#...
         \\.CCCCC..
-        \\.FDKKK..
+        \\.FSKKK..
     ,
         \\@.......
         \\.CCC#...
-        \\.FDKCC..
+        \\.FSKCC..
         \\....KK..
     , .new(1, 2), .new(0, -1));
 
@@ -205,12 +214,12 @@ test "catslime" {
         \\@.......
         \\..#.....
         \\.CCCCC..
-        \\.FDKKK..
+        \\.FSKKK..
     ,
         \\@.......
         \\..#CCC..
         \\.CCKKK..
-        \\.FD.....
+        \\.FS.....
     , .new(5, 2), .new(0, -1));
 }
 
@@ -269,12 +278,27 @@ const LevelState = struct {
             const dir = new_pos.sub(old_pos);
             const animals = old_state.animals;
 
-            // all animals connected to the current one, via catslimes
+            // all animals connected to the current one, via being in front...
             const in_group = try scratch.alloc(bool, animals.len);
             @memset(in_group, false);
             in_group[grabbed] = true;
+            if (CONFIG.multipush) {
+                var raypos = old_pos.add(dir);
+                while (true) {
+                    if (animalAt2(animals, raypos)) |index| {
+                        in_group[index] = true;
+                    } else break;
+                    raypos = raypos.add(dir);
+                }
+            }
+
+            // ...or via catslimes
             var stack: std.ArrayListUnmanaged(usize) = .empty;
-            try stack.append(scratch, grabbed);
+            for (in_group, 0..) |moving, k| {
+                if (moving) {
+                    try stack.append(scratch, k);
+                }
+            }
             var cursor: usize = 0;
             while (cursor < stack.items.len) : (cursor += 1) {
                 const source_index = stack.items[cursor];
@@ -315,8 +339,21 @@ const LevelState = struct {
                 @memset(reachable, false);
                 if (moving[grabbed]) {
                     reachable[grabbed] = true;
+                    if (CONFIG.multipush) {
+                        var raypos = old_pos.add(dir);
+                        while (true) {
+                            if (animalAt2(animals, raypos)) |index| {
+                                reachable[index] = true;
+                            } else break;
+                            raypos = raypos.add(dir);
+                        }
+                    }
                     stack.clearRetainingCapacity();
-                    try stack.append(scratch, grabbed);
+                    for (reachable, 0..) |r, k| {
+                        if (r) {
+                            try stack.append(scratch, k);
+                        }
+                    }
                     var c: usize = 0;
                     while (c < stack.items.len) : (c += 1) {
                         const idx = stack.items[c];
