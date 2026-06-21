@@ -35,21 +35,7 @@ atlas_texture: Gl.Texture,
 
 editing: bool = false,
 
-const levels_ascii: []const []const u8 = &.{
-    \\#####
-    \\#...#
-    \\@.F.#
-    \\#F..#
-    \\#K.F#
-    \\#####
-    ,
-    \\#####
-    \\#..C#
-    \\@..C#
-    \\#..##
-    \\#FDK#
-    \\#####
-};
+const levels_ascii_raw: []const u8 = @embedFile("levels.txt");
 
 fn testMove(
     allocator: std.mem.Allocator,
@@ -462,13 +448,21 @@ const Animal = struct {
         firefly,
         sundragon,
         catslime,
+        ant,
+        stonefish,
+        iceburd,
+        fourheadedfrog,
 
         fn toAscii(kind: Kind) u8 {
             return switch (kind) {
                 .beetlekey => 'K',
                 .firefly => 'F',
-                .sundragon => 'D',
+                .sundragon => 'S',
                 .catslime => 'C',
+                .ant => 'A',
+                .stonefish => 'R',
+                .iceburd => 'I',
+                .fourheadedfrog => '4',
             };
         }
 
@@ -495,9 +489,13 @@ pub fn init(
     dst.usual.init(gpa, random_seed, try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
 
     dst.cur_level = 0;
-    dst.levels = try gpa.alloc(LevelState, levels_ascii.len);
-    for (levels_ascii, dst.levels) |src, *lvl| {
-        lvl.* = try .fromAscii(gpa, src);
+    var it = std.mem.splitSequence(u8, levels_ascii_raw, "\n\n");
+    dst.levels = try gpa.alloc(LevelState, kommon.itertools.iteratorLen(it));
+    var k: usize = 0;
+    while (it.next()) |src| {
+        errdefer std.log.err("bad level at index {d}: \n{s}", .{ k - 1, src });
+        dst.levels[k] = try .fromAscii(gpa, src);
+        k += 1;
     }
 
     dst.atlas_texture = gl.buildTexture2D(loaded_images.get(.atlas_texture), true);
@@ -561,6 +559,10 @@ const Drawer = struct {
             .firefly => 3,
             .beetlekey => 6,
             .sundragon => 4,
+            .ant => 11,
+            .stonefish => 15,
+            .iceburd => 12,
+            .fourheadedfrog => 8,
         });
     }
 };
