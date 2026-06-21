@@ -154,21 +154,32 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
                 result.appendSliceAssumeCapacity(self.data[row_index * self.size.x .. (row_index + 1) * self.size.x]);
                 result.appendAssumeCapacity('\n');
             }
+            assert(result.unusedCapacitySlice().len == 0);
 
             return try result.toOwnedSlice(allocator);
         }
 
-        pub fn fromAscii(allocator: std.mem.Allocator, ascii: []const u8) !Self {
+        // TODO:improve, less hacky, add tests
+        pub fn fromAscii(allocator: std.mem.Allocator, ascii_raw: []const u8) !Self {
             if (T != u8) @compileError("fromAscii only works on Grid2D(u8)");
-            // TODO: windows line endings
-            var lines = std.mem.splitScalar(u8, ascii, '\n');
+            const ascii = std.mem.trim(u8, ascii_raw, &std.ascii.whitespace);
+            var lines = if (std.mem.indexOf(u8, ascii, "\r\n") != null)
+                std.mem.splitSequence(u8, ascii, "\r\n")
+            else
+                std.mem.splitSequence(u8, ascii, "\n");
             const width = lines.peek().?.len;
             const height = kommon.itertools.iteratorLen(lines);
             const data = try allocator.alloc(T, width * height);
             errdefer allocator.free(data);
             var j: usize = 0;
             while (lines.next()) |line| {
-                if (line.len != width) return error.NotAnAsciiRectangle;
+                // if (line.len == 0 and lines.peek() == null) {
+                //     continue;
+                // }
+                if (line.len != width) {
+                    std.log.err("bad line len {d} for line {s}; size is {d}x{d}", .{ line.len, line, width, height });
+                    return error.NotAnAsciiRectangle;
+                }
                 std.mem.copyForwards(T, data[j * width ..], line);
                 j += 1;
             }

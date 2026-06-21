@@ -120,6 +120,21 @@ fn consumeTextInput() ?std.BoundedArray(u8, 4) {
     return pending_text_input.popFirst();
 }
 
+// kept around so we can free the previous result on the next call
+var sdl_clipboard_text: [*c]u8 = null;
+fn getClipboardText() ?[]const u8 {
+    if (sdl_clipboard_text != null) c.SDL_free(sdl_clipboard_text);
+    sdl_clipboard_text = c.SDL_GetClipboardText();
+    const text = std.mem.span(sdl_clipboard_text);
+    if (text.len == 0) return null;
+    return text;
+}
+fn setClipboardText(text: []const u8) void {
+    const text_z = global_gpa_BAD.dupeZ(u8, text) catch std.debug.panic("Out of Memory!?", .{});
+    defer global_gpa_BAD.free(text_z);
+    errify(c.SDL_SetClipboardText(text_z)) catch std.debug.panic("couldn't set clipboard, {s}", .{c.SDL_GetError()});
+}
+
 // TODO: reconsider
 var getitem_lastreader: std.io.FixedBufferStream([]const u8) = undefined;
 var getitem_lastreader_reader: std.io.FixedBufferStream([]const u8).Reader = undefined;
@@ -833,6 +848,8 @@ pub fn main() !void {
         .startTextInput = startTextInput,
         .stopTextInput = stopTextInput,
         .consumeTextInput = consumeTextInput,
+        .getClipboardText = getClipboardText,
+        .setClipboardText = setClipboardText,
         .aspect_ratio = window_size.aspectRatio(),
         .delta_seconds = 0,
         .global_seconds = 0,

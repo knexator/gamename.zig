@@ -414,9 +414,14 @@ const LevelState = struct {
         defer ascii_grid.deinit(allocator);
 
         if (true) { // validate input
-            for (ascii_grid.data) |char| {
+            for (ascii_grid.data, 0..) |char, k| {
                 if (char == '#' or char == '.' or char == '@') continue;
                 if (Animal.Kind.fromAscii(char) != null) continue;
+                std.log.err("size: {d}x{d}", .{ ascii_grid.size.x, ascii_grid.size.y });
+                std.log.err(
+                    "at index {d},  pos {d}, {d}: bad ascii char: {s}, {d}",
+                    .{ k, @mod(k, ascii_grid.size.x), @divFloor(k, ascii_grid.size.x), @as([]const u8, &.{char}), char },
+                );
                 return error.BadData;
             }
         }
@@ -641,9 +646,23 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             level.states_history.appendAssumeCapacity(.{ .solved = false, .animals = new_animals });
         }
 
-        if (platform.keyboard.wasPressed(.KeyP)) {
+        if (platform.keyboard.wasPressed(.KeyC)) {
             const str = try level.cur().toAscii(level.info, mem.scratch.allocator());
             std.log.info("\n{s}", .{str});
+            platform.setClipboardText(str);
+        }
+
+        if (platform.keyboard.wasPressed(.KeyV)) {
+            if (platform.getClipboardText()) |ascii| {
+                // std.log.debug("acsii len {d}:\n{s}\n\n{any}", .{ ascii.len, ascii, ascii });
+                if (LevelState.fromAscii(mem.gpa, ascii)) |new_level| {
+                    // std.log.debug("created level", .{});
+                    level.deinit(mem.gpa);
+                    level.* = new_level;
+                } else |err| {
+                    std.log.err("bad ascii: {s}", .{@errorName(err)});
+                }
+            }
         }
     }
 
@@ -721,7 +740,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (self.editing) {
         message = &.{
             "i to increase level size, o to decrease it",
-            "p to export results, 1-9 to add animals",
+            "c/v to save/load into clipboard, 1-9 to add animals",
             "right click to delete animals and toggle walls",
         };
     }

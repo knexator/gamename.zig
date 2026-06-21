@@ -48,6 +48,13 @@ function resizeCanvas() {
 let text_input_active = false;
 const text_input_element = document.createElement("input");
 let pending_text_input = [];
+
+// reading the clipboard is async, so we cache the latest known value and serve
+// that synchronously; it gets refreshed on paste events and on each read request
+let clipboard_text = "";
+window.addEventListener("paste", (e) => {
+  clipboard_text = (e.clipboardData || window.clipboardData).getData("text");
+});
 if (true) {
   text_input_element.setAttribute("type", "text");
   text_input_element.setAttribute("autocomplete", "off");
@@ -593,6 +600,25 @@ async function getWasm() {
         const char = pending_text_input.shift();
         return text_encoder.encodeInto(char, getBytes(buf_ptr, buf_len)).written;
       },
+
+      // clipboard
+      getClipboardText: (buf_ptr, buf_len) => {
+        // readText is async, so refresh the cache for next time and return
+        // whatever we already had
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          navigator.clipboard.readText().then((text) => {
+            clipboard_text = text;
+          }).catch(() => {});
+        }
+        return text_encoder.encodeInto(clipboard_text, getBytes(buf_ptr, buf_len)).written;
+      },
+      setClipboardText: (text_ptr, text_len) => {
+        const text = getString(text_ptr, text_len);
+        clipboard_text = text;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => {});
+        }
+      },
     },
   });
   return wasm_module.instance.exports;
@@ -673,7 +699,7 @@ window.addEventListener('focus', () => wasm_exports.clearAllPressedKeys());
 
 document.addEventListener("keydown", (ev) => {
   if (ev.repeat) return;
-  console.log("keydown", ev);
+  // console.log("keydown", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keydown(key_num);
@@ -682,7 +708,7 @@ document.addEventListener("keydown", (ev) => {
 
 document.addEventListener("keyup", (ev) => {
   if (ev.repeat) return;
-  console.log("keyup", ev);
+  // console.log("keyup", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keyup(key_num);

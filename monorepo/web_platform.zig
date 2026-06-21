@@ -481,6 +481,12 @@ const js = struct {
         /// returns the amount of bytes filled
         extern fn consumeTextInput(buf_ptr: [*]u8, buf_len: usize) usize;
     };
+
+    pub const clipboard = struct {
+        /// returns the amount of bytes filled
+        extern fn getClipboardText(buf_ptr: [*]u8, buf_len: usize) usize;
+        extern fn setClipboardText(text_ptr: [*]const u8, text_len: usize) void;
+    };
 };
 
 const js_better = struct {
@@ -584,6 +590,22 @@ const js_better = struct {
             return result;
         }
     };
+
+    pub const clipboard = struct {
+        // reused across calls; reading is async on web, so this holds whatever
+        // value JS had cached (from a previous read or a paste event)
+        var buffer: []u8 = undefined;
+
+        pub fn getClipboardText() ?[]const u8 {
+            const len = js.clipboard.getClipboardText(buffer.ptr, buffer.len);
+            if (len == 0) return null;
+            return buffer[0..len];
+        }
+
+        pub fn setClipboardText(text: []const u8) void {
+            js.clipboard.setClipboardText(text.ptr, text.len);
+        }
+    };
 };
 
 const GameState = @import("GameState");
@@ -617,6 +639,8 @@ var web_platform: PlatformGives = .{
     .startTextInput = js_better.text_input.startTextInput,
     .stopTextInput = js_better.text_input.stopTextInput,
     .consumeTextInput = js_better.text_input.consumeTextInput,
+    .getClipboardText = js_better.clipboard.getClipboardText,
+    .setClipboardText = js_better.clipboard.setClipboardText,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,
@@ -1247,6 +1271,8 @@ export fn init(random_seed: u32) void {
     tweakable_floats = .init(web_platform.gpa);
     tweakable_textures = .init(web_platform.gpa);
     tweakable_strings = .init(web_platform.gpa);
+
+    js_better.clipboard.buffer = web_platform.gpa.alloc(u8, std.math.maxInt(u16)) catch @panic("OoM");
 
     my_game.init(.{
         .gpa = gpa,
