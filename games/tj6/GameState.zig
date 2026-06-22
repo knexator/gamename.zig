@@ -239,6 +239,7 @@ const LevelState = struct {
 
     const Snapshot = struct {
         animals: []const Animal,
+        is_automove: bool = false,
 
         fn solved(self: Snapshot, info: Constant) bool {
             for (self.animals) |a| {
@@ -262,6 +263,45 @@ const LevelState = struct {
                 if (self.animalAt(pos.add(dir))) |a| result.appendAssumeCapacity(self.animals[a].kind);
             }
             return result;
+        }
+
+        fn autoMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, scratch: std.mem.Allocator) !?Snapshot {
+            var new_animals: std.ArrayListUnmanaged(Animal) = try .initCapacity(allocator, old_state.animals.len);
+
+            var any_changes = false;
+
+            for (old_state.animals) |animal| {
+                if (animal.prev_move == .died) {
+                    any_changes = true;
+                } else {
+                    var a = animal;
+                    a.prev_move = .nothing;
+                    new_animals.appendAssumeCapacity(a);
+                }
+            }
+
+            _ = info;
+            _ = scratch;
+
+            for (new_animals.items) |frog| {
+                if (frog.kind != .fourheadedfrog) continue;
+                for (IVec2.cardinal_directions) |dir| {
+                    const first_pos = frog.pos.add(dir);
+                    if (animalAt2(new_animals.items, first_pos)) |index| {
+                        if (new_animals.items[index].kind.isBug()) {
+                            new_animals.items[index].prev_move = .died;
+                            any_changes = true;
+                        }
+                    } else {}
+                }
+            }
+
+            if (any_changes) {
+                return .{ .animals = try new_animals.toOwnedSlice(allocator), .is_automove = true };
+            } else {
+                new_animals.deinit(allocator);
+                return null;
+            }
         }
 
         fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, scratch: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !struct {
@@ -497,6 +537,7 @@ const Animal = struct {
         nothing,
         /// prev pos
         moved: IVec2,
+        died,
     } = .nothing,
 
     const Kind = enum {
@@ -508,6 +549,21 @@ const Animal = struct {
         stonefish,
         iceburd,
         fourheadedfrog,
+
+        fn isBug(kind: Kind) bool {
+            return switch (kind) {
+                .beetlekey,
+                .firefly,
+                => true,
+                .sundragon,
+                .catslime,
+                .ant,
+                .stonefish,
+                .iceburd,
+                .fourheadedfrog,
+                => false,
+            };
+        }
 
         fn toAscii(kind: Kind) u8 {
             return switch (kind) {
@@ -613,6 +669,7 @@ const Drawer = struct {
         const pos: Vec2 = switch (animal_.prev_move) {
             .nothing => animal_.pos.tof32(),
             .moved => |prev| .lerp(prev.tof32(), animal_.pos.tof32(), anim_t),
+            .died => if (anim_t < 0.5) animal_.pos.tof32() else return,
         };
         self.sprite(pos, switch (animal_.kind) {
             .catslime => 10,
@@ -652,10 +709,22 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const level = &self.levels[self.cur_level];
 
+    if (self.anim_t >= 1) {
+        if (try level.cur().autoMove(level.info, mem.gpa, mem.frame.allocator())) |new_state| {
+            try level.states_history.append(mem.gpa, new_state);
+            self.anim_t = 0;
+        }
+    }
+
     if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.1, 0.2) and
         level.states_history.items.len > 1)
     {
-        _ = level.states_history.pop();
+        while (true) {
+            const old = level.states_history.pop().?;
+            if (!old.is_automove) break;
+            assert(level.states_history.items.len > 1);
+        }
+        self.anim_t = 1;
     }
 
     if (platform.keyboard.wasPressed(.KeyR) and
@@ -797,7 +866,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                         self.started_grabbing_at = active_tile.?;
                     }
                 }
-            } else {
+            } else if (!level.cur().is_automove or self.anim_t >= 1) {
                 const result = try level.cur().doMove(level.info, mem.gpa, mem.frame.allocator(), self.started_grabbing_at.?, active_tile.?);
                 message = result.message;
                 if (result.new_state) |new_state| {
