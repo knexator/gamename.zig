@@ -265,6 +265,52 @@ const LevelState = struct {
             return result;
         }
 
+        fn distToBug(animals: []const Animal, info: Constant, pos: IVec2, dir: IVec2) ?isize {
+            var dist: isize = 0;
+
+            var target = pos.add(dir);
+
+            while (true) {
+                if (info.lock.equals(target) or (info.walls.atSignedSafe(target) orelse true)) {
+                    return null;
+                }
+
+                if (animalAt2(animals, target)) |animal| {
+                    const kind = animals[animal].kind;
+                    if (kind.isBug()) {
+                        return dist;
+                    } else if (!kind.isTongue()) {
+                        return null;
+                    }
+                }
+
+                target = target.add(dir);
+                dist += 1;
+            }
+
+            return dist;
+        }
+
+        fn tongueLen(animals: []const Animal, pos: IVec2, dir: IVec2) isize {
+            var dist: isize = 0;
+
+            var target = pos.add(dir);
+
+            while (true) {
+                const valid = if (animalAt2(animals, target)) |animal|
+                    animals[animal].kind == Animal.Kind.tongue(dir)
+                else
+                    false;
+
+                if (!valid) return dist;
+
+                target = target.add(dir);
+                dist += 1;
+            }
+
+            return dist;
+        }
+
         fn autoMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, scratch: std.mem.Allocator) !?Snapshot {
             var new_animals: std.ArrayListUnmanaged(Animal) = try .initCapacity(allocator, old_state.animals.len);
 
@@ -280,19 +326,35 @@ const LevelState = struct {
                 }
             }
 
-            _ = info;
             _ = scratch;
 
-            for (new_animals.items) |frog| {
+            var frog_index: usize = 0;
+            while (frog_index < new_animals.items.len) : (frog_index += 1) {
+                const frog = new_animals.items[frog_index];
                 if (frog.kind != .fourheadedfrog) continue;
+
                 for (IVec2.cardinal_directions) |dir| {
-                    const first_pos = frog.pos.add(dir);
-                    if (animalAt2(new_animals.items, first_pos)) |index| {
-                        if (new_animals.items[index].kind.isBug()) {
-                            new_animals.items[index].prev_move = .died;
-                            any_changes = true;
+                    const tongue_len = tongueLen(new_animals.items, frog.pos, dir);
+                    const maybe_bug_dist = distToBug(new_animals.items, info, frog.pos, dir);
+
+                    if (maybe_bug_dist) |bug_dist| {
+                        any_changes = true;
+                        if (tongue_len < bug_dist) {
+                            try new_animals.append(allocator, .{ .kind = .tongue(dir), .pos = frog.pos.add(dir.scale(tongue_len + 1)) });
+                        } else if (bug_dist == 0) {
+                            assert(tongue_len == bug_dist);
+                            new_animals.items[animalAt2(new_animals.items, frog.pos.add(dir)).?].prev_move = .died;
+                        } else {
+                            assert(tongue_len == bug_dist);
+                            _ = new_animals.swapRemove(animalAt2(new_animals.items, frog.pos.add(dir.scale(tongue_len))).?);
+                            const bug = &new_animals.items[animalAt2(new_animals.items, frog.pos.add(dir.scale(bug_dist + 1))).?];
+                            bug.prev_move = .{ .moved = bug.pos };
+                            bug.pos.addInPlace(dir.neg());
                         }
-                    } else {}
+                    } else if (tongue_len > 0) {
+                        any_changes = true;
+                        _ = new_animals.swapRemove(animalAt2(new_animals.items, frog.pos.add(dir.scale(tongue_len))).?);
+                    }
                 }
             }
 
@@ -550,6 +612,35 @@ const Animal = struct {
         iceburd,
         fourheadedfrog,
 
+        tongue_up,
+        tongue_down,
+        tongue_right,
+        tongue_left,
+
+        fn isTongue(kind: Kind) bool {
+            return switch (kind) {
+                else => false,
+                .tongue_up,
+                .tongue_down,
+                .tongue_right,
+                .tongue_left,
+                => true,
+            };
+        }
+
+        fn tongue(dir: IVec2) Kind {
+            assert(dir.isCardinalDirection());
+            if (dir.equals(.e1)) {
+                return .tongue_right;
+            } else if (dir.equals(.ne1)) {
+                return .tongue_left;
+            } else if (dir.equals(.e2)) {
+                return .tongue_up;
+            } else if (dir.equals(.ne2)) {
+                return .tongue_down;
+            } else unreachable;
+        }
+
         fn isBug(kind: Kind) bool {
             return switch (kind) {
                 .beetlekey,
@@ -561,6 +652,10 @@ const Animal = struct {
                 .stonefish,
                 .iceburd,
                 .fourheadedfrog,
+                .tongue_up,
+                .tongue_down,
+                .tongue_right,
+                .tongue_left,
                 => false,
             };
         }
@@ -575,6 +670,10 @@ const Animal = struct {
                 .stonefish => 'R',
                 .iceburd => 'I',
                 .fourheadedfrog => '4',
+                .tongue_up => 0,
+                .tongue_down => 0,
+                .tongue_right => 0,
+                .tongue_left => 0,
             };
         }
 
@@ -680,6 +779,11 @@ const Drawer = struct {
             .stonefish => 15,
             .iceburd => 12,
             .fourheadedfrog => 8,
+
+            .tongue_up => 2,
+            .tongue_down => 14,
+            .tongue_right => 9,
+            .tongue_left => 7,
         });
     }
 };
@@ -709,10 +813,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const level = &self.levels[self.cur_level];
 
-    if (self.anim_t >= 1) {
+    if (self.anim_t >= 1 or self.started_grabbing_at != null) {
         if (try level.cur().autoMove(level.info, mem.gpa, mem.frame.allocator())) |new_state| {
             try level.states_history.append(mem.gpa, new_state);
             self.anim_t = 0;
+            self.started_grabbing_at = null;
         }
     }
 
@@ -825,8 +930,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (self.editing and active_tile != null) {
         inline for (@typeInfo(Animal.Kind).@"enum".fields, 1..) |field, digit| {
-            comptime assert(digit < 10);
-            if (platform.keyboard.wasPressed(.digit(digit))) {
+            comptime assert(digit < 10 or std.mem.startsWith(u8, field.name, "tongue"));
+            if (digit < 10 and platform.keyboard.wasPressed(.digit(digit))) {
                 var new_animals: std.ArrayListUnmanaged(Animal) = .fromOwnedSlice(try mem.gpa.dupe(Animal, level.cur().animals));
                 if (level.cur().animalAt(active_tile.?)) |old| {
                     _ = new_animals.swapRemove(old);
