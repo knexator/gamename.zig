@@ -33,6 +33,7 @@ levels: []LevelState,
 cur_level: usize = 0,
 started_grabbing_at: ?IVec2 = null,
 atlas_texture: Gl.Texture,
+anim_t: f32 = 1,
 
 editing: bool = false,
 
@@ -390,8 +391,12 @@ const LevelState = struct {
             if (!moving[grabbed]) return .empty;
 
             const new_animals = try allocator.dupe(Animal, animals);
+            for (new_animals) |*a| a.prev_move = .nothing;
             for (new_animals, 0..) |*animal, idx| {
-                if (moving[idx]) animal.pos.addInPlace(dir);
+                if (moving[idx]) {
+                    animal.prev_move = .{ .moved = animal.pos };
+                    animal.pos.addInPlace(dir);
+                }
             }
 
             var result: Snapshot = .{ .animals = new_animals };
@@ -488,6 +493,11 @@ const LevelState = struct {
 const Animal = struct {
     pos: IVec2,
     kind: Kind,
+    prev_move: union(enum) {
+        nothing,
+        /// prev pos
+        moved: IVec2,
+    } = .nothing,
 
     const Kind = enum {
         beetlekey,
@@ -582,25 +592,29 @@ const Drawer = struct {
         drawer.batch.draw(camera);
     }
 
-    fn sprite(self: *Drawer, pos: IVec2, index: usize) void {
+    fn sprite(self: *Drawer, pos: Vec2, index: usize) void {
         self.batch.add(.{
-            .point = .{ .pos = pos.tof32() },
+            .point = .{ .pos = pos },
             .texcoord = sheet.at(index),
         });
     }
 
     pub fn wall(self: *Drawer, pos: UVec2) void {
         // self.canvas.fillRect(camera, .{ .top_left = pos.tof32(), .size = .one }, .fromHex("#885522"));
-        self.sprite(pos.cast(isize), 0);
+        self.sprite(pos.tof32(), 0);
     }
 
     pub fn lock(self: *Drawer, pos: IVec2) void {
         // self.canvas.fillRect(camera, .{ .top_left = pos.tof32(), .size = .one }, .cyan);
-        self.sprite(pos, 1);
+        self.sprite(pos.tof32(), 1);
     }
 
-    pub fn animal(self: *Drawer, animal_: Animal) void {
-        self.sprite(animal_.pos, switch (animal_.kind) {
+    pub fn animal(self: *Drawer, animal_: Animal, anim_t: f32) void {
+        const pos: Vec2 = switch (animal_.prev_move) {
+            .nothing => animal_.pos.tof32(),
+            .moved => |prev| .lerp(prev.tof32(), animal_.pos.tof32(), anim_t),
+        };
+        self.sprite(pos, switch (animal_.kind) {
             .catslime => 10,
             .firefly => 3,
             .beetlekey => 6,
@@ -618,6 +632,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
     const mem = &self.usual.mem;
     // const smooth = &self.usual.smooth;
+
+    const turn_duration = 0.1;
+    math.towards(&self.anim_t, 1, platform.delta_seconds / turn_duration);
 
     if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
         self.cur_level += 1;
@@ -785,6 +802,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 message = result.message;
                 if (result.new_state) |new_state| {
                     try level.states_history.append(mem.gpa, new_state);
+                    self.anim_t = 0;
                     self.started_grabbing_at = active_tile.?;
                 }
             }
@@ -815,7 +833,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         drawer.lock(level.info.lock);
     }
     for (level.cur().animals) |animal| {
-        drawer.animal(animal);
+        drawer.animal(animal, self.anim_t);
     }
 
     drawer.end(camera);
