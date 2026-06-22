@@ -786,11 +786,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 if (result.new_state) |new_state| {
                     try level.states_history.append(mem.gpa, new_state);
                     self.started_grabbing_at = active_tile.?;
-                    if (new_state.solved(level.info)) {
-                        if (self.cur_level + 1 < self.levels.len) {
-                            self.cur_level += 1;
-                        }
-                    }
                 }
             }
         }
@@ -836,6 +831,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             1.1,
             .white,
         );
+    }
+
+    if (level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {
+        if (self.cur_level + 1 < self.levels.len) {
+            self.cur_level += 1;
+        }
     }
 
     return false;
