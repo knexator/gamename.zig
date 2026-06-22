@@ -645,10 +645,10 @@ const Animal = struct {
             return switch (kind) {
                 .beetlekey,
                 .firefly,
+                .ant,
                 => true,
                 .sundragon,
                 .catslime,
-                .ant,
                 .stonefish,
                 .iceburd,
                 .fourheadedfrog,
