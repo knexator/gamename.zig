@@ -3,11 +3,6 @@ pub const PlatformGives = kommon.engine.PlatformGivesFor(GameState);
 pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 pub const tracy = @import("tracy");
 
-const CONFIG: struct {
-    can_grab_fireflies: bool = true,
-    multipush: bool = true,
-} = .{};
-
 // TODO: type
 pub const stuff = .{
     .metadata = .{
@@ -16,7 +11,26 @@ pub const stuff = .{
         .desired_aspect_ratio = 4.0 / 3.0,
     },
 
-    .sounds = .{},
+    .sounds = .{
+        .firefly_1 = "assets/sfx/sfx_Firefly1.wav",
+        .firefly_2 = "assets/sfx/sfx_Firefly2.wav",
+        .frog_1 = "assets/sfx/sfx_Frog1.wav",
+        .frog_2 = "assets/sfx/sfx_Frog2.wav",
+        .frog_3 = "assets/sfx/sfx_Frog3.wav",
+        .frog_4 = "assets/sfx/sfx_Frog4.wav",
+        .ice_1 = "assets/sfx/sfx_Ice1.wav",
+        .ice_2 = "assets/sfx/sfx_Ice2.wav",
+        .slimecat_1 = "assets/sfx/sfx_SlimeCat1.wav",
+        .slimecat_2 = "assets/sfx/sfx_SlimeCat2.wav",
+        .slimecat_3 = "assets/sfx/sfx_SlimeCat3.wav",
+        .step_1 = "assets/sfx/sfx_Step1.wav",
+        .step_2 = "assets/sfx/sfx_Step2.wav",
+        .step_3 = "assets/sfx/sfx_Step3.wav",
+        .step_4 = "assets/sfx/sfx_Step4.wav",
+        .stone_1 = "assets/sfx/sfx_Stone1.wav",
+        .stone_2 = "assets/sfx/sfx_Stone2.wav",
+        .unlock = "assets/sfx/sfx_Unlock.wav",
+    },
 
     .loops = .{},
 
@@ -35,9 +49,19 @@ started_grabbing_at: ?IVec2 = null,
 atlas_texture: Gl.Texture,
 anim_t: f32 = 1,
 
+prev_active_tile: ?IVec2 = null,
+
 editing: bool = false,
 
 const levels_ascii_raw: []const u8 = @embedFile("levels.txt");
+
+fn randomSound(options: []const std.meta.FieldEnum(@TypeOf(stuff.sounds))) std.meta.FieldEnum(@TypeOf(stuff.sounds)) {
+    const S = struct {
+        var counter: usize = 0;
+    };
+    defer S.counter += 1;
+    return options[@mod(S.counter, options.len)];
+}
 
 fn testMove(
     allocator: std.mem.Allocator,
@@ -252,9 +276,11 @@ const LevelState = struct {
         is_automove: bool = false,
         is_lost: bool = false,
         any_eaten_ever: bool = false,
+        any_eaten_now: bool = false,
         message: ?[]const []const u8 = null,
 
         fn solved(self: Snapshot, info: Constant) bool {
+            if (self.is_lost) return false;
             for (self.animals) |a| {
                 if (a.kind == .beetlekey and a.pos.equals(info.lock)) return true;
             } else return false;
@@ -271,9 +297,13 @@ const LevelState = struct {
         }
 
         fn surroundingAnimals(self: Snapshot, pos: IVec2) std.BoundedArray(Animal.Kind, 4) {
+            return surroundingAnimals2(self.animals, pos);
+        }
+
+        fn surroundingAnimals2(animals: []const Animal, pos: IVec2) std.BoundedArray(Animal.Kind, 4) {
             var result: std.BoundedArray(Animal.Kind, 4) = .{};
             for (IVec2.cardinal_directions) |dir| {
-                if (self.animalAt(pos.add(dir))) |a| result.appendAssumeCapacity(self.animals[a].kind);
+                if (animalAt2(animals, pos.add(dir))) |a| result.appendAssumeCapacity(animals[a].kind);
             }
             return result;
         }
@@ -373,14 +403,41 @@ const LevelState = struct {
                 }
             }
 
+            if (true) { // validate rule: all sundragons next to a firefly
+                for (new_animals.items) |*animal| {
+                    if (animal.kind != .sundragon) continue;
+                    const any_firefly = for (surroundingAnimals2(new_animals.items, animal.pos).constSlice()) |k| {
+                        if (k == .firefly) break true;
+                    } else false;
+                    if (!any_firefly) {
+                        animal.alternative = true;
+                        // sounds.insert(randomSound(&.{ .firefly_1, .firefly_2 }));
+                    }
+                }
+            }
+
+            if (true) { // validate rule: no iceburds next to a firefly
+                for (new_animals.items) |*animal| {
+                    if (animal.kind != .iceburd) continue;
+                    const any_firefly = for (surroundingAnimals2(new_animals.items, animal.pos).constSlice()) |k| {
+                        if (k == .firefly) break true;
+                    } else false;
+                    if (any_firefly) {
+                        animal.alternative = true;
+                        // sounds.insert(randomSound(&.{ .ice_1, .ice_2 }));
+                    }
+                }
+            }
+
             if (any_changes) {
                 const any_eaten_ever = old_state.any_eaten_ever or any_eaten;
                 return .{
                     .animals = try new_animals.toOwnedSlice(allocator),
                     .is_automove = true,
                     .any_eaten_ever = any_eaten_ever,
+                    .any_eaten_now = any_eaten,
                     .message = if (any_eaten_ever) &.{"Frog ate a bug!"} else null,
-                    .is_lost = any_eaten_ever,
+                    .is_lost = old_state.is_lost or any_eaten_ever,
                 };
             } else {
                 new_animals.deinit(allocator);
@@ -417,7 +474,7 @@ const LevelState = struct {
                         if (!al[b]) continue;
                     }
                     const catslime = animals[a].kind == .catslime or animals[b].kind == .catslime;
-                    const shoved = CONFIG.multipush and d.equals(dir);
+                    const shoved = d.equals(dir);
                     if (catslime or shoved) {
                         out[b] = true;
                         try stack.append(scratch, b);
@@ -429,21 +486,17 @@ const LevelState = struct {
         fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, scratch: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !struct {
             message: ?[]const []const u8,
             new_state: ?Snapshot,
+            sounds: std.EnumSet(std.meta.FieldEnum(@TypeOf(stuff.sounds))) = .initEmpty(),
 
             const empty: @This() = .{ .message = null, .new_state = null };
-            fn badMove(msg: []const []const u8) @This() {
-                return .{ .new_state = null, .message = msg };
-            }
         } {
+            std.log.debug("doing move", .{});
             if (old_pos.sub(new_pos).taxiMag() != 1) return .empty;
             if (info.walls.atSigned(new_pos)) return .empty;
             const grabbed = old_state.animalAt(old_pos) orelse return .empty;
             const animal_kind = old_state.animals[grabbed].kind;
-            if (animal_kind == .firefly and !CONFIG.can_grab_fireflies) {
-                return .badMove(&.{ "Ouch! These fireflies are", "too hot to handle" });
-            }
             if (animal_kind == .stonefish) {
-                return .badMove(&.{"Too heavy to move"});
+                return .{ .new_state = null, .message = &.{"Too heavy to move"}, .sounds = .initOne(randomSound(&.{ .stone_1, .stone_2 })) };
             }
 
             const dir = new_pos.sub(old_pos);
@@ -493,16 +546,22 @@ const LevelState = struct {
             // Nothing happens if the grabbed animal itself can't move.
             if (!moving[grabbed]) return .empty;
 
+            var any_slime_moved = false;
             const new_animals = try allocator.dupe(Animal, animals);
             for (new_animals) |*a| a.prev_move = .nothing;
             for (new_animals, 0..) |*animal, idx| {
                 if (moving[idx]) {
                     animal.prev_move = .{ .moved = animal.pos };
                     animal.pos.addInPlace(dir);
+                    if (animal.kind == .catslime) any_slime_moved = true;
                 }
             }
 
             var result: Snapshot = .{ .animals = new_animals };
+            var sounds: std.EnumSet(std.meta.FieldEnum(@TypeOf(stuff.sounds))) = .initOne(if (any_slime_moved)
+                randomSound(&.{ .slimecat_1, .slimecat_2, .slimecat_3 })
+            else
+                randomSound(&.{ .step_1, .step_2, .step_3, .step_4 }));
 
             if (true) { // validate rule: all sundragons next to a firefly
                 for (new_animals) |*animal| {
@@ -514,6 +573,7 @@ const LevelState = struct {
                         animal.alternative = true;
                         result.is_lost = true;
                         result.message = &.{ "Sundragon must always", "be next to a firefly" };
+                        sounds.insert(randomSound(&.{ .firefly_1, .firefly_2 }));
                     }
                 }
             }
@@ -528,11 +588,16 @@ const LevelState = struct {
                         animal.alternative = true;
                         result.is_lost = true;
                         result.message = &.{"Iceburd melted!"};
+                        sounds.insert(randomSound(&.{ .ice_1, .ice_2 }));
                     }
                 }
             }
 
-            return .{ .new_state = result, .message = null };
+            if (result.solved(info)) {
+                sounds = .initOne(.unlock);
+            }
+
+            return .{ .new_state = result, .message = null, .sounds = sounds };
         }
 
         fn toAscii(self: Snapshot, info: Constant, allocator: std.mem.Allocator) ![]const u8 {
@@ -836,6 +901,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             try level.states_history.append(mem.gpa, new_state);
             self.anim_t = 0;
             self.started_grabbing_at = null;
+            if (new_state.any_eaten_now) platform.sound_queue.insert(randomSound(&.{ .frog_1, .frog_2, .frog_3, .frog_4 }));
         }
     }
 
@@ -937,6 +1003,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
     const active_tile = level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size().tof32() });
+    defer self.prev_active_tile = active_tile;
 
     if (self.editing and active_tile != null and mouse.wasPressed(.right) and !level.info.lock.equals(active_tile.?)) {
         if (level.cur().animalAt(active_tile.?)) |animal_id| {
@@ -994,6 +1061,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                     }
                 } else if (!level.cur().is_automove or self.anim_t >= 1) {
                     const result = try level.cur().doMove(level.info, mem.gpa, mem.frame.allocator(), self.started_grabbing_at.?, active_tile.?);
+                    if (self.prev_active_tile == null or !active_tile.?.equals(self.prev_active_tile.?)) {
+                        platform.sound_queue.setUnion(result.sounds);
+                    }
                     message = result.message;
                     if (result.new_state) |new_state| {
                         try level.states_history.append(mem.gpa, new_state);
@@ -1003,6 +1073,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 }
             }
         }
+    } else {
+        platform.setCursor(.default);
     }
 
     if (self.editing) {
