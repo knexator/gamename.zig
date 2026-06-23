@@ -2,6 +2,8 @@
 // zig build run
 // zig build --watch -Dhot-reloadable=only_lib
 
+// butler push .\zig-out\web_static\ knexator/my-game-name:html
+
 const active_folder = "tj6";
 
 const std = @import("std");

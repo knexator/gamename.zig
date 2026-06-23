@@ -8,7 +8,7 @@ pub const stuff = .{
     .metadata = .{
         .name = "tj6",
         .author = "knexator",
-        .desired_aspect_ratio = 4.0 / 3.0,
+        .desired_aspect_ratio = 16.0 / 9.0,
     },
 
     .sounds = .{
@@ -59,6 +59,7 @@ atlas_texture: Gl.Texture,
 anim_t: f32 = 1,
 
 prev_active_tile: ?IVec2 = null,
+prev_active_tile_time: f32 = 0,
 
 editing: bool = false,
 
@@ -778,6 +779,25 @@ const Animal = struct {
                 if (toAscii(cur) == std.ascii.toUpper(char)) return cur;
             } else return null;
         }
+
+        fn hoverMessage(kind: Kind) ?[]const []const u8 {
+            return switch (kind) {
+                .beetlekey => &.{"Its horns can unlock cages."},
+                .ant => &.{ "I guess it's not very magical.", "Just a regular old ant." },
+                .stonefish => &.{"Heavy. Needs assistance moving."},
+                .fourheadedfrog => &.{"Eats any bugs it can see."},
+                .catslime => &.{ "Sticky. Pulls anything adjacent to it", "in the same direction when moving." },
+                .iceburd => &.{"Melts when near hot creatures."},
+                .firefly => &.{"Hot."},
+                .sundragon => &.{"Needs the warmth of hot creatures."},
+
+                .tongue_down,
+                .tongue_up,
+                .tongue_right,
+                .tongue_left,
+                => null,
+            };
+        }
     };
 };
 
@@ -1041,7 +1061,19 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
     const active_tile = level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size().tof32() });
-    defer self.prev_active_tile = active_tile;
+    defer {
+        if (self.prev_active_tile != null and
+            active_tile != null and
+            self.started_grabbing_at == null and
+            self.prev_active_tile.?.equals(active_tile.?))
+        {
+            self.prev_active_tile_time += platform.delta_seconds;
+        } else {
+            self.prev_active_tile_time = 0;
+        }
+
+        self.prev_active_tile = active_tile;
+    }
 
     if (self.editing and active_tile != null and mouse.wasPressed(.right) and !level.info.lock.equals(active_tile.?)) {
         if (level.cur().animalAt(active_tile.?)) |animal_id| {
@@ -1068,6 +1100,15 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     var message = level.cur().message;
+    const time_until_message = 0.3;
+    if (!level.cur().is_lost and active_tile != null and
+        self.prev_active_tile_time > time_until_message and
+        self.prev_active_tile != null and self.prev_active_tile.?.equals(active_tile.?))
+    {
+        if (level.cur().animalAt(active_tile.?)) |i| {
+            message = level.cur().animals[i].kind.hoverMessage();
+        }
+    }
 
     if (!level.cur().is_lost and (!level.cur().is_automove or self.anim_t >= 1)) {
         if (self.started_grabbing_at == null) {
