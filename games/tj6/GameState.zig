@@ -12,8 +12,11 @@ pub const stuff = .{
     },
 
     .sounds = .{
-        .firefly_1 = "assets/sfx/sfx_Firefly1.wav",
-        .firefly_2 = "assets/sfx/sfx_Firefly2.wav",
+        // .firefly_1 = "assets/sfx/sfx_Firefly1.wav",
+        // .firefly_2 = "assets/sfx/sfx_Firefly2.wav",
+        .poweroff_1 = "assets/sfx/sfx_PwrOff1.wav",
+        .poweroff_2 = "assets/sfx/sfx_PwrOff2.wav",
+        .poweroff_3 = "assets/sfx/sfx_PwrOff3.wav",
         .frog_1 = "assets/sfx/sfx_Frog1.wav",
         .frog_2 = "assets/sfx/sfx_Frog2.wav",
         .frog_3 = "assets/sfx/sfx_Frog3.wav",
@@ -277,6 +280,7 @@ const LevelState = struct {
         is_lost: bool = false,
         any_eaten_ever: bool = false,
         any_eaten_now: bool = false,
+        started_frog_attack: bool = false,
         message: ?[]const []const u8 = null,
 
         fn solved(self: Snapshot, info: Constant) bool {
@@ -359,6 +363,7 @@ const LevelState = struct {
 
             var any_changes = false;
             var any_eaten = false;
+            var started_frog_attack = false;
 
             for (old_state.animals) |animal| {
                 if (animal.prev_move == .eaten) {
@@ -385,6 +390,7 @@ const LevelState = struct {
                     if (maybe_bug_dist) |bug_dist| {
                         any_changes = true;
                         if (tongue_len < bug_dist) {
+                            if (tongue_len == 0) started_frog_attack = true;
                             try new_animals.append(allocator, .{ .kind = .tongue(dir), .pos = frog.pos.add(dir.scale(tongue_len + 1)) });
                         } else if (bug_dist == 0) {
                             assert(tongue_len == bug_dist);
@@ -411,7 +417,7 @@ const LevelState = struct {
                     } else false;
                     if (!any_firefly) {
                         animal.alternative = true;
-                        // sounds.insert(randomSound(&.{ .firefly_1, .firefly_2 }));
+                        // sounds.insert(randomSound(&.{ .poweroff_1, .poweroff_2, .poweroff_3 }));
                     }
                 }
             }
@@ -438,6 +444,7 @@ const LevelState = struct {
                     .any_eaten_now = any_eaten,
                     .message = if (any_eaten_ever) &.{"Frog ate a bug!"} else null,
                     .is_lost = old_state.is_lost or any_eaten_ever,
+                    .started_frog_attack = started_frog_attack,
                 };
             } else {
                 new_animals.deinit(allocator);
@@ -573,7 +580,7 @@ const LevelState = struct {
                         animal.alternative = true;
                         result.is_lost = true;
                         result.message = &.{ "Sundragon must always", "be next to a firefly" };
-                        sounds.insert(randomSound(&.{ .firefly_1, .firefly_2 }));
+                        sounds.insert(randomSound(&.{ .poweroff_1, .poweroff_2, .poweroff_3 }));
                     }
                 }
             }
@@ -901,7 +908,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             try level.states_history.append(mem.gpa, new_state);
             self.anim_t = 0;
             self.started_grabbing_at = null;
-            if (new_state.any_eaten_now) platform.sound_queue.insert(randomSound(&.{ .frog_1, .frog_2, .frog_3, .frog_4 }));
+            if (new_state.any_eaten_now or new_state.started_frog_attack) platform.sound_queue.insert(randomSound(&.{ .frog_1, .frog_2, .frog_3, .frog_4 }));
         }
     }
 
