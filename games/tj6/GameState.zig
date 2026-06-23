@@ -35,7 +35,12 @@ pub const stuff = .{
         .unlock = "assets/sfx/sfx_Unlock.wav",
     },
 
-    .loops = .{},
+    .loops = if (@import("builtin").target.ofmt == .wasm) .{
+        .music = "assets/music/mx_BGM_Full.mp3",
+        .muffled = "assets/music/mx_BGM_Full_Muffled.mp3",
+        // TODO: find out why is this needed
+        // .alarm = "assets/music/mx_BGM_Full.mp3",
+    } else .{},
 
     .preloaded_images = .{
         .arial_atlas = "fonts/Arial.png",
@@ -497,7 +502,6 @@ const LevelState = struct {
 
             const empty: @This() = .{ .message = null, .new_state = null };
         } {
-            std.log.debug("doing move", .{});
             if (old_pos.sub(new_pos).taxiMag() != 1) return .empty;
             if (info.walls.atSigned(new_pos)) return .empty;
             const grabbed = old_state.animalAt(old_pos) orelse return .empty;
@@ -1082,6 +1086,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     } else {
         platform.setCursor(.default);
+    }
+
+    if (@import("builtin").target.ofmt == .wasm) {
+        math.lerpTowards(platform.loop_volumes.getPtr(.music), if (level.cur().is_lost) 0 else 1, .fast, platform.delta_seconds);
+        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), if (level.cur().is_lost) 1 else 0, .fast, platform.delta_seconds);
     }
 
     if (self.editing) {
