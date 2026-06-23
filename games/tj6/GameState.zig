@@ -317,7 +317,7 @@ const LevelState = struct {
             var any_changes = false;
 
             for (old_state.animals) |animal| {
-                if (animal.prev_move == .died) {
+                if (animal.prev_move == .eaten) {
                     any_changes = true;
                 } else {
                     var a = animal;
@@ -343,7 +343,7 @@ const LevelState = struct {
                             try new_animals.append(allocator, .{ .kind = .tongue(dir), .pos = frog.pos.add(dir.scale(tongue_len + 1)) });
                         } else if (bug_dist == 0) {
                             assert(tongue_len == bug_dist);
-                            new_animals.items[animalAt2(new_animals.items, frog.pos.add(dir)).?].prev_move = .died;
+                            new_animals.items[animalAt2(new_animals.items, frog.pos.add(dir)).?].prev_move = .{ .eaten = frog.pos };
                         } else {
                             assert(tongue_len == bug_dist);
                             _ = new_animals.swapRemove(animalAt2(new_animals.items, frog.pos.add(dir.scale(tongue_len))).?);
@@ -599,7 +599,8 @@ const Animal = struct {
         nothing,
         /// prev pos
         moved: IVec2,
-        died,
+        /// frog pos
+        eaten: IVec2,
     } = .nothing,
 
     const Kind = enum {
@@ -768,7 +769,7 @@ const Drawer = struct {
         const pos: Vec2 = switch (animal_.prev_move) {
             .nothing => animal_.pos.tof32(),
             .moved => |prev| .lerp(prev.tof32(), animal_.pos.tof32(), anim_t),
-            .died => if (anim_t < 0.5) animal_.pos.tof32() else return,
+            .eaten => |next| .lerp(animal_.pos.tof32(), next.tof32(), anim_t),
         };
         self.sprite(pos, switch (animal_.kind) {
             .catslime => 10,
