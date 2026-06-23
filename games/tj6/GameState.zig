@@ -53,6 +53,7 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 usual: kommon.Usual,
 levels: []LevelState,
 cur_level: usize = 0,
+level_change_t: f32 = 1,
 started_grabbing_at: ?IVec2 = null,
 atlas_texture: Gl.Texture,
 anim_t: f32 = 1,
@@ -793,7 +794,6 @@ pub fn init(
     const random_seed = runtime_params.random_seed;
     dst.usual.init(gpa, random_seed, try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
 
-    dst.cur_level = 0;
     var it = std.mem.splitSequence(u8, levels_ascii_raw, "\n\n");
     dst.levels = try gpa.alloc(LevelState, kommon.itertools.iteratorLen(it));
     var k: usize = 0;
@@ -841,6 +841,25 @@ const Drawer = struct {
         drawer.batch.draw(camera);
     }
 
+    pub fn drawLevel(drawer: *Drawer, camera: Rect, level: *const LevelState, anim_t: f32) void {
+        if (true) { // draw walls
+            var it = level.info.walls.iterator();
+            while (it.next()) |p| {
+                if (level.info.walls.at2(p)) {
+                    drawer.wall(p);
+                }
+            }
+        }
+        if (!level.cur().solved(level.info)) {
+            drawer.lock(level.info.lock);
+        }
+        for (level.cur().animals) |animal| {
+            drawer.drawAnimal(animal, anim_t);
+        }
+
+        drawer.end(camera);
+    }
+
     fn sprite(self: *Drawer, pos: Vec2, index: usize) void {
         self.batch.add(.{
             .point = .{ .pos = pos },
@@ -858,20 +877,20 @@ const Drawer = struct {
         self.sprite(pos.tof32(), 1);
     }
 
-    pub fn animal(self: *Drawer, animal_: Animal, anim_t: f32) void {
-        const pos: Vec2 = switch (animal_.prev_move) {
-            .nothing => animal_.pos.tof32(),
-            .moved => |prev| .lerp(prev.tof32(), animal_.pos.tof32(), anim_t),
-            .eaten => |next| .lerp(animal_.pos.tof32(), next.tof32(), anim_t),
+    pub fn drawAnimal(self: *Drawer, animal: Animal, anim_t: f32) void {
+        const pos: Vec2 = switch (animal.prev_move) {
+            .nothing => animal.pos.tof32(),
+            .moved => |prev| .lerp(prev.tof32(), animal.pos.tof32(), anim_t),
+            .eaten => |next| .lerp(animal.pos.tof32(), next.tof32(), anim_t),
         };
-        self.sprite(pos, switch (animal_.kind) {
+        self.sprite(pos, switch (animal.kind) {
             .catslime => 10,
             .firefly => 3,
             .beetlekey => 6,
-            .sundragon => if (animal_.alternative) 5 else 4,
+            .sundragon => if (animal.alternative) 5 else 4,
             .ant => 11,
             .stonefish => 15,
-            .iceburd => if (animal_.alternative) 13 else 12,
+            .iceburd => if (animal.alternative) 13 else 12,
             .fourheadedfrog => 8,
 
             .tongue_up => 2,
@@ -890,6 +909,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     const turn_duration = 0.1;
     math.towards(&self.anim_t, 1, platform.delta_seconds / turn_duration);
+    const level_swap_duration = 0.4;
+    math.towards(&self.level_change_t, 1, platform.delta_seconds / level_swap_duration);
 
     if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
         self.cur_level += 1;
@@ -905,6 +926,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.editing = !self.editing;
     }
 
+    const prev_level = self.levels[self.cur_level -| 1];
     const level = &self.levels[self.cur_level];
 
     if (self.anim_t >= 1 or self.started_grabbing_at != null) {
@@ -1008,8 +1030,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
+    const level_change_t = math.easings.easeInOutCubic(self.level_change_t);
+    const prev_camera: Rect = .withAspectRatio(.plusMargin3(.plusMargin(.{
+        .top_left = .new(10 * level_change_t, 0),
+        .size = prev_level.info.size().tof32(),
+    }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const camera: Rect = .withAspectRatio(.plusMargin3(.plusMargin(.{
-        .top_left = .zero,
+        .top_left = .new(-10 * (1 - level_change_t), 0),
         .size = level.info.size().tof32(),
     }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
@@ -1104,23 +1131,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     platform.gl.clear(.fromHex("#181818"));
 
     var drawer: Drawer = .start(&self.usual.canvas, self.atlas_texture);
-
-    if (true) { // draw walls
-        var it = level.info.walls.iterator();
-        while (it.next()) |p| {
-            if (level.info.walls.at2(p)) {
-                drawer.wall(p);
-            }
-        }
+    if (level_change_t < 1) {
+        drawer.drawLevel(prev_camera, &prev_level, self.anim_t);
     }
-    if (!level.cur().solved(level.info)) {
-        drawer.lock(level.info.lock);
-    }
-    for (level.cur().animals) |animal| {
-        drawer.animal(animal, self.anim_t);
-    }
-
-    drawer.end(camera);
+    drawer.drawLevel(camera, level, self.anim_t);
 
     if (message) |msg| {
         try self.usual.canvas.drawTextLines(
@@ -1138,6 +1152,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {
         if (self.cur_level + 1 < self.levels.len) {
             self.cur_level += 1;
+            self.level_change_t = 0;
         }
     }
 
