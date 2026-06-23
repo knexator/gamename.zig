@@ -5,7 +5,8 @@ import GUI from './lil-gui.esm.min.js';
 const gui = new GUI();
 const TWEAKABLE = {};
 let params = new URLSearchParams(document.location.search);
-if (window.location.hostname.endsWith('itch.io') || params.size == 0) gui.hide();
+const on_itch = window.location.hostname.endsWith('itch.io') || document.referrer.includes('itch.io')
+if (on_itch || params.size == 0) gui.hide();
 
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
