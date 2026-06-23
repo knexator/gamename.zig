@@ -512,7 +512,7 @@ const LevelState = struct {
                 for (new_animals) |*animal| {
                     if (animal.kind != .iceburd) continue;
                     const any_firefly = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
-                        if (k == .sundragon) break true;
+                        if (k == .firefly) break true;
                     } else false;
                     if (any_firefly) {
                         animal.alternative = true;
@@ -843,7 +843,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (platform.keyboard.wasPressed(.KeyR) and
         level.states_history.items.len > 1)
     {
-        try level.states_history.append(mem.gpa, level.states_history.items[0]);
+        const restart_animals = try mem.gpa.dupe(Animal, level.states_history.items[0].animals);
+        try level.states_history.append(mem.gpa, .{ .animals = restart_animals });
+        self.anim_t = 1;
     }
 
     if (self.editing) {
