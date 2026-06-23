@@ -240,6 +240,8 @@ const LevelState = struct {
     const Snapshot = struct {
         animals: []const Animal,
         is_automove: bool = false,
+        is_lost: bool = false,
+        message: ?[]const []const u8 = null,
 
         fn solved(self: Snapshot, info: Constant) bool {
             for (self.animals) |a| {
@@ -504,14 +506,29 @@ const LevelState = struct {
             var result: Snapshot = .{ .animals = new_animals };
 
             if (true) { // validate rule: all sundragons next to a firefly
-                for (new_animals) |animal| {
+                for (new_animals) |*animal| {
                     if (animal.kind != .sundragon) continue;
                     const any_firefly = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
                         if (k == .firefly) break true;
                     } else false;
                     if (!any_firefly) {
-                        allocator.free(new_animals);
-                        return .badMove(&.{ "Sundragon must always", "be next to a firefly" });
+                        animal.alternative = true;
+                        result.is_lost = true;
+                        result.message = &.{ "Sundragon must always", "be next to a firefly" };
+                    }
+                }
+            }
+
+            if (true) { // validate rule: no iceburds next to a firefly
+                for (new_animals) |*animal| {
+                    if (animal.kind != .iceburd) continue;
+                    const any_firefly = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
+                        if (k == .sundragon) break true;
+                    } else false;
+                    if (any_firefly) {
+                        animal.alternative = true;
+                        result.is_lost = true;
+                        result.message = &.{"Iceburd melted!"};
                     }
                 }
             }
@@ -595,6 +612,7 @@ const LevelState = struct {
 const Animal = struct {
     pos: IVec2,
     kind: Kind,
+    alternative: bool = false,
     prev_move: union(enum) {
         nothing,
         /// prev pos
@@ -775,10 +793,10 @@ const Drawer = struct {
             .catslime => 10,
             .firefly => 3,
             .beetlekey => 6,
-            .sundragon => 4,
+            .sundragon => if (animal_.alternative) 5 else 4,
             .ant => 11,
             .stonefish => 15,
-            .iceburd => 12,
+            .iceburd => if (animal_.alternative) 13 else 12,
             .fourheadedfrog => 8,
 
             .tongue_up => 2,
@@ -943,42 +961,44 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    var message: ?[]const []const u8 = null;
+    var message = level.cur().message;
 
-    if (self.started_grabbing_at == null) {
-        platform.setCursor(if (active_tile != null and level.cur().animalAt(active_tile.?) != null)
-            .could_grab
-        else
-            .default);
-        if (mouse.wasPressed(.left)) {
-            self.started_grabbing_at = active_tile;
-        }
-    } else {
-        platform.setCursor(.grabbing);
-        if (!mouse.cur.isDown(.left)) {
-            self.started_grabbing_at = null;
-        } else if (active_tile != null) {
-            if (self.editing) {
-                if (!level.info.walls.atSigned(active_tile.?) and
-                    level.cur().animalAt(active_tile.?) == null)
-                {
-                    if (level.cur().animalAt(self.started_grabbing_at.?)) |grabbed| {
-                        const new_animals = try mem.gpa.dupe(Animal, level.cur().animals);
-                        new_animals[grabbed].pos = active_tile.?;
-                        try level.states_history.append(mem.gpa, .{ .animals = new_animals });
-                        self.started_grabbing_at = active_tile.?;
-                    } else if (level.info.lock.equals(self.started_grabbing_at.?)) {
-                        level.info.lock = active_tile.?;
+    if (!level.cur().is_lost and (!level.cur().is_automove or self.anim_t >= 1)) {
+        if (self.started_grabbing_at == null) {
+            platform.setCursor(if (active_tile != null and level.cur().animalAt(active_tile.?) != null)
+                .could_grab
+            else
+                .default);
+            if (mouse.wasPressed(.left)) {
+                self.started_grabbing_at = active_tile;
+            }
+        } else {
+            platform.setCursor(.grabbing);
+            if (!mouse.cur.isDown(.left)) {
+                self.started_grabbing_at = null;
+            } else if (active_tile != null) {
+                if (self.editing) {
+                    if (!level.info.walls.atSigned(active_tile.?) and
+                        level.cur().animalAt(active_tile.?) == null)
+                    {
+                        if (level.cur().animalAt(self.started_grabbing_at.?)) |grabbed| {
+                            const new_animals = try mem.gpa.dupe(Animal, level.cur().animals);
+                            new_animals[grabbed].pos = active_tile.?;
+                            try level.states_history.append(mem.gpa, .{ .animals = new_animals });
+                            self.started_grabbing_at = active_tile.?;
+                        } else if (level.info.lock.equals(self.started_grabbing_at.?)) {
+                            level.info.lock = active_tile.?;
+                            self.started_grabbing_at = active_tile.?;
+                        }
+                    }
+                } else if (!level.cur().is_automove or self.anim_t >= 1) {
+                    const result = try level.cur().doMove(level.info, mem.gpa, mem.frame.allocator(), self.started_grabbing_at.?, active_tile.?);
+                    message = result.message;
+                    if (result.new_state) |new_state| {
+                        try level.states_history.append(mem.gpa, new_state);
+                        self.anim_t = 0;
                         self.started_grabbing_at = active_tile.?;
                     }
-                }
-            } else if (!level.cur().is_automove or self.anim_t >= 1) {
-                const result = try level.cur().doMove(level.info, mem.gpa, mem.frame.allocator(), self.started_grabbing_at.?, active_tile.?);
-                message = result.message;
-                if (result.new_state) |new_state| {
-                    try level.states_history.append(mem.gpa, new_state);
-                    self.anim_t = 0;
-                    self.started_grabbing_at = active_tile.?;
                 }
             }
         }
