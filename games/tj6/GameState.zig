@@ -1116,8 +1116,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (@import("builtin").target.ofmt == .wasm) {
-        math.lerpTowards(platform.loop_volumes.getPtr(.music), if (level.cur().is_lost) 0 else 1, .fast, platform.delta_seconds);
-        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), if (level.cur().is_lost) 1 else 0, .fast, platform.delta_seconds);
+        math.lerpTowards(platform.loop_volumes.getPtr(.music), if (level.cur().is_lost) 0 else 0.5, .fast, platform.delta_seconds);
+        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), if (level.cur().is_lost) 0.5 else 0, .fast, platform.delta_seconds);
     }
 
     if (self.editing) {
