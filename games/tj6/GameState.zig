@@ -224,6 +224,16 @@ test "catslime" {
     , .new(5, 2), .new(0, -1));
 }
 
+test "catslime multipush" {
+    try testMove(std.testing.allocator,
+        \\CK..@
+        \\KK...
+    ,
+        \\.CK.@
+        \\.KK..
+    , .new(0, 0), .new(1, 0));
+}
+
 const LevelState = struct {
     states_history: std.ArrayListUnmanaged(Snapshot),
     info: Constant,
@@ -368,6 +378,44 @@ const LevelState = struct {
             }
         }
 
+        /// Floods, into `out`, the set of animals dragged when `grabbed` moves
+        /// in `dir`. From a member `a`, an adjacent animal `b` joins when:
+        /// either is a catslime (sticky in any direction), or `b` is directly in front of `a`.
+        /// When `allowed` is given, only flagged animals can join or be traversed through.
+        fn findDragGroup(
+            animals: []const Animal,
+            grabbed: usize,
+            dir: IVec2,
+            allowed: ?[]const bool,
+            scratch: std.mem.Allocator,
+            out: []bool,
+        ) !void {
+            @memset(out, false);
+            if (allowed) |a| {
+                if (!a[grabbed]) return;
+            }
+            out[grabbed] = true;
+            var stack: std.ArrayListUnmanaged(usize) = .empty;
+            try stack.append(scratch, grabbed);
+            var cursor: usize = 0;
+            while (cursor < stack.items.len) : (cursor += 1) {
+                const a = stack.items[cursor];
+                for (IVec2.cardinal_directions) |d| {
+                    const b = animalAt2(animals, animals[a].pos.add(d)) orelse continue;
+                    if (out[b]) continue;
+                    if (allowed) |al| {
+                        if (!al[b]) continue;
+                    }
+                    const catslime = animals[a].kind == .catslime or animals[b].kind == .catslime;
+                    const shoved = CONFIG.multipush and d.equals(dir);
+                    if (catslime or shoved) {
+                        out[b] = true;
+                        try stack.append(scratch, b);
+                    }
+                }
+            }
+        }
+
         fn doMove(old_state: Snapshot, info: Constant, allocator: std.mem.Allocator, scratch: std.mem.Allocator, old_pos: IVec2, new_pos: IVec2) !struct {
             message: ?[]const []const u8,
             new_state: ?Snapshot,
@@ -391,41 +439,12 @@ const LevelState = struct {
             const dir = new_pos.sub(old_pos);
             const animals = old_state.animals;
 
-            // all animals connected to the current one, via being in front...
+            // all animals connected to the current one
             const in_group = try scratch.alloc(bool, animals.len);
-            @memset(in_group, false);
-            in_group[grabbed] = true;
-            if (CONFIG.multipush) {
-                var raypos = old_pos.add(dir);
-                while (true) {
-                    if (animalAt2(animals, raypos)) |index| {
-                        in_group[index] = true;
-                    } else break;
-                    raypos = raypos.add(dir);
-                }
-            }
-
-            // ...or via catslimes
-            var stack: std.ArrayListUnmanaged(usize) = .empty;
-            for (in_group, 0..) |moving, k| {
-                if (moving) {
-                    try stack.append(scratch, k);
-                }
-            }
-            var cursor: usize = 0;
-            while (cursor < stack.items.len) : (cursor += 1) {
-                const source_index = stack.items[cursor];
-                for (IVec2.cardinal_directions) |d| {
-                    const target_index = animalAt2(animals, animals[source_index].pos.add(d)) orelse continue;
-                    if (in_group[target_index]) continue;
-                    if (animals[source_index].kind == .catslime or animals[target_index].kind == .catslime) {
-                        in_group[target_index] = true;
-                        try stack.append(scratch, target_index);
-                    }
-                }
-            }
+            try findDragGroup(animals, grabbed, dir, null, scratch, in_group);
 
             // remove any animals blocked by a wall, and those reachable through it
+            // iterates to a fixpoint, always terminates
             const moving = try scratch.dupe(bool, in_group);
             const reachable = try scratch.alloc(bool, animals.len);
             while (true) {
@@ -450,37 +469,7 @@ const LevelState = struct {
 
                 // Only animals still reachable from the grabbed one, through
                 // members that are themselves moving, keep being dragged.
-                @memset(reachable, false);
-                if (moving[grabbed]) {
-                    reachable[grabbed] = true;
-                    if (CONFIG.multipush) {
-                        var raypos = old_pos.add(dir);
-                        while (true) {
-                            if (animalAt2(animals, raypos)) |index| {
-                                reachable[index] = true;
-                            } else break;
-                            raypos = raypos.add(dir);
-                        }
-                    }
-                    stack.clearRetainingCapacity();
-                    for (reachable, 0..) |r, k| {
-                        if (r) {
-                            try stack.append(scratch, k);
-                        }
-                    }
-                    var c: usize = 0;
-                    while (c < stack.items.len) : (c += 1) {
-                        const idx = stack.items[c];
-                        for (IVec2.cardinal_directions) |d| {
-                            const j = animalAt2(animals, animals[idx].pos.add(d)) orelse continue;
-                            if (reachable[j] or !moving[j]) continue;
-                            if (animals[idx].kind == .catslime or animals[j].kind == .catslime) {
-                                reachable[j] = true;
-                                try stack.append(scratch, j);
-                            }
-                        }
-                    }
-                }
+                try findDragGroup(animals, grabbed, dir, moving, scratch, reachable);
                 for (moving, 0..) |*m, idx| {
                     if (m.* and !reachable[idx]) {
                         m.* = false;
