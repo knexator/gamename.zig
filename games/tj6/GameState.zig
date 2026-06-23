@@ -251,6 +251,7 @@ const LevelState = struct {
         animals: []const Animal,
         is_automove: bool = false,
         is_lost: bool = false,
+        any_eaten_ever: bool = false,
         message: ?[]const []const u8 = null,
 
         fn solved(self: Snapshot, info: Constant) bool {
@@ -327,10 +328,12 @@ const LevelState = struct {
             var new_animals: std.ArrayListUnmanaged(Animal) = try .initCapacity(allocator, old_state.animals.len);
 
             var any_changes = false;
+            var any_eaten = false;
 
             for (old_state.animals) |animal| {
                 if (animal.prev_move == .eaten) {
                     any_changes = true;
+                    any_eaten = true;
                 } else {
                     var a = animal;
                     a.prev_move = .nothing;
@@ -371,7 +374,14 @@ const LevelState = struct {
             }
 
             if (any_changes) {
-                return .{ .animals = try new_animals.toOwnedSlice(allocator), .is_automove = true };
+                const any_eaten_ever = old_state.any_eaten_ever or any_eaten;
+                return .{
+                    .animals = try new_animals.toOwnedSlice(allocator),
+                    .is_automove = true,
+                    .any_eaten_ever = any_eaten_ever,
+                    .message = if (any_eaten_ever) &.{"Frog ate a bug!"} else null,
+                    .is_lost = any_eaten_ever,
+                };
             } else {
                 new_animals.deinit(allocator);
                 return null;
