@@ -865,7 +865,7 @@ pub fn init(
     dst.levels = try gpa.alloc(LevelState, kommon.itertools.iteratorLen(it));
     var k: usize = 0;
     while (it.next()) |src| {
-        errdefer std.log.err("bad level at index {d}: \n{s}", .{ k - 1, src });
+        errdefer std.log.err("bad level at index {d}: \n{s}", .{ k, src });
         dst.levels[k] = try .fromAscii(gpa, src);
         k += 1;
     }
