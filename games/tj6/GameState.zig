@@ -63,6 +63,52 @@ prev_active_tile_time: f32 = 0,
 
 editing: bool = false,
 
+hovered: ?usize = null,
+active: ?usize = null,
+buttons: [2]Button = .{
+    .{ .text = "Reset", .action = .reset },
+    .{ .text = "Undo", .action = .undo },
+},
+
+const Button = struct {
+    active_t: f32 = 0,
+    hovered_t: f32 = 0,
+    enabled_t: f32 = 0,
+    text: []const u8,
+    rect: Rect = undefined,
+    enabled: bool = undefined,
+    action: Action,
+
+    const Action = enum { undo, reset };
+
+    pub fn draw(button: Button, canvas: *Canvas, camera: Rect) !void {
+        canvas.fillRect(
+            camera,
+            button.rect
+                .plusMargin(button.hovered_t * 0.1)
+                .plusMargin2(Vec2.new(1, -1).scale(0.15 * button.active_t)),
+            .lerp(
+                .fromHex("#2b2f3a"),
+                .lerp(
+                    .fromHex("#3d4860"),
+                    .fromHex("#63749b"),
+                    button.hovered_t,
+                ),
+                button.enabled_t,
+            ),
+        );
+
+        try canvas.drawText(
+            0,
+            camera,
+            button.text,
+            .centeredAt(button.rect.get(.center)),
+            0.5 * button.rect.size.y,
+            .lerp(.gray(0.5), .white, button.enabled_t),
+        );
+    }
+};
+
 const levels_ascii_raw: []const u8 = @embedFile("levels.txt");
 
 fn randomSound(options: []const std.meta.FieldEnum(@TypeOf(stuff.sounds))) std.meta.FieldEnum(@TypeOf(stuff.sounds)) {
@@ -288,6 +334,7 @@ const LevelState = struct {
         any_eaten_ever: bool = false,
         any_eaten_now: bool = false,
         started_frog_attack: bool = false,
+        was_reset: bool = false,
         message: ?[]const []const u8 = null,
 
         fn solved(self: Snapshot, info: Constant) bool {
@@ -818,7 +865,7 @@ pub fn init(
     dst.levels = try gpa.alloc(LevelState, kommon.itertools.iteratorLen(it));
     var k: usize = 0;
     while (it.next()) |src| {
-        errdefer std.log.err("bad level at index {d}: \n{s}", .{ k - 1, src });
+        errdefer std.log.err("bad level at index {d}: \n{s}", .{ k, src });
         dst.levels[k] = try .fromAscii(gpa, src);
         k += 1;
     }
@@ -949,6 +996,40 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const prev_level = self.levels[self.cur_level -| 1];
     const level = &self.levels[self.cur_level];
 
+    const ui_camera: Rect = .withAspectRatio(.fromCenterAndSize(
+        .zero,
+        .new(16, 9),
+    ), platform.aspect_ratio, .grow, .center);
+    const ui_mouse = platform.getMouse(ui_camera);
+
+    for (&self.buttons) |*button| {
+        button.rect = switch (button.action) {
+            .undo => ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_left),
+            .reset => ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_right),
+        };
+        button.enabled = switch (button.action) {
+            .undo => level.states_history.items.len > 1,
+            .reset => level.states_history.items.len > 1 and !level.cur().was_reset,
+        };
+    }
+
+    if (!ui_mouse.cur.isDown(.left)) self.active = null;
+    // if (self.active != null and !self.buttons[self.active.?].enabled) self.active = null;
+    self.hovered = for (self.buttons, 0..) |button, k| {
+        if ((self.active == null or self.active == k) and
+            button.enabled and button.rect.contains(ui_mouse.cur.position)) break k;
+    } else null;
+    self.active, const action: ?Button.Action = if (ui_mouse.wasPressed(.left))
+        .{ self.hovered, if (self.hovered) |h| self.buttons[h].action else null }
+    else
+        .{ self.active, null };
+
+    for (&self.buttons, 0..) |*button, k| {
+        math.lerpTowards(&button.hovered_t, if (k == self.hovered) 1 else 0, .fast, platform.delta_seconds);
+        math.lerpTowards(&button.active_t, if (k == self.active) 1 else 0, .fast, platform.delta_seconds);
+        math.lerpTowards(&button.enabled_t, if (button.enabled) 1 else 0, .fast, platform.delta_seconds);
+    }
+
     if (self.anim_t >= 1 or self.started_grabbing_at != null) {
         if (try level.cur().autoMove(level.info, mem.gpa, mem.frame.allocator())) |new_state| {
             try level.states_history.append(mem.gpa, new_state);
@@ -958,7 +1039,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (platform.wasKeyPressedOrRetriggered(.KeyZ, 0.1, 0.2) and
+    if ((action == .undo or platform.wasKeyPressedOrRetriggered(.KeyZ, 0.1, 0.2)) and
         level.states_history.items.len > 1)
     {
         while (true) {
@@ -969,11 +1050,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.anim_t = 1;
     }
 
-    if (platform.keyboard.wasPressed(.KeyR) and
+    if ((action == .reset or platform.keyboard.wasPressed(.KeyR)) and
         level.states_history.items.len > 1)
     {
         const restart_animals = try mem.gpa.dupe(Animal, level.states_history.items[0].animals);
-        try level.states_history.append(mem.gpa, .{ .animals = restart_animals });
+        try level.states_history.append(mem.gpa, .{ .animals = restart_animals, .was_reset = true });
         self.anim_t = 1;
     }
 
@@ -1060,7 +1141,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .size = level.info.size().tof32(),
     }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
-    const active_tile = level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size().tof32() });
+    const active_tile: ?IVec2 = if (self.hovered != null or self.active != null)
+        null
+    else
+        level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size().tof32() });
     defer {
         if (self.prev_active_tile != null and
             active_tile != null and
@@ -1114,6 +1198,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         if (self.started_grabbing_at == null) {
             platform.setCursor(if (active_tile != null and level.cur().animalAt(active_tile.?) != null)
                 .could_grab
+            else if (self.hovered != null or self.active != null)
+                .pointer
             else
                 .default);
             if (mouse.wasPressed(.left)) {
@@ -1188,6 +1274,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             1.1,
             .white,
         );
+    }
+
+    for (self.buttons) |button| {
+        try button.draw(&self.usual.canvas, ui_camera);
     }
 
     if (level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {
