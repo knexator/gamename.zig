@@ -829,14 +829,14 @@ const Animal = struct {
 
         fn hoverMessage(kind: Kind) ?[]const []const u8 {
             return switch (kind) {
-                .beetlekey => &.{"Its horns can unlock cages."},
-                .ant => &.{ "I guess it's not very magical.", "Just a regular old ant." },
-                .stonefish => &.{"Heavy. Needs assistance moving."},
-                .fourheadedfrog => &.{"Eats any bugs it can see."},
-                .catslime => &.{ "Sticky. Pulls anything adjacent to it", "in the same direction when moving." },
-                .iceburd => &.{"Melts when near hot creatures."},
-                .firefly => &.{"Hot."},
-                .sundragon => &.{"Needs the warmth of hot creatures."},
+                .beetlekey => &.{ "Keetle: Its horns can", "unlock cages." },
+                .ant => &.{ "Ant: I guess it's not very magical.", "Just a regular old ant." },
+                .stonefish => &.{ "Stonefish: Heavy.", "Needs assistance moving." },
+                .fourheadedfrog => &.{ "Four-headed Frog:", "Eats any bugs it can see." },
+                .catslime => &.{ "Slimecat: Sticky. Pulls anything adjacent to it", "in the same direction when moving." },
+                .iceburd => &.{"Iceburd: Melts when near fireflies."},
+                .firefly => &.{"Firefly: Hot."},
+                .sundragon => &.{"Sundragon: Needs the warmth of fireflies."},
 
                 .tongue_down,
                 .tongue_up,
@@ -1263,21 +1263,21 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     drawer.drawLevel(camera, level, self.anim_t);
 
+    for (self.buttons) |button| {
+        try button.draw(&self.usual.canvas, ui_camera);
+    }
+
     if (message) |msg| {
         try self.usual.canvas.drawTextLines(
             0,
-            camera,
+            ui_camera,
             .center,
-            .{ .center = level.info.size().tof32().mul(.new(0.5, 1)).addY(1) },
+            .{ .center = ui_camera.getAt(.new(0.5, 1)).addY(-1.4) },
             msg,
-            0.5,
+            0.7,
             1.1,
             .white,
         );
-    }
-
-    for (self.buttons) |button| {
-        try button.draw(&self.usual.canvas, ui_camera);
     }
 
     if (level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {
