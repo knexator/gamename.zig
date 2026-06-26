@@ -63,9 +63,23 @@ prev_active_tile_time: f32 = 0,
 
 editing: bool = false,
 
+started_playing: bool = false,
+
+in_menu: bool = true,
+in_menu_t: f32 = 1,
+
+sfx_muted: bool = false,
+music_muted: bool = false,
+
 hovered: ?usize = null,
 active: ?usize = null,
-buttons: [2]Button = .{
+buttons: [7]Button = .{
+    .{ .text = "Continue", .action = .continue_game },
+    .{ .text = "<", .action = .prev_level },
+    .{ .text = ">", .action = .next_level },
+    .{ .text = "SFX", .action = .toggle_sfx },
+    .{ .text = "Music", .action = .toggle_music },
+
     .{ .text = "Reset", .action = .reset },
     .{ .text = "Undo", .action = .undo },
 },
@@ -74,14 +88,28 @@ const Button = struct {
     active_t: f32 = 0,
     hovered_t: f32 = 0,
     enabled_t: f32 = 0,
+    latched_t: f32 = 0,
     text: []const u8,
     rect: Rect = undefined,
     enabled: bool = undefined,
+    exists: bool = true,
+    latched: bool = false,
     action: Action,
 
-    const Action = enum { undo, reset };
+    const Action = enum {
+        // in-game
+        undo,
+        reset,
+        // main menu
+        continue_game,
+        prev_level,
+        next_level,
+        toggle_sfx,
+        toggle_music,
+    };
 
     pub fn draw(button: Button, canvas: *Canvas, camera: Rect) !void {
+        if (!button.exists) return;
         canvas.fillRect(
             camera,
             button.rect
@@ -106,6 +134,10 @@ const Button = struct {
             0.5 * button.rect.size.y,
             .lerp(.gray(0.5), .white, button.enabled_t),
         );
+
+        canvas.line(camera, &.{
+            button.rect.get(.top_right), button.rect.get(.bottom_left),
+        }, 0.1, .withAlpha(.red, button.latched_t));
     }
 };
 
@@ -978,6 +1010,16 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     math.towards(&self.anim_t, 1, platform.delta_seconds / turn_duration);
     const level_swap_duration = 0.4;
     math.towards(&self.level_change_t, 1, platform.delta_seconds / level_swap_duration);
+    const menu_move_duration = 0.4;
+    math.towards(&self.in_menu_t, if (self.in_menu) 1 else 0, platform.delta_seconds / menu_move_duration);
+
+    if (self.in_menu_t == 0) self.started_playing = true;
+
+    if (platform.keyboard.wasPressed(.Escape)) {
+        self.in_menu = true;
+        self.hovered = null;
+        self.active = null;
+    }
 
     if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
         self.cur_level += 1;
@@ -1002,33 +1044,80 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     ), platform.aspect_ratio, .grow, .center);
     const ui_mouse = platform.getMouse(ui_camera);
 
-    for (&self.buttons) |*button| {
-        button.rect = switch (button.action) {
-            .undo => ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_left),
-            .reset => ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_right),
-        };
-        button.enabled = switch (button.action) {
-            .undo => level.states_history.items.len > 1,
-            .reset => level.states_history.items.len > 1 and !level.cur().was_reset,
-        };
+    const in_menu_t = math.easings.easeInOutCubic(self.in_menu_t);
+    const buttons = &self.buttons;
+    for (buttons) |*button| {
+        const delta_game: Vec2 = .new(0, in_menu_t * ui_camera.size.y);
+        const delta_menu: Vec2 = .new(0, (in_menu_t - 1) * ui_camera.size.y);
+        switch (button.action) {
+            .undo => {
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_left).move(delta_game);
+                button.enabled = level.states_history.items.len > 1;
+            },
+            .reset => {
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_right).move(delta_game);
+                button.enabled = level.states_history.items.len > 1 and !level.cur().was_reset;
+            },
+            .continue_game => {
+                button.rect = Rect.fromCenterAndSize(.new(0, 2.6), .new(6, 1.5)).move(delta_menu);
+                button.enabled = true;
+                button.text = if (self.started_playing) try std.fmt.allocPrint(mem.frame.allocator(), "Continue: level {d}", .{self.cur_level + 1}) else "Start";
+            },
+            .prev_level => {
+                button.rect = Rect.fromCenterAndSize(.new(-4.5, 2.6), .new(1.5, 1.5)).move(delta_menu);
+                button.enabled = self.levels.len > 1;
+                button.exists = self.started_playing;
+            },
+            .next_level => {
+                button.rect = Rect.fromCenterAndSize(.new(4.5, 2.6), .new(1.5, 1.5)).move(delta_menu);
+                button.enabled = self.levels.len > 1;
+                button.exists = self.started_playing;
+            },
+            .toggle_sfx => {
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.1, 1.2), .top_left);
+                button.enabled = true;
+                button.latched = self.sfx_muted;
+            },
+            .toggle_music => {
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.1, 1.2), .top_right);
+                button.enabled = true;
+                button.latched = self.music_muted;
+            },
+        }
     }
 
     if (!ui_mouse.cur.isDown(.left)) self.active = null;
-    // if (self.active != null and !self.buttons[self.active.?].enabled) self.active = null;
-    self.hovered = for (self.buttons, 0..) |button, k| {
+    self.hovered = for (buttons, 0..) |button, k| {
         if ((self.active == null or self.active == k) and
-            button.enabled and button.rect.contains(ui_mouse.cur.position)) break k;
+            button.exists and button.enabled and
+            button.rect.contains(ui_mouse.cur.position)) break k;
     } else null;
     self.active, const action: ?Button.Action = if (ui_mouse.wasPressed(.left))
-        .{ self.hovered, if (self.hovered) |h| self.buttons[h].action else null }
+        .{ self.hovered, if (self.hovered) |h| buttons[h].action else null }
     else
         .{ self.active, null };
 
-    for (&self.buttons, 0..) |*button, k| {
+    for (buttons, 0..) |*button, k| {
         math.lerpTowards(&button.hovered_t, if (k == self.hovered) 1 else 0, .fast, platform.delta_seconds);
         math.lerpTowards(&button.active_t, if (k == self.active) 1 else 0, .fast, platform.delta_seconds);
         math.lerpTowards(&button.enabled_t, if (button.enabled) 1 else 0, .fast, platform.delta_seconds);
+        math.lerpTowards(&button.latched_t, if (button.latched) 1 else 0, .fast, platform.delta_seconds);
     }
+
+    if (action) |a| switch (a) {
+        .undo, .reset => {},
+        .continue_game => {
+            self.in_menu = false;
+            self.level_change_t = 1;
+            self.anim_t = 1;
+            self.hovered = null;
+            self.active = null;
+        },
+        .prev_level => self.cur_level = (self.cur_level + self.levels.len - 1) % self.levels.len,
+        .next_level => self.cur_level = (self.cur_level + 1) % self.levels.len,
+        .toggle_sfx => self.sfx_muted = !self.sfx_muted,
+        .toggle_music => self.music_muted = !self.music_muted,
+    };
 
     if (self.anim_t >= 1 or self.started_grabbing_at != null) {
         if (try level.cur().autoMove(level.info, mem.gpa, mem.frame.allocator())) |new_state| {
@@ -1141,7 +1230,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .size = level.info.size().tof32(),
     }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
-    const active_tile: ?IVec2 = if (self.hovered != null or self.active != null)
+    const active_tile: ?IVec2 = if (self.in_menu or self.hovered != null or self.active != null)
         null
     else
         level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size().tof32() });
@@ -1243,9 +1332,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (@import("builtin").target.ofmt == .wasm) {
-        math.lerpTowards(platform.loop_volumes.getPtr(.music), if (level.cur().is_lost) 0 else 0.5, .fast, platform.delta_seconds);
-        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), if (level.cur().is_lost) 0.5 else 0, .fast, platform.delta_seconds);
+        const music_gain: f32 = if (self.music_muted) 0 else 1;
+        math.lerpTowards(platform.loop_volumes.getPtr(.music), music_gain * (if (level.cur().is_lost) 0 else 0.5), .fast, platform.delta_seconds);
+        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), music_gain * (if (level.cur().is_lost) 0.5 else 0), .fast, platform.delta_seconds);
     }
+
+    if (self.sfx_muted) platform.sound_queue.* = .initEmpty();
 
     if (self.editing) {
         message = &.{
@@ -1263,8 +1355,28 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     drawer.drawLevel(camera, level, self.anim_t);
 
+    self.usual.canvas.fillRect(.unit, .unit, .blackAlpha((@as(f32, if (self.started_playing) 0.5 else 1)) * in_menu_t));
+
     for (self.buttons) |button| {
         try button.draw(&self.usual.canvas, ui_camera);
+    }
+
+    if (!self.started_playing) {
+        try self.usual.canvas.drawTextLines(
+            0,
+            ui_camera,
+            .center,
+            .{ .center = ui_camera.getAt(.new(0.5, 0.45 - (1.0 - in_menu_t))) },
+            &.{
+                "The owner of the Magical Menagerie",
+                "has left for lunch, help the creatures",
+                "work together to unlock their cages",
+                "without letting any of them die.",
+            },
+            0.7,
+            1.1,
+            .white,
+        );
     }
 
     if (message) |msg| {
