@@ -199,10 +199,16 @@ pub fn ZVec2(T: type) type {
 
         pub const zero = new(0, 0);
         pub const one = new(1, 1);
+
         pub const e1 = new(1, 0);
         pub const e2 = new(0, 1);
         pub const ne1 = if (signed(T)) new(-1, 0) else undefined;
         pub const ne2 = if (signed(T)) new(0, -1) else undefined;
+
+        pub const xpos = e1;
+        pub const ypos = e2;
+        pub const xneg = ne1;
+        pub const yneg = ne2;
 
         pub const cardinal_directions = [4]IVec2{
             .new(1, 0),

@@ -7609,7 +7609,7 @@ const Workspace = struct {
             inline for (KeyboardButton.directional_keys) |kv| {
                 for (kv.keys) |key| {
                     if (platform.keyboard.cur.isDown(key) and !typing) {
-                        p.pos.addInPlace(kv.dir.scale(delta_seconds * -2));
+                        p.pos.addInPlace(kv.dir.tof32().scale(delta_seconds * -2));
                     }
                 }
             }

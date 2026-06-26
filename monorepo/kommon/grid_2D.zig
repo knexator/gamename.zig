@@ -286,6 +286,10 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             );
         }
 
+        pub fn inEdge(self: Self, pos: IVec2) bool {
+            return pos.x == 0 or pos.y == 0 or pos.x + 1 == self.size.x or pos.y + 1 == self.size.y;
+        }
+
         pub fn findSingle(self: Self, value: T) !UVec2 {
             var result: ?UVec2 = null;
             var it = self.iterator();

@@ -58,6 +58,8 @@ started_grabbing_at: ?IVec2 = null,
 atlas_texture: Gl.Texture,
 anim_t: f32 = 1,
 
+keyboard_wasd_offset: IVec2 = .zero,
+
 prev_active_tile: ?IVec2 = null,
 prev_active_tile_time: f32 = 0,
 
@@ -373,6 +375,7 @@ const LevelState = struct {
             if (self.is_lost) return false;
             for (self.animals) |a| {
                 if (a.kind == .beetlekey and a.pos.equals(info.lock)) return true;
+                if (a.kind == .beetlekey and info.walls.inEdge(a.pos)) return true;
             } else return false;
         }
 
@@ -1021,19 +1024,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.active = null;
     }
 
-    if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
-        self.cur_level += 1;
-        self.cur_level %= self.levels.len;
-    }
-    if (platform.keyboard.wasPressed(.KeyA) or platform.keyboard.wasPressed(.ArrowLeft)) {
-        self.cur_level += self.levels.len - 1;
-        self.cur_level %= self.levels.len;
-    }
+    // if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
+    //     self.cur_level += 1;
+    //     self.cur_level %= self.levels.len;
+    // }
+    // if (platform.keyboard.wasPressed(.KeyA) or platform.keyboard.wasPressed(.ArrowLeft)) {
+    //     self.cur_level += self.levels.len - 1;
+    //     self.cur_level %= self.levels.len;
+    // }
 
-    // TODO(tj6): disable on release
-    if (platform.keyboard.wasPressed(.KeyE)) {
-        self.editing = !self.editing;
-    }
+    // if (platform.keyboard.wasPressed(.KeyE)) {
+    //     self.editing = !self.editing;
+    // }
 
     const prev_level = self.levels[self.cur_level -| 1];
     const level = &self.levels[self.cur_level];
@@ -1061,7 +1063,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .continue_game => {
                 button.rect = Rect.fromCenterAndSize(.new(0, 2.6), .new(6, 1.5)).move(delta_menu);
                 button.enabled = true;
-                button.text = if (self.started_playing) try std.fmt.allocPrint(mem.frame.allocator(), "Continue: level {d}", .{self.cur_level + 1}) else "Start";
+                button.text = if (self.started_playing) try std.fmt.allocPrint(mem.frame.allocator(), "Continue ({d})", .{self.cur_level + 1}) else "Start";
             },
             .prev_level => {
                 button.rect = Rect.fromCenterAndSize(.new(-4.5, 2.6), .new(1.5, 1.5)).move(delta_menu);
@@ -1112,6 +1114,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             self.anim_t = 1;
             self.hovered = null;
             self.active = null;
+
+            if (level.cur().solved(level.info)) {
+                for (level.states_history.items[1..]) |s| {
+                    mem.gpa.free(s.animals);
+                }
+                level.states_history.shrinkRetainingCapacity(1);
+            }
         },
         .prev_level => self.cur_level = (self.cur_level + self.levels.len - 1) % self.levels.len,
         .next_level => self.cur_level = (self.cur_level + 1) % self.levels.len,
@@ -1230,10 +1239,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         .size = level.info.size().tof32(),
     }, 0.5), .bottom, 1.5), platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
+
+    if (self.started_grabbing_at == null) {
+        self.keyboard_wasd_offset = .zero;
+    } else {
+        for (KeyboardButton.directional_keys) |s| {
+            for (s.keys) |k| {
+                if (platform.keyboard.wasPressed(k)) {
+                    self.keyboard_wasd_offset.addInPlace(s.dir);
+                }
+            }
+        }
+    }
+
     const active_tile: ?IVec2 = if (self.in_menu or self.hovered != null or self.active != null)
         null
     else
-        level.info.walls.tileSignedAt(mouse.cur.position, .{ .top_left = .zero, .size = level.info.size().tof32() });
+        level.info.walls.tileSignedAt(mouse.cur.position.add(self.keyboard_wasd_offset.tof32()), .{
+            .top_left = .zero,
+            .size = level.info.size().tof32(),
+        });
     defer {
         if (self.prev_active_tile != null and
             active_tile != null and
@@ -1369,9 +1394,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .{ .center = ui_camera.getAt(.new(0.5, 0.45 - (1.0 - in_menu_t))) },
             &.{
                 "The owner of the Magical Menagerie",
-                "has left for lunch, help the creatures",
+                "has left for lunch. Help the creatures",
                 "work together to unlock their cages",
-                "without letting any of them die.",
+                "(without letting any of them die).",
             },
             0.7,
             1.1,
@@ -1392,7 +1417,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         );
     }
 
-    if (level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {
+    if (!self.in_menu and level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {
         if (self.cur_level + 1 < self.levels.len) {
             self.cur_level += 1;
             self.level_change_t = 0;
