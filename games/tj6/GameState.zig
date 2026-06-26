@@ -1333,8 +1333,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (@import("builtin").target.ofmt == .wasm) {
         const music_gain: f32 = if (self.music_muted) 0 else 1;
-        math.lerpTowards(platform.loop_volumes.getPtr(.music), music_gain * (if (level.cur().is_lost) 0 else 0.5), .fast, platform.delta_seconds);
-        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), music_gain * (if (level.cur().is_lost) 0.5 else 0), .fast, platform.delta_seconds);
+        math.lerpTowards(platform.loop_volumes.getPtr(.music), music_gain * @as(f32, if (level.cur().is_lost) 0 else 0.5), .fast, platform.delta_seconds);
+        math.lerpTowards(platform.loop_volumes.getPtr(.muffled), music_gain * @as(f32, if (level.cur().is_lost) 0.5 else 0), .fast, platform.delta_seconds);
     }
 
     if (self.sfx_muted) platform.sound_queue.* = .initEmpty();
