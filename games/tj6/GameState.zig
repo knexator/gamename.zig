@@ -525,6 +525,15 @@ const LevelState = struct {
             }
 
             if (any_changes) {
+                if (true) { // slimed
+                    for (new_animals.items) |*animal| {
+                        const any_cat = for (surroundingAnimals2(new_animals.items, animal.pos).constSlice()) |k| {
+                            if (k == .catslime) break true;
+                        } else false;
+                        animal.slimed = .next(animal.slimed, any_cat);
+                    }
+                }
+
                 const any_eaten_ever = old_state.any_eaten_ever or any_eaten;
                 return .{
                     .animals = try new_animals.toOwnedSlice(allocator),
@@ -688,6 +697,15 @@ const LevelState = struct {
                 }
             }
 
+            if (true) { // slimed
+                for (new_animals) |*animal| {
+                    const any_cat = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
+                        if (k == .catslime) break true;
+                    } else false;
+                    animal.slimed = .next(animal.slimed, any_cat);
+                }
+            }
+
             if (result.solved(info)) {
                 sounds = .initOne(.unlock);
             }
@@ -752,6 +770,16 @@ const LevelState = struct {
                 .pos = pos,
             });
         }
+
+        if (true) { // slimed
+            for (initial_state.items) |*animal| {
+                const any_cat = for (Snapshot.surroundingAnimals2(initial_state.items, animal.pos).constSlice()) |k| {
+                    if (k == .catslime) break true;
+                } else false;
+                animal.slimed = if (any_cat) .yes else .no;
+            }
+        }
+
         try states_history.append(allocator, .{ .animals = try initial_state.toOwnedSlice(allocator) });
 
         return .{
@@ -772,6 +800,24 @@ const Animal = struct {
     pos: IVec2,
     kind: Kind,
     alternative: bool = false,
+    slimed: enum {
+        no,
+        recently,
+        yes,
+        pub fn next(cur: @This(), any_cat: bool) @This() {
+            return if (any_cat) switch (cur) {
+                .no => .recently,
+                .recently, .yes => .yes,
+            } else .no;
+        }
+        pub fn visible(cur: @This(), anim_t: f32) bool {
+            return switch (cur) {
+                .no => false,
+                .yes => true,
+                .recently => anim_t >= 0.8,
+            };
+        }
+    } = .no,
     prev_move: union(enum) {
         nothing,
         /// prev pos
@@ -1000,6 +1046,9 @@ const Drawer = struct {
             .tongue_right => 9,
             .tongue_left => 7,
         });
+        if (animal.slimed.visible(anim_t)) {
+            self.sprite(pos, 16);
+        }
     }
 };
 
