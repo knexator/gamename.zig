@@ -527,6 +527,7 @@ const LevelState = struct {
             if (any_changes) {
                 if (true) { // slimed
                     for (new_animals.items) |*animal| {
+                        if (animal.kind.isTongue()) continue;
                         const any_cat = for (surroundingAnimals2(new_animals.items, animal.pos).constSlice()) |k| {
                             if (k == .catslime) break true;
                         } else false;
@@ -699,6 +700,7 @@ const LevelState = struct {
 
             if (true) { // slimed
                 for (new_animals) |*animal| {
+                    if (animal.kind.isTongue()) continue;
                     const any_cat = for (result.surroundingAnimals(animal.pos).constSlice()) |k| {
                         if (k == .catslime) break true;
                     } else false;
@@ -773,6 +775,7 @@ const LevelState = struct {
 
         if (true) { // slimed
             for (initial_state.items) |*animal| {
+                if (animal.kind.isTongue()) continue;
                 const any_cat = for (Snapshot.surroundingAnimals2(initial_state.items, animal.pos).constSlice()) |k| {
                     if (k == .catslime) break true;
                 } else false;
