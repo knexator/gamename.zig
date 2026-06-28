@@ -66,6 +66,7 @@ prev_active_tile_time: f32 = 0,
 editing: bool = false,
 
 started_playing: bool = false,
+show_final_message: bool = false,
 
 in_menu: bool = true,
 in_menu_t: f32 = 1,
@@ -1129,12 +1130,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             },
             .prev_level => {
                 button.rect = Rect.fromCenterAndSize(.new(-4.5, 2.6), .new(1.5, 1.5)).move(delta_menu);
-                button.enabled = self.levels.len > 1;
+                button.enabled = true;
                 button.exists = self.started_playing;
             },
             .next_level => {
                 button.rect = Rect.fromCenterAndSize(.new(4.5, 2.6), .new(1.5, 1.5)).move(delta_menu);
-                button.enabled = self.levels.len > 1;
+                button.enabled = true;
                 button.exists = self.started_playing;
             },
             .toggle_sfx => {
@@ -1220,6 +1221,9 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (action == .exit or platform.keyboard.wasPressed(.Escape)) {
         self.in_menu = true;
+        self.show_final_message = self.cur_level == 22;
+    } else {
+        if (self.in_menu_t < 0.01 or self.cur_level != 22) self.show_final_message = false;
     }
 
     if (self.editing) {
@@ -1446,7 +1450,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     drawer.drawLevel(camera, level, self.anim_t);
 
-    self.usual.canvas.fillRect(.unit, .unit, .blackAlpha((@as(f32, if (self.started_playing) 0.5 else 1)) * in_menu_t));
+    self.usual.canvas.fillRect(.unit, .unit, .blackAlpha((@as(f32, if (self.started_playing and !self.show_final_message) 0.5 else 1)) * in_menu_t));
 
     for (self.buttons) |button| {
         try button.draw(&self.usual.canvas, ui_camera);
@@ -1464,6 +1468,25 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 "work together through 22 levels to",
                 "unlock their cages and escape the menagerie",
                 "(without letting any of them die)!",
+            },
+            0.7,
+            1.1,
+            .white,
+        );
+    }
+
+    if (self.show_final_message) {
+        try self.usual.canvas.drawTextLines(
+            0,
+            ui_camera,
+            .center,
+            .{ .center = ui_camera.getAt(.new(0.5, 0.45 - (1.0 - in_menu_t))) },
+            &.{
+                "Congrats on completing the game.",
+                "You've saved the animals but there's",
+                "still more to free. The following",
+                "are 4 challenge levels more difficult",
+                "than the main game.",
             },
             0.7,
             1.1,
