@@ -1112,7 +1112,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             },
             .exit => {
                 button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_right).move(delta_game);
-                // button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .bottom_center).move(delta_game);
                 button.enabled = true;
             },
             .continue_game => {
@@ -1141,12 +1140,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 button.exists = self.started_playing;
             },
             .toggle_sfx => {
-                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_left);
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_left).move(delta_menu);
                 button.enabled = true;
                 button.latched = self.sfx_muted;
             },
             .toggle_music => {
-                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_left).moveRelative(.new(0, 1)).move(.new(0, 0.1));
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_right).move(delta_menu);
                 button.enabled = true;
                 button.latched = self.music_muted;
             },
