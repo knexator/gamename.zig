@@ -77,15 +77,15 @@ music_muted: bool = false,
 hovered: ?usize = null,
 active: ?usize = null,
 buttons: [8]Button = .{
-    .{ .text = "Continue", .action = .continue_game },
-    .{ .text = "<", .action = .prev_level },
-    .{ .text = ">", .action = .next_level },
-    .{ .text = "SFX", .action = .toggle_sfx },
-    .{ .text = "Music", .action = .toggle_music },
+    .{ .text = "Continue", .action = .continue_game, .layer = .menu },
+    .{ .text = "<", .action = .prev_level, .layer = .menu },
+    .{ .text = ">", .action = .next_level, .layer = .menu },
+    .{ .text = "SFX", .action = .toggle_sfx, .layer = .menu },
+    .{ .text = "Music", .action = .toggle_music, .layer = .menu },
 
-    .{ .text = "Menu", .action = .exit },
-    .{ .text = "Reset", .action = .reset },
-    .{ .text = "Undo", .action = .undo },
+    .{ .text = "Menu", .action = .exit, .layer = .game },
+    .{ .text = "Reset", .action = .reset, .layer = .game },
+    .{ .text = "Undo", .action = .undo, .layer = .game },
 },
 
 const Button = struct {
@@ -99,6 +99,7 @@ const Button = struct {
     exists: bool = true,
     latched: bool = false,
     action: Action,
+    layer: enum { game, menu },
 
     const Action = enum {
         // in-game
@@ -1110,7 +1111,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 button.enabled = level.states_history.items.len > 1 and !level.cur().was_reset;
             },
             .exit => {
-                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .bottom_center).move(delta_game);
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_right).move(delta_game);
+                // button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .bottom_center).move(delta_game);
                 button.enabled = true;
             },
             .continue_game => {
@@ -1139,12 +1141,12 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
                 button.exists = self.started_playing;
             },
             .toggle_sfx => {
-                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.1, 1.2), .top_left);
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_left);
                 button.enabled = true;
                 button.latched = self.sfx_muted;
             },
             .toggle_music => {
-                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.1, 1.2), .top_right);
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .top_left).moveRelative(.new(0, 1)).move(.new(0, 0.1));
                 button.enabled = true;
                 button.latched = self.music_muted;
             },
@@ -1450,11 +1452,26 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
     drawer.drawLevel(camera, level, self.anim_t);
 
-    self.usual.canvas.fillRect(.unit, .unit, .blackAlpha((@as(f32, if (self.started_playing and !self.show_final_message) 0.5 else 1)) * in_menu_t));
-
     for (self.buttons) |button| {
-        try button.draw(&self.usual.canvas, ui_camera);
+        if (button.layer == .game) {
+            try button.draw(&self.usual.canvas, ui_camera);
+        }
     }
+
+    if (message) |msg| {
+        try self.usual.canvas.drawTextLines(
+            0,
+            ui_camera,
+            .center,
+            .{ .center = ui_camera.getAt(.new(0.5, 1)).addY(-1.4) },
+            msg,
+            0.7,
+            1.1,
+            .white,
+        );
+    }
+
+    self.usual.canvas.fillRect(.unit, .unit, .blackAlpha((@as(f32, if (self.started_playing and !self.show_final_message) 0.5 else 1)) * in_menu_t));
 
     if (!self.started_playing) {
         try self.usual.canvas.drawTextLines(
@@ -1494,17 +1511,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         );
     }
 
-    if (message) |msg| {
-        try self.usual.canvas.drawTextLines(
-            0,
-            ui_camera,
-            .center,
-            .{ .center = ui_camera.getAt(.new(0.5, 1)).addY(-1.4) },
-            msg,
-            0.7,
-            1.1,
-            .white,
-        );
+    for (self.buttons) |button| {
+        if (button.layer == .menu) {
+            try button.draw(&self.usual.canvas, ui_camera);
+        }
     }
 
     if (!self.in_menu and level.cur().solved(level.info) and !mouse.cur.isDown(.left)) {

@@ -1629,6 +1629,10 @@ pub const Rect = extern struct {
         return .fromPivotAndSize(original.get(keep), keep.asPivot(), size);
     }
 
+    pub fn withSize2(original: Rect, size: Vec2, keep_pivot: Vec2) Rect {
+        return .fromPivotAndSize(original.getAt(keep_pivot), keep_pivot, size);
+    }
+
     pub fn withSize1d(original: Rect, which: enum { width, height }, size: f32, keep: MeasureKind) Rect {
         return original.withSize(switch (which) {
             .width => .new(size, original.size.y),
