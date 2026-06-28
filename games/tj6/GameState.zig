@@ -75,13 +75,14 @@ music_muted: bool = false,
 
 hovered: ?usize = null,
 active: ?usize = null,
-buttons: [7]Button = .{
+buttons: [8]Button = .{
     .{ .text = "Continue", .action = .continue_game },
     .{ .text = "<", .action = .prev_level },
     .{ .text = ">", .action = .next_level },
     .{ .text = "SFX", .action = .toggle_sfx },
     .{ .text = "Music", .action = .toggle_music },
 
+    .{ .text = "Menu", .action = .exit },
     .{ .text = "Reset", .action = .reset },
     .{ .text = "Undo", .action = .undo },
 },
@@ -102,6 +103,7 @@ const Button = struct {
         // in-game
         undo,
         reset,
+        exit,
         // main menu
         continue_game,
         prev_level,
@@ -1070,12 +1072,6 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (self.in_menu_t == 0) self.started_playing = true;
 
-    if (platform.keyboard.wasPressed(.Escape)) {
-        self.in_menu = true;
-        self.hovered = null;
-        self.active = null;
-    }
-
     // if (platform.keyboard.wasPressed(.KeyD) or platform.keyboard.wasPressed(.ArrowRight)) {
     //     self.cur_level += 1;
     //     self.cur_level %= self.levels.len;
@@ -1111,6 +1107,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .reset => {
                 button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2.5, 1.5), .bottom_right).move(delta_game);
                 button.enabled = level.states_history.items.len > 1 and !level.cur().was_reset;
+            },
+            .exit => {
+                button.rect = ui_camera.plusMargin(-0.5).withSize(.new(2, 1), .bottom_center).move(delta_game);
+                button.enabled = true;
             },
             .continue_game => {
                 button.rect = Rect.fromCenterAndSize(.new(0, 2.6), .new(6, 1.5)).move(delta_menu);
@@ -1169,7 +1169,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     }
 
     if (action) |a| switch (a) {
-        .undo, .reset => {},
+        .undo, .reset, .exit => {},
         .continue_game => {
             self.in_menu = false;
             self.level_change_t = 1;
@@ -1216,6 +1216,10 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         const restart_animals = try mem.gpa.dupe(Animal, level.states_history.items[0].animals);
         try level.states_history.append(mem.gpa, .{ .animals = restart_animals, .was_reset = true });
         self.anim_t = 1;
+    }
+
+    if (action == .exit or platform.keyboard.wasPressed(.Escape)) {
+        self.in_menu = true;
     }
 
     if (self.editing) {
