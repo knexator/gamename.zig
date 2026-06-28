@@ -60,6 +60,8 @@ anim_t: f32 = 1,
 
 keyboard_wasd_offset: IVec2 = .zero,
 
+time_in_youwin: f32 = 0,
+
 prev_active_tile: ?IVec2 = null,
 prev_active_tile_time: f32 = 0,
 
@@ -1220,7 +1222,13 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         self.anim_t = 1;
     }
 
-    if (action == .exit or platform.keyboard.wasPressed(.Escape)) {
+    if (self.cur_level == 22 and self.in_menu == false) {
+        self.time_in_youwin += platform.delta_seconds;
+    } else {
+        self.time_in_youwin = 0;
+    }
+
+    if (action == .exit or platform.keyboard.wasPressed(.Escape) or self.time_in_youwin >= 5) {
         self.in_menu = true;
         self.show_final_message = self.cur_level == 22;
     } else {
