@@ -1115,7 +1115,17 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .continue_game => {
                 button.rect = Rect.fromCenterAndSize(.new(0, 2.6), .new(6, 1.5)).move(delta_menu);
                 button.enabled = true;
-                button.text = if (self.started_playing) try std.fmt.allocPrint(mem.frame.allocator(), "Continue ({d})", .{self.cur_level + 1}) else "Start";
+                button.text = if (self.started_playing)
+                    if (self.cur_level > 22)
+                        try std.fmt.allocPrint(mem.frame.allocator(), "Extra ({d})", .{
+                            self.cur_level - 22,
+                        })
+                    else
+                        try std.fmt.allocPrint(mem.frame.allocator(), "Continue ({d})", .{
+                            self.cur_level + 1,
+                        })
+                else
+                    "Start";
             },
             .prev_level => {
                 button.rect = Rect.fromCenterAndSize(.new(-4.5, 2.6), .new(1.5, 1.5)).move(delta_menu);
@@ -1445,10 +1455,11 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
             .center,
             .{ .center = ui_camera.getAt(.new(0.5, 0.45 - (1.0 - in_menu_t))) },
             &.{
-                "The owner of the Magical Menagerie",
-                "has left for lunch. Help the creatures",
-                "work together to unlock their cages",
-                "(without letting any of them die).",
+                "The owner of the magical menagerie",
+                "has left for lunch, help the creatures",
+                "work together through 22 levels to",
+                "unlock their cages and escape the menagerie",
+                "(without letting any of them die)!",
             },
             0.7,
             1.1,
