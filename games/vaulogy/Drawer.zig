@@ -3,21 +3,17 @@
 pub const Drawer = @This();
 pub const Gl = kommon.Gl;
 
-const DRAW_ATOMS_PLAINLY = false;
+const DRAW_ATOMS_PLAINLY = true;
 
 canvas: *Canvas,
 atom_visuals_cache: AtomVisualCache,
 atom_testing: Gl.Texture,
 
-renderables: struct {
-    uber: UberDrawable,
-},
+renderer: Renderer,
 
-uber_batch: UberDrawable.Batch = undefined,
-
-pub const UberDrawable = Canvas.DrawableV2(
-    extern struct {
-        a_ndc_position: Vec2,
+const Renderer = struct {
+    const VertexData = extern struct {
+        a_position: Vec2,
         a_texcoord: Vec2,
         a_color: FColor,
         a_mode: enum(u32) {
@@ -33,18 +29,191 @@ pub const UberDrawable = Canvas.DrawableV2(
             .integer = true,
             .data_type = .INT,
         };
-    },
-    struct {},
+    };
+    const ShaderCamera = struct {
+        u_camera_origin: Vec2,
+        u_camera_axis_x: Vec2,
+        u_camera_axis_y: Vec2,
+
+        const default: ShaderCamera = .{
+            .u_camera_origin = .zero,
+            .u_camera_axis_x = .xpos,
+            .u_camera_axis_y = .ypos,
+        };
+
+        fn toNDC(camera: ShaderCamera, pos: Vec2) Vec2 {
+            return camera.u_camera_origin
+                .add(camera.u_camera_axis_x.scale(pos.x))
+                .add(camera.u_camera_axis_y.scale(pos.y));
+        }
+
+        pub fn isOrtho(camera: ShaderCamera) bool {
+            return Vec2.dot(camera.u_camera_axis_x, camera.u_camera_axis_y) == 0;
+        }
+
+        pub fn fromRectAndParent(camera: Rect, parent: Point) ShaderCamera {
+            const ndc_scale: Vec2 = .new(2.0 / camera.size.x, 2.0 / camera.size.y);
+            return .{
+                .u_camera_origin = camera.localFromWorldPosition(parent.pos).scale(2).sub(.one),
+                .u_camera_axis_x = Vec2.e1.scale(parent.scale).rotate(parent.turns).mul(ndc_scale),
+                .u_camera_axis_y = Vec2.e2.scale(parent.scale).rotate(parent.turns).mul(ndc_scale),
+            };
+        }
+
+        test "default camera" {
+            try std.testing.expectEqual(ShaderCamera.default, ShaderCamera.fromRectAndParent(.fromCenterAndSize(.zero, .both(2)), .{}));
+        }
+
+        test "fromRectAndParent" {
+            const tests: []const struct { expected_ndc: Vec2, local_pos: Vec2, parent: Point, camera: Rect } = &.{
+                .{ .expected_ndc = .zero, .local_pos = .zero, .parent = .{}, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+                .{ .expected_ndc = .new(2, 3), .local_pos = .new(2, 3), .parent = .{}, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+                .{ .expected_ndc = .zero, .local_pos = .zero, .parent = .{}, .camera = .{ .top_left = .both(-2), .size = .both(4) } },
+                .{ .expected_ndc = .new(1, 0), .local_pos = .new(2, 0), .parent = .{}, .camera = .{ .top_left = .both(-2), .size = .both(4) } },
+
+                .{ .expected_ndc = .new(-1, -1), .local_pos = .zero, .parent = .{}, .camera = .unit },
+                .{ .expected_ndc = .new(1, 1), .local_pos = .new(1, 1), .parent = .{}, .camera = .unit },
+
+                .{ .expected_ndc = .both(-0.5), .local_pos = .zero, .parent = .{}, .camera = .{ .top_left = .both(-0.5), .size = .both(2) } },
+                .{ .expected_ndc = .both(0.5), .local_pos = .one, .parent = .{}, .camera = .{ .top_left = .both(-0.5), .size = .both(2) } },
+
+                .{ .expected_ndc = .new(1, 0), .local_pos = .new(1, 0), .parent = .{}, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+                .{ .expected_ndc = .new(2, 0), .local_pos = .new(1, 0), .parent = .{ .scale = 2 }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+                .{ .expected_ndc = .new(1, -1), .local_pos = .new(1, 0), .parent = .{ .scale = 1 }, .camera = .unit },
+                .{ .expected_ndc = .new(3, -1), .local_pos = .new(1, 0), .parent = .{ .scale = 2 }, .camera = .unit },
+
+                .{ .expected_ndc = .new(0, 1), .local_pos = .new(1, 0), .parent = .{ .turns = 0.25 }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+                .{ .expected_ndc = .zero, .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0) }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+                .{ .expected_ndc = .zero, .local_pos = .new(0.5, 0.5), .parent = .{}, .camera = .unit },
+                .{ .expected_ndc = .new(1, -1), .local_pos = .zero, .parent = .{ .pos = .new(1, 0) }, .camera = .unit },
+                .{ .expected_ndc = .zero, .local_pos = .new(-0.5, 0.5), .parent = .{ .pos = .new(1, 0) }, .camera = .unit },
+                .{ .expected_ndc = .new(-1, -1), .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0) }, .camera = .unit },
+
+                .{ .expected_ndc = .zero, .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0) }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+                .{ .expected_ndc = .zero, .local_pos = .new(0, 1), .parent = .{ .pos = .new(1, 0), .turns = 0.25 }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+                .{ .expected_ndc = .new(1, 1), .local_pos = .new(10, 1), .parent = .{}, .camera = .{ .top_left = .zero, .size = .new(10, 1) } },
+                .{ .expected_ndc = .new(0, 1), .local_pos = .new(1, 0), .parent = .{ .turns = 0.25 }, .camera = .fromCenterAndSize(.zero, .new(10, 2)) },
+            };
+
+            for (tests) |t| {
+                const actual_cam: ShaderCamera = .fromRectAndParent(t.camera, t.parent);
+                const actual_ndc = actual_cam.toNDC(t.local_pos);
+
+                try Vec2.expectApproxEqAbs(t.expected_ndc, actual_ndc, 0.001);
+            }
+        }
+
+        pub const Changer = struct {
+            affine_map: ShaderCamera,
+
+            pub fn get(old_camera: ShaderCamera, new_camera: ShaderCamera) Changer {
+                const ax = new_camera.u_camera_axis_x;
+                const ay = new_camera.u_camera_axis_y;
+                const det = ax.x * ay.y - ay.x * ax.y;
+                const Inv = struct {
+                    ax: Vec2,
+                    ay: Vec2,
+                    det: f32,
+                    fn mul(self: @This(), v: Vec2) Vec2 {
+                        return .new(
+                            (self.ay.y * v.x - self.ay.x * v.y) / self.det,
+                            (self.ax.x * v.y - self.ax.y * v.x) / self.det,
+                        );
+                    }
+                };
+                const inv: Inv = .{ .ax = ax, .ay = ay, .det = det };
+                return .{ .affine_map = .{
+                    .u_camera_origin = inv.mul(old_camera.u_camera_origin.sub(new_camera.u_camera_origin)),
+                    .u_camera_axis_x = inv.mul(old_camera.u_camera_axis_x),
+                    .u_camera_axis_y = inv.mul(old_camera.u_camera_axis_y),
+                } };
+            }
+
+            pub fn apply(changer: ?Changer, pos: Vec2) Vec2 {
+                return if (changer) |c|
+                    c.affine_map.toNDC(pos)
+                else
+                    pos;
+            }
+        };
+
+        test "changer" {
+            const tests: []const struct {
+                local_poss: []const Vec2 = &[_]Vec2{ .zero, .xpos, .ypos, .one, .xneg, .yneg, .new(2, 3) },
+                old_camera: ShaderCamera,
+                new_camera: ShaderCamera,
+            } = &.{
+                .{ .old_camera = .default, .new_camera = .default },
+
+                .{ .old_camera = .default, .new_camera = .fromRectAndParent(.unit, .{}) },
+                .{ .old_camera = .fromRectAndParent(.unit, .{}), .new_camera = .default },
+            };
+
+            for (tests) |t| {
+                const changer: Changer = .get(t.old_camera, t.new_camera);
+
+                for (t.local_poss) |local_pos| {
+                    const expected_ndc = t.old_camera.toNDC(local_pos);
+
+                    const actual_pos = changer.apply(local_pos);
+                    const actual_ndc = toNDC(t.new_camera, actual_pos);
+
+                    try Vec2.expectApproxEqAbs(expected_ndc, actual_ndc, 0.001);
+                }
+            }
+        }
+    };
+    const IndexType = Gl.IndexType;
+
+    uber_drawable: UberDrawable,
+    atlas_texture: Gl.Texture,
+    uber_batch: UberDrawable.Batch = undefined,
+    last_camera: ShaderCamera = undefined,
+
+    pub fn initFrame(renderer: *Renderer) !void {
+        renderer.uber_batch = try renderer.uber_drawable.batch();
+        renderer.uber_batch.setUniforms(ShaderCamera.default, renderer.atlas_texture);
+        renderer.last_camera = .default;
+    }
+
+    pub fn addV2(renderer: *Renderer, shader_camera: ShaderCamera, vertices_len: usize, triangles: []const [3]IndexType) !std.meta.Tuple(&.{ []VertexData, ?ShaderCamera.Changer }) {
+        const changer: ?ShaderCamera.Changer = if (!std.meta.eql(shader_camera, renderer.last_camera)) blk: {
+            if (vertices_len > 100) {
+                renderer.uber_batch.draw();
+                renderer.uber_batch.setUniforms(shader_camera, renderer.atlas_texture);
+                renderer.last_camera = shader_camera;
+                break :blk null;
+            } else {
+                break :blk .get(shader_camera, renderer.last_camera);
+            }
+        } else null;
+
+        return .{ try renderer.uber_batch.addV2(vertices_len, triangles), changer };
+    }
+};
+
+pub const UberDrawable = Canvas.DrawableV2(
+    Renderer.VertexData,
+    Renderer.ShaderCamera,
     \\precision highp float;
-    \\in vec2 a_ndc_position;
+    \\in vec2 a_position;
     \\in vec2 a_texcoord;
     \\in vec4 a_color;
     \\in int a_mode;
     \\out vec2 v_texcoord;
     \\out vec4 v_color;
     \\flat out int v_mode;
+    \\uniform vec2 u_camera_origin;
+    \\uniform vec2 u_camera_axis_x;
+    \\uniform vec2 u_camera_axis_y;
     \\void main() {
-    \\  gl_Position = vec4(a_ndc_position, 0, 1);
+    \\  vec2 clip = u_camera_origin + u_camera_axis_x * a_position.x + u_camera_axis_y * a_position.y;
+    \\  gl_Position = vec4(clip.x, -clip.y, 0, 1);
     \\  v_texcoord = a_texcoord;
     \\  v_color = a_color;
     \\  v_mode = a_mode;
@@ -106,16 +275,16 @@ pub fn init(usual: *kommon.Usual, atom_testing: *const anyopaque) !Drawer {
     return .{
         .canvas = &usual.canvas,
         .atom_visuals_cache = try .init(usual.mem.forever.allocator(), usual.canvas.gl),
-        .renderables = .{
-            .uber = try .init(&usual.canvas),
+        .renderer = .{
+            .uber_drawable = try .init(&usual.canvas),
+            .atlas_texture = usual.canvas.text_renderers[0].atlas_texture,
         },
         .atom_testing = usual.canvas.gl.buildTexture2D(atom_testing, false),
     };
 }
 
 pub fn onFrameStart(drawer: *Drawer) !void {
-    drawer.uber_batch = try drawer.renderables.uber.batch();
-    drawer.uber_batch.setUniforms(.{}, drawer.canvas.text_renderers[0].atlas_texture);
+    try drawer.renderer.initFrame();
 }
 
 pub fn onFrameEnd(drawer: *Drawer) void {
@@ -123,7 +292,7 @@ pub fn onFrameEnd(drawer: *Drawer) void {
 }
 
 pub fn flush(drawer: *Drawer) void {
-    drawer.uber_batch.draw();
+    drawer.renderer.uber_batch.draw();
 }
 
 pub const AtomVisuals = struct {
@@ -1359,12 +1528,12 @@ pub fn fillShape(
     shape: Canvas.PrecomputedShape,
     color: FColor,
 ) !void {
-    const vertices = try drawer.uber_batch.addV2(shape.local_points.len, shape.triangles);
+    const vertices, const changer = try drawer.renderer.addV2(.fromRectAndParent(camera, parent), shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices) |p, *dst| {
         dst.* = .{
             .a_mode = .fill,
             .a_texcoord = .zero,
-            .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
+            .a_position = Renderer.ShaderCamera.Changer.apply(changer, p),
             .a_color = color,
         };
     }
@@ -1378,12 +1547,12 @@ pub fn fillShapeWithVertexColors(
     colors: []const FColor,
 ) !void {
     assert(colors.len == shape.local_points.len);
-    const vertices = try drawer.uber_batch.addV2(shape.local_points.len, shape.triangles);
+    const vertices, const changer = try drawer.renderer.addV2(.fromRectAndParent(camera, parent), shape.local_points.len, shape.triangles);
     for (shape.local_points, vertices, colors) |p, *dst, color| {
         dst.* = .{
             .a_texcoord = .zero,
             .a_mode = .fill,
-            .a_ndc_position = camera.NDCFromWorldPosition(parent.applyToLocalPosition(p)),
+            .a_position = Renderer.ShaderCamera.Changer.apply(changer, p),
             .a_color = color,
         };
     }
@@ -1408,19 +1577,13 @@ pub fn drawTextV2(drawer: *Drawer, parent_point: Point, font_index: usize, camer
 
     for (quads) |raw_q| {
         const q = raw_q.translate(delta).withParentPoint(parent_point);
-        try drawer.uber_batch.add(&.{
-            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
-            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
-            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
-            .{ .a_mode = .text, .a_ndc_position = camera.NDCFromWorldPosition(q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
-        }, drawer.canvas.DEFAULT_SHAPES.square.triangles);
-
-        // const asdf = camera.NDCFromWorldPosition(q.pos.get(.top_left));
-        // const asdf2 = camera.NDCFromWorldPosition(q.pos.get(.bottom_right));
-        // const rect123: Rect = .fromCenterAndSize(.zero, .both(2));
-        // if (rect123.contains(asdf) and rect123.contains(asdf2)) {
-        //     std.log.debug("top left ndc: {any},\tbl: {any}", .{ asdf, asdf2 });
-        // }
+        const vertices, const changer = try drawer.renderer.addV2(.fromRectAndParent(camera, .{}), 4, drawer.canvas.DEFAULT_SHAPES.square.triangles);
+        @memcpy(vertices, &[_]Renderer.VertexData{
+            .{ .a_mode = .text, .a_position = Renderer.ShaderCamera.Changer.apply(changer, q.pos.get(.top_left)), .a_texcoord = q.tex.get(.top_left), .a_color = q.color },
+            .{ .a_mode = .text, .a_position = Renderer.ShaderCamera.Changer.apply(changer, q.pos.get(.top_right)), .a_texcoord = q.tex.get(.top_right), .a_color = q.color },
+            .{ .a_mode = .text, .a_position = Renderer.ShaderCamera.Changer.apply(changer, q.pos.get(.bottom_left)), .a_texcoord = q.tex.get(.bottom_left), .a_color = q.color },
+            .{ .a_mode = .text, .a_position = Renderer.ShaderCamera.Changer.apply(changer, q.pos.get(.bottom_right)), .a_texcoord = q.tex.get(.bottom_right), .a_color = q.color },
+        });
     }
 }
 

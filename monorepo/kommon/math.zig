@@ -1840,6 +1840,15 @@ pub const Rect = extern struct {
         return .new(v.x * 2 - 1, -(v.y * 2 - 1));
     }
 
+    pub fn myNDCFromWorldPosition(camera: Rect, p: Vec2) Vec2 {
+        const v = camera.localFromWorldPosition(p);
+        return .new(v.x * 2 - 1, v.y * 2 - 1);
+    }
+
+    test "myNDCFromWorldPosition" {
+        try Vec2.expectApproxEqAbs(.one, myNDCFromWorldPosition(.unit, .one), 0.001);
+    }
+
     pub fn fromSpriteSheet(which: UVec2, count: UVec2, uv_margin: Vec2) Rect {
         const rect: Rect = .{
             .top_left = which.tof32().div(count.tof32()),

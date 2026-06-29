@@ -230,6 +230,7 @@ pub const UniformInfo = struct {
                     FColor => .{ .FColor = v },
                     Rect => .{ .Rect = v },
                     Point => .{ .Point = v },
+                    Vec2 => .{ .Vec2 = v },
                     else => @compileError(std.fmt.comptimePrint("Unhandled type: {s}", .{@typeName(@TypeOf(v))})),
                 };
             }
