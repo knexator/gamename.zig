@@ -724,6 +724,10 @@ pub const Vec2 = extern struct {
         );
     }
 
+    pub fn max(v: Vec2) f32 {
+        return @max(v.x, v.y);
+    }
+
     pub fn maxEach(a: Vec2, b: Vec2) Vec2 {
         return .new(
             @max(a.x, b.x),

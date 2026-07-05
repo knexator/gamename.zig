@@ -94,6 +94,8 @@ pub const FuzzerContext = struct {
                     }
                 }.anon,
 
+                .getClipboardText = undefined,
+                .setClipboardText = undefined,
                 .downloadActiveFramebuffer = undefined,
                 .setItem = undefined,
                 .getItem = undefined,
@@ -1409,6 +1411,9 @@ pub const Lego = struct {
                 const garland = children(executor_index).garland;
                 const input = children(executor_index).input;
                 return executor.animation == null and
+                    // TODO(bug): empty functions stop execution, even if there are enqueued cases. For example, try 'x -> f: x { y -> y}' with f having no cases
+                    //  This line is a small part of the solution, but there's too much more
+                    // (garland.garland().hasChildCases() or executor.first_enqueued != .nothing) and
                     garland.garland().hasChildCases() and
                     Toybox.get(input).specific.sexpr.kind != .empty;
             }
@@ -2614,8 +2619,8 @@ pub const Handle = struct {
             switch (handle.kind) {
                 .circle => |radius| {
                     const r = std.math.lerp(radius.base, radius.hot, handle.hot_t);
-                    drawer.canvas.fillCircle(camera, handle.point.pos, handle.point.scale * r, COLORS.bg.withAlpha(alpha));
-                    drawer.canvas.strokeCircle(128, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
+                    drawer.canvas.fillCircleV3(camera, .{ .center = handle.point.pos, .radius = handle.point.scale * r }, COLORS.bg.withAlpha(alpha), .low);
+                    drawer.canvas.strokeCircle(9, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
                 },
                 // TODO(game): improve
                 .fnkbox_tab => {
@@ -3818,6 +3823,10 @@ pub const Toybox = struct {
         fnkname.get().specific.sexpr.is_fnkname = true;
 
         const executor = try buildExecutor(Fnkbox.relative_executor_point, true, initial_definition, undo_stack);
+
+        if (fnkname.isTheSexprLit("swap")) {
+            executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+        }
 
         return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .editable = editable } }, &.{
             box,
@@ -7474,7 +7483,10 @@ const Workspace = struct {
                                         true,
                                         level.description,
                                         samples,
-                                        null,
+                                        if (level.initial_definition) |definition|
+                                            try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch, undo_stack)
+                                        else
+                                            null,
                                         workspace.gpa_for_text,
                                         undo_stack,
                                     );
@@ -8892,6 +8904,9 @@ const Workspace = struct {
             const definition = try garland.get().specific.garland.toOldCoreValue(scratch);
 
             const local_point_from_mainarea = workspace.main_area.get().absolute_point.inverseApplyGetLocal(cur.get().absolute_point);
+            if (local_point_from_mainarea.pos.max() > 100_000) {
+                panic("point too big: {any}", .{local_point_from_mainarea});
+            }
             try out.writeStructEndian(local_point_from_mainarea.pos, ENDIANNESS);
             std.log.info("wrote pos: {any}", .{local_point_from_mainarea.pos});
 

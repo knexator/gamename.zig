@@ -535,6 +535,25 @@ pub fn fillShape(
     }
 }
 
+pub fn fillCircleV3(
+    self: *const Canvas,
+    camera: Rect,
+    circle: math.Circle,
+    color: FColor,
+    resolution: enum { low, medium, high },
+) void {
+    return self.fillShape(
+        camera,
+        .{ .pos = circle.center, .scale = circle.radius },
+        switch (resolution) {
+            .low => self.DEFAULT_SHAPES.circle_8,
+            .medium => self.DEFAULT_SHAPES.circle_32,
+            .high => self.DEFAULT_SHAPES.circle_128,
+        },
+        color,
+    );
+}
+
 pub fn fillCircleV2(
     self: *const Canvas,
     camera: Rect,

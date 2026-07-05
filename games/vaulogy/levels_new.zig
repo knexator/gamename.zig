@@ -140,7 +140,7 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "changeLowercaseToPrevCyclingOnC",
         .description = "Shift back: c into b, b into a, a into c.",
-        .initial_definition = .{ .cases = &.{
+        .initial_definition = if (true) null else .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Vals.lowercase[2], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[2], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -156,7 +156,7 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "swap",
         .description = "Swap both vau halves",
-        .initial_definition = .{ .cases = &.{.{
+        .initial_definition = if (true) null else .{ .cases = &.{.{
             .pattern = &.doPair(Sexpr.builtin.empty, Vals.vars.down),
             .template = &.doPair(Vals.vars.down, Vals.vars.up),
             .fnk_name = Sexpr.builtin.empty,
@@ -221,7 +221,20 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "shiftInUnknownDirection",
         .description = "Shift the lower half depending on the top",
-        .initial_definition = null,
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = &.doPair(Vals.abc[0], &.doVar("any")),
+                .template = &.doVar("any"),
+                .fnk_name = &.doLit("changeLowercaseToNextCyclingOnC"),
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(Sexpr.builtin.empty, &.doVar("any")),
+                .template = &.doVar("any"),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.abc.len);
@@ -336,7 +349,7 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "startWithB",
         .description = "Check if the top half is 'b'",
-        .initial_definition = .{ .cases = &.{
+        .initial_definition = if (true) null else .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("left"), Sexpr.builtin.empty),
                 .template = &.doVar("left"),
@@ -470,7 +483,7 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "withBottomShifted",
         .description = "Same pair but with the lower half shifted",
-        .initial_definition = .{ .cases = &.{
+        .initial_definition = if (true) null else .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("upper"), &.doVar("lower")),
                 .template = &.doVar("lower"),
@@ -538,7 +551,7 @@ pub const levels: []const Level = &.{
         .fnk_name = "hasSomeB",
         // intro to recursion
         .description = "Check if the input has a 'B' anywhere.",
-        .initial_definition = .{ .cases = &.{
+        .initial_definition = if (true) null else .{ .cases = &.{
             .{ .pattern = Vals.lowercase[0], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[1], .template = Sexpr.builtin.true, .fnk_name = Sexpr.builtin.empty, .next = null },
             .{ .pattern = Vals.lowercase[2], .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
@@ -584,7 +597,7 @@ pub const levels: []const Level = &.{
         .fnk_name = "second",
         // simplest intro to lists
         .description = "Get the second element of the list.",
-        .initial_definition = .{ .cases = &.{
+        .initial_definition = if (true) null else .{ .cases = &.{
             .{
                 .pattern = &.doPair(
                     Vals.lowercase[0],

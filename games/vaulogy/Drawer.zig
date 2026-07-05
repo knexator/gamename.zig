@@ -709,6 +709,7 @@ fn drawShapeV3(
         );
     }
 
+    if (true) return;
     if (stroke) |col| {
         // TODO: wouldnt be needed if Rect had rotation
         const world_points = try self.canvas.frame_arena.allocator().alloc(Vec2, shape.local_points.len + 1);
