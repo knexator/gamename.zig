@@ -16,6 +16,7 @@ pub const Level = struct {
     fnk_name: []const u8,
     description: []const u8,
     initial_definition: ?core.FnkBodyV2,
+    bubble_definition: ?core.FnkBodyV2 = null,
     generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample,
 
     pub fn samplesIterator(level: Level) SamplesIterator {
@@ -349,7 +350,8 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "startWithB",
         .description = "Check if the top half is 'b'",
-        .initial_definition = if (true) null else .{ .cases = &.{
+        .initial_definition = null,
+        .bubble_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("left"), Sexpr.builtin.empty),
                 .template = &.doVar("left"),
@@ -483,7 +485,8 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "withBottomShifted",
         .description = "Same pair but with the lower half shifted",
-        .initial_definition = if (true) null else .{ .cases = &.{
+        .initial_definition = null,
+        .bubble_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("upper"), &.doVar("lower")),
                 .template = &.doVar("lower"),

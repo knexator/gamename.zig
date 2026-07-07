@@ -4697,7 +4697,7 @@ const Workspace = struct {
             postit_pos = .new(-6, 0);
             Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
                 .{ .pos = postit_pos },
-                levels[level_index].initial_definition.?,
+                levels[level_index].bubble_definition.?,
                 scratch.allocator(),
                 undo_stack,
             ), undo_stack);
@@ -4731,7 +4731,7 @@ const Workspace = struct {
             postit_pos = .new(-7.6, 0);
             Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
                 .{ .pos = postit_pos },
-                levels[level_index].initial_definition.?,
+                levels[level_index].bubble_definition.?,
                 scratch.allocator(),
                 undo_stack,
             ), undo_stack);
