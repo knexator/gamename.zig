@@ -218,7 +218,7 @@ test "No leaks on Workspace and Drawer" {
 }
 
 test "solutions" {
-    if (true) return error.SkipZigTest;
+    // if (true) return error.SkipZigTest;
 
     const gpa = std.testing.allocator;
     var mem: core.VeryPermamentGameStuff = .init(gpa);
@@ -3164,6 +3164,17 @@ pub const Toybox = struct {
             cur = Toybox.get(cur).tree.next;
         }
         assert(cur == .nothing);
+        return result;
+    }
+
+    pub fn getFirstNChildren(comptime expected_count: usize, parent: Lego.Index) [expected_count]Lego.Index {
+        var cur = Toybox.get(parent).tree.first;
+        var result: [expected_count]Lego.Index = undefined;
+        for (&result) |*dst| {
+            assert(cur != .nothing);
+            dst.* = cur;
+            cur = Toybox.get(cur).tree.next;
+        }
         return result;
     }
 
@@ -7901,7 +7912,8 @@ const Workspace = struct {
                 const zone = tracy.initZone(@src(), .{ .name = "recomputing fnkslist" });
                 defer zone.deinit();
 
-                const scrollbar, const fnkslist, const searchbox = Toybox.getChildrenExact(3, workspace.toolbar_fnks);
+                // not exactly 3 children since the player might have dropped stuff in the area
+                const scrollbar, const fnkslist, const searchbox = Toybox.getFirstNChildren(3, workspace.toolbar_fnks);
                 const filter_text = searchbox.get().specific.editable_textline.text();
 
                 if (true) { // destroy old
