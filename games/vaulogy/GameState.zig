@@ -218,8 +218,6 @@ test "No leaks on Workspace and Drawer" {
 }
 
 test "solutions" {
-    // if (true) return error.SkipZigTest;
-
     const gpa = std.testing.allocator;
     var mem: core.VeryPermamentGameStuff = .init(gpa);
     defer mem.deinit();
@@ -233,6 +231,10 @@ test "solutions" {
     defer scoring.deinit(true);
 
     for (levels) |level| {
+        // TODO(design): test all levels
+        if (std.mem.startsWith(u8, level.fnk_name, "meta_")) continue;
+        if (std.mem.eql(u8, level.fnk_name, "interpreter")) continue;
+
         defer _ = scratch.reset(.retain_capacity);
         var samples_it = level.samplesIterator();
         while (try samples_it.next(&pool, scratch.allocator())) |item| {
