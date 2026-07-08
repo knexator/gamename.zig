@@ -347,6 +347,7 @@ pub const Lego = struct {
         list_viewer: ListViewer,
         meta_viewer: MetaViewer,
         bubble: Bubble,
+        bubble_connection: BubbleConnection,
         scorer: Scorer,
         scorer_row: ScorerRow,
         // TODO(design): simplify this
@@ -461,6 +462,9 @@ pub const Lego = struct {
             goal: FulfillCondition,
             prev_bubble: Lego.Index,
             blueprint: Lego.Index,
+            hint_for: [2]Lego.Index = @splat(.nothing),
+            requested_hints: bool = false,
+            has_hints: bool = false,
 
             pub const FulfillCondition = union(enum) {
                 all_scorers_solved,
@@ -470,17 +474,28 @@ pub const Lego = struct {
             pub const Children = struct {
                 instanced: Lego.Index,
                 reset_bubble_button: Lego.Index,
+                unlock_hint_button: Lego.Index,
             };
 
             pub fn children(index: Lego.Index) Children {
                 assert(Toybox.get(index).specific.tag() == .bubble);
-                const asdf = Toybox.getChildrenExact(2, index);
+                const asdf = Toybox.getChildrenExact(3, index);
                 assert(asdf[0].hasTag(.area));
                 return .{
                     .instanced = asdf[0],
                     .reset_bubble_button = asdf[1],
+                    .unlock_hint_button = asdf[2],
                 };
             }
+
+            pub fn visibleUnlockHints(self: *const Bubble) bool {
+                return self.has_hints and !self.requested_hints;
+            }
+        };
+
+        pub const BubbleConnection = struct {
+            source: Lego.Index,
+            target: Lego.Index,
         };
 
         pub const Scorer = struct {
@@ -667,6 +682,8 @@ pub const Lego = struct {
                 toggle_skip_fnk,
                 /// assumes that bubble is the direct parent
                 reset_bubble,
+                /// assumes that bubble is the direct parent
+                unlock_hint,
                 /// assumes that scorer_row is the direct parent
                 create_fnkbox_for_row,
                 /// assumes that the scrollable_list of testcases is the direct parent
@@ -686,6 +703,7 @@ pub const Lego = struct {
                     .scroll_up,
                     .scroll_down,
                     .reset_bubble,
+                    .unlock_hint,
                     .create_fnkbox_for_row,
                     .add_testcase,
                     => false,
@@ -2344,6 +2362,7 @@ pub const Lego = struct {
     pub fn handle(lego: *const Lego) ?Handle {
         const kind: Handle.Kind = switch (lego.specific) {
             .bubble,
+            .bubble_connection,
             .scorer,
             .scorer_row,
             .scorer_rows,
@@ -2467,6 +2486,7 @@ pub const Lego = struct {
                 break :blk .no;
             },
             .bubble,
+            .bubble_connection,
             .scorer,
             .scorer_row,
             .fnkname_holder,
@@ -2508,6 +2528,7 @@ pub const Lego = struct {
             .meta_viewer,
             => false,
             .bubble,
+            .bubble_connection,
             .scorer,
             .scorer_row,
             .scorer_rows,
@@ -3943,7 +3964,18 @@ pub const Toybox = struct {
                 .local_rect = .fromCenterAndSize(.zero, .one),
                 .action = .reset_bubble,
             } }, undo_stack),
+            try Toybox.new(.{ .pos = blueprint.get().specific.area.bg.local_rect.get(.top_center) }, .{ .button = .{
+                .local_rect = .fromCenterAndSize(.zero, .new(2.5, 1.5)),
+                .action = .unlock_hint,
+            } }, undo_stack),
         }, undo_stack);
+    }
+
+    pub fn buildBubbleConnection(source: Lego.Index, target: Lego.Index, undo_stack: ?*UndoStack) !Lego.Index {
+        return try Toybox.new(.{}, .{ .bubble_connection = .{
+            .source = source,
+            .target = target,
+        } }, undo_stack);
     }
 
     pub fn setLocalPointSmooth(index: Lego.Index, new_local_point: Point) void {
@@ -4475,41 +4507,58 @@ const Workspace = struct {
                 .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
             });
 
-            postit_pos = .new(-7.8, 2.4);
-            postit.addFromText(postit_pos, &.{ "This strand", "solves it:" });
-            postit_pos.addInPlace(.new(1, 4.7));
-            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
-                    .fnkname = null,
-                    .next = null,
-                }, undo_stack),
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
-                    .fnkname = null,
-                    .next = null,
-                }, undo_stack),
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
-                    .fnkname = null,
-                    .next = null,
-                }, undo_stack),
-            }, undo_stack), undo_stack);
+            const strand_already_in_box = true;
+            if (!strand_already_in_box) {
+                postit_pos = .new(-7.8, 2.4);
+                postit.addFromText(postit_pos, &.{ "This strand", "solves it:" });
+                postit_pos.addInPlace(.new(1, 4.7));
+                Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
+                    try Toybox.buildCase(.{}, .{
+                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                        .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                        .fnkname = null,
+                        .next = null,
+                    }, undo_stack),
+                    try Toybox.buildCase(.{}, .{
+                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                        .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                        .fnkname = null,
+                        .next = null,
+                    }, undo_stack),
+                    try Toybox.buildCase(.{}, .{
+                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                        .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                        .fnkname = null,
+                        .next = null,
+                    }, undo_stack),
+                }, undo_stack), undo_stack);
+            }
 
             postit_pos = .new(0, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("changeLowercaseToNextCyclingOnC")}, &.{.new(4.5, 8.5)}, undo_stack);
+            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos.add(if (strand_already_in_box) .new(-9, -1) else .zero) }, &.{levelIndex("changeLowercaseToNextCyclingOnC")}, &.{.new(4.5, 8.5)}, undo_stack);
             Toybox.addChildLast(bp, scorer, undo_stack);
 
-            postit_pos.addInPlace(.new(0, 4.5));
+            postit_pos.addInPlace(.new(if (strand_already_in_box) -6.5 else 0, 4.5));
             postit.addFromParts(postit_pos, &.{
                 .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the +", "button to create", "a new 'solution'" } } },
                 .{ .point = .{ .pos = .new(3, 1), .turns = -0.25 }, .part = .arrow },
             });
             postit_pos.addInPlace(.new(6.8, 0.4));
-            postit.addFromText(postit_pos, &.{ "And move the", "strand to it,", "solving the", "assignment." });
+            if (strand_already_in_box) {
+                postit.addFromText(postit_pos, &.{ "And complete the", "strand, solving", "the assignment." });
+            } else {
+                postit.addFromText(postit_pos, &.{ "And move the", "strand to it,", "solving the", "assignment." });
+            }
+
+            if (strand_already_in_box) {
+                postit_pos.addInPlace(.new(7, 0));
+                Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos }, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack), undo_stack);
+            }
 
             break :blk bp;
         }, undo_stack);
@@ -4804,7 +4853,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, first_recursion_cruel, undo_stack);
 
         bubble_pos.addInPlace(.new(0, -40));
-        const first_recursion_nicer = try Toybox.buildBubble(.{ .pos = bubble_pos }, final_tutorial, .all_scorers_solved, blk: {
+        const first_recursion_nicer = try Toybox.buildBubble(.{ .pos = bubble_pos }, .nothing, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4819,6 +4868,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_nicer, undo_stack);
         bubble_pos.addInPlace(.new(0, 40));
+        addHint(first_recursion_nicer, first_recursion_cruel);
 
         bubble_pos.addInPlace(.new(0, 40));
         const optional = try Toybox.buildBubble(.{ .pos = bubble_pos }, final_tutorial, .all_scorers_solved, blk: {
@@ -5499,6 +5549,31 @@ const Workspace = struct {
             postit.addFromText(postit_pos.addX(7), &.{ "Try to invent", "machines that", "will be useful", "for multiple", "assignments." });
         }
 
+        if (true) { // arrows for bubbles
+            var cur = dst.main_area.get().tree.first;
+            while (cur != .nothing) : (cur = cur.get().tree.next) {
+                if (!cur.hasTag(.bubble)) continue;
+                // Toybox.addChildFirst(dst.main_area, @panic("TODO"), undo_stack);
+
+                const bubble = cur.get().specific.bubble;
+                if (bubble.prev_bubble != .nothing) {
+                    Toybox.addChildLast(dst.main_area, try Toybox.buildBubbleConnection(
+                        bubble.prev_bubble,
+                        cur,
+                        undo_stack,
+                    ), undo_stack);
+                }
+                for (bubble.hint_for) |next_bubble| {
+                    if (next_bubble == .nothing) continue;
+                    Toybox.addChildLast(dst.main_area, try Toybox.buildBubbleConnection(
+                        cur,
+                        next_bubble,
+                        undo_stack,
+                    ), undo_stack);
+                }
+            }
+        }
+
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         assert(dst.valid(arena.allocator()));
@@ -5553,8 +5628,12 @@ const Workspace = struct {
                 } else {
                     lego.specific.bubble.locked = if (lego.specific.bubble.prev_bubble.getSafe()) |prev|
                         prev.specific.bubble.locked or !prev.specific.bubble.fulfilled
-                    else
-                        false;
+                    else for (lego.specific.bubble.hint_for) |harder| {
+                        if (harder == .nothing) continue;
+                        if (harder.get().specific.bubble.requested_hints) break false;
+                    } else for (lego.specific.bubble.hint_for) |harder| {
+                        if (harder != .nothing) break true;
+                    } else false;
                 }
 
                 const area = lego.index.children(.bubble).instanced;
@@ -5801,12 +5880,14 @@ const Workspace = struct {
                     .scorer_row,
                     .scorer_rows,
                     .bubble,
+                    .bubble_connection,
                     => {},
                 }
                 if (step.children_already_visited) {
                     if (lego.handle()) |handle| {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
                             .bubble,
+                            .bubble_connection,
                             .scorer,
                             .scorer_row,
                             .scorer_rows,
@@ -6359,6 +6440,7 @@ const Workspace = struct {
                     .scorer_row,
                     .scorer_rows,
                     .bubble,
+                    .bubble_connection,
                     => {},
                 }
             }
@@ -6732,6 +6814,13 @@ const Workspace = struct {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                 },
+                                .unlock_hint => {
+                                    if (button.enabled) {
+                                        drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                        drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                        try drawer.canvas.drawText(0, camera_relative, "Hint?", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                    }
+                                },
                                 .create_fnkbox_for_row, .add_testcase => if (button.enabled) {
                                     // TODO(game): nicer
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
@@ -6925,6 +7014,12 @@ const Workspace = struct {
                                 0.05,
                                 .blackAlpha(alpha),
                             );
+                        },
+                        .bubble_connection => |bubble_connection| {
+                            drawer.canvas.line(camera, &.{
+                                bubble_connection.source.get().absolute_point.pos,
+                                bubble_connection.target.get().absolute_point.pos,
+                            }, bubble_connection.source.get().absolute_point.scale * 0.05, .black);
                         },
                         .bubble => |bubble| {
                             if (bubble.locked) {
@@ -7514,6 +7609,10 @@ const Workspace = struct {
                                     Toybox.changeChild(original_instanced, new_instanced, undo_stack);
                                     Toybox.destroyFloating(original_instanced, undo_stack);
                                 },
+                                .unlock_hint => {
+                                    const bubble = &workspace.grabbing.index.get().tree.parent.get().specific.bubble;
+                                    bubble.requested_hints = true;
+                                },
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
                                     const testcase_index = try ensureLoadedTestcase(fnkbox.get().specific.fnkbox.status.unsolved, scratch, undo_stack);
@@ -7723,6 +7822,7 @@ const Workspace = struct {
                     .executor_crank,
                     .fnkname_holder,
                     .bubble,
+                    .bubble_connection,
                     => {},
                 }
 
@@ -8146,6 +8246,7 @@ const Workspace = struct {
                         .launch_testcase, .delete_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
                         .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
                         .scroll_up, .scroll_down, .reset_bubble, .add_testcase => true,
+                        .unlock_hint => lego.tree.parent.get().specific.bubble.visibleUnlockHints(),
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
                         .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
@@ -8157,6 +8258,7 @@ const Workspace = struct {
                         .scroll_up,
                         .scroll_down,
                         .reset_bubble,
+                        .unlock_hint,
                         .create_fnkbox_for_row,
                         .add_testcase,
                         => false,
@@ -9676,4 +9778,14 @@ fn printNextGarlands(first: Lego.Index) void {
         std.log.debug("index: {d}", .{cur.asI32()});
     }
     std.log.debug("done", .{});
+}
+
+fn addHint(easy: Lego.Index, hard: Lego.Index) void {
+    hard.get().specific.bubble.has_hints = true;
+    var bubble = &easy.get().specific.bubble;
+    for (&bubble.hint_for) |*dst| {
+        if (dst.* != .nothing) continue;
+        dst.* = hard;
+        break;
+    } else unreachable;
 }
