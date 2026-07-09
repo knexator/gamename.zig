@@ -3081,6 +3081,27 @@ pub const Toybox = struct {
         }
     }
 
+    pub fn addChildFirst(parent: Lego.Index, new_child: Lego.Index, undo_stack: ?*UndoStack) void {
+        assert(parent != .nothing);
+        if (new_child == .nothing) return;
+        if (undo_stack) |stack| {
+            stack.append(.{ .pop = new_child });
+        }
+        const parent_tree = &Toybox.get(parent).tree;
+        const child_tree = &Toybox.get(new_child).tree;
+        assert(child_tree.isFloating());
+        child_tree.parent = parent;
+        child_tree.next = parent_tree.first;
+        child_tree.prev = .nothing;
+        if (parent_tree.first != .nothing) {
+            Toybox.get(parent_tree.first).tree.prev = new_child;
+        }
+        parent_tree.first = new_child;
+        if (parent_tree.last == .nothing) {
+            parent_tree.last = new_child;
+        }
+    }
+
     pub fn isFloating(index: Lego.Index) bool {
         return Toybox.get(index).tree.isFloating();
     }
@@ -5553,11 +5574,9 @@ const Workspace = struct {
             var cur = dst.main_area.get().tree.first;
             while (cur != .nothing) : (cur = cur.get().tree.next) {
                 if (!cur.hasTag(.bubble)) continue;
-                // Toybox.addChildFirst(dst.main_area, @panic("TODO"), undo_stack);
-
                 const bubble = cur.get().specific.bubble;
                 if (bubble.prev_bubble != .nothing) {
-                    Toybox.addChildLast(dst.main_area, try Toybox.buildBubbleConnection(
+                    Toybox.addChildFirst(dst.main_area, try Toybox.buildBubbleConnection(
                         bubble.prev_bubble,
                         cur,
                         undo_stack,
@@ -5565,7 +5584,7 @@ const Workspace = struct {
                 }
                 for (bubble.hint_for) |next_bubble| {
                     if (next_bubble == .nothing) continue;
-                    Toybox.addChildLast(dst.main_area, try Toybox.buildBubbleConnection(
+                    Toybox.addChildFirst(dst.main_area, try Toybox.buildBubbleConnection(
                         cur,
                         next_bubble,
                         undo_stack,
@@ -7016,10 +7035,15 @@ const Workspace = struct {
                             );
                         },
                         .bubble_connection => |bubble_connection| {
-                            drawer.canvas.line(camera, &.{
-                                bubble_connection.source.get().absolute_point.pos,
-                                bubble_connection.target.get().absolute_point.pos,
-                            }, bubble_connection.source.get().absolute_point.scale * 0.05, .black);
+                            const s = bubble_connection.source.get().absolute_point.scale;
+                            drawer.canvas.arrow(camera, @as(math.Segment, .{
+                                .a = bubble_connection.source.get().absolute_point.pos,
+                                .b = bubble_connection.target.get().absolute_point.pos,
+                            }).clipToBeOutsideRect(bubble_connection.source.get().absolute_point.applyToLocalRect(
+                                bubble_connection.source.get().specific.bubble.blueprint.get().specific.area.bg.local_rect.plusMargin(0.5),
+                            )).clipToBeOutsideRect(bubble_connection.target.get().absolute_point.applyToLocalRect(
+                                bubble_connection.target.get().specific.bubble.blueprint.get().specific.area.bg.local_rect.plusMargin(0.5),
+                            )), s * 0.1, s * 1, .black);
                         },
                         .bubble => |bubble| {
                             if (bubble.locked) {

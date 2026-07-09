@@ -1258,6 +1258,26 @@ pub fn fillInstancedCircles(
     );
 }
 
+pub fn arrow(
+    self: *const Canvas,
+    camera: Rect,
+    segment: math.Segment,
+    world_width: f32,
+    head_size: f32,
+    color: FColor,
+) void {
+    self.line(camera, &.{
+        segment.a,
+        segment.b,
+    }, world_width, color);
+    const angle = 1.0 / 8.0;
+    self.line(camera, &.{
+        segment.b.towardsPure(segment.a, head_size).rotateAround(segment.b, angle),
+        segment.b,
+        segment.b.towardsPure(segment.a, head_size).rotateAround(segment.b, -angle),
+    }, world_width, color);
+}
+
 // // https://wwwtyro.net/2019/11/18/instanced-lines.html
 pub fn line(
     self: *const Canvas,

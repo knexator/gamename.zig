@@ -361,6 +361,87 @@ pub fn ZVec2(T: type) type {
     };
 }
 
+pub const HalfPlane = struct {
+    origin: Vec2,
+    /// normalized
+    normal_outside: Vec2,
+
+    pub fn signedDistance(self: HalfPlane, pos: Vec2) f32 {
+        assert(self.normal_outside.isNormalized());
+        return pos.sub(self.origin).dot(self.normal_outside);
+    }
+
+    pub fn contains(self: HalfPlane, point: Vec2) bool {
+        return self.signedDistance(point) >= 0.0;
+    }
+};
+
+pub const Segment = struct {
+    a: Vec2,
+    b: Vec2,
+
+    pub fn inverted(original: Segment) Segment {
+        return .{ .a = original.b, .b = original.a };
+    }
+
+    pub fn clipToBeOutsideRect(original: Segment, rect: Rect) Segment {
+        const clip_from_a = rect.contains(original.a);
+        const clip_from_b = rect.contains(original.b);
+        assert(clip_from_a != clip_from_b); // xor
+
+        if (clip_from_a) {
+            return .{ .a = original.intersectionWithRectFromInside(rect).?, .b = original.b };
+        } else {
+            return .{ .a = original.a, .b = original.inverted().intersectionWithRectFromInside(rect).? };
+        }
+    }
+
+    pub fn intersectionWithRectFromInside(original: Segment, rect: Rect) ?Vec2 {
+        assert(rect.contains(original.a));
+        assert(!rect.contains(original.b));
+
+        var min_t: f32 = std.math.inf(f32);
+        for (Rect.Side.all) |side| {
+            const maybe_t = original.intersectionWithHalfPlane(rect.halfPlaneOutside(side));
+            if (maybe_t) |t| {
+                min_t = t;
+            }
+        }
+        assert(in01(min_t));
+
+        return original.at(min_t);
+    }
+
+    pub fn intersectionWithHalfPlane(original: Segment, half_plane: HalfPlane) ?f32 {
+        const start_dist = half_plane.signedDistance(original.a);
+        const end_dist = half_plane.signedDistance(original.b);
+        const denom = start_dist - end_dist;
+        if (denom == 0.0) return null;
+
+        const t = start_dist / denom;
+        if (!in01(t)) return null;
+        return t;
+    }
+
+    test "segment intersection with rect from inside" {
+        const rect: Rect = .unit;
+        const inside: Vec2 = .half;
+
+        const seg_right: Segment = .{ .a = inside, .b = inside.addX(2) };
+        const right_hit = try seg_right.intersectionWithRectFromInside(rect);
+        try Vec2.expectApproxEqAbs(.new(1.0, 0.5), right_hit, 0.001);
+
+        const seg_bottom_right: Segment = .{ .a = inside, .b = .one };
+        const corner = try seg_bottom_right.intersectionWithRectFromInside(rect);
+        try Vec2.expectApproxEqAbs(.one, corner, 0.001);
+    }
+
+    pub fn at(segment: Segment, t: f32) Vec2 {
+        assert(in01(t));
+        return .lerp(segment.a, segment.b, t);
+    }
+};
+
 const GrowOrShrink = enum { grow, shrink };
 pub const Vec2 = extern struct {
     pub const Scalar = f32;
@@ -1433,6 +1514,15 @@ pub const Rect = extern struct {
             };
         }
     };
+
+    pub fn halfPlaneOutside(self: Rect, side: Side) HalfPlane {
+        return switch (side) {
+            .left => .{ .origin = self.get(.top_left), .normal_outside = .new(1, 0) },
+            .top => .{ .origin = self.get(.top_left), .normal_outside = .new(0, 1) },
+            .right => .{ .origin = self.get(.bottom_right), .normal_outside = .new(-1, 0) },
+            .bottom => .{ .origin = self.get(.bottom_right), .normal_outside = .new(0, -1) },
+        };
+    }
 
     pub const MeasureKind = enum {
         top_left,
