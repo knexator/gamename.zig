@@ -376,6 +376,10 @@ pub const HalfPlane = struct {
     }
 };
 
+comptime {
+    std.testing.refAllDecls(Segment);
+}
+
 pub const Segment = struct {
     a: Vec2,
     b: Vec2,
@@ -396,14 +400,23 @@ pub const Segment = struct {
         }
     }
 
+    test clipToBeOutsideRect {
+        const original: Segment = .{ .a = .zero, .b = .new(2, -1) };
+        const clipped = original.clipToBeOutsideRect(.fromCenterAndSize(.zero, .both(2)));
+        const expected: Segment = .{ .a = .new(1, -0.5), .b = .new(2, -1) };
+
+        try Vec2.expectApproxEqAbs(expected.a, clipped.a, 0.001);
+        try Vec2.expectApproxEqAbs(expected.b, clipped.b, 0.001);
+    }
+
     pub fn intersectionWithRectFromInside(original: Segment, rect: Rect) ?Vec2 {
         assert(rect.contains(original.a));
         assert(!rect.contains(original.b));
 
         var min_t: f32 = std.math.inf(f32);
         for (Rect.Side.all) |side| {
-            const maybe_t = original.intersectionWithHalfPlane(rect.halfPlaneOutside(side));
-            if (maybe_t) |t| {
+            const t = original.intersectionWithHalfPlane(rect.halfPlaneOutside(side)) orelse continue;
+            if (t < min_t) {
                 min_t = t;
             }
         }
@@ -428,11 +441,11 @@ pub const Segment = struct {
         const inside: Vec2 = .half;
 
         const seg_right: Segment = .{ .a = inside, .b = inside.addX(2) };
-        const right_hit = try seg_right.intersectionWithRectFromInside(rect);
+        const right_hit = seg_right.intersectionWithRectFromInside(rect) orelse return error.FailedTest;
         try Vec2.expectApproxEqAbs(.new(1.0, 0.5), right_hit, 0.001);
 
         const seg_bottom_right: Segment = .{ .a = inside, .b = .one };
-        const corner = try seg_bottom_right.intersectionWithRectFromInside(rect);
+        const corner = seg_bottom_right.intersectionWithRectFromInside(rect) orelse return error.FailedTest;
         try Vec2.expectApproxEqAbs(.one, corner, 0.001);
     }
 

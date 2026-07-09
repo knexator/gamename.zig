@@ -718,6 +718,29 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .fnk_name = "prepend",
+        .description = "Add the element to the start of the list",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const input = switch (k) {
+                    0...3 => try toList(pool, Vals.lowercase[0 .. 2 + k]),
+                    4...100 => blk: {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                        const random = random_instance.random();
+                        break :blk try randomList(pool, &Vals.lowercase, random, random.intRangeAtMost(usize, 1, 12));
+                    },
+                    else => return null,
+                };
+                return .{
+                    .input = input,
+                    // .expected = input,
+                    .expected = try store(pool, .doPair(input.pair.right, input.pair.left)),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
         .fnk_name = "last",
         // simplest intro to lists
         .description = "Get the last element of the list.",
