@@ -4826,20 +4826,23 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks, undo_stack);
 
         bubble_pos.addInPlace(.new(30, 0));
-        const final_tutorial = try buildBubbleSimple(bubble_pos, intro_to_mixing_both_tricks, "shiftPair", &.{
+        const final_tutorial = try buildBubbleSimple(bubble_pos, intro_to_mixing_both_tricks, &.{"shiftPair"}, &.{
             &.{ "You now know", "everything!" },
             &.{"Good luck!"},
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, final_tutorial, undo_stack);
 
         bubble_pos.addInPlace(.new(40, -20));
-        const first_recursion_cruel = try buildBubbleSimple(bubble_pos, final_tutorial, "shiftAll", &.{
+        const first_recursion_cruel = try buildBubbleSimple(bubble_pos, final_tutorial, &.{ "shiftAll", "mirrorTree" }, &.{
             &.{ "Most assignments", "will be", "unreasonably", "hard" },
             &.{ "Don't hesitate", "to look on the", "slides on top", "for a hint" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_cruel, undo_stack);
 
-        const first_recursion_nicer = try buildBubbleSimple(bubble_pos.add(.new(-20, -30)), .nothing, "hasSomeB", &.{}, undo_stack);
+        const first_recursion_nicer = try buildBubbleSimple(bubble_pos.add(.new(-20, -30)), .nothing, &.{"hasSomeB"}, &.{
+            &.{ "Many problems", "can be solved", "by a function", "that invokes", "itself" },
+            &.{ "(these are called", "'recursive' functions)" },
+        }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_nicer, undo_stack);
         addHint(first_recursion_nicer, first_recursion_cruel);
 
@@ -4876,7 +4879,14 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, optional, undo_stack);
 
         bubble_pos.addInPlace(.new(30, 0));
-        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, first_recursion_cruel, .all_scorers_solved, blk: {
+        const double_recursion = try buildBubbleSimple(bubble_pos, first_recursion_cruel, &.{"sameShape?"}, &.{
+            &.{ "Now that you know", "how to recurse", "on a tree..." },
+            &.{ "...let's see how", "you recurse on", "two trees at once" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, double_recursion, undo_stack);
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, double_recursion, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4888,15 +4898,18 @@ const Workspace = struct {
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{ "All assignments", "take and return", "a single vau" });
             postit_pos.addInPlace(.new(7.3, 0.3));
-            postit.addFromText(postit_pos, &.{ "But sometimes", "this isn't", "enough!" });
+            postit.addFromText(postit_pos, &.{ "It's easy to treat", "a single vau", "as a pair", "of two values" });
             postit_pos.addInPlace(.new(7.4, 0.2));
-            postit.addFromText(postit_pos, &.{ "Luckily, we can", "encode any", "sequence of vaus", "into a single one" });
+            // postit.addFromText(postit_pos, &.{ "But sometimes", "this isn't", "enough!" });
+            postit.addFromText(postit_pos, &.{ "But sometimes", "you need an", "unknown", "amount", "of values!" });
 
             postit_pos = .new(-7, -1);
+            postit.addFromText(postit_pos, &.{ "Luckily, we can", "encode any", "sequence of vaus", "into a single one" });
+            postit_pos.addInPlace(.new(6.7, 0.2));
             postit.addFromText(postit_pos, &.{ "The top half is", "the first element,", "the bottom half", "is the rest" });
-            postit_pos.addInPlace(.new(7.3, 0.2));
+            postit_pos.addInPlace(.new(6.7, -0.1));
             postit.addFromText(postit_pos, &.{ "When there are", "no elements left", "we use the", "'empty list' vau:" });
-            Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos.add(.new(4, 0)) }, .{ .atom_lit = "nil" }, false, false, undo_stack), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos.add(.new(2, 3)) }, .{ .atom_lit = "nil" }, false, false, undo_stack), undo_stack);
 
             postit_pos = .new(-7.2, 6.2);
             postit.addFromText(postit_pos, &.{ "I've added this", "to your toolbar:" });
@@ -4921,14 +4934,19 @@ const Workspace = struct {
                 levelIndex("second"),
             }, &.{.new(8, -4.5)}, undo_stack), undo_stack);
 
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, -3) }, &.{
+                levelIndex("pairToList"),
+            }, &.{.new(-8, -4.5)}, undo_stack), undo_stack);
+
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            const postit_pos: Vec2 = .new(-3, 0);
-            postit.addFromText(postit_pos, &.{ "Top half is", "the list,", "bottom half is", "the element" });
+            const postit_pos: Vec2 = .new(-3, 4);
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 7) }, &.{
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, postit_pos.y + 4.5) }, &.{
                 levelIndex("prepend"),
-            }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
+            }, &.{.new(0, 10.5)}, undo_stack), undo_stack);
+
+            postit.addFromText(postit_pos, &.{ "Top half is", "the list,", "bottom half is", "the element" });
 
             break :blk bp;
         }, undo_stack);
@@ -4967,31 +4985,15 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, lists_1_5, undo_stack);
 
         bubble_pos.addInPlace(.new(30, 0));
-        const lists_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_1_5, .all_scorers_solved, blk: {
-            const bp = try Toybox.new(
-                .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-                undo_stack,
-            );
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -8) }, &.{
-                levelIndex("reverse"),
-            }, &.{.new(8, -4.5)}, undo_stack), undo_stack);
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 0) }, &.{
-                levelIndex("mostCommonBoolean"),
-            }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
-                levelIndex("findSecondLongest"),
-            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
-
-            break :blk bp;
-        }, undo_stack);
+        const lists_2 = try buildBubbleSimple(bubble_pos, lists_1_5, &.{ "reverse", "evenLength?" }, &.{}, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_2, undo_stack);
 
         bubble_pos.addInPlace(.new(30, 0));
-        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_2, .all_scorers_solved, blk: {
+        const lists_3 = try buildBubbleSimple(bubble_pos, lists_2, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{}, undo_stack);
+        Toybox.addChildLast(dst.main_area, lists_3, undo_stack);
+
+        bubble_pos.addInPlace(.new(30, 0));
+        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_3, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5006,8 +5008,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calculator, undo_stack);
 
-        bubble_pos.addInPlace(.new(0, 40));
-        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_2, .all_scorers_solved, blk: {
+        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos.add(.new(30, 20)) }, calculator, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5032,9 +5033,8 @@ const Workspace = struct {
             break :blk bp;
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
-        bubble_pos.addInPlace(.new(0, -40));
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(.new(30, -20));
         const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, calculator, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -5581,7 +5581,7 @@ const Workspace = struct {
         assert(dst.valid(arena.allocator()));
     }
 
-    fn buildBubbleSimple(bubble_pos: Vec2, prev: Lego.Index, comptime level_name: []const u8, postits: []const []const []const u8, undo_stack: ?*UndoStack) !Lego.Index {
+    fn buildBubbleSimple(bubble_pos: Vec2, prev: Lego.Index, comptime level_names: []const []const u8, postits: []const []const []const u8, undo_stack: ?*UndoStack) !Lego.Index {
         const scorer_pos: Vec2 = .new(-7, 0);
         const postit_pos: []const Vec2 = &.{
             .new(-8, -8),
@@ -5600,9 +5600,11 @@ const Workspace = struct {
                 postit.addFromText(postit_pos[k], lines);
             }
 
-            const level_index = levelIndex(level_name);
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{level_index}, &.{.new(0, 8.5)}, undo_stack);
-            Toybox.addChildLast(bp, scorer, undo_stack);
+            inline for (level_names, 0..) |level_name, k| {
+                const level_index = levelIndex(level_name);
+                const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos.addY(5 * k) }, &.{level_index}, &.{.new(k * 4, 8.5 + tof32(k) * 2)}, undo_stack);
+                Toybox.addChildLast(bp, scorer, undo_stack);
+            }
 
             break :blk bp;
         }, undo_stack);

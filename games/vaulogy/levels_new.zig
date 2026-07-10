@@ -88,6 +88,36 @@ const Helpers = struct {
         };
     }
 
+    fn mirrorTree(pool: *SexprPool, in: *const Sexpr) !*const Sexpr {
+        return switch (in.*) {
+            else => in,
+            .pair => |pair| try store(pool, Sexpr.doPair(
+                try mirrorTree(pool, pair.right),
+                try mirrorTree(pool, pair.left),
+            )),
+        };
+    }
+
+    fn changeValuesRandomly(pool: *SexprPool, in: *const Sexpr, values: []const *const Sexpr, random: std.Random) !*const Sexpr {
+        return switch (in.*) {
+            else => in,
+            .atom_lit => values[random.uintLessThan(usize, values.len)],
+            .pair => |pair| try store(pool, Sexpr.doPair(
+                try changeValuesRandomly(pool, pair.left, values, random),
+                try changeValuesRandomly(pool, pair.right, values, random),
+            )),
+        };
+    }
+
+    fn sameShape(left: *const Sexpr, right: *const Sexpr) bool {
+        const is_left_pair = left.isPair();
+        const is_right_pair = right.isPair();
+        if (!is_left_pair and !is_right_pair) return true;
+        if (is_left_pair != is_right_pair) return false;
+        return sameShape(left.pair.left, right.pair.left) and
+            sameShape(left.pair.right, right.pair.right);
+    }
+
     fn atomsCount(in: *const Sexpr) usize {
         return switch (in.*) {
             .empty, .atom_var => 0,
@@ -1385,10 +1415,116 @@ pub const levels: []const Level = &.{
                     else => return null,
                 };
                 return .{
-                    .input = input,
-                    // .expected = input,
-                    .expected = try store(pool, .doPair(input.pair.right, input.pair.left)),
+                    .input = try store(pool, .doPair(input.pair.right, input.pair.left)),
+                    // .input = input,
+                    .expected = input,
                 };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "mirrorTree",
+        .description = "Mirror the given tree",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    const input = try randomSexpr(pool, values, random, if (k < 10) 1 else 2, if (k < 10) 3 else 5);
+                    return .{
+                        .input = input,
+                        .expected = try Helpers.mirrorTree(pool, input),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "sameShape?",
+        .description = "Check if two halves have the same shape",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                if (k < 100) {
+                    const should_be_equal = k % 2 == 0;
+                    const input = try randomSexpr(pool, values, random, if (k < 10) 1 else 2, 5);
+                    if (should_be_equal) {
+                        const other = try Helpers.changeValuesRandomly(pool, input, values, random);
+                        return .{
+                            .input = try store(pool, Sexpr.doPair(input, other)),
+                            .expected = Sexpr.builtin.true,
+                        };
+                    } else {
+                        const other = try randomSexpr(pool, values, random, if (k < 10) 1 else 2, if (k < 10) 3 else 5);
+                        return .{
+                            .input = try store(pool, Sexpr.doPair(input, other)),
+                            .expected = Sexpr.fromBool(Helpers.sameShape(input, other)),
+                        };
+                    }
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "pairToList",
+        .description = "Build a list with the two given elements",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const values = Vals.abc;
+                const k1 = @mod(k, values.len);
+                const k2 = @divFloor(k, values.len);
+                if (k2 < values.len) {
+                    return .{
+                        .input = try store(pool, Sexpr.doPair(values[k1], values[k2])),
+                        .expected = try toList(pool, &.{ values[k1], values[k2] }),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "evenLength?",
+        .description = "Check if the list has an even or odd length",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const some_samples: []const []const *const Sexpr = &.{
+                    &.{},
+                    &.{Vals.lowercase[0]},
+                    &.{ Vals.lowercase[0], Vals.lowercase[1] },
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
+                };
+                if (kommon.safeAt([]const *const Sexpr, some_samples, k)) |input| {
+                    return .{
+                        .input = try toList(pool, input),
+                        .expected = Sexpr.fromBool(input.len % 2 == 0),
+                    };
+                } else if (k < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                    const random = random_instance.random();
+                    var remaining_len = 1 + random.uintLessThan(usize, switch (k) {
+                        0...19 => 4,
+                        20...59 => 7,
+                        60...100 => 50,
+                        else => unreachable,
+                    });
+                    var input = Sexpr.builtin.nil;
+                    const is_even = remaining_len % 2 == 0;
+                    while (remaining_len > 0) : (remaining_len -= 1) {
+                        const i = random.uintLessThan(usize, Vals.lowercase.len);
+                        input = try store(pool, Sexpr.doPair(Vals.lowercase[i], input));
+                    }
+                    return .{
+                        .input = input,
+                        .expected = Sexpr.fromBool(is_even),
+                    };
+                } else return null;
             }
         }.generate_sample,
     },

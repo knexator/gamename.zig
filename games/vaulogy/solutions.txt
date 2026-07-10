@@ -104,6 +104,12 @@ last {
     (@x . @y) -> last: @y;
 }
 
+move-last-to-first {
+    (@x . nil) -> (@x . nil);
+    (@x . @y) -> move-last-to-first: @y {
+        (@f . @r) -> (@f . (@x . @r));
+    };
+}
 
 shiftAll {
     (@a . @b) -> shiftAll: @a {
@@ -120,6 +126,10 @@ hasSomeB {
     }
     b -> true;
     @other -> false;
+}
+
+prepend {
+    (@x . @y) -> (@y . @x);
 }
 
 second {
@@ -534,3 +544,50 @@ brainfuck_extract_loop {
 }
 
 // my next goal: justify a map function
+
+mirrorTree {
+    (x . y) -> mirrorTree: x {
+        x2 -> mirrorTree: y {
+            y2 -> (y2 . x2);
+        }
+    }
+}
+
+sameShape? {
+    ((a . b) . (x . y)) -> sameShape?: (a . x) {
+        no -> no;
+        yes -> sameShape?: (b . y);
+    }
+    ((a . b) . _) -> no;
+    (_ . (x . y)) -> no;
+    (_ . _) -> yes;
+}
+
+prepend {
+    (element . list) -> (element . list);
+}
+
+pairToList {
+    (x . y) -> (x . (y . "nil"));
+}
+
+evenLength? {
+    "nil" -> true;
+    (x . "nil") -> false;
+    (x . (y . rest)) -> evenLength?: rest;
+}
+
+without-last {
+    (x . "nil") -> "nil";
+    (x . rest) -> without-last: rest {
+        y -> (x . y);
+    }
+}
+
+// meta: generic-op-on-tree {
+//     (base-case-fn combine-fn)
+// }
+// with shiftAll = generic-op-on-tree . (shift id) 
+// and mirror-tree = generic-op-on-tree . (id swap) 
+// and has-b = generic-op-on-tree . (is-b or) 
+// etc
