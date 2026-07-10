@@ -1490,7 +1490,7 @@ pub const levels: []const Level = &.{
     },
     .{
         .fnk_name = "evenLength?",
-        .description = "Check if the list has an even or odd length",
+        .description = "Check if the list length is even or odd",
         .initial_definition = null,
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
@@ -1525,6 +1525,46 @@ pub const levels: []const Level = &.{
                         .expected = Sexpr.fromBool(is_even),
                     };
                 } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "append",
+        .description = "Move the first element to the end",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const some_samples: []const []const *const Sexpr = &.{
+                    &.{Vals.lowercase[0]},
+                    &.{ Vals.lowercase[0], Vals.lowercase[1] },
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
+                    &.{ Vals.uppercase[0], Vals.uppercase[1] },
+                    &.{ Vals.lowercase[3], Vals.lowercase[4], Vals.lowercase[4] },
+                };
+                if (k >= 100) return null;
+                const input: []const *const Sexpr = kommon.safeAt([]const *const Sexpr, some_samples, k) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                    const random = random_instance.random();
+                    const len = 3 + random.uintLessThan(usize, switch (k) {
+                        0...19 => 4,
+                        20...59 => 7,
+                        60...100 => 50,
+                        else => unreachable,
+                    });
+                    var result: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, len);
+                    for (0..len) |_| {
+                        const i = random.uintLessThan(usize, Vals.lowercase.len);
+                        result.appendAssumeCapacity(Vals.lowercase[i]);
+                    }
+                    break :blk result.items;
+                };
+                const output = try arena.alloc(*const Sexpr, input.len);
+                @memcpy(output[0 .. input.len - 1], input[1..]);
+                output[input.len - 1] = input[0];
+                return .{
+                    .input = try toList(pool, input),
+                    .expected = try toList(pool, output),
+                };
             }
         }.generate_sample,
     },

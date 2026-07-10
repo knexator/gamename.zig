@@ -4984,9 +4984,13 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_1_5, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(.new(30, -20));
         const lists_2 = try buildBubbleSimple(bubble_pos, lists_1_5, &.{ "reverse", "evenLength?" }, &.{}, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_2, undo_stack);
+
+        const hint_for_lists_2 = try buildBubbleSimple(bubble_pos.add(.new(-30, -20)), .nothing, &.{"append"}, &.{}, undo_stack);
+        Toybox.addChildLast(dst.main_area, hint_for_lists_2, undo_stack);
+        addHint(hint_for_lists_2, lists_2);
 
         bubble_pos.addInPlace(.new(30, 0));
         const lists_3 = try buildBubbleSimple(bubble_pos, lists_2, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{}, undo_stack);
