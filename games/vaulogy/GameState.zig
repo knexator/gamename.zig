@@ -4207,6 +4207,11 @@ const Workspace = struct {
 
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 15 }, true);
 
+        const path_next_close: Vec2 = .new(30, 0);
+        const path_next: Vec2 = .new(50, 0);
+        const path_up: Vec2 = .new(60, -30);
+        const path_down: Vec2 = .new(60, 30);
+
         var bubble_pos: Vec2 = .zero;
         const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .nothing, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
@@ -4271,7 +4276,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, welcome_to_the_lab, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const simple_warmup = try Toybox.buildBubble(.{ .pos = bubble_pos }, welcome_to_the_lab, .{
             .has_sexpr = try Toybox.buildSexprFromText(.{}, "(a . (b . c))", false, false, undo_stack),
         }, blk: {
@@ -4321,7 +4326,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, simple_warmup, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, simple_warmup, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4393,7 +4398,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_strands, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_executors = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_strands, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4460,7 +4465,7 @@ const Workspace = struct {
 
         const scorer_pos: Vec2 = .new(-7, 0);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_executors, .all_scorers_solved, if (false) blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4587,7 +4592,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_fnkboxes, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const player_creates_fnkbox = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_fnkboxes, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4643,7 +4648,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, player_creates_fnkbox, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_wildcards = try Toybox.buildBubble(.{ .pos = bubble_pos }, player_creates_fnkbox, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4683,7 +4688,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_wildcards, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_calling = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_wildcards, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4721,7 +4726,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_calling, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const calling_exercise = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_calling, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4760,7 +4765,7 @@ const Workspace = struct {
 
         dst.toolbar_unlocks.case_with_wildcards = calling_exercise;
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_nested_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, calling_exercise, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4792,7 +4797,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_nested_strands, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const intro_to_mixing_both_tricks = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_nested_strands, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4825,28 +4830,33 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next_close);
         const final_tutorial = try buildBubbleSimple(bubble_pos, intro_to_mixing_both_tricks, &.{"shiftPair"}, &.{
             &.{ "You now know", "everything!" },
             &.{"Good luck!"},
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, final_tutorial, undo_stack);
 
-        bubble_pos.addInPlace(.new(40, -20));
+        var old_bubble_pos = bubble_pos;
+        bubble_pos.addInPlace(path_up);
         const first_recursion_cruel = try buildBubbleSimple(bubble_pos, final_tutorial, &.{ "shiftAll", "mirrorTree" }, &.{
-            &.{ "Most assignments", "will be", "unreasonably", "hard" },
-            &.{ "Don't hesitate", "to look on the", "slides on top", "for a hint" },
+            &.{ "From now on,", "I won't always", "tell you", "all you need", "to know" },
+            &.{ "Instead of", "going from", "easy to hard", "assignments..." },
+            &.{ "...I will give you", "unreasonable", "hard ones first and", "hide the tutorial", "behind that", "'hint?' button" },
+            // &.{ "Some", "assignments", "will be", "unreasonably", "hard" },
+            // &.{ "or require you", "to rediscover", "some genius", "idea"},
+            // &.{ "Don't hesitate", "to use the", "'hint' button", "for extra", "explanations" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_cruel, undo_stack);
 
-        const first_recursion_nicer = try buildBubbleSimple(bubble_pos.add(.new(-20, -30)), .nothing, &.{"hasSomeB"}, &.{
+        const first_recursion_nicer = try buildBubbleSimple(bubble_pos.add(path_down.neg()), .nothing, &.{"hasSomeB"}, &.{
             &.{ "Many problems", "can be solved", "by a function", "that invokes", "itself" },
-            &.{ "(these are called", "'recursive' functions)" },
+            &.{ "(these are", "'recursive'", "functions)" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, first_recursion_nicer, undo_stack);
         addHint(first_recursion_nicer, first_recursion_cruel);
 
-        const optional = try Toybox.buildBubble(.{ .pos = bubble_pos.addY(40) }, final_tutorial, .all_scorers_solved, blk: {
+        const optional = try Toybox.buildBubble(.{ .pos = old_bubble_pos.add(path_down) }, final_tutorial, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4878,14 +4888,14 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, optional, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const double_recursion = try buildBubbleSimple(bubble_pos, first_recursion_cruel, &.{"sameShape?"}, &.{
             &.{ "Now that you know", "how to recurse", "on a tree..." },
             &.{ "...let's see how", "you recurse on", "two trees at once" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, double_recursion, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, double_recursion, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4922,7 +4932,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_lists, undo_stack);
         dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_lists, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4952,7 +4962,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_1, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const lists_1_5 = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_1, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -4984,31 +4994,31 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_1_5, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, -20));
+        bubble_pos.addInPlace(path_up);
         const lists_remove_last_b = try buildBubbleSimple(bubble_pos, lists_1_5, &.{"removeLastB"}, &.{
             &.{ "I don't expect", "you to get", "this one", "without", "the hints" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_remove_last_b, undo_stack);
 
-        var other_bubble_pos = bubble_pos;
-        other_bubble_pos.addInPlace(.new(-30, -20));
-        const hints_for_lists_remove_last_b = try buildBubbleSimple(other_bubble_pos, .nothing, &.{ "reverse", "removeFirstB" }, &.{}, undo_stack);
+        old_bubble_pos = bubble_pos;
+        old_bubble_pos.addInPlace(path_down.neg());
+        const hints_for_lists_remove_last_b = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "reverse", "removeFirstB" }, &.{}, undo_stack);
         Toybox.addChildLast(dst.main_area, hints_for_lists_remove_last_b, undo_stack);
         addHint(hints_for_lists_remove_last_b, lists_remove_last_b);
 
-        other_bubble_pos.addInPlace(.new(-30, 0));
-        const hint_for_reverse = try buildBubbleSimple(other_bubble_pos, .nothing, &.{"append"}, &.{}, undo_stack);
+        old_bubble_pos.addInPlace(path_next.neg());
+        const hint_for_reverse = try buildBubbleSimple(old_bubble_pos, .nothing, &.{"append"}, &.{}, undo_stack);
         Toybox.addChildLast(dst.main_area, hint_for_reverse, undo_stack);
         addHint(hint_for_reverse, hints_for_lists_remove_last_b);
 
-        other_bubble_pos = bubble_pos.addY(40);
-        const lists_middle_element = try buildBubbleSimple(other_bubble_pos, lists_1_5, &.{"middleElement"}, &.{
+        old_bubble_pos = bubble_pos.addY(40);
+        const lists_middle_element = try buildBubbleSimple(old_bubble_pos, lists_1_5, &.{"middleElement"}, &.{
             &.{ "Not hard, but", "the best solution", "requires some", "ingenuity" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_middle_element, undo_stack);
 
-        other_bubble_pos.addInPlace(.new(-30, 20));
-        const hint_for_lists_middle_element = try buildBubbleSimple(other_bubble_pos, .nothing, &.{"evenLength?"}, &.{
+        old_bubble_pos.addInPlace(path_up.neg());
+        const hint_for_lists_middle_element = try buildBubbleSimple(old_bubble_pos, .nothing, &.{"evenLength?"}, &.{
             &.{ "Two key ideas", "for the best", "solution:" },
             &.{ "Eating two", "elements on", "each step" },
             &.{ "Recursing", "on two lists", "at once" },
@@ -5017,19 +5027,19 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, hint_for_lists_middle_element, undo_stack);
         addHint(hint_for_lists_middle_element, lists_middle_element);
 
-        bubble_pos.addInPlace(.new(30, -20));
+        bubble_pos.addInPlace(path_up);
         const lists_final = try buildBubbleSimple(bubble_pos, lists_remove_last_b, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{
             &.{ "Try to get", "these ones", "without hints!" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_final, undo_stack);
 
-        other_bubble_pos = bubble_pos;
-        other_bubble_pos.addInPlace(.new(-30, -20));
-        const hint_for_lists_final = try buildBubbleSimple(other_bubble_pos, .nothing, &.{ "separateBooleans", "findTopTwoLongest" }, &.{}, undo_stack);
+        old_bubble_pos = bubble_pos;
+        old_bubble_pos.addInPlace(path_down.neg());
+        const hint_for_lists_final = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "separateBooleans", "findTopTwoLongest" }, &.{}, undo_stack);
         Toybox.addChildLast(dst.main_area, hint_for_lists_final, undo_stack);
         addHint(hint_for_lists_final, lists_final);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_final, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -5045,7 +5055,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calculator, undo_stack);
 
-        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos.add(.new(30, 20)) }, calculator, .all_scorers_solved, blk: {
+        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down) }, calculator, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5071,7 +5081,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, -20));
+        bubble_pos.addInPlace(path_up);
         const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, calculator, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -5114,7 +5124,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, meta_1, undo_stack);
         dst.toolbar_unlocks.meta_viewer = meta_1;
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_1, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
@@ -5137,7 +5147,7 @@ const Workspace = struct {
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, meta_2, undo_stack);
 
-        bubble_pos.addInPlace(.new(30, 0));
+        bubble_pos.addInPlace(path_next);
         const meta_final = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_2, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
