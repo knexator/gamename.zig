@@ -1361,6 +1361,7 @@ pub const Rect = extern struct {
     size: Vec2,
 
     pub const unit: Rect = .{ .top_left = .zero, .size = .one };
+    pub const zero: Rect = .{ .top_left = .zero, .size = .zero };
 
     pub fn asBounds(rect: Rect) Bounds {
         return .fromRect(rect);

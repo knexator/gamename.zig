@@ -9491,7 +9491,25 @@ const Menu = struct {
     showing: bool = true,
     // showing_t: f32 = 1,
 
-    hovered_t: f32 = 0,
+    save_slot: i32 = 0,
+
+    buttons: [3]Button = .{
+        .{ .rect = .fromCenterAndSize(.zero, .one), .action = .play },
+        .{ .rect = .zero, .action = .prev_save_slot },
+        .{ .rect = .zero, .action = .next_save_slot },
+    },
+
+    const Button = struct {
+        hovered_t: f32 = 0,
+        rect: Rect,
+        action: Action,
+
+        const Action = enum {
+            play,
+            next_save_slot,
+            prev_save_slot,
+        };
+    };
 
     pub fn update(menu: *Menu, platform: PlatformGives, maybe_drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         _ = scratch;
@@ -9503,18 +9521,52 @@ const Menu = struct {
         const mouse = platform.getMouse(camera);
         const delta_seconds = platform.delta_seconds;
 
-        const button_rect: Rect = .fromCenterAndSize(.zero, .one);
+        const slot_rect: Rect = camera.plusMargin(-0.1).withSize(.new(0.9, 0.2), .bottom_left);
+        menu.buttons[1].rect = slot_rect.withAspectRatio(1, .shrink, .top_left);
+        menu.buttons[2].rect = slot_rect.withAspectRatio(1, .shrink, .top_right);
 
-        const hovered = button_rect.contains(mouse.cur.position);
-        math.lerpTowards(&menu.hovered_t, if (hovered) 1 else 0, .slow, delta_seconds);
-
-        if (hovered and mouse.wasPressed(.left)) {
-            menu.showing = false;
+        const hovered: ?usize = for (menu.buttons, 0..) |button, k| {
+            if (button.rect.contains(mouse.cur.position)) break k;
+        } else null;
+        for (&menu.buttons, 0..) |*button, k| {
+            math.lerpTowards(&button.hovered_t, if (k == hovered) 1 else 0, .slow, delta_seconds);
         }
+        const maybe_action: ?Button.Action = if (mouse.wasPressed(.left))
+            if (hovered) |h| menu.buttons[h].action else null
+        else
+            null;
+
+        if (maybe_action) |action| switch (action) {
+            .play => menu.showing = false,
+            .prev_save_slot => menu.save_slot = @mod(menu.save_slot - 1, 100),
+            .next_save_slot => menu.save_slot = @mod(menu.save_slot + 1, 100),
+        };
 
         if (maybe_drawer) |drawer| {
-            drawer.canvas.borderRect(camera, button_rect.plusMargin(menu.hovered_t * 0.1), 0.05, .inner, .black);
-            try drawer.canvas.drawText(0, camera, "play", .centeredAt(button_rect.getCenter()), 0.2, .black);
+            try drawer.canvas.drawText(0, camera, try std.fmt.allocPrint(
+                drawer.canvas.frame_arena.allocator(),
+                "save {d}",
+                .{menu.save_slot},
+            ), .centeredAt(slot_rect.getCenter().addY(-0.01)), 0.125, .black);
+
+            for (menu.buttons) |button| {
+                drawer.canvas.borderRect(camera, button.rect.plusMargin(button.hovered_t * 0.1 * button.rect.size.y), switch (button.action) {
+                    .play => 0.05,
+                    .prev_save_slot,
+                    .next_save_slot,
+                    => 0.01,
+                }, .inner, .black);
+                try drawer.canvas.drawText(0, camera, switch (button.action) {
+                    .play => "play",
+                    .prev_save_slot => "<",
+                    .next_save_slot => ">",
+                }, .centeredAt(button.rect.getCenter()), switch (button.action) {
+                    .play => 0.25,
+                    .prev_save_slot,
+                    .next_save_slot,
+                    => 0.15,
+                }, .black);
+            }
 
             try drawer.canvas.drawText(0, camera, "Vaulogy", .centeredAt(.new(0, -0.85)), 0.4, .black);
         }
@@ -9587,6 +9639,18 @@ pub fn afterHotReload(self: *GameState) !void {
 var first_frame_done = false;
 var seconds_since_last_save: f32 = 0;
 
+fn getSave(platform: PlatformGives, slot: i32) ?std.io.AnyReader {
+    var buf: [128]u8 = undefined;
+    const name = std.fmt.bufPrint(&buf, "vaulogy_save_{d}", .{slot}) catch unreachable;
+    return platform.getItem(name);
+}
+
+fn setSave(platform: PlatformGives, slot: i32, data: []const u8) void {
+    var buf: [128]u8 = undefined;
+    const name = std.fmt.bufPrint(&buf, "vaulogy_save_{d}", .{slot}) catch unreachable;
+    return platform.setItem(name, data);
+}
+
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
@@ -9594,8 +9658,8 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     if (!first_frame_done) {
         first_frame_done = true;
         if (SAVING_ENABLED) {
-            if (platform.getItem("vaulogy_save")) |reader| {
-                // TODO: debug why we can't directly use reader
+            if (getSave(platform, self.menu.save_slot)) |reader| {
+                // TODO(platform): debug why we can't directly use reader
                 // try self.workspace.load(reader, &self.core_mem);
 
                 std.log.debug("got reader: {any}", .{reader});
@@ -9624,7 +9688,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
-        platform.setItem("vaulogy_save", asdf.items);
+        setSave(platform, self.menu.save_slot, asdf.items);
         seconds_since_last_save = 0;
         std.log.debug("autosaved", .{});
     }
@@ -9632,18 +9696,42 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
 
     if (platform.keyboard.wasPressed(.Escape)) {
         self.menu.showing = !self.menu.showing;
-        if (self.menu.showing) {
+        if (self.menu.showing and self.workspace.canAutosaveNow()) {
             var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
             defer asdf.deinit();
             try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
-            platform.setItem("vaulogy_save", asdf.items);
+            setSave(platform, self.menu.save_slot, asdf.items);
             seconds_since_last_save = 0;
         }
     }
 
     platform.gl.clear(COLORS.bg);
     if (self.menu.showing) {
+        const old_save_slot = self.menu.save_slot;
         try self.menu.update(platform, &self.drawer, self.usual.mem.frame.allocator());
+        const new_save_slot = self.menu.save_slot;
+        if (new_save_slot != old_save_slot) {
+            if (self.workspace.canAutosaveNow()) {
+                var asdf: std.ArrayList(u8) = .init(self.usual.mem.frame.allocator());
+                defer asdf.deinit();
+                try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());
+                setSave(platform, old_save_slot, asdf.items);
+                seconds_since_last_save = 0;
+            } else std.log.err("TODO: handle saving better", .{});
+            seconds_since_last_save = 0;
+
+            if (getSave(platform, new_save_slot)) |reader| {
+                const data = try reader.readAllAlloc(self.usual.mem.frame.allocator(), std.math.maxInt(usize));
+                var fbs = std.io.fixedBufferStream(data);
+                try self.workspace.load(fbs.reader().any(), self.usual.mem.frame.allocator());
+            } else {
+                const dst = &self.workspace;
+                dst.deinit();
+                toybox.deinit();
+                try toybox.init(toybox.all_legos_arena.child_allocator);
+                try dst.init(dst.arena_for_atom_names.child_allocator, dst.random_instance.next());
+            }
+        }
     } else {
         try self.workspace.update(platform, &self.drawer, self.usual.mem.frame.allocator());
     }
