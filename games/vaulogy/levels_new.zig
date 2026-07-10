@@ -1568,6 +1568,246 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
+    .{
+        .fnk_name = "middleElement",
+        .description = "Middle element of an odd-sized list",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const some_samples: []const []const *const Sexpr = &.{
+                    &.{Vals.lowercase[0]},
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2], Vals.lowercase[3], Vals.lowercase[4] },
+                };
+                if (k >= 100) return null;
+                const input: []const *const Sexpr = kommon.safeAt([]const *const Sexpr, some_samples, k) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                    const random = random_instance.random();
+                    const half_len = random.uintLessThan(usize, switch (k) {
+                        0...19 => 3,
+                        20...59 => 5,
+                        60...100 => 25,
+                        else => unreachable,
+                    });
+                    const len = half_len * 2 + 1;
+                    var result: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, len);
+                    for (0..len) |_| {
+                        const i = random.uintLessThan(usize, Vals.lowercase.len);
+                        result.appendAssumeCapacity(Vals.lowercase[i]);
+                    }
+                    break :blk result.items;
+                };
+                return .{
+                    .input = try toList(pool, input),
+                    .expected = input[@divExact(input.len - 1, 2)],
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "removeLastB",
+        .description = "Remove the last 'b' element",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const some_samples: []const []const *const Sexpr = &.{
+                    &.{Vals.lowercase[1]},
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2], Vals.lowercase[1], Vals.lowercase[4] },
+                };
+                if (k >= 100) return null;
+                const input: []const *const Sexpr = kommon.safeAt([]const *const Sexpr, some_samples, k) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                    const random = random_instance.random();
+                    const len = 3 + random.uintLessThan(usize, switch (k) {
+                        0...19 => 4,
+                        20...59 => 7,
+                        60...100 => 50,
+                        else => unreachable,
+                    });
+                    var generated_b = false;
+                    var result: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, len);
+                    for (0..len) |_| {
+                        const i = random.uintLessThan(usize, Vals.lowercase.len);
+                        if (i == 1) generated_b = true;
+                        result.appendAssumeCapacity(Vals.lowercase[i]);
+                    }
+                    if (!generated_b) {
+                        result.items[random.uintLessThan(usize, result.items.len)] = Vals.lowercase[1];
+                    }
+                    break :blk result.items;
+                };
+                var result: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, input.len);
+                result.appendSliceAssumeCapacity(input);
+                var index = result.items.len - 1;
+                while (true) : (index -= 1) {
+                    if (result.items[index] == Vals.lowercase[1]) {
+                        _ = result.orderedRemove(index);
+                        break;
+                    }
+                }
+                return .{
+                    .input = try toList(pool, input),
+                    .expected = try toList(pool, result.items),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "removeFirstB",
+        .description = "Remove the first 'b' element",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const some_samples: []const []const *const Sexpr = &.{
+                    &.{Vals.lowercase[1]},
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
+                    &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2], Vals.lowercase[1], Vals.lowercase[4] },
+                };
+                if (k >= 100) return null;
+                const input: []const *const Sexpr = kommon.safeAt([]const *const Sexpr, some_samples, k) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                    const random = random_instance.random();
+                    const len = 3 + random.uintLessThan(usize, switch (k) {
+                        0...19 => 4,
+                        20...59 => 7,
+                        60...100 => 50,
+                        else => unreachable,
+                    });
+                    var generated_b = false;
+                    var result: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, len);
+                    for (0..len) |_| {
+                        const i = random.uintLessThan(usize, Vals.lowercase.len);
+                        if (i == 1) generated_b = true;
+                        result.appendAssumeCapacity(Vals.lowercase[i]);
+                    }
+                    if (!generated_b) {
+                        result.items[random.uintLessThan(usize, result.items.len)] = Vals.lowercase[1];
+                    }
+                    break :blk result.items;
+                };
+                var result: std.ArrayListUnmanaged(*const Sexpr) = try .initCapacity(arena, input.len);
+                result.appendSliceAssumeCapacity(input);
+                var index: usize = 0;
+                while (true) : (index += 1) {
+                    if (result.items[index] == Vals.lowercase[1]) {
+                        _ = result.orderedRemove(index);
+                        break;
+                    }
+                }
+                return .{
+                    .input = try toList(pool, input),
+                    .expected = try toList(pool, result.items),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "separateBooleans",
+        .description = "Separate true and false values",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const t = Sexpr.builtin.true;
+                const f = Sexpr.builtin.false;
+                const Foo = struct { input: []const *const Sexpr, n_true: usize, n_false: usize };
+                const premade_samples: []const Foo = &.{
+                    .{
+                        .input = &.{ t, f, t },
+                        .n_true = 2,
+                        .n_false = 1,
+                    },
+                    .{
+                        .input = &.{ t, f, f, t, f },
+                        .n_true = 2,
+                        .n_false = 3,
+                    },
+                    .{
+                        .input = &.{ t, t, t, f, f, f, f },
+                        .n_true = 3,
+                        .n_false = 4,
+                    },
+                    .{
+                        .input = &.{ t, f, t, f, t, f, t },
+                        .n_true = 4,
+                        .n_false = 3,
+                    },
+                };
+                if (k >= 100) return null;
+                const input: Foo = kommon.safeAt(Foo, premade_samples, k) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                    const random = random_instance.random();
+                    var num_true = 1 + random.uintLessThan(usize, 10);
+                    var num_false = 1 + random.uintLessThan(usize, 10);
+                    // long samples
+                    if (k > 90) num_false += 50;
+                    if (k > 90) num_true += 50;
+                    if (num_true == num_false) {
+                        if (random.boolean()) {
+                            num_true += 1;
+                        } else {
+                            num_false += 1;
+                        }
+                    }
+                    const all_elements = try arena.alloc(*const Sexpr, num_true + num_false);
+                    @memset(all_elements, f);
+                    for (0..num_true) |_| {
+                        var index = random.uintLessThan(usize, all_elements.len);
+                        while (all_elements[index] == t) {
+                            index = random.uintLessThan(usize, all_elements.len);
+                        }
+                        all_elements[index] = t;
+                    }
+                    break :blk .{
+                        .input = all_elements,
+                        .n_true = num_true,
+                        .n_false = num_false,
+                    };
+                };
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
+                const random = random_instance.random();
+                return .{
+                    .input = try toList(pool, input.input),
+                    .expected = try store(pool, Sexpr.doPair(
+                        try randomList(pool, &.{Sexpr.builtin.true}, random, input.n_true),
+                        try randomList(pool, &.{Sexpr.builtin.false}, random, input.n_false),
+                    )),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "findTopTwoLongest",
+        .description = "Get the longest and second-longest lists",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index < 100) {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    var elements_count = 3 + random.uintLessThan(usize, if (sample_index < 5) 1 else 12);
+                    // long samples
+                    if (sample_index > 90) elements_count += 20;
+                    const counts = try arena.alloc(usize, elements_count);
+                    counts[0] = 1 + random.uintLessThan(usize, if (sample_index < 3) 1 else 10);
+                    for (counts[1..], 0..) |*dst, n| {
+                        dst.* = counts[n] + 1 + random.uintLessThan(usize, 6);
+                    }
+                    const elements = try arena.alloc(*const Sexpr, elements_count);
+                    for (counts, elements) |count, *dst| {
+                        dst.* = try randomList(pool, &Vals.lowercase, random, count);
+                    }
+                    const longest = elements[elements_count - 1];
+                    const second = elements[elements_count - 2];
+                    random.shuffle(*const Sexpr, elements);
+                    return .{
+                        .input = try toList(pool, elements),
+                        .expected = try store(pool, .doPair(longest, second)),
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
 };
 
 fn store(pool: *SexprPool, s: Sexpr) !*const Sexpr {

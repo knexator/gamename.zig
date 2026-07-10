@@ -4985,19 +4985,52 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, lists_1_5, undo_stack);
 
         bubble_pos.addInPlace(.new(30, -20));
-        const lists_2 = try buildBubbleSimple(bubble_pos, lists_1_5, &.{ "reverse", "evenLength?" }, &.{}, undo_stack);
-        Toybox.addChildLast(dst.main_area, lists_2, undo_stack);
+        const lists_remove_last_b = try buildBubbleSimple(bubble_pos, lists_1_5, &.{"removeLastB"}, &.{
+            &.{ "I don't expect", "you to get", "this one", "without", "the hints" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, lists_remove_last_b, undo_stack);
 
-        const hint_for_lists_2 = try buildBubbleSimple(bubble_pos.add(.new(-30, -20)), .nothing, &.{"append"}, &.{}, undo_stack);
-        Toybox.addChildLast(dst.main_area, hint_for_lists_2, undo_stack);
-        addHint(hint_for_lists_2, lists_2);
+        var other_bubble_pos = bubble_pos;
+        other_bubble_pos.addInPlace(.new(-30, -20));
+        const hints_for_lists_remove_last_b = try buildBubbleSimple(other_bubble_pos, .nothing, &.{ "reverse", "removeFirstB" }, &.{}, undo_stack);
+        Toybox.addChildLast(dst.main_area, hints_for_lists_remove_last_b, undo_stack);
+        addHint(hints_for_lists_remove_last_b, lists_remove_last_b);
+
+        other_bubble_pos.addInPlace(.new(-30, 0));
+        const hint_for_reverse = try buildBubbleSimple(other_bubble_pos, .nothing, &.{"append"}, &.{}, undo_stack);
+        Toybox.addChildLast(dst.main_area, hint_for_reverse, undo_stack);
+        addHint(hint_for_reverse, hints_for_lists_remove_last_b);
+
+        other_bubble_pos = bubble_pos.addY(40);
+        const lists_middle_element = try buildBubbleSimple(other_bubble_pos, lists_1_5, &.{"middleElement"}, &.{
+            &.{ "Not hard, but", "the best solution", "requires some", "ingenuity" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, lists_middle_element, undo_stack);
+
+        other_bubble_pos.addInPlace(.new(-30, 20));
+        const hint_for_lists_middle_element = try buildBubbleSimple(other_bubble_pos, .nothing, &.{"evenLength?"}, &.{
+            &.{ "Two key ideas", "for the best", "solution:" },
+            &.{ "Eating two", "elements on", "each step" },
+            &.{ "Recursing", "on two lists", "at once" },
+            &.{ "Here's an", "assignment", "to practice", "the first one" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, hint_for_lists_middle_element, undo_stack);
+        addHint(hint_for_lists_middle_element, lists_middle_element);
+
+        bubble_pos.addInPlace(.new(30, -20));
+        const lists_final = try buildBubbleSimple(bubble_pos, lists_remove_last_b, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{
+            &.{ "Try to get", "these ones", "without hints!" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, lists_final, undo_stack);
+
+        other_bubble_pos = bubble_pos;
+        other_bubble_pos.addInPlace(.new(-30, -20));
+        const hint_for_lists_final = try buildBubbleSimple(other_bubble_pos, .nothing, &.{ "separateBooleans", "findTopTwoLongest" }, &.{}, undo_stack);
+        Toybox.addChildLast(dst.main_area, hint_for_lists_final, undo_stack);
+        addHint(hint_for_lists_final, lists_final);
 
         bubble_pos.addInPlace(.new(30, 0));
-        const lists_3 = try buildBubbleSimple(bubble_pos, lists_2, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{}, undo_stack);
-        Toybox.addChildLast(dst.main_area, lists_3, undo_stack);
-
-        bubble_pos.addInPlace(.new(30, 0));
-        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_3, .all_scorers_solved, blk: {
+        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_final, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5591,6 +5624,7 @@ const Workspace = struct {
             .new(-8, -8),
             .new(-0.3, -7.2),
             .new(7.7, -7.1),
+            .new(-6.9, 5.8),
         };
         return try Toybox.buildBubble(.{ .pos = bubble_pos }, prev, .all_scorers_solved, blk: {
             const bp = try Toybox.new(

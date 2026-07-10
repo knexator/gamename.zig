@@ -104,13 +104,6 @@ last {
     (@x . @y) -> last: @y;
 }
 
-move-last-to-first {
-    (@x . nil) -> (@x . nil);
-    (@x . @y) -> move-last-to-first: @y {
-        (@f . @r) -> (@f . (@x . @r));
-    };
-}
-
 shiftAll {
     (@a . @b) -> shiftAll: @a {
         @A -> shiftAll: @b {
@@ -126,10 +119,6 @@ hasSomeB {
     }
     b -> true;
     @other -> false;
-}
-
-prepend {
-    (@x . @y) -> (@y . @x);
 }
 
 second {
@@ -302,6 +291,10 @@ findSecondLongest {
     @x -> findTopTwo: (@x . (nil . nil)) {
         (@fst . @snd) -> @snd;
     }
+}
+
+findTopTwoLongest {
+    @x -> findTopTwo: (@x . (nil . nil));
 }
 
 // custom
@@ -546,41 +539,90 @@ brainfuck_extract_loop {
 // my next goal: justify a map function
 
 mirrorTree {
-    (x . y) -> mirrorTree: x {
-        x2 -> mirrorTree: y {
-            y2 -> (y2 . x2);
+    (@x . @y) -> mirrorTree: @x {
+        @x2 -> mirrorTree: @y {
+            @y2 -> (@y2 . @x2);
         }
     }
 }
 
 sameShape? {
-    ((a . b) . (x . y)) -> sameShape?: (a . x) {
-        no -> no;
-        yes -> sameShape?: (b . y);
+    ((@a . @b) . (@x . @y)) -> sameShape?: (@a . @x) {
+        // false -> false;
+        true -> sameShape?: (@b . @y);
     }
-    ((a . b) . _) -> no;
-    (_ . (x . y)) -> no;
-    (_ . _) -> yes;
+    ((@a . @b) . @_) -> false;
+    (@_ . (@x . @y)) -> false;
+    (@_ . @_) -> true;
 }
 
 prepend {
-    (element . list) -> (element . list);
+    (@list . @element) -> (@element . @list);
 }
 
 pairToList {
-    (x . y) -> (x . (y . "nil"));
+    (@x . @y) -> (@x . (@y . nil));
 }
 
 evenLength? {
-    "nil" -> true;
-    (x . "nil") -> false;
-    (x . (y . rest)) -> evenLength?: rest;
+    nil -> true;
+    (@x . nil) -> false;
+    (@x . (@y . @rest)) -> evenLength?: @rest;
 }
 
-without-last {
-    (x . "nil") -> "nil";
-    (x . rest) -> without-last: rest {
-        y -> (x . y);
+// without-last {
+//     (x . "nil") -> "nil";
+//     (x . rest) -> without-last: rest {
+//         y -> (x . y);
+//     }
+// }
+
+append {
+    (@x . nil) -> (@x . nil);
+    (@x . (@y . @rest)) -> append: (@x . @rest) {
+        @r2 -> (@y . @r2);
+    }
+}
+
+middleElement {
+    @x -> middleElementHelper: (@x . @x);
+}
+
+middleElementHelper {
+    ( (@f . @r) . (@x . nil) ) -> @f;
+    ( (@f . @r) . (@x . (@y . @rest)) ) -> middleElementHelper: (@r . @rest);
+}
+
+// TODO: use meta
+removeLastB {
+    @x -> reverse: @x {
+        @y -> removeFirstB: @y {
+            @z -> reverse: @z;
+        }
+    }
+}
+
+removeFirstB {
+    (b . @r) -> @r;
+    (@x . @r) -> removeFirstB: @r {
+        @r2 -> (@x . @r2);
+    }
+}
+
+separateBooleans {
+    @x -> separateBooleansHelper: (@x . (nil . nil));
+}
+
+separateBooleansHelper {
+    (nil . @z) -> @z;
+    ((true . @rest) . (@x . @y)) -> separateBooleansHelper: (@rest . ( (true . @x) . @y ));
+    ((false . @rest) . (@x . @y)) -> separateBooleansHelper: (@rest . ( @x . (false . @y) ));
+}
+
+moveLastToFirst {
+    (@x . nil) -> (@x . nil);
+    (@x . @y) -> moveLastToFirst: @y {
+        (@f . @r) -> (@f . (@x . @r));
     }
 }
 
