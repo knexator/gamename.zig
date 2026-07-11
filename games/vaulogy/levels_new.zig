@@ -263,6 +263,12 @@ pub const levels: []const Level = &.{
                 .next = null,
             },
             .{
+                .pattern = &.doPair(Vals.abc[1], &.doVar("any")),
+                .template = &.doVar("any"),
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
                 .pattern = &.doPair(Sexpr.builtin.empty, &.doVar("any")),
                 .template = &.doVar("any"),
                 .fnk_name = Sexpr.builtin.empty,
