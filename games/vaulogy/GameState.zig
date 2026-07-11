@@ -2479,6 +2479,7 @@ pub const Lego = struct {
             .button,
             .executor_brake,
             .executor_crank,
+            .editable_textline,
             => .no,
             .fnkbox => .fnkbox,
             .lens => blk: {
@@ -2495,7 +2496,6 @@ pub const Lego = struct {
             .executor_controls,
             .microscope,
             .fnkbox_box,
-            .editable_textline,
             .scrollable_list,
             .fnkslist_element,
             .newcase,
@@ -2760,18 +2760,18 @@ const TextManipulation = struct {
         if (edit.selection.cursor >= end) edit.selection.cursor -= end - start;
     }
 
-    pub fn backspace(edit: TextManipulation) void {
+    pub fn backspace(edit: TextManipulation, jump: Jump) void {
         const start: usize, const end: usize = if (edit.selection.empty())
-            .{ edit.moved(edit.selection.cursor, .left, .one), edit.selection.cursor }
+            .{ edit.moved(edit.selection.cursor, .left, jump), edit.selection.cursor }
         else
             .{ edit.selection.min(), edit.selection.max() };
 
         edit.delete(start, end);
     }
 
-    pub fn supr(edit: TextManipulation) void {
+    pub fn supr(edit: TextManipulation, jump: Jump) void {
         const start: usize, const end: usize = if (edit.selection.empty())
-            .{ edit.selection.cursor, edit.moved(edit.selection.cursor, .right, .one) }
+            .{ edit.selection.cursor, edit.moved(edit.selection.cursor, .right, jump) }
         else
             .{ edit.selection.min(), edit.selection.max() };
 
@@ -2791,7 +2791,9 @@ const TextManipulation = struct {
         );
         edit.selection.* = .both(edit.selection.cursor + 1);
 
+        // TODO(zig): compiler bug here, dup is undefined if we dont print it
         const dup = edit.cursor_points.items[edit.selection.cursor - 1];
+        std.log.info("dup: {any}", .{dup});
         try edit.cursor_points.insert(edit.alloc_cursor_points, edit.selection.cursor, dup);
         for (edit.cursor_points.items[edit.selection.cursor..]) |*dst| {
             dst.index += bytes.len;
@@ -2877,16 +2879,16 @@ const TextManipulation = struct {
             .{ .index = 5, .relative_pos = .zero, .relative_height = 0 },
         }, helper.cursor_points.items);
 
-        helper.edit().supr();
+        helper.edit().supr(.one);
         try helper.expectState("he.,lo");
 
-        helper.edit().backspace();
+        helper.edit().backspace(.one);
         try helper.expectState("h.,lo");
 
         helper.edit().right(true, .one);
         try helper.expectState("h.l,o");
 
-        helper.edit().backspace();
+        helper.edit().backspace(.one);
         try helper.expectState("h.,o");
 
         helper.edit().right(true, .one);
@@ -2907,13 +2909,13 @@ const TextManipulation = struct {
         helper.edit().left(true, .one);
         try helper.expectState(",ho.");
 
-        helper.edit().backspace();
+        helper.edit().backspace(.one);
         try helper.expectState(",.");
 
-        helper.edit().backspace();
+        helper.edit().backspace(.one);
         try helper.expectState(",.");
 
-        helper.edit().supr();
+        helper.edit().supr(.one);
         try helper.expectState(",.");
 
         try helper.edit().insertCharacter("a");
@@ -7353,10 +7355,10 @@ const Workspace = struct {
                 textedit.right(platform.keyboard.cur.isShiftDown(), if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
             if (platform.wasKeyPressedOrRetriggered(.Backspace, key_time_rest, key_time_first)) {
-                textedit.backspace();
+                textedit.backspace(if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
             if (platform.wasKeyPressedOrRetriggered(.Delete, key_time_rest, key_time_first)) {
-                textedit.supr();
+                textedit.supr(if (platform.keyboard.cur.isControlDown()) .word else .one);
             }
 
             while (platform.consumeTextInput()) |input| {
