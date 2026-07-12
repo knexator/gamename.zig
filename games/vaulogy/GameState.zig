@@ -4873,6 +4873,8 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "They will be a bit", "spoiled by later", "assignments,", "so it's more fun to", "try them now" });
             postit_pos.addInPlace(.new(7.7, 0.2));
             postit.addFromText(postit_pos, &.{ "But don't", "expect to", "succeed!" });
+            postit_pos = .new(-7, 7);
+            postit.addFromText(postit_pos, &.{ "You can", "right click", "functions to", "create your", "own helpers" });
 
             Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -2) }, &.{
                 levelIndex("biggestHalf"),
@@ -4999,6 +5001,7 @@ const Workspace = struct {
         bubble_pos.addInPlace(path_up);
         const lists_remove_last_b = try buildBubbleSimple(bubble_pos, lists_1_5, &.{"removeLastB"}, &.{
             &.{ "I don't expect", "you to get", "this one", "without", "the hints" },
+            &.{ "Remember you", "can right click", "functions to", "create your", "own helpers" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, lists_remove_last_b, undo_stack);
 
@@ -5013,7 +5016,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, hint_for_reverse, undo_stack);
         addHint(hint_for_reverse, hints_for_lists_remove_last_b);
 
-        old_bubble_pos = bubble_pos.addY(40);
+        old_bubble_pos = bubble_pos.add(path_up.neg()).add(path_down);
         const lists_middle_element = try buildBubbleSimple(old_bubble_pos, lists_1_5, &.{"middleElement"}, &.{
             &.{ "Not hard, but", "the best solution", "requires some", "ingenuity" },
         }, undo_stack);
@@ -5042,20 +5045,37 @@ const Workspace = struct {
         addHint(hint_for_lists_final, lists_final);
 
         bubble_pos.addInPlace(path_next);
-        const calculator = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_final, .all_scorers_solved, blk: {
-            const bp = try Toybox.new(
-                .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-                undo_stack,
-            );
+        const breather = try buildBubbleSimple(bubble_pos, lists_final, &.{}, &.{
+            &.{ "You've come", "so far!" },
+            &.{ "You're almost", "ready for", "your actual", "assignment" },
+            &.{ "But first,", "one last", "tutorial" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, breather, undo_stack);
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 0) }, &.{
-                levelIndex("calculator"),
-            }, &.{.new(0, 8.5)}, undo_stack), undo_stack);
-
-            break :blk bp;
+        bubble_pos.addInPlace(path_up);
+        const calculator = try buildBubbleSimple(bubble_pos, breather, &.{"calculator"}, &.{
+            &.{ "There are two", "lessons here" },
+            &.{ "The hints will", "show you the", "details of", "the first one:", "numbers" },
+            &.{ "The second one", "is more subtle", "and needs", "no hint" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calculator, undo_stack);
+
+        old_bubble_pos = bubble_pos;
+        old_bubble_pos.addInPlace(path_down.neg());
+        const calculator_hints_1 = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "calculator_sum", "calculator_mul", "calculator_sub" }, &.{
+            &.{ "These default", "solutions", "are not", "enough!" },
+            &.{ "You'll need to", "handle all", "numbers, not", "just 1 to 9" },
+            &.{ "The hint can", "show you how" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, calculator_hints_1, undo_stack);
+        addHint(calculator_hints_1, calculator);
+
+        old_bubble_pos.addInPlace(path_next.neg());
+        const calculator_hints_2 = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "unary_from_naive", "naive_from_unary", "sum_unary" }, &.{
+            &.{ "There are", "the only", "hardcoded", "strands", "you need!" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, calculator_hints_2, undo_stack);
+        addHint(calculator_hints_2, calculator_hints_1);
 
         const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down) }, calculator, .all_scorers_solved, blk: {
             const bp = try Toybox.new(

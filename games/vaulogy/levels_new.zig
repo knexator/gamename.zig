@@ -1814,6 +1814,290 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
+    .{
+        .fnk_name = "calculator_sum",
+        .description = "Calculator: sum",
+        // TODO (zig): "global variable contains reference to comptime var"
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[0]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[1]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[2]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[3]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[4]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[5]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[6]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[7]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[0]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[1]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[2]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[3]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[4]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[5]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[6]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[0]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[1]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[2]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[3]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[4]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[5]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[0]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[1]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[2]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[3]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[4]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[0]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[1]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[2]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[3]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[0]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[1]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[2]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[0]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[1]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[0]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const In = std.meta.Tuple(&.{ i32, i32 });
+                var all_examples: std.ArrayListUnmanaged(In) = try .initCapacity(arena, 81);
+                for (1..10) |k1| {
+                    for (1..10) |k2| {
+                        if (k1 + k2 < 10) {
+                            all_examples.appendAssumeCapacity(.{ @intCast(k1), @intCast(k2) });
+                        }
+                    }
+                }
+                if (sample_index >= all_examples.items.len) return null;
+                var random_instance: std.Random.DefaultPrng = .init(0);
+                const random = random_instance.random();
+                random.shuffle(In, all_examples.items);
+                const input = all_examples.items[sample_index];
+                return .{
+                    .input = try store(pool, Sexpr.doPair(
+                        Vals.naive_numbers[@intCast(input[0] - 1)],
+                        Vals.naive_numbers[@intCast(input[1] - 1)],
+                    )),
+                    .expected = toNaiveNumber(input[0] + input[1]) catch unreachable,
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "calculator_sub",
+        .description = "Calculator: substract",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[0]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[0]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[1]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[0]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[1]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[2]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[0]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[1]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[2]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[3]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[0]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[1]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[2]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[3]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[4]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[0]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[1]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[2]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[3]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[4]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[5]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[0]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[1]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[2]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[3]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[4]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[5]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[6]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[0]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[1]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[2]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[3]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[4]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[5]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[6]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[7]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const In = std.meta.Tuple(&.{ i32, i32 });
+                var all_examples: std.ArrayListUnmanaged(In) = try .initCapacity(arena, 81);
+                for (1..10) |k1| {
+                    for (1..10) |k2| {
+                        if (k1 > k2 and (k1 - k2) < 10) {
+                            all_examples.appendAssumeCapacity(.{ @intCast(k1), @intCast(k2) });
+                        }
+                    }
+                }
+                if (sample_index >= all_examples.items.len) return null;
+                var random_instance: std.Random.DefaultPrng = .init(0);
+                const random = random_instance.random();
+                random.shuffle(In, all_examples.items);
+                const input = all_examples.items[sample_index];
+                return .{
+                    .input = try store(pool, Sexpr.doPair(
+                        Vals.naive_numbers[@intCast(input[0] - 1)],
+                        Vals.naive_numbers[@intCast(input[1] - 1)],
+                    )),
+                    .expected = toNaiveNumber(input[0] - input[1]) catch unreachable,
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "calculator_mul",
+        .description = "Calculator: multiply",
+        .initial_definition = .{ .cases = &.{
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[0]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[1]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[2]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[3]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[4]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[5]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[6]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[7]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[0], Vals.naive_numbers[8]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[0]), .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[1]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[2]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[1], Vals.naive_numbers[3]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[0]), .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[1]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[2], Vals.naive_numbers[2]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[0]), .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[3], Vals.naive_numbers[1]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[4], Vals.naive_numbers[0]), .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[5], Vals.naive_numbers[0]), .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[6], Vals.naive_numbers[0]), .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[0]), .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+            .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[0]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                const In = std.meta.Tuple(&.{ i32, i32 });
+                var all_examples: std.ArrayListUnmanaged(In) = try .initCapacity(arena, 81);
+                for (1..10) |k1| {
+                    for (1..10) |k2| {
+                        if (k1 * k2 < 10) {
+                            all_examples.appendAssumeCapacity(.{ @intCast(k1), @intCast(k2) });
+                        }
+                    }
+                }
+                if (sample_index >= all_examples.items.len) return null;
+                var random_instance: std.Random.DefaultPrng = .init(0);
+                const random = random_instance.random();
+                random.shuffle(In, all_examples.items);
+                const input = all_examples.items[sample_index];
+                return .{
+                    .input = try store(pool, Sexpr.doPair(
+                        Vals.naive_numbers[@intCast(input[0] - 1)],
+                        Vals.naive_numbers[@intCast(input[1] - 1)],
+                    )),
+                    .expected = toNaiveNumber(input[0] * input[1]) catch unreachable,
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "unary_from_naive",
+        .description = "convert to unary",
+        .initial_definition = .{
+            .cases = &.{
+                .{ .pattern = Vals.naive_numbers[0], .template = Vals.unary_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[1], .template = Vals.unary_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[2], .template = Vals.unary_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[3], .template = Vals.unary_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[4], .template = Vals.unary_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[5], .template = Vals.unary_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[6], .template = Vals.unary_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[7], .template = Vals.unary_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.naive_numbers[8], .template = Vals.unary_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            },
+        },
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index < 9) {
+                    return .{
+                        .input = Vals.unary_numbers[sample_index],
+                        .expected = Vals.naive_numbers[sample_index],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "naive_from_unary",
+        .description = "convert from unary",
+        .initial_definition = .{
+            .cases = &.{
+                .{ .pattern = Vals.unary_numbers[0], .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[1], .template = Vals.naive_numbers[1], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[2], .template = Vals.naive_numbers[2], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[3], .template = Vals.naive_numbers[3], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[4], .template = Vals.naive_numbers[4], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[5], .template = Vals.naive_numbers[5], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[6], .template = Vals.naive_numbers[6], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[7], .template = Vals.naive_numbers[7], .fnk_name = Sexpr.builtin.empty, .next = null },
+                .{ .pattern = Vals.unary_numbers[8], .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
+            },
+        },
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index < 9) {
+                    return .{
+                        .input = Vals.naive_numbers[sample_index],
+                        .expected = Vals.unary_numbers[sample_index],
+                    };
+                } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "sum_unary",
+        .description = "sum two unary numbers",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const some_samples: []const [2]i32 = &.{
+                    .{ 1, 1 },
+                    .{ 2, 2 },
+                    .{ 0, 4 },
+                    .{ 4, 0 },
+                    .{ 2, 3 },
+                    .{ 2, -1 },
+                    .{ 2, -3 },
+                    .{ -2, -1 },
+                    .{ 2, -2 },
+                };
+                const input: [2]i32 = kommon.safeAt([2]i32, some_samples, sample_index) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    const bound: i32 = switch (sample_index) {
+                        0...19 => 4,
+                        20...59 => 7,
+                        60...100 => 50,
+                        else => return null,
+                    };
+                    break :blk .{
+                        random.intRangeAtMost(i32, -bound, bound),
+                        random.intRangeAtMost(i32, -bound, bound),
+                    };
+                };
+                return .{
+                    .input = try store(pool, .doPair(
+                        try toUnary(pool, input[0]),
+                        try toUnary(pool, input[1]),
+                    )),
+                    .expected = try toUnary(pool, input[0] + input[1]),
+                };
+            }
+        }.generate_sample,
+    },
 };
 
 fn store(pool: *SexprPool, s: Sexpr) !*const Sexpr {
@@ -1830,6 +2114,15 @@ fn toListWithSentinel(pool: *SexprPool, items: []const *const Sexpr, sentinel: *
     var result = sentinel;
     for (0..items.len) |k| {
         result = try store(pool, Sexpr.doPair(items[items.len - 1 - k], result));
+    }
+    return result;
+}
+
+fn toUnary(pool: *SexprPool, n: i32) !*const Sexpr {
+    var result = Sexpr.builtin.nil;
+    const symbol = if (n >= 0) Vals.unary_pos else Vals.unary_neg;
+    for (0..@abs(n)) |_| {
+        result = try store(pool, Sexpr.doPair(symbol, result));
     }
     return result;
 }
@@ -2057,6 +2350,18 @@ const Vals = struct {
         &Sexpr.doLit("7"),
         &Sexpr.doLit("8"),
         &Sexpr.doLit("9"),
+    };
+
+    const unary_pos: *const Sexpr = &.doLit("+1");
+    const unary_neg: *const Sexpr = &.doLit("-1");
+
+    const unary_numbers: [9]*const Sexpr = blk: {
+        var result: [9]*const Sexpr = undefined;
+        result[0] = &.doPair(unary_pos, Sexpr.builtin.nil);
+        for (1..result.len) |k| {
+            result[k] = &.doPair(unary_pos, result[k - 1]);
+        }
+        break :blk result;
     };
 
     const calculator_ops: [3]*const Sexpr = .{
