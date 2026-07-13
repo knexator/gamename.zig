@@ -1627,7 +1627,10 @@ pub fn sexprFromCase(case: MatchCaseDefinition, pool: *MemoryPool(Sexpr)) error{
             try externalFromInternal(case.template, pool),
         )),
         try storeSexprInPool(pool, Sexpr.doPair(
-            case.fnk_name,
+            if (case.fnk_name.equals(Sexpr.builtin.empty))
+                Sexpr.builtin.nil
+            else
+                case.fnk_name,
             if (case.next) |next|
                 try sexprFromCases(next.items, pool)
             else

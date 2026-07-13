@@ -12,6 +12,13 @@ fn safeAt(arr: []const *const Sexpr, index: usize) ?*const Sexpr {
     return kommon.safeAt(*const Sexpr, arr, index);
 }
 
+// TODO:
+//  each byte in this list appears exactly twice, except one; find it (key idea: xor)
+//  given (x . y), is y a rotation of x? (key idea: y in x++x)
+//  could removing one element turn this list into a palindrome?
+//  return the l/r path that leads to the only x in this tree
+//  given two lists, is one a mapping of the other? (xyyx vs abba)
+
 pub const Level = struct {
     fnk_name: []const u8,
     description: []const u8,
@@ -2094,6 +2101,110 @@ pub const levels: []const Level = &.{
                         try toUnary(pool, input[1]),
                     )),
                     .expected = try toUnary(pool, input[0] + input[1]),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "meta_invert_map",
+        .description = "Invert a simple strand",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+                var pairs: std.ArrayListUnmanaged([2]*const Sexpr) = .empty;
+                switch (sample_index) {
+                    0 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                Vals.abc[k],
+                                Vals.abc[@mod(k + 1, 3)],
+                            });
+                    },
+                    1 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                Vals.abc[@mod(k + 1, 3)],
+                                Vals.abc[k],
+                            });
+                    },
+                    2 => {
+                        for (Vals.lowercase, Vals.uppercase) |a, b|
+                            try pairs.append(arena, .{
+                                a,
+                                b,
+                            });
+                    },
+                    3...50 => {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                        const random = random_instance.random();
+                        const n_things = random.intRangeLessThan(usize, 2, if (sample_index < 25) 6 else 15);
+                        try pairs.ensureUnusedCapacity(arena, n_things);
+                        for (0..n_things) |_| {
+                            try pairs.append(arena, .{
+                                try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                                try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                            });
+                        }
+                    },
+                    else => return null,
+                }
+                const cases_1 = try arena.alloc(core.MatchCaseDefinition, pairs.items.len);
+                const cases_2 = try arena.alloc(core.MatchCaseDefinition, pairs.items.len);
+                for (pairs.items, cases_1, cases_2) |pair, *case_1, *case_2| {
+                    case_1.* = .{
+                        .pattern = pair[0],
+                        .template = pair[1],
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    };
+                    case_2.* = .{
+                        .pattern = pair[1],
+                        .template = pair[0],
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    };
+                }
+                return .{
+                    .input = try core.sexprFromCases(cases_1, pool),
+                    .expected = try core.sexprFromCases(cases_2, pool),
+                };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "meta_invert_case",
+        .description = "Invert a single case",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                const k = sample_index;
+                const pair: [2]*const Sexpr = switch (sample_index) {
+                    0...2 => .{ Vals.abc[k], Vals.abc[@mod(k + 1, 3)] },
+                    3...5 => .{ Vals.abc[@mod(k - 3 + 1, 3)], Vals.abc[k - 3] },
+                    6...11 => .{ Vals.lowercase[k - 6], Vals.uppercase[k - 6] },
+                    12...50 => blk: {
+                        var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                        const random = random_instance.random();
+                        break :blk .{
+                            try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                            try randomSexpr(pool, &(Vals.lowercase ++ Vals.uppercase), random, 1, 3),
+                        };
+                    },
+                    else => return null,
+                };
+                return .{
+                    .input = try core.sexprFromCase(.{
+                        .pattern = pair[0],
+                        .template = pair[1],
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    }, pool),
+                    .expected = try core.sexprFromCase(.{
+                        .pattern = pair[1],
+                        .template = pair[0],
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = .empty,
+                    }, pool),
                 };
             }
         }.generate_sample,

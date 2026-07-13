@@ -391,6 +391,7 @@ pub const Segment = struct {
     pub fn clipToBeOutsideRect(original: Segment, rect: Rect) Segment {
         const clip_from_a = rect.contains(original.a);
         const clip_from_b = rect.contains(original.b);
+        if (clip_from_a == clip_from_b) return original;
         assert(clip_from_a != clip_from_b); // xor
 
         if (clip_from_a) {

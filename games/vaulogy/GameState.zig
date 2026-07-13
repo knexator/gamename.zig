@@ -3636,6 +3636,17 @@ pub const Toybox = struct {
         return .nothing;
     }
 
+    pub fn isInATopLevelSexpr(index: Lego.Index) bool {
+        assert(index != .nothing);
+        var cur = index;
+        while (cur != .nothing) {
+            if (Toybox.get(cur).specific.tag() == .area) return true;
+            if (Toybox.get(cur).specific.tag() != .sexpr) return false;
+            cur = Toybox.get(cur).tree.parent;
+        }
+        return true;
+    }
+
     pub fn parentAbsolutePoint(index: Lego.Index) Point {
         assert(index != .nothing);
         const parent = Toybox.get(index).tree.parent;
@@ -4072,6 +4083,8 @@ const Workspace = struct {
     grabbing: Grabbing = .nothing,
     active_text_input: Lego.Index = .nothing,
     active_text_selection: Canvas.TextSelection = undefined,
+
+    did_first_frame: bool = false,
 
     undo_stack: UndoStack,
     random_instance: std.Random.DefaultPrng,
@@ -5056,7 +5069,7 @@ const Workspace = struct {
         const calculator = try buildBubbleSimple(bubble_pos, breather, &.{"calculator"}, &.{
             &.{ "There are two", "lessons here" },
             &.{ "The hints will", "show you the", "details of", "the first one:", "numbers" },
-            &.{ "The second one", "is more subtle", "and needs", "no hint" },
+            &.{ "The second", "lesson", "is more subtle", "and needs", "no hint" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calculator, undo_stack);
 
@@ -5072,39 +5085,31 @@ const Workspace = struct {
 
         old_bubble_pos.addInPlace(path_next.neg());
         const calculator_hints_2 = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "unary_from_naive", "naive_from_unary", "sum_unary" }, &.{
-            &.{ "There are", "the only", "hardcoded", "strands", "you need!" },
+            &.{ "These are", "the only", "hardcoded", "strands", "you need!" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, calculator_hints_2, undo_stack);
         addHint(calculator_hints_2, calculator_hints_1);
 
-        const optional_brainfuck = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down) }, calculator, .all_scorers_solved, blk: {
-            const bp = try Toybox.new(
-                .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-                undo_stack,
-            );
+        bubble_pos.addInPlace(path_up);
+        const explicit_second_lesson = try buildBubbleSimple(bubble_pos, calculator, &.{}, &.{
+            &.{ "Assignments", "have you write", "code that", "manipulates", "data" },
+            &.{ "But that line", "got blurred", "in the calculator" },
+            &.{ "The data itself", "told you what", "code to run" },
+            &.{ "In other words", "data as code." },
+            &.{ "(for a much", "harder example,", "see the next", "optional", "assignment)" },
+            &.{ "But what about", "code as data?" },
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, explicit_second_lesson, undo_stack);
 
-            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
-
-            var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "This assignment", "is about", "Brainf*ck,", "a programming", "language" });
-            postit_pos.addInPlace(.new(7.7, 0.1));
-            postit.addFromText(postit_pos, &.{ "Search online", "how it works" });
-            postit_pos.addInPlace(.new(7.7, 0.2));
-            postit.addFromText(postit_pos, &.{ "The top half", "is the code,", "the lower half", "is the stdin;", "return the stdout" });
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-4, 2) }, &.{
-                levelIndex("brainfuck"),
-            }, &.{
-                .new(0, 8.5),
-            }, undo_stack), undo_stack);
-
-            break :blk bp;
+        const optional_brainfuck = try buildBubbleSimple(bubble_pos.add(path_down), explicit_second_lesson, &.{"brainfuck"}, &.{
+            &.{ "This assignment", "is about", "Brainf*ck,", "a programming", "language" },
+            &.{ "Search online", "how it works" },
+            &.{ "The top half", "is the code,", "the lower half", "is the stdin;", "return the stdout" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
 
         bubble_pos.addInPlace(path_up);
-        const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, calculator, .all_scorers_solved, blk: {
+        const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, explicit_second_lesson, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5114,13 +5119,13 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "Huge news:", "we can represent", "strands with vaus!" });
+            postit.addFromText(postit_pos, &.{ "Huge news:", "we can represent", "Strands with Vaus!" });
             postit_pos.addInPlace(.new(7.7, 0.2));
             postit.addFromText(postit_pos, &.{ "In other words,", "you can make", "strands", "that operate", "on strands!" });
 
             postit_pos = .new(-8, 0);
-            postit.addFromText(postit_pos, &.{ "This converts", "between vaus", "and strands:" });
-            const meta_viewer = try Toybox.buildMetaViewer(.{ .pos = postit_pos.add(.new(7, -2)) }, undo_stack);
+            postit.addFromText(postit_pos, &.{ "This gadget", "converts", "between vaus", "and strands:" });
+            const meta_viewer = try Toybox.buildMetaViewer(.{ .pos = postit_pos.add(.new(6, -2)) }, undo_stack);
             Toybox.addChildLast(bp, meta_viewer, undo_stack);
             const old_garland = meta_viewer.children(.meta_viewer).garland;
             const new_garland = try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
@@ -5137,8 +5142,13 @@ const Workspace = struct {
             meta_viewer.get().specific.meta_viewer.value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer);
             // meta_viewer.get().specific.meta_viewer.garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer);
 
+            postit_pos = .new(9, -4);
+            postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
+            postit_pos.addInPlace(.new(1, 6.1));
+            postit.addFromText(postit_pos, &.{ "The top half", "of each case", "is pattern and template;", "the bottom half", "is fnkname and next" });
+
             Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
-                levelIndex("meta_constant"),
+                levelIndex("meta_invert_map"),
             }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
 
             break :blk bp;
@@ -5657,6 +5667,8 @@ const Workspace = struct {
             .new(-0.3, -7.2),
             .new(7.7, -7.1),
             .new(-6.9, 5.8),
+            .new(0.5, 5.9),
+            .new(7.8, 5.8),
         };
         return try Toybox.buildBubble(.{ .pos = bubble_pos }, prev, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
@@ -5840,7 +5852,7 @@ const Workspace = struct {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root };
                             } else if (grabbing != .nothing and !lego.immutable and Toybox.get(grabbing).specific.tag() == .sexpr and
-                                (OVERWRITING_TOPLEVEL_SEXPRS_ENABLED or sexpr.kind == .empty or Toybox.findAncestor(lego.index, .case) != .nothing))
+                                (OVERWRITING_TOPLEVEL_SEXPRS_ENABLED or sexpr.kind == .empty or sexpr.kind == .atom_var or !Toybox.isInATopLevelSexpr(lego.index)))
                             {
                                 return .{ .dropzone = cur, .over_background = root };
                             }
@@ -7849,6 +7861,7 @@ const Workspace = struct {
     }
 
     fn updateNonInteractive(workspace: *Workspace, absolute_camera: Rect, delta_seconds: f32, hot_and_dropzone: HotAndDropzone, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
+        defer workspace.did_first_frame = true;
         // TODO(design): improve/remove, by having this be the permanent list, and not iterating over all elements
         var things_actually_hot_etc: std.ArrayList(Lego.Index) = .init(scratch);
 
@@ -8521,7 +8534,7 @@ const Workspace = struct {
         }
 
         const something_happened = undo_stack.anyChangesThisFrame();
-        if (something_happened or false) {
+        if (something_happened or !workspace.did_first_frame) {
             try workspace.canonizeAfterChanges(scratch);
         }
 
