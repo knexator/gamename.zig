@@ -5142,10 +5142,13 @@ const Workspace = struct {
             meta_viewer.get().specific.meta_viewer.value_hash = Lego.Specific.MetaViewer.computeValueHash(meta_viewer);
             // meta_viewer.get().specific.meta_viewer.garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer);
 
-            postit_pos = .new(9, -4);
-            postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
-            postit_pos.addInPlace(.new(1, 6.1));
-            postit.addFromText(postit_pos, &.{ "The top half", "of each case", "is pattern and template;", "the bottom half", "is fnkname and next" });
+            postit_pos.addInPlace(.new(15, 1));
+            postit.addFromText(postit_pos, &.{ "Try placing", "the inputs and", "goals of the", "assignment", "in the gadget" });
+
+            // postit_pos = .new(9, -4);
+            // postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
+            // postit_pos.addInPlace(.new(1, 6.1));
+            // postit.addFromText(postit_pos, &.{ "The top half", "of each case", "is pattern and template;", "the bottom half", "is fnkname and next" });
 
             Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
                 levelIndex("meta_invert_map"),
@@ -5156,6 +5159,39 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, meta_1, undo_stack);
         dst.toolbar_unlocks.meta_viewer = meta_1;
 
+        const meta_encoding = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down.neg()) }, .nothing, .all_scorers_solved, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
+            postit_pos.addInPlace(.new(7, 0.1));
+            postit.addFromText(postit_pos, &.{ "Each case has", "4 parts:", "pattern,", "template,", "fnkname,", "and nested" });
+            postit_pos.addInPlace(.new(7, 0.1));
+            postit.addFromText(postit_pos, &.{ "Fnkname", "is just the", "name of the", "assignment", "called by the", "case, or 'nil'", "by default" });
+
+            postit_pos = .new(-8, 0);
+            postit.addFromText(postit_pos, &.{ "Pattern and", "template", "are encoded", "into the top half" });
+            postit_pos.addInPlace(.new(7, 0.1));
+            postit.addFromText(postit_pos, &.{ "They are not", "the raw value", "but 'quoted'" });
+
+            postit_pos.addInPlace(.new(8.2, 0.2));
+            postit.addFromText(postit_pos, &.{ "Nested is", "itself", "a list of cases" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+                levelIndex("meta_invert_case"),
+            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_encoding, undo_stack);
+        addHint(meta_encoding, meta_1);
+
         bubble_pos.addInPlace(path_next);
         const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_1, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
@@ -5164,12 +5200,10 @@ const Workspace = struct {
                 undo_stack,
             );
 
-            // const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            // var postit_pos: Vec2 = .new(-8, -8);
-            // postit.addFromText(postit_pos, &.{""});
-            // postit_pos.addInPlace(.new(7.7, 0.2));
-            // postit.addFromText(postit_pos, &.{ "In other words,", "you can make strands", "that operate", "on strands!" });
+            const postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Time to write", "code that", "generates", "code :)" });
 
             Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
                 levelIndex("meta_hardcoded_map"),
