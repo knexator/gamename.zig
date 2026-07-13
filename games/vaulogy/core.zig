@@ -946,8 +946,8 @@ pub const ExecutionThread = struct {
             .allow_no_cases = true,
             .allow_unbound_variables = true,
             .allow_undefined_fnks = true,
-            // TODO(game): increase
-            .max_steps = 10_000,
+            // TODO(game): remove this
+            .max_steps = 100_000,
         };
 
         pub const old: Config = .{

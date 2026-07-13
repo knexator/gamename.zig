@@ -335,7 +335,7 @@ dictLookupWithDefault {
     }
 }
 
-calculator {
+calculator_ooold {
     @tree -> calculatorIntoPeano: @tree {
         @peano -> peanoIntoCalculator: @peano;
     }
@@ -633,3 +633,122 @@ moveLastToFirst {
 // and mirror-tree = generic-op-on-tree . (id swap) 
 // and has-b = generic-op-on-tree . (is-b or) 
 // etc
+
+naive_from_unary {
+    (+1) -> 1;
+    (+1 +1) -> 2;
+    (+1 +1 +1) -> 3;
+    (+1 +1 +1 +1) -> 4;
+    (+1 +1 +1 +1 +1) -> 5;
+    (+1 +1 +1 +1 +1 +1) -> 6;
+    (+1 +1 +1 +1 +1 +1 +1) -> 7;
+    (+1 +1 +1 +1 +1 +1 +1 +1) -> 8;
+    (+1 +1 +1 +1 +1 +1 +1 +1 +1) -> 9;
+}
+
+unary_from_naive {
+    @x -> calculator_into_unary: @x;
+}
+
+sum_unary {
+    (nil . @y) -> reduce_unary: @y;
+    ((@t . @x) . @y) -> sum_unary: (@x . (@t . @y));
+}
+
+sub_unary {
+    (@x . @y) -> neg_unary: @y {
+        @y2 -> sum_unary: (@x . @y2);
+    }
+}
+
+neg_unary {
+    nil -> nil;
+    (+1 . @rest) -> neg_unary: @rest {
+        @r2 -> (-1 . @r2);
+    }
+    (-1 . @rest) -> neg_unary: @rest {
+        @r2 -> (+1 . @r2);
+    }
+}
+
+reduce_unary {
+    nil -> nil;
+    (+1 -1 . @rest) -> reduce_unary: @rest;
+    (-1 +1 . @rest) -> reduce_unary: @rest;
+    (@x . @rest) -> reduce_unary: @rest {
+        @r2 -> (@x . @r2) {
+            (+1 -1 . @r3) -> @r3;
+            (-1 +1 . @r3) -> @r3;
+        }
+    }
+}
+
+abs_and_sign {
+    (+1 . @r) -> (pos . (+1 . @r));
+    (-1 . @r) -> neg_unary: (-1 . @r) {
+        @z -> (neg . @z);
+    }
+}
+
+mul_unary {
+    (@x . @y) -> abs_and_sign: @x {
+        (@xs . @xabs) -> abs_and_sign: @y {
+            (@ys . @yabs) -> mul_pos_unary: (@xabs . @yabs) {
+                @r -> (@xs . @ys) {
+                    (pos . pos) -> @r;
+                    (neg . neg) -> @r;
+                    (pos . neg) -> neg_unary: @r;
+                    (neg . pos) -> neg_unary: @r;
+                }
+            }
+        }
+    }
+}
+
+mul_pos_unary {
+    (nil . @y) -> nil;
+    ((+1 . @x) . @y) -> mul_pos_unary: (@x . @y) {
+        @z -> sum_unary: (@z . @y);
+    }
+}
+
+calculator {
+    @x -> calculator_into_unary: @x {
+        @y -> naive_from_unary: @y;
+    }
+}
+
+calculator_sum {
+    @p -> calculator: ( + . @p );
+}
+
+calculator_sub {
+    @p -> calculator: ( - . @p );
+}
+
+calculator_mul {
+    @p -> calculator: ( * . @p );
+}
+
+calculator_into_unary {
+
+    1 -> (+1);
+    2 -> (+1 +1);
+    3 -> (+1 +1 +1);
+    4 -> (+1 +1 +1 +1);
+    5 -> (+1 +1 +1 +1 +1);
+    6 -> (+1 +1 +1 +1 +1 +1);
+    7 -> (+1 +1 +1 +1 +1 +1 +1);
+    8 -> (+1 +1 +1 +1 +1 +1 +1 +1);
+    9 -> (+1 +1 +1 +1 +1 +1 +1 +1 +1);
+
+    ( @op . (@x . @y) ) -> calculator_into_unary: @x {
+        @x2 -> calculator_into_unary: @y {
+            @y2 -> @op {
+                + -> sum_unary: (@x2 . @y2);
+                - -> sub_unary: (@x2 . @y2);
+                * -> mul_unary: (@x2 . @y2);
+            }
+        }
+    }
+}

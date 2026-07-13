@@ -2023,8 +2023,8 @@ pub const levels: []const Level = &.{
             fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index < 9) {
                     return .{
-                        .input = Vals.unary_numbers[sample_index],
-                        .expected = Vals.naive_numbers[sample_index],
+                        .input = Vals.naive_numbers[sample_index],
+                        .expected = Vals.unary_numbers[sample_index],
                     };
                 } else return null;
             }
@@ -2050,8 +2050,8 @@ pub const levels: []const Level = &.{
             fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index < 9) {
                     return .{
-                        .input = Vals.naive_numbers[sample_index],
-                        .expected = Vals.unary_numbers[sample_index],
+                        .input = Vals.unary_numbers[sample_index],
+                        .expected = Vals.naive_numbers[sample_index],
                     };
                 } else return null;
             }

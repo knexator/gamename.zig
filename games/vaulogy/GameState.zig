@@ -218,7 +218,6 @@ test "No leaks on Workspace and Drawer" {
 }
 
 test "solutions" {
-    if (true) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     var mem: core.VeryPermamentGameStuff = .init(gpa);
     defer mem.deinit();
