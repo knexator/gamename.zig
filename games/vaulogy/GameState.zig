@@ -7218,6 +7218,7 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         assert(workspace.valid(scratch));
 
+        tracy.plot(u32, "undo stack size", @intCast(workspace.undo_stack.commands.len()));
         // tracy.plot(u32, "canvas frame arena capacity in mb", @intCast(@divFloor(drawer.?.canvas.frame_arena.queryCapacity(), 1024 * 1024)));
 
         var typing: bool = workspace.active_text_input != .nothing;
@@ -8853,9 +8854,12 @@ const Workspace = struct {
             }
         }
 
-        undo_stack.storeAllData(Executor.children(executor_index).controls.get().specific.executor_controls.crank());
-        Executor.children(executor_index).controls.get().specific.executor_controls
-            .crank().get().specific.executor_crank.value = if (executor.animation) |anim| anim.t else 0;
+        const crank = Executor.children(executor_index).controls.get().specific.executor_controls.crank();
+        const new_crank_value = if (executor.animation) |anim| anim.t else 0;
+        if (new_crank_value != crank.get().specific.executor_crank.value) {
+            undo_stack.storeAllData(crank);
+            crank.get().specific.executor_crank.value = new_crank_value;
+        }
     }
 
     fn resetExecutorAndExtractResult(workspace: *Workspace, executor_index: Lego.Index, original_garland: Lego.Index) !Lego.Index {
