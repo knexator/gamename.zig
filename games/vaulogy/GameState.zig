@@ -1517,6 +1517,7 @@ pub const Lego = struct {
         };
 
         pub const Fnkbox = struct {
+            // TODO(bug): this should also make the garland non-editable
             editable: bool,
             execution: ?struct {
                 original_garland: Lego.Index,
@@ -3792,7 +3793,7 @@ pub const Toybox = struct {
     pub fn buildFnkboxFromLevel(
         local_point: Point,
         fnkname: Lego.Index,
-        level: Level,
+        level_index: usize,
         editable: bool,
         scratch: std.mem.Allocator,
         text_allocator: std.mem.Allocator,
@@ -3801,14 +3802,19 @@ pub const Toybox = struct {
         var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
         defer pool.deinit();
 
-        const samples: []const [2]Lego.Index = blk: {
-            var samples_it = level.samplesIterator();
-            var samples: std.ArrayListUnmanaged([2]Lego.Index) = .empty;
-            while (try samples_it.next(&pool, scratch)) |item| {
-                try samples.append(scratch, .{
-                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.input, false, false, undo_stack),
-                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, item.expected, false, false, undo_stack),
-                });
+        const level = levels[level_index];
+
+        const samples: []const Lego.Index = blk: {
+            var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
+            try samples.ensureUnusedCapacity(scratch, 100);
+            var sample_index: usize = 0;
+            while (try level.generate_sample(sample_index, &pool, scratch)) |sample| {
+                try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .build(
+                    level_index,
+                    sample_index,
+                    sample,
+                ) }, undo_stack));
+                sample_index += 1;
                 _ = pool.reset(.retain_capacity);
             }
             break :blk try samples.toOwnedSlice(scratch);
@@ -3820,7 +3826,7 @@ pub const Toybox = struct {
             editable,
             level.description,
             samples,
-            if (level.initial_definition) |definition|
+            if (try level.initialDefinition(&pool, scratch)) |definition|
                 try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch, undo_stack)
             else
                 null,
@@ -5156,7 +5162,110 @@ const Workspace = struct {
         dst.toolbar_unlocks.meta_viewer = meta_play;
 
         bubble_pos.addInPlace(path_next);
-        const meta_invert = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_scorers_solved, blk: {
+        const meta_duplicate = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_scorers_solved, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "Let's start with", "a useful tool:", "call duplicator" });
+
+            postit_pos = .new(-1, -5);
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(1, 5), .turns = math.lerp(0.5, 0.25, 0.5) }, .part = .arrow },
+                .{ .point = .{ .pos = .both(3) }, .part = .{ .paragraph = &.{ "It creates", "this from that" } } },
+                .{ .point = .{ .pos = .new(5, 4.5) }, .part = .arrow },
+            });
+
+            postit.addFromText(.new(8, -8), &.{ "Next slide", "you'll learn", "how to use it" });
+            postit.addFromText(.new(5, 12), &.{ "Don't worry", "about the", "implementation", "for now" });
+
+            Toybox.addChildLast(bp, try Toybox.buildSexpr(
+                .{ .pos = postit_pos.add(.new(3.75, 1.5)) },
+                .{ .atom_lit = "changeLowercaseToNextCyclingOnC" },
+                false,
+                false,
+                undo_stack,
+            ), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-4, 4)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = "first" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_var = "first" }, false, false, undo_stack),
+                    .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "changeLowercaseToNextCyclingOnC" }, false, true, undo_stack),
+                    .next = try Toybox.buildGarland(.{}, &.{
+                        try Toybox.buildCase(.{}, .{
+                            .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = "second" }, true, false, undo_stack),
+                            .template = try Toybox.buildSexpr(.{}, .{ .atom_var = "second" }, false, false, undo_stack),
+                            .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "changeLowercaseToNextCyclingOnC" }, false, true, undo_stack),
+                            .next = null,
+                        }, undo_stack),
+                    }, undo_stack),
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            const level_index = levelIndex("meta_duplicate");
+            const level = levels[level_index];
+            postit_pos = .new(-7, 8);
+            Toybox.addChildLast(bp, try Toybox.buildFnkboxFromLevel(
+                .{ .pos = postit_pos },
+                try dst.findFnkname(.{}, true, level.fnk_name, undo_stack),
+                level_index,
+                false,
+                scratch.allocator(),
+                dst.gpa_for_text,
+                undo_stack,
+            ), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_duplicate, undo_stack);
+
+        bubble_pos.addInPlace(path_next_close);
+        const meta_duplicate_usage = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate, .all_scorers_solved, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "You can use it", "manually:", "take a strand,", "encode it into a vau", "with the gadget..." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos, &.{ "...run that vau", "through the meta", "strand, and turn", "the result vau", "back into a strand" });
+            postit_pos.addInPlace(.new(8, 1));
+            postit.addFromText(postit_pos, &.{ "That can be", "useful, but", "there's a better", "way: directly", "call the tool", "in your code" });
+
+            postit_pos = .new(4, 0);
+            postit.addFromText(postit_pos, &.{ "Compound", "fnknames", "will apply", "the left side tool", "on the right side" });
+
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-10, -1)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = "other" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_var = "other" }, false, false, undo_stack),
+                    .fnkname = try Toybox.buildSexpr(.{}, .{ .pair = .{
+                        .up = try Toybox.buildSexpr(.{}, .{ .atom_lit = "meta_duplicate" }, false, true, undo_stack),
+                        .down = try Toybox.buildSexpr(.{}, .{ .atom_lit = "changeLowercaseToNextCyclingOnC" }, false, true, undo_stack),
+                    } }, false, true, undo_stack),
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
+                levelIndex("shiftback_with_meta_duplicate"),
+            }, &.{.new(0, 12)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_duplicate_usage, undo_stack);
+
+        if (false) _ = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5225,30 +5334,6 @@ const Workspace = struct {
 
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, meta_invert, undo_stack);
-
-        bubble_pos.addInPlace(path_next);
-        const meta_invert_usage = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_invert, .all_scorers_solved, blk: {
-            const bp = try Toybox.new(
-                .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-                undo_stack,
-            );
-
-            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
-
-            var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "You can use it", "manually:", "take a strand,", "encode it into a vau", "with the gadget..." });
-            postit_pos.addInPlace(.new(7, 0));
-            postit.addFromText(postit_pos, &.{ "...run that vau", "through the meta", "strand, and turn", "the result vau", "back into a strand" });
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
-                levelIndex("shiftback_with_meta"),
-            }, &.{.new(0, 10)}, undo_stack), undo_stack);
-
-            break :blk bp;
-        }, undo_stack);
-        Toybox.addChildLast(dst.main_area, meta_invert_usage, undo_stack);
 
         // const meta_encoding = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down.neg()) }, .nothing, .all_scorers_solved, blk: {
         //     const bp = try Toybox.new(
@@ -5284,7 +5369,7 @@ const Workspace = struct {
         // addHint(meta_encoding, meta_play);
 
         bubble_pos.addInPlace(path_next);
-        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_invert_usage, .all_scorers_solved, blk: {
+        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate_usage, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5544,7 +5629,7 @@ const Workspace = struct {
                         false,
                         level.description,
                         samples,
-                        if (level.initial_definition) |definition|
+                        if (try level.initialDefinition(&pool, scratch.allocator())) |definition|
                             try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch.allocator(), undo_stack)
                         else
                             null,
@@ -5987,7 +6072,9 @@ const Workspace = struct {
                             if (grabbing == .nothing and sexpr.kind != .empty) {
                                 return .{ .hot = cur, .over_background = root };
                             } else if (grabbing != .nothing and !lego.immutable and Toybox.get(grabbing).specific.tag() == .sexpr and
-                                (OVERWRITING_TOPLEVEL_SEXPRS_ENABLED or sexpr.kind == .empty or sexpr.kind == .atom_var or !Toybox.isInATopLevelSexpr(lego.index)))
+                                (OVERWRITING_TOPLEVEL_SEXPRS_ENABLED or sexpr.kind == .empty or
+                                    sexpr.kind == .atom_var or grabbing.get().specific.sexpr.kind == .atom_var or
+                                    !Toybox.isInATopLevelSexpr(lego.index)))
                             {
                                 return .{ .dropzone = cur, .over_background = root };
                             }
@@ -7832,7 +7919,7 @@ const Workspace = struct {
                                         true,
                                         level.description,
                                         samples,
-                                        if (level.initial_definition) |definition|
+                                        if (try level.initialDefinition(&pool, scratch)) |definition|
                                             try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch, undo_stack)
                                         else
                                             null,
@@ -9254,9 +9341,19 @@ const Workspace = struct {
 
         try out.writeStructEndian(workspace.main_area.get().local_point, ENDIANNESS);
 
+        // TODO(design): rethink non-editable fnkboxes, probably
         const fnkboxes = try workspace.allFnkboxes(false, scratch);
-        try writeLen(out, fnkboxes.len);
+        const n_saved: usize = blk: {
+            var r: usize = 0;
+            for (fnkboxes) |cur| {
+                if (!cur.get().specific.fnkbox.editable) continue;
+                r += 1;
+            }
+            break :blk r;
+        };
+        try writeLen(out, n_saved);
         for (fnkboxes) |cur| {
+            if (!cur.get().specific.fnkbox.editable) continue;
             const fnkname_value = try cur.children(.fnkbox).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
             const garland = if (cur.get().specific.fnkbox.execution) |e|
                 e.original_garland
@@ -9443,7 +9540,8 @@ const Workspace = struct {
                             .default => {
                                 const level_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
                                 const sample_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
-                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch)).?;
+                                // 'orelse' only engaged if tests were deleted between versions
+                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch)) orelse continue;
 
                                 testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .unloaded = .build(
                                     level_index,

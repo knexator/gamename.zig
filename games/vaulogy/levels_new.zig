@@ -23,8 +23,16 @@ pub const Level = struct {
     fnk_name: []const u8,
     description: []const u8,
     initial_definition: ?core.FnkBodyV2,
+    initial_definition_lit: ?[]const u8 = null,
     bubble_definition: ?core.FnkBodyV2 = null,
     generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample,
+
+    pub fn initialDefinition(level: Level, pool: *SexprPool, allocator_for_cases: std.mem.Allocator) !?core.FnkBodyV2 {
+        return level.initial_definition orelse if (level.initial_definition_lit) |src| blk: {
+            const body = (try core.parsing.parseSingleFnk(src, pool, allocator_for_cases)).body;
+            break :blk try body.toV2(allocator_for_cases);
+        } else null;
+    }
 
     pub fn samplesIterator(level: Level) SamplesIterator {
         return .{ .k = 0, .level = level };
@@ -2237,13 +2245,13 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
-        .fnk_name = "shiftback_with_meta",
+        .fnk_name = "shiftback_with_meta_duplicate",
         .description = "Shift back: c into b, b into a, a into c.",
         .initial_definition = .{ .cases = &.{
             .{
                 .pattern = Vals.vars.other,
                 .template = Vals.vars.other,
-                .fnk_name = &.doPair(&.doLit("meta_invert_map"), &.doLit("changeLowercaseToNextCyclingOnC")),
+                .fnk_name = &.doPair(&.doLit("meta_duplicate"), &.doLit("changeLowercaseToNextCyclingOnC")),
                 .next = null,
             },
         } },
@@ -2252,6 +2260,32 @@ pub const levels: []const Level = &.{
                 if (k < 3) {
                     return .{ .input = Vals.lowercase[@mod(k + 1, 3)], .expected = Vals.lowercase[k] };
                 } else return null;
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "meta_duplicate",
+        .description = "Tool: call duplicator",
+        .initial_definition = null,
+        .initial_definition_lit =
+        \\meta_duplicate {
+        \\  @n -> ((  ((var . first) . (var . first)) . (@n . (
+        \\     ( ( (var . second)  . (var . second) ) . ( @n . nil ) )
+        \\  ))  ));
+        \\}
+        ,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index > 0) return null;
+                const result = try core.parsing.parseSingleSexpr(
+                    \\   ((  ((var . first) . (var . first)) . (changeLowercaseToNextCyclingOnC . (
+                    \\     ( ( (var . second)  . (var . second) ) . ( changeLowercaseToNextCyclingOnC . nil ) )
+                    \\  ))  ))
+                , pool);
+                return .{
+                    .input = try store(pool, .doLit("changeLowercaseToNextCyclingOnC")),
+                    .expected = result,
+                };
             }
         }.generate_sample,
     },
