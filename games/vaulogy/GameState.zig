@@ -5098,6 +5098,9 @@ const Workspace = struct {
             &.{ "In other words", "data as code." },
             &.{ "(for a much", "harder example,", "see the next", "optional", "assignment)" },
             &.{ "But what about", "code as data?" },
+            &.{ "You must be", "tired of making", "and modifying", "strands manually" },
+            &.{ "Wouldn't it", "be nice to", "have strands", "do that work", "for you?" },
+            &.{ "By representing", "strands as vaus,", "we can write", "code to create", "and modify them" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, explicit_second_lesson, undo_stack);
 
@@ -5109,7 +5112,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, optional_brainfuck, undo_stack);
 
         bubble_pos.addInPlace(path_up);
-        const meta_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, explicit_second_lesson, .all_scorers_solved, blk: {
+        const meta_play = try Toybox.buildBubble(.{ .pos = bubble_pos }, explicit_second_lesson, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5118,14 +5121,9 @@ const Workspace = struct {
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
-            var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "Huge news:", "we can represent", "Strands with Vaus!" });
-            postit_pos.addInPlace(.new(7.7, 0.2));
-            postit.addFromText(postit_pos, &.{ "In other words,", "you can make", "strands", "that operate", "on strands!" });
-
-            postit_pos = .new(-8, 0);
+            var postit_pos: Vec2 = .new(-8, -7);
             postit.addFromText(postit_pos, &.{ "This gadget", "converts", "between vaus", "and strands:" });
-            const meta_viewer = try Toybox.buildMetaViewer(.{ .pos = postit_pos.add(.new(6, -2)) }, undo_stack);
+            const meta_viewer = try Toybox.buildMetaViewer(.{ .pos = postit_pos.add(.new(5.5, -1.5)) }, undo_stack);
             Toybox.addChildLast(bp, meta_viewer, undo_stack);
             const old_garland = meta_viewer.children(.meta_viewer).garland;
             const new_garland = try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
@@ -5143,23 +5141,22 @@ const Workspace = struct {
             // meta_viewer.get().specific.meta_viewer.garland_hash = Lego.Specific.MetaViewer.computeGarlandHash(meta_viewer);
 
             postit_pos.addInPlace(.new(15, 1));
-            postit.addFromText(postit_pos, &.{ "Try placing", "the inputs and", "goals of the", "assignment", "in the gadget" });
+            postit.addFromText(postit_pos, &.{ "Try playing", "around with it,", "try out", "some strands" });
 
-            // postit_pos = .new(9, -4);
-            // postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
-            // postit_pos.addInPlace(.new(1, 6.1));
-            // postit.addFromText(postit_pos, &.{ "The top half", "of each case", "is pattern and template;", "the bottom half", "is fnkname and next" });
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
-                levelIndex("meta_invert_map"),
-            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+            postit_pos = .new(-7.5, 5);
+            postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases." });
+            postit_pos.addInPlace(.new(7.1, 0.7));
+            postit.addFromText(postit_pos, &.{ "The encoding", "for a case is", "a bit tricky" });
+            postit_pos.addInPlace(.new(7.1, 0.7));
+            postit.addFromText(postit_pos, &.{ "Don't worry", "about it", "for now" });
 
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, meta_1, undo_stack);
-        dst.toolbar_unlocks.meta_viewer = meta_1;
+        Toybox.addChildLast(dst.main_area, meta_play, undo_stack);
+        dst.toolbar_unlocks.meta_viewer = meta_play;
 
-        const meta_encoding = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down.neg()) }, .nothing, .all_scorers_solved, blk: {
+        bubble_pos.addInPlace(path_next);
+        const meta_invert = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5169,31 +5166,125 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
-            postit_pos.addInPlace(.new(7, 0.1));
-            postit.addFromText(postit_pos, &.{ "Each case has", "4 parts:", "pattern,", "template,", "fnkname,", "and nested" });
-            postit_pos.addInPlace(.new(7, 0.1));
-            postit.addFromText(postit_pos, &.{ "Fnkname", "is just the", "name of the", "assignment", "called by the", "case, or 'nil'", "by default" });
+            postit.addFromText(postit_pos, &.{ "Let's start with ", "a useful tool:", "a map inverter" });
 
-            postit_pos = .new(-8, 0);
-            postit.addFromText(postit_pos, &.{ "Pattern and", "template", "are encoded", "into the top half" });
-            postit_pos.addInPlace(.new(7, 0.1));
-            postit.addFromText(postit_pos, &.{ "They are not", "the raw value", "but 'quoted'" });
+            postit_pos = .new(0, -7);
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(1, 5), .turns = math.lerp(0.5, 0.25, 0.5) }, .part = .arrow },
+                .{ .point = .{ .pos = .both(3) }, .part = .{ .paragraph = &.{ "It turns", "this into that" } } },
+                .{ .point = .{ .pos = .new(5, 5), .turns = math.lerp(0.0, 0.25, 0.5) }, .part = .arrow },
+            });
 
-            postit_pos.addInPlace(.new(8.2, 0.2));
-            postit.addFromText(postit_pos, &.{ "Nested is", "itself", "a list of cases" });
+            postit.addFromText(.new(8, -8), &.{ "For now, you", "can use it", "manually, thanks", "to the gadget" });
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
-                levelIndex("meta_invert_case"),
-            }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-6.25, 3)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "1" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "2" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "3" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(4.75, 3)) }, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "1" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "2" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "3" }, true, false, undo_stack),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, undo_stack),
+                    .fnkname = null,
+                    .next = null,
+                }, undo_stack),
+            }, undo_stack), undo_stack);
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
+                levelIndex("meta_invert_map"),
+            }, &.{.new(0, 10)}, undo_stack), undo_stack);
 
             break :blk bp;
         }, undo_stack);
-        Toybox.addChildLast(dst.main_area, meta_encoding, undo_stack);
-        addHint(meta_encoding, meta_1);
+        Toybox.addChildLast(dst.main_area, meta_invert, undo_stack);
 
         bubble_pos.addInPlace(path_next);
-        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_1, .all_scorers_solved, blk: {
+        const meta_invert_usage = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_invert, .all_scorers_solved, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                undo_stack,
+            );
+
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+            var postit_pos: Vec2 = .new(-8, -8);
+            postit.addFromText(postit_pos, &.{ "You can use it", "manually:", "take a strand,", "encode it into a vau", "with the gadget..." });
+            postit_pos.addInPlace(.new(7, 0));
+            postit.addFromText(postit_pos, &.{ "...run that vau", "through the meta", "strand, and turn", "the result vau", "back into a strand" });
+
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
+                levelIndex("shiftback_with_meta"),
+            }, &.{.new(0, 10)}, undo_stack), undo_stack);
+
+            break :blk bp;
+        }, undo_stack);
+        Toybox.addChildLast(dst.main_area, meta_invert_usage, undo_stack);
+
+        // const meta_encoding = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down.neg()) }, .nothing, .all_scorers_solved, blk: {
+        //     const bp = try Toybox.new(
+        //         .{},
+        //         .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+        //         undo_stack,
+        //     );
+
+        //     const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
+
+        //     var postit_pos: Vec2 = .new(-8, -8);
+        //     postit.addFromText(postit_pos, &.{ "The encoding", "is as simple", "as it can be:", "a list of cases" });
+        //     postit_pos.addInPlace(.new(7, 0.1));
+        //     postit.addFromText(postit_pos, &.{ "Each case has", "4 parts:", "pattern,", "template,", "fnkname,", "and nested" });
+        //     postit_pos.addInPlace(.new(7, 0.1));
+        //     postit.addFromText(postit_pos, &.{ "Fnkname", "is just the", "name of the", "assignment", "called by the", "case, or 'nil'", "by default" });
+
+        //     postit_pos = .new(-8, 0);
+        //     postit.addFromText(postit_pos, &.{ "Pattern and", "template", "are encoded", "into the top half" });
+        //     postit_pos.addInPlace(.new(7, 0.1));
+        //     postit.addFromText(postit_pos, &.{ "They are not", "the raw value", "but 'quoted'" });
+
+        //     postit_pos.addInPlace(.new(8.2, 0.2));
+        //     postit.addFromText(postit_pos, &.{ "Nested is", "itself", "a list of cases" });
+
+        //     Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
+        //         levelIndex("meta_invert_case"),
+        //     }, &.{.new(8, 11.5)}, undo_stack), undo_stack);
+
+        //     break :blk bp;
+        // }, undo_stack);
+        // Toybox.addChildLast(dst.main_area, meta_encoding, undo_stack);
+        // addHint(meta_encoding, meta_play);
+
+        bubble_pos.addInPlace(path_next);
+        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_invert_usage, .all_scorers_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5696,7 +5787,17 @@ const Workspace = struct {
 
     fn buildBubbleSimple(bubble_pos: Vec2, prev: Lego.Index, comptime level_names: []const []const u8, postits: []const []const []const u8, undo_stack: ?*UndoStack) !Lego.Index {
         const scorer_pos: Vec2 = .new(-7, 0);
-        const postit_pos: []const Vec2 = &.{
+        const postit_pos: []const Vec2 = if (level_names.len == 0) &.{
+            .new(-8, -8),
+            .new(-0.3, -7.2),
+            .new(7.7, -7.1),
+            .new(-7.2, -0.3),
+            .new(0.15, 0.0),
+            .new(7.8, 0.3),
+            .new(-6.9, 7.3),
+            .new(0.5, 7.5),
+            .new(7.8, 7.9),
+        } else &.{
             .new(-8, -8),
             .new(-0.3, -7.2),
             .new(7.7, -7.1),
@@ -8992,11 +9093,10 @@ const Workspace = struct {
             error.BAD_INPUT,
             error.FnkNotFound,
             error.NoMatchingCase,
-            error.InvalidMetaFnk,
             error.UsedUndefinedVariable,
             error.TookTooLong,
             => panic("unreachable? {s}", .{@errorName(err)}),
-            // => return null,
+            error.InvalidMetaFnk => return null,
         } orelse return null;
         const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(new_point, fnkbody.*, scratch, undo_stack);
         const original_fnkname = try Lego.Specific.Garland.stealFnkname(

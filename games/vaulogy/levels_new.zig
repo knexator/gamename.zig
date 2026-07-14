@@ -2108,7 +2108,27 @@ pub const levels: []const Level = &.{
     .{
         .fnk_name = "meta_invert_map",
         .description = "Invert a simple strand",
-        .initial_definition = null,
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = Sexpr.builtin.nil,
+                .template = Sexpr.builtin.nil,
+                .fnk_name = Sexpr.builtin.empty,
+                .next = null,
+            },
+            .{
+                .pattern = &.doPair(&.doPair(&.doPair(Vals.vars.up, Vals.vars.down), Sexpr.pair_nil_nil), Vals.vars.tail),
+                .template = Vals.vars.tail,
+                .fnk_name = &.doLit("meta_invert_map"),
+                .next = &.{
+                    .{
+                        .pattern = Vals.vars.other,
+                        .template = &.doPair(&.doPair(&.doPair(Vals.vars.down, Vals.vars.up), Sexpr.pair_nil_nil), Vals.vars.other),
+                        .fnk_name = Sexpr.builtin.empty,
+                        .next = null,
+                    },
+                },
+            },
+        } },
         .generate_sample = struct {
             fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
                 var pairs: std.ArrayListUnmanaged([2]*const Sexpr) = .empty;
@@ -2117,24 +2137,31 @@ pub const levels: []const Level = &.{
                         for (0..3) |k|
                             try pairs.append(arena, .{
                                 Vals.abc[k],
-                                Vals.abc[@mod(k + 1, 3)],
+                                Vals.naive_numbers[k],
                             });
                     },
                     1 => {
+                        for (0..3) |k|
+                            try pairs.append(arena, .{
+                                Vals.abc[k],
+                                Vals.abc[@mod(k + 1, 3)],
+                            });
+                    },
+                    2 => {
                         for (0..3) |k|
                             try pairs.append(arena, .{
                                 Vals.abc[@mod(k + 1, 3)],
                                 Vals.abc[k],
                             });
                     },
-                    2 => {
+                    3 => {
                         for (Vals.lowercase, Vals.uppercase) |a, b|
                             try pairs.append(arena, .{
                                 a,
                                 b,
                             });
                     },
-                    3...50 => {
+                    4...50 => {
                         var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
                         const random = random_instance.random();
                         const n_things = random.intRangeLessThan(usize, 2, if (sample_index < 25) 6 else 15);
@@ -2206,6 +2233,25 @@ pub const levels: []const Level = &.{
                         .next = .empty,
                     }, pool),
                 };
+            }
+        }.generate_sample,
+    },
+    .{
+        .fnk_name = "shiftback_with_meta",
+        .description = "Shift back: c into b, b into a, a into c.",
+        .initial_definition = .{ .cases = &.{
+            .{
+                .pattern = Vals.vars.other,
+                .template = Vals.vars.other,
+                .fnk_name = &.doPair(&.doLit("meta_invert_map"), &.doLit("changeLowercaseToNextCyclingOnC")),
+                .next = null,
+            },
+        } },
+        .generate_sample = struct {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                if (k < 3) {
+                    return .{ .input = Vals.lowercase[@mod(k + 1, 3)], .expected = Vals.lowercase[k] };
+                } else return null;
             }
         }.generate_sample,
     },
@@ -2485,6 +2531,8 @@ const Vals = struct {
         down: *const Sexpr = &Sexpr.doVar("down"),
         up: *const Sexpr = &Sexpr.doVar("up"),
         other: *const Sexpr = &Sexpr.doVar("other"),
+        head: *const Sexpr = &Sexpr.doVar("head"),
+        tail: *const Sexpr = &Sexpr.doVar("tail"),
     } = .{};
 
     const BF: struct {

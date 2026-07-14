@@ -654,7 +654,10 @@ pub const StackThing = struct {
         //         return err,
         // };
 
-        const fnkbody = (try scoring_run.findFunktion(fn_name, config)) orelse if (config.allow_undefined_fnks)
+        const fnkbody = (scoring_run.findFunktion(fn_name, config) catch |err| switch (err) {
+            error.InvalidMetaFnk => if (config.allow_undefined_fnks) null else return err,
+            else => return err,
+        }) orelse if (config.allow_undefined_fnks)
             return .{ .builtin = input }
         else
             return error.FnkNotFound;
@@ -1681,7 +1684,7 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
                 const cur = cur_parent.left;
                 try cases.append(arena, try caseFromSexpr(cur, arena, pool));
                 switch (cur_parent.right.*) {
-                    .empty => @panic("TODO"),
+                    .empty => return error.InvalidMetaFnk,
                     .atom_lit => |a| {
                         if (a.equals(Sexpr.builtin.nil.atom_lit)) {
                             break;
