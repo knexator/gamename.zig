@@ -543,6 +543,8 @@ pub const Lego = struct {
                         all_fnks_hash == row_asdf.solved_computed_at.all_fnks_hash)
                     {
                         if (row_asdf.solved) {
+                            score.time += row_asdf.solved_score.time;
+                            score.max_stack = @max(score.max_stack, row_asdf.solved_score.max_stack);
                             continue;
                         } else {
                             failed_any = true;
@@ -603,6 +605,10 @@ pub const Lego = struct {
                     }
 
                     row_asdf.solved = !failed_any;
+                    row_asdf.solved_score = .{
+                        .time = score.time,
+                        .max_stack = score.max_stack,
+                    };
                     row_asdf.solved_computed_at = .{
                         .all_fnks_hash = all_fnks_hash,
                         .fnkname_hash = fnkname_hash,
@@ -628,6 +634,11 @@ pub const Lego = struct {
             magic_id: u32,
 
             solved: bool = false,
+            // TODO(bug): remove this and move it to the Scorer, including the whole score
+            solved_score: struct {
+                time: usize,
+                max_stack: usize,
+            } = undefined,
             solved_computed_at: struct {
                 all_fnks_hash: u32,
                 fnkname_hash: u32,
@@ -5106,7 +5117,7 @@ const Workspace = struct {
             &.{ "But what about", "code as data?" },
             &.{ "You must be", "tired of making", "and modifying", "strands manually" },
             &.{ "Wouldn't it", "be nice to", "have strands", "do that work", "for you?" },
-            &.{ "By representing", "strands as vaus,", "we can write", "code to create", "and modify them" },
+            &.{ "By representing", "strands as vaus,", "we can write", "tools to create", "and modify them" },
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, explicit_second_lesson, undo_stack);
 
@@ -5236,16 +5247,15 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "You can use it", "manually:", "take a strand,", "encode it into a vau", "with the gadget..." });
-            postit_pos.addInPlace(.new(7, 0));
-            postit.addFromText(postit_pos, &.{ "...run that vau", "through the meta", "strand, and turn", "the result vau", "back into a strand" });
-            postit_pos.addInPlace(.new(8, 1));
+            postit.addFromText(postit_pos, &.{ "You can use it", "manually:", "run it on a vau, then", "use the gadget", "to turn the result", "into a strand" });
+            postit_pos.addInPlace(.new(7, 1));
             postit.addFromText(postit_pos, &.{ "That can be", "useful, but", "there's a better", "way: directly", "call the tool", "in your code" });
+            postit_pos.addInPlace(.new(7.1, 0.2));
+            postit.addFromText(postit_pos, &.{ "Left half is", "the tool name,", "right half is", "the argument" });
 
-            postit_pos = .new(4, 0);
-            postit.addFromText(postit_pos, &.{ "Compound", "fnknames", "will apply", "the left side tool", "on the right side" });
+            postit.addFromText(.new(-5.5, 1.5), &.{ "The generated", "strand is", "directly", "invoked" });
 
-            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-10, -1)) }, &.{
+            Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-4, 4)) }, &.{
                 try Toybox.buildCase(.{}, .{
                     .pattern = try Toybox.buildSexpr(.{}, .{ .atom_var = "other" }, true, false, undo_stack),
                     .template = try Toybox.buildSexpr(.{}, .{ .atom_var = "other" }, false, false, undo_stack),
