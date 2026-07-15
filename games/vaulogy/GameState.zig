@@ -500,6 +500,9 @@ pub const Lego = struct {
 
         pub const Scorer = struct {
             score: ?Score = null,
+            score_computed_at: struct {
+                all_fnks_hash: u32,
+            } = .{ .all_fnks_hash = 0 },
 
             pub const Score = struct {
                 total_time: usize,
@@ -525,6 +528,8 @@ pub const Lego = struct {
                 defer zone.deinit();
 
                 assert(scorer_index.hasTag(.scorer));
+                if (scorer_index.get().specific.scorer.score_computed_at.all_fnks_hash == all_fnks_hash) return;
+
                 var mem: core.VeryPermamentGameStuff = .init(scratch);
                 var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &mem);
                 var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
@@ -537,21 +542,6 @@ pub const Lego = struct {
                 var failed_any: bool = false;
                 for (rows) |row| {
                     const fnkname_index = row.children(.scorer_row).fnkname;
-                    const fnkname_hash = Lego.Specific.Sexpr.hash(fnkname_index);
-                    const row_asdf = &row.get().specific.scorer_row;
-                    if (fnkname_hash == row_asdf.solved_computed_at.fnkname_hash and
-                        all_fnks_hash == row_asdf.solved_computed_at.all_fnks_hash)
-                    {
-                        if (row_asdf.solved) {
-                            score.time += row_asdf.solved_score.time;
-                            score.max_stack = @max(score.max_stack, row_asdf.solved_score.max_stack);
-                            continue;
-                        } else {
-                            failed_any = true;
-                            break;
-                        }
-                    }
-
                     const fnkname = try fnkname_index.get().specific.sexpr.toOldCoreValue(scratch);
 
                     const level_index = row.get().specific.scorer_row.level_index;
@@ -604,16 +594,6 @@ pub const Lego = struct {
                         }
                     }
 
-                    row_asdf.solved = !failed_any;
-                    row_asdf.solved_score = .{
-                        .time = score.time,
-                        .max_stack = score.max_stack,
-                    };
-                    row_asdf.solved_computed_at = .{
-                        .all_fnks_hash = all_fnks_hash,
-                        .fnkname_hash = fnkname_hash,
-                    };
-
                     if (failed_any) break;
                 }
                 scorer_index.get().specific.scorer.score = if (failed_any)
@@ -625,6 +605,9 @@ pub const Lego = struct {
                         .code_size = scoring_run.score.code_size,
                         .compile_time = scoring_run.score.compile_time,
                     };
+                scorer_index.get().specific.scorer.score_computed_at = .{
+                    .all_fnks_hash = all_fnks_hash,
+                };
             }
         };
 
@@ -632,17 +615,6 @@ pub const Lego = struct {
             level_index: usize,
             offset: ?Vec2,
             magic_id: u32,
-
-            solved: bool = false,
-            // TODO(bug): remove this and move it to the Scorer, including the whole score
-            solved_score: struct {
-                time: usize,
-                max_stack: usize,
-            } = undefined,
-            solved_computed_at: struct {
-                all_fnks_hash: u32,
-                fnkname_hash: u32,
-            } = .{ .all_fnks_hash = 0, .fnkname_hash = 0 },
 
             pub const Children = struct {
                 create_fnkname_button: Lego.Index,
