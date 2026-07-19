@@ -8737,6 +8737,30 @@ const Workspace = struct {
             }
         }
 
+        if (true) { // delete testcases to avoid accidental damage
+            const zone = tracy.initZone(@src(), .{ .name = "delete mangled testcases" });
+            defer zone.deinit();
+
+            const fnkboxes = try workspace.allFnkboxes(false, scratch);
+            for (fnkboxes) |fnkbox_index| {
+                const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
+                assert(testcases_parent.hasTag(.scrollable_list));
+                var cur = testcases_parent.get().tree.first;
+                var next: Lego.Index = undefined;
+                while (cur != .nothing) : (cur = next) {
+                    next = cur.get().tree.next;
+                    if (!cur.hasTag(.testcase)) continue;
+                    if (cur.get().specific.testcase.source == .nothing) continue;
+                    const to_delete = cur.children(.testcase).input.get().specific.sexpr.kind == .empty or
+                        cur.children(.testcase).expected.get().specific.sexpr.kind == .empty;
+                    if (to_delete) {
+                        Toybox.pop(cur, undo_stack);
+                        Toybox.destroyFloating(cur, undo_stack);
+                    }
+                }
+            }
+        }
+
         const something_happened = undo_stack.anyChangesThisFrame();
         if (something_happened or !workspace.did_first_frame) {
             try workspace.canonizeAfterChanges(scratch);
