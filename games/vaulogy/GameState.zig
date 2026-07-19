@@ -702,6 +702,7 @@ pub const Lego = struct {
             visible_length: f32,
             scroll_visual: f32,
             scroll_target: f32,
+            prev_scroll_visual: f32 = 0,
 
             const min_handle_length: f32 = 0.25;
             const max_handle_length: f32 = 1;
@@ -743,6 +744,10 @@ pub const Lego = struct {
                     .scroll_visual = scroll,
                     .scroll_target = scroll,
                 };
+            }
+
+            pub fn scrollVisualDelta(scrollbar: *const Scrollbar) f32 {
+                return scrollbar.prev_scroll_visual - scrollbar.scroll_visual;
             }
 
             pub fn handleRectVisual(scrollbar: *const Scrollbar) Rect {
@@ -6687,14 +6692,15 @@ const Workspace = struct {
                     },
                     .scrollable_list => |scrollable_list| {
                         const scroll_visual = cur.scrollbar(.scrollable_list).get().specific.scrollbar.scroll_visual;
+                        const delta_scroll = cur.scrollbar(.scrollable_list).get().specific.scrollbar.scrollVisualDelta();
 
                         var height: f32 = 0;
                         var cur_element: Lego.Index = lego.tree.first;
                         var y: f32 = -scroll_visual;
                         while (cur_element != .nothing) {
+                            cur_element.get().local_point.pos.y += delta_scroll * scrollable_list.spacing();
+
                             if (scrollable_list.instantUpdates()) {
-                                // TODO(polish): this in fnkbox_testcases to avoid buggy looking scrolling,
-                                //  but still avoid popping when adding/removing testcases
                                 cur_element.get().local_point = .{ .pos = scrollable_list.base()
                                     .addY(scrollable_list.spacing() * y), .scale = scrollable_list.elementScale() };
                             } else {
@@ -6711,6 +6717,7 @@ const Workspace = struct {
                         }
                     },
                     .scrollbar => |*scrollbar| {
+                        scrollbar.prev_scroll_visual = scrollbar.scroll_visual;
                         math.lerpTowardsRange(&scrollbar.scroll_target, 0, @max(0, scrollbar.total_length - scrollbar.visible_length), .slow, delta_seconds);
                         math.lerpTowards(&scrollbar.scroll_visual, scrollbar.scroll_target, .slow, delta_seconds);
                     },
@@ -8089,7 +8096,10 @@ const Workspace = struct {
                 if (true) { // reduce visual_offset
                     const target = lego.visualOffsetGoal();
                     done = done and Point.equalsAbs(lego.visual_offset, target, 0.001);
-                    lego.visual_offset.lerpTowards(target, .fast, delta_seconds);
+                    lego.visual_offset.lerpTowards(target, if (lego.tree.parent.hasTag(.scrollable_list))
+                        .slow
+                    else
+                        .fast, delta_seconds);
                 }
 
                 switch (lego.specific) {
@@ -9267,6 +9277,7 @@ const Workspace = struct {
             .unloaded = testcase_index,
         } }, undo_stack);
         new.get().local_point = testcase_index.get().local_point;
+        new.get().visual_offset = testcase_index.get().visual_offset;
         Toybox.changeChild(testcase_index, new, undo_stack);
 
         return new;
