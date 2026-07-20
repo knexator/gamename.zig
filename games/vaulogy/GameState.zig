@@ -5986,7 +5986,7 @@ const Workspace = struct {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.editable_textline)) |editable_textline| {
                     if (workspace.isFreefloating(lego.index) or
-                        Toybox.findAncestor(lego.index, .fnkbox).get().specific.fnkbox.editable)
+                        (if (Toybox.findAncestor(lego.index, .fnkbox).getSafe()) |f| f.specific.fnkbox.editable else false))
                     {
                         editable_textline.inner_text.deinit(workspace.gpa_for_text);
                     }
