@@ -6145,6 +6145,9 @@ const Workspace = struct {
                         panic("unexpected unloaded testcase while interacting!", .{});
                     },
                     .editable_textline => |editable_textline| {
+                        if (Toybox.findAncestor(cur, .fnkbox).getSafe()) |f| {
+                            if (!f.specific.fnkbox.editable) continue;
+                        }
                         var best_index: usize = 0;
                         var best_dist: f32 = 1.0; // don't go too far, horizontally
                         var found_something = false;
