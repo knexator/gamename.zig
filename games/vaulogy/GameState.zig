@@ -8760,10 +8760,13 @@ const Workspace = struct {
                 while (cur != .nothing) : (cur = next) {
                     next = cur.get().tree.next;
                     if (!cur.hasTag(.testcase)) continue;
-                    if (cur.get().specific.testcase.source == .nothing) continue;
-                    const to_delete = cur.children(.testcase).input.get().specific.sexpr.kind == .empty or
-                        cur.children(.testcase).expected.get().specific.sexpr.kind == .empty;
-                    if (to_delete) {
+                    const source = cur.get().specific.testcase.source;
+                    if (source == .nothing) continue;
+
+                    const mangled = source.get().specific.unloaded_testcase.source.input_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).input) or
+                        source.get().specific.unloaded_testcase.source.expected_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).expected);
+
+                    if (mangled) {
                         Toybox.pop(cur, undo_stack);
                         Toybox.destroyFloating(cur, undo_stack);
                     }
