@@ -5,9 +5,11 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 // Causes of bugs:
 // - functions that take a pointer and allocate memory might invalidate that pointer
 
-// TODO: max stack size in toOldCoreValue :((((
+// TODO(bug): max stack size in toOldCoreValue :((((
 
 // TODO(polish): undo for text changes
+
+// TODO(game): in *_viewer, highlight the corresponding 'other' element!
 
 const Drawer = @import("Drawer.zig");
 
@@ -400,6 +402,7 @@ pub const Lego = struct {
         fnkslist_element: FnkslistElement,
         postit_text: struct {
             text: []const u8,
+            kind: enum { left, center } = .center,
         },
         postit_drawing: enum {
             arrow,
@@ -1848,6 +1851,7 @@ pub const Lego = struct {
                     point: Point,
                     part: union(enum) {
                         paragraph: []const []const u8,
+                        left_paragraph: []const []const u8,
                         arrow,
                         long_arrow,
                         launch_testcase_button,
@@ -1872,7 +1876,7 @@ pub const Lego = struct {
                                     Toybox.addChildLast(postit, try Toybox.new(
                                         center,
                                         .{ .postit_drawing = switch (part_tag) {
-                                            .paragraph, .thing => comptime unreachable,
+                                            .left_paragraph, .paragraph, .thing => comptime unreachable,
                                             .arrow => .arrow,
                                             .long_arrow => .long_arrow,
                                             .piece_center => .piece_center,
@@ -1884,11 +1888,15 @@ pub const Lego = struct {
                                 .thing => |index| {
                                     Toybox.addChildLastV2(center, postit, index, this.undo_stack);
                                 },
-                                .paragraph => |lines| {
+                                inline .paragraph, .left_paragraph => |lines, t| {
                                     for (lines, 0..) |line, k| {
                                         Toybox.addChildLast(postit, try Toybox.new(
                                             center.applyToLocalPoint(.{ .pos = .new(0, (tof32(k) - (tof32(lines.len) - 1) / 2.0)) }),
-                                            .{ .postit_text = .{ .text = line } },
+                                            .{ .postit_text = .{ .text = line, .kind = switch (t) {
+                                                else => comptime unreachable,
+                                                .left_paragraph => .left,
+                                                .paragraph => .center,
+                                            } } },
                                             this.undo_stack,
                                         ), this.undo_stack);
                                     }
@@ -5317,6 +5325,7 @@ const Workspace = struct {
                 .{ .point = .{ .pos = .new(2.5, 3) }, .part = .{ .paragraph = &.{"template"} } },
                 .{ .point = .{ .pos = .new(4.75, 2) }, .part = .{ .paragraph = &.{"call"} } },
                 .{ .point = .{ .pos = .new(4.25, 4) }, .part = .{ .paragraph = &.{"nested"} } },
+                .{ .point = .{ .pos = .new(4.25, 4.75) }, .part = .{ .paragraph = &.{"strand"} } },
             });
 
             break :blk bp;
@@ -5334,16 +5343,68 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp, .undo_stack = undo_stack };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos.add(.both(0.3)), &.{"etc etc"});
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 1) }, .part = .{ .paragraph = &.{"Reference:"} } },
+                .{ .point = .{ .pos = .new(1, 4), .scale = 1.5 }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                    .{ .pos = .new(0, 0) },
+                    "((a . b) . (changeLowercaseToNextCyclingOnC . nil))",
+                    false,
+                    false,
+                    undo_stack,
+                ) } },
+                .{ .point = .{ .pos = .new(3.15, 2.8), .scale = 0.65 }, .part = .{ .left_paragraph = &.{"template"} } },
+                .{ .point = .{ .pos = .new(3.15, 3.6), .scale = 0.65 }, .part = .{ .left_paragraph = &.{"pattern"} } },
+                .{ .point = .{ .pos = .new(3.15, 4.35), .scale = 0.65 }, .part = .{ .left_paragraph = &.{"call"} } },
+                .{ .point = .{ .pos = .new(3.15, 5.1), .scale = 0.65 }, .part = .{ .left_paragraph = &.{"nested"} } },
+            });
 
-            //     postit_pos = .new(-8, 0);
-            //     postit.addFromText(postit_pos, &.{ "Pattern and", "template", "are encoded", "into the top half" });
-            //     postit_pos.addInPlace(.new(7, 0.1));
-            //     postit.addFromText(postit_pos, &.{ "They are not", "the raw value", "but 'quoted'" });
+            postit_pos.addInPlace(.new(9, 1.0));
+            postit.addFromText(postit_pos, &.{ "The template", "and pattern", "have an extra", "quirk:" });
+            const other_pos = postit_pos.add(.new(6.8, 0.5));
+            postit.addFromParts(other_pos, &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "", "will get", "encoded as", "" } } },
+                .{ .point = .{ .pos = .new(2.5, 1.1), .scale = 0.75 }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                    .{},
+                    "a",
+                    false,
+                    false,
+                    undo_stack,
+                ) } },
+                .{ .point = .{ .pos = .new(2.5, 4.9), .scale = 0.75 }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                    .{},
+                    "(lit . a)",
+                    false,
+                    false,
+                    undo_stack,
+                ) } },
+            });
+            postit_pos.addInPlace(.new(-0.8, 8.3));
+            postit_pos.addInPlace(.new(-6.8, -0.3));
+            postit.addFromText(postit_pos, &.{ "This is", "required", "so we can", "also encode", "wildcards:" });
+            postit_pos.addInPlace(.new(6.8, 0.3));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "", "will get", "encoded as", "" } } },
+                .{ .point = .{ .pos = .new(2.5, 1.1), .scale = 0.75 }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                    .{},
+                    "@asdf",
+                    false,
+                    false,
+                    undo_stack,
+                ) } },
+                .{ .point = .{ .pos = .new(2.5, 4.9), .scale = 0.75 }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                    .{},
+                    "(var . asdf)",
+                    false,
+                    false,
+                    undo_stack,
+                ) } },
+            });
+            postit_pos.addInPlace(.new(6.8, 0.3));
+            postit.addFromText(postit_pos, &.{ "(with the", "bottom half", "being some", "random atom)" });
 
-            // Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
-            //     levelIndex("shiftback_with_meta_duplicate"),
-            // }, &.{.new(0, 12)}, undo_stack), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
+                levelIndex("fillAllVariablesWithA"),
+            }, &.{.new(0, 12)}, undo_stack), undo_stack);
 
             break :blk bp;
         }, undo_stack);
@@ -7127,7 +7188,10 @@ const Workspace = struct {
                             }), .fromHex("#d4bd68"));
                         },
                         .postit_text => |postit_text| {
-                            try drawer.canvas.drawText(0, camera_relative, postit_text.text, .centeredAt(.zero), 0.8, .black);
+                            try drawer.canvas.drawText(0, camera_relative, postit_text.text, switch (postit_text.kind) {
+                                .center => .centeredAt(.zero),
+                                .left => .leftCenterAt(.zero),
+                            }, 0.8, .black);
                         },
                         .postit_drawing => |kind| {
                             switch (kind) {

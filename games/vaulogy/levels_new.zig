@@ -2289,6 +2289,19 @@ pub const levels: []const Level = &.{
             }
         }.generate_sample,
     },
+    .{
+        .fnk_name = "fillAllVariablesWithA",
+        .description = "Fill in all variables with 'a'",
+        .initial_definition = null,
+        .generate_sample = struct {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+                // TODO(game)
+                _ = sample_index;
+                _ = pool;
+                return null;
+            }
+        }.generate_sample,
+    },
 };
 
 fn store(pool: *SexprPool, s: Sexpr) !*const Sexpr {
