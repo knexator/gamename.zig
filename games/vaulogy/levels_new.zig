@@ -25,7 +25,7 @@ pub const Level = struct {
     initial_definition: ?core.FnkBodyV2,
     initial_definition_lit: ?[]const u8 = null,
     bubble_definition: ?core.FnkBodyV2 = null,
-    generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample,
+    generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator, atom_mem: std.mem.Allocator) core.OoM!?Sample,
 
     pub fn initialDefinition(level: Level, pool: *SexprPool, allocator_for_cases: std.mem.Allocator) !?core.FnkBodyV2 {
         return level.initial_definition orelse if (level.initial_definition_lit) |src| blk: {
@@ -42,8 +42,8 @@ pub const Level = struct {
         k: usize,
         level: Level,
 
-        pub fn next(self: *SamplesIterator, pool: *SexprPool, arena: std.mem.Allocator) !?Sample {
-            const result = try self.level.generate_sample(self.k, pool, arena);
+        pub fn next(self: *SamplesIterator, pool: *SexprPool, arena: std.mem.Allocator, text_gpa: std.mem.Allocator) !?Sample {
+            const result = try self.level.generate_sample(self.k, pool, arena, text_gpa);
             if (result) |r| {
                 self.k += 1;
                 return r;
@@ -159,7 +159,7 @@ pub const levels: []const Level = &.{
     //         .{ .pattern = Vals.lowercase[1], .template = Vals.lowercase[0], .fnk_name = Sexpr.builtin.empty, .next = null },
     //     } },
     //     .generate_sample = struct {
-    //         fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+    //         fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
     //             if (k == 0) {
     //                 return .{ .input = Vals.lowercase[0], .expected = Vals.lowercase[1] };
     //             } else if (k == 1) {
@@ -179,7 +179,7 @@ pub const levels: []const Level = &.{
             },
         },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < 3) {
                     return .{ .input = Vals.lowercase[k], .expected = Vals.lowercase[@mod(k + 1, 3)] };
                 } else return null;
@@ -195,7 +195,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = Vals.lowercase[2], .template = Vals.lowercase[1], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < 3) {
                     return .{ .input = Vals.lowercase[@mod(k + 1, 3)], .expected = Vals.lowercase[k] };
                 } else return null;
@@ -212,7 +212,7 @@ pub const levels: []const Level = &.{
             .next = null,
         }} },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const [2]*const Sexpr = &.{
                     .{ Vals.uppercase[0], Vals.lowercase[0] },
                     .{ Vals.uppercase[0], Vals.lowercase[2] },
@@ -255,7 +255,7 @@ pub const levels: []const Level = &.{
         .description = "Shift the pair's top half",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.abc.len);
                 const k2 = @divFloor(k, Vals.abc.len);
                 if (k2 < Vals.abc.len) {
@@ -291,7 +291,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.abc.len);
                 const k2 = @divFloor(k, Vals.abc.len);
                 if (k2 < Vals.abc.len) {
@@ -322,7 +322,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = Vals.lowercase[5], .template = Vals.uppercase[5], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const order: [Vals.lowercase.len]usize = .{ 2, 0, 3, 5, 4, 1 };
                 if (kommon.safeAt(usize, &order, k)) |k2| {
                     return .{ .input = Vals.lowercase[k2], .expected = Vals.uppercase[k2] };
@@ -342,7 +342,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = Vals.uppercase[5], .template = Vals.lowercase[5], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const order: [Vals.lowercase.len]usize = .{ 2, 0, 3, 5, 4, 1 };
                 if (kommon.safeAt(usize, &order, k)) |k2| {
                     return .{ .input = Vals.uppercase[k2], .expected = Vals.lowercase[k2] };
@@ -360,7 +360,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = &Sexpr.doVar("other"), .template = Sexpr.builtin.false, .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const both = Vals.lowercase ++ Vals.uppercase;
                 if (k < both.len) {
                     return .{
@@ -389,7 +389,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
                 const k2 = @divFloor(k, Vals.lowercase.len);
                 if (k2 < Vals.lowercase.len) {
@@ -433,7 +433,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const both = Vals.abc;
                 const k1 = @mod(k, both.len);
                 const k2 = @divFloor(k, both.len);
@@ -471,7 +471,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < Vals.lowercase.len) {
                     const in = Vals.lowercase[k];
                     return .{
@@ -524,7 +524,7 @@ pub const levels: []const Level = &.{
         //     },
         // } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
                 const k2 = @divFloor(k, Vals.lowercase.len);
                 if (k2 < Vals.lowercase.len) {
@@ -556,7 +556,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 const k1 = @mod(k, values.len);
                 const k2 = @divFloor(k, values.len);
@@ -574,7 +574,7 @@ pub const levels: []const Level = &.{
         .description = "Shift both halves",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 const k1 = @mod(k, values.len);
                 const k2 = @divFloor(k, values.len);
@@ -592,7 +592,7 @@ pub const levels: []const Level = &.{
         .description = "Make both halves into uppercase.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.lowercase.len);
                 const k2 = @divFloor(k, Vals.lowercase.len);
                 if (k2 < Vals.lowercase.len) {
@@ -629,7 +629,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 switch (k) {
                     0...2 => return .{
                         .input = Vals.abc[k],
@@ -702,7 +702,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 switch (k) {
                     // (a . (b . ...)) -> b;
                     0...3 => return .{
@@ -731,7 +731,7 @@ pub const levels: []const Level = &.{
         .description = "Check if the given list has a 'b' element.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const T = struct { in: []const *const Sexpr, out: bool };
                 const some_samples: []const T = &.{
                     .{ .out = false, .in = &.{} },
@@ -775,7 +775,7 @@ pub const levels: []const Level = &.{
         .description = "Get the last element of the list.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 switch (k) {
                     0...3 => return .{
                         .input = try toList(pool, Vals.lowercase[0 .. 2 + k]),
@@ -800,7 +800,7 @@ pub const levels: []const Level = &.{
         .description = "Shift each letter",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                 const random = random_instance.random();
@@ -819,7 +819,7 @@ pub const levels: []const Level = &.{
         .description = "Return the half with more letters",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                 const random = random_instance.random();
@@ -844,7 +844,7 @@ pub const levels: []const Level = &.{
         .description = "Return the half with deeper nesting",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                 const random = random_instance.random();
@@ -869,7 +869,7 @@ pub const levels: []const Level = &.{
         .description = "Uppercase each element in the list.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k == 0) {
                     return .{
                         .input = Sexpr.builtin.nil,
@@ -901,7 +901,7 @@ pub const levels: []const Level = &.{
         .description = "Return true if the list contains any vowel",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k == 0) {
                     return .{
                         .input = Sexpr.builtin.nil,
@@ -933,7 +933,7 @@ pub const levels: []const Level = &.{
         .description = "Change the casing of the given letter.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < Vals.lowercase.len) {
                     return .{
                         .input = Vals.lowercase[k],
@@ -953,7 +953,7 @@ pub const levels: []const Level = &.{
         .description = "Get the lowercase and uppercase versions of the given letter.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < Vals.lowercase.len) {
                     return .{
                         .input = Vals.lowercase[k],
@@ -974,7 +974,7 @@ pub const levels: []const Level = &.{
         .description = "Reverse the given list.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const []const *const Sexpr = &.{
                     &.{},
                     &.{Vals.lowercase[0]},
@@ -1019,7 +1019,7 @@ pub const levels: []const Level = &.{
         .description = "Return the most common element",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const t = Sexpr.builtin.true;
                 const f = Sexpr.builtin.false;
                 const premade_samples: []const struct { input: []const *const Sexpr, expected: *const Sexpr } = &.{
@@ -1082,7 +1082,7 @@ pub const levels: []const Level = &.{
         .description = "Return the second-longest list",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
                     const random = random_instance.random();
@@ -1114,7 +1114,7 @@ pub const levels: []const Level = &.{
         .description = "Return the second most common element of the list.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const a, const b, const c, _, _, _ = Vals.lowercase;
                 const premade_samples: []const struct { input: []const *const Sexpr, expected: *const Sexpr } = &.{
                     .{
@@ -1172,7 +1172,7 @@ pub const levels: []const Level = &.{
         .description = "Calculator!",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const premade_samples: []const struct { input: []const u8, expected: []const u8 } = &.{
                     .{
                         .input = "(+ 2 . 2)",
@@ -1213,7 +1213,7 @@ pub const levels: []const Level = &.{
                         if (kommon.math.inRangeClosed(result, 1, 9)) {
                             break .{ tree, result };
                         }
-                    } else return generate_sample(0, pool, undefined);
+                    } else return generate_sample(0, pool, undefined, undefined);
                     return .{
                         .input = tree,
                         .expected = toNaiveNumber(result) catch unreachable,
@@ -1227,7 +1227,7 @@ pub const levels: []const Level = &.{
         .description = "Implement a BrainF*ck interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 // TODO(game): infinite samples
                 const prev = Vals.BF.prev;
                 const next = Vals.BF.next;
@@ -1289,7 +1289,7 @@ pub const levels: []const Level = &.{
         .description = "Build a strand that always returns the given input",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                 const random = random_instance.random();
                 const value = if (k < 3)
@@ -1317,7 +1317,7 @@ pub const levels: []const Level = &.{
         .description = "Build a strand for the given hardcoded map",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 var pairs: std.ArrayListUnmanaged(Sample) = .empty;
                 switch (sample_index) {
                     0 => {
@@ -1379,7 +1379,7 @@ pub const levels: []const Level = &.{
         .description = "Implement a Vaulogy interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 // TODO: should be an argument?
                 const strings_pool = pool.arena.allocator();
                 if (k != 0) return null;
@@ -1425,7 +1425,7 @@ pub const levels: []const Level = &.{
         .description = "Add the element to the start of the list",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const input = switch (k) {
                     0...3 => try toList(pool, Vals.lowercase[0 .. 2 + k]),
                     4...100 => blk: {
@@ -1448,7 +1448,7 @@ pub const levels: []const Level = &.{
         .description = "Mirror the given tree",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                 const random = random_instance.random();
@@ -1467,7 +1467,7 @@ pub const levels: []const Level = &.{
         .description = "Check if two halves have the same shape",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 var random_instance: std.Random.DefaultPrng = .init(@intCast(k));
                 const random = random_instance.random();
@@ -1496,7 +1496,7 @@ pub const levels: []const Level = &.{
         .description = "Build a list with the two given elements",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const values = Vals.abc;
                 const k1 = @mod(k, values.len);
                 const k2 = @divFloor(k, values.len);
@@ -1514,7 +1514,7 @@ pub const levels: []const Level = &.{
         .description = "Check if the list length is even or odd",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const []const *const Sexpr = &.{
                     &.{},
                     &.{Vals.lowercase[0]},
@@ -1554,7 +1554,7 @@ pub const levels: []const Level = &.{
         .description = "Move the first element to the end",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const []const *const Sexpr = &.{
                     &.{Vals.lowercase[0]},
                     &.{ Vals.lowercase[0], Vals.lowercase[1] },
@@ -1594,7 +1594,7 @@ pub const levels: []const Level = &.{
         .description = "Middle element of an odd-sized list",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const []const *const Sexpr = &.{
                     &.{Vals.lowercase[0]},
                     &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
@@ -1630,7 +1630,7 @@ pub const levels: []const Level = &.{
         .description = "Remove the last 'b' element",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const []const *const Sexpr = &.{
                     &.{Vals.lowercase[1]},
                     &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
@@ -1679,7 +1679,7 @@ pub const levels: []const Level = &.{
         .description = "Remove the first 'b' element",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const []const *const Sexpr = &.{
                     &.{Vals.lowercase[1]},
                     &.{ Vals.lowercase[0], Vals.lowercase[1], Vals.lowercase[2] },
@@ -1728,7 +1728,7 @@ pub const levels: []const Level = &.{
         .description = "Separate true and false values",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const t = Sexpr.builtin.true;
                 const f = Sexpr.builtin.false;
                 const Foo = struct { input: []const *const Sexpr, n_true: usize, n_false: usize };
@@ -1802,7 +1802,7 @@ pub const levels: []const Level = &.{
         .description = "Get the longest and second-longest lists",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index < 100) {
                     var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
                     const random = random_instance.random();
@@ -1872,7 +1872,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = &.doPair(Vals.naive_numbers[7], Vals.naive_numbers[0]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const In = std.meta.Tuple(&.{ i32, i32 });
                 var all_examples: std.ArrayListUnmanaged(In) = try .initCapacity(arena, 81);
                 for (1..10) |k1| {
@@ -1939,7 +1939,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[7]), .template = Vals.naive_numbers[0], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const In = std.meta.Tuple(&.{ i32, i32 });
                 var all_examples: std.ArrayListUnmanaged(In) = try .initCapacity(arena, 81);
                 for (1..10) |k1| {
@@ -1993,7 +1993,7 @@ pub const levels: []const Level = &.{
             .{ .pattern = &.doPair(Vals.naive_numbers[8], Vals.naive_numbers[0]), .template = Vals.naive_numbers[8], .fnk_name = Sexpr.builtin.empty, .next = null },
         } },
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const In = std.meta.Tuple(&.{ i32, i32 });
                 var all_examples: std.ArrayListUnmanaged(In) = try .initCapacity(arena, 81);
                 for (1..10) |k1| {
@@ -2035,7 +2035,7 @@ pub const levels: []const Level = &.{
             },
         },
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index < 9) {
                     return .{
                         .input = Vals.naive_numbers[sample_index],
@@ -2062,7 +2062,7 @@ pub const levels: []const Level = &.{
             },
         },
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index < 9) {
                     return .{
                         .input = Vals.unary_numbers[sample_index],
@@ -2077,7 +2077,7 @@ pub const levels: []const Level = &.{
         .description = "sum two unary numbers",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const some_samples: []const [2]i32 = &.{
                     .{ 1, 1 },
                     .{ 2, 2 },
@@ -2138,7 +2138,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 var pairs: std.ArrayListUnmanaged([2]*const Sexpr) = .empty;
                 switch (sample_index) {
                     0 => {
@@ -2211,7 +2211,7 @@ pub const levels: []const Level = &.{
         .description = "Invert a single case",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k = sample_index;
                 const pair: [2]*const Sexpr = switch (sample_index) {
                     0...2 => .{ Vals.abc[k], Vals.abc[@mod(k + 1, 3)] },
@@ -2256,7 +2256,7 @@ pub const levels: []const Level = &.{
             },
         } },
         .generate_sample = struct {
-            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(k: usize, _: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (k < 3) {
                     return .{ .input = Vals.lowercase[@mod(k + 1, 3)], .expected = Vals.lowercase[k] };
                 } else return null;
@@ -2275,7 +2275,7 @@ pub const levels: []const Level = &.{
         \\}
         ,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index > 0) return null;
                 const result = try core.parsing.parseSingleSexpr(
                     \\   ((  ((var . first) . (var . first)) . (changeLowercaseToNextCyclingOnC . (
@@ -2294,11 +2294,31 @@ pub const levels: []const Level = &.{
         .description = "Fill in all variables with 'a'",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator) core.OoM!?Sample {
-                // TODO(game)
-                _ = sample_index;
-                _ = pool;
-                return null;
+            // TODO(bug): change text_gpa to something that interns atom names
+            fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator, text_gpa: std.mem.Allocator) core.OoM!?Sample {
+                if (sample_index > 20) return null;
+                var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                const random = random_instance.random();
+                var atoms: [6]*const Sexpr = undefined;
+                @memcpy(atoms[0..3], Vals.abc);
+                for (atoms[3..6]) |*dst| {
+                    const var_name = try text_gpa.alloc(u8, 32);
+                    const rnd: kommon.math.Random = .init(random);
+                    rnd.alphanumeric_bytes(var_name);
+                    dst.* = try store(pool, .doVar(var_name));
+                }
+                const true_input = try randomSexpr(pool, &atoms, random, 0, 2);
+                return .{
+                    .input = try core.externalFromInternal(true_input, pool),
+                    .expected = core.fillTemplateV2(true_input, &.{
+                        .{ .name = atoms[3].atom_var.value, .value = Vals.abc[0] },
+                        .{ .name = atoms[4].atom_var.value, .value = Vals.abc[0] },
+                        .{ .name = atoms[5].atom_var.value, .value = Vals.abc[0] },
+                    }, pool) catch |err| switch (err) {
+                        inline else => |x| return x,
+                        error.UsedUndefinedVariable => unreachable,
+                    },
+                };
             }
         }.generate_sample,
     },

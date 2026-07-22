@@ -220,7 +220,6 @@ test "No leaks on Workspace and Drawer" {
 }
 
 test "solutions" {
-    if (true) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     var mem: core.VeryPermamentGameStuff = .init(gpa);
     defer mem.deinit();
@@ -240,7 +239,7 @@ test "solutions" {
 
         defer _ = scratch.reset(.retain_capacity);
         var samples_it = level.samplesIterator();
-        while (try samples_it.next(&pool, scratch.allocator())) |item| {
+        while (try samples_it.next(&pool, scratch.allocator(), scratch.allocator())) |item| {
             defer _ = pool.reset(.retain_capacity);
 
             var exec: core.ExecutionThread = try .init(item.input, &.doLit(level.fnk_name), &scoring, .new);
@@ -552,7 +551,7 @@ pub const Lego = struct {
                     const level_index = row.get().specific.scorer_row.level_index;
                     const level = levels[level_index];
                     var samples_it = level.samplesIterator();
-                    while (try samples_it.next(&pool, scratch)) |sample| {
+                    while (try samples_it.next(&pool, scratch, scratch)) |sample| {
                         defer _ = pool.reset(.retain_capacity);
 
                         var exec = core.ExecutionThread.init(sample.input, fnkname, &scoring_run, .new) catch |err| switch (err) {
@@ -1574,7 +1573,7 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32) !void {
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, text_gpa: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32) !void {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for fnkbox" });
                 defer zone.deinit();
 
@@ -1653,7 +1652,7 @@ pub const Lego = struct {
                                 break :blk unloaded_testcase.solved;
                             }
 
-                            const sample = (try levels[unloaded_testcase.source.level].generate_sample(unloaded_testcase.source.sample, &pool, scratch)).?;
+                            const sample = (try levels[unloaded_testcase.source.level].generate_sample(unloaded_testcase.source.sample, &pool, scratch, text_gpa)).?;
                             var exec = try core.ExecutionThread.init(sample.input, fnkname_value, &scoring_run, .new);
                             defer exec.deinit();
                             const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
@@ -3808,7 +3807,7 @@ pub const Toybox = struct {
             var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
             try samples.ensureUnusedCapacity(scratch, 100);
             var sample_index: usize = 0;
-            while (try level.generate_sample(sample_index, &pool, scratch)) |sample| {
+            while (try level.generate_sample(sample_index, &pool, scratch, text_allocator)) |sample| {
                 try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .build(
                     level_index,
                     sample_index,
@@ -6075,7 +6074,7 @@ const Workspace = struct {
             if (!lego.exists) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(workspace, scratch, all_fnks, all_fnks_hash);
+                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.gpa_for_text, all_fnks, all_fnks_hash);
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
@@ -8055,7 +8054,7 @@ const Workspace = struct {
                                         var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
                                         try samples.ensureUnusedCapacity(scratch, 100);
                                         var sample_index: usize = 0;
-                                        while (try level.generate_sample(sample_index, &pool, scratch)) |sample| {
+                                        while (try level.generate_sample(sample_index, &pool, scratch, workspace.gpa_for_text)) |sample| {
                                             try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .build(
                                                 level_index,
                                                 sample_index,
@@ -8105,7 +8104,7 @@ const Workspace = struct {
                                 },
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
-                                    const testcase_index = try ensureLoadedTestcase(fnkbox.get().specific.fnkbox.status.unsolved, scratch, undo_stack);
+                                    const testcase_index = try ensureLoadedTestcase(fnkbox.get().specific.fnkbox.status.unsolved, scratch, workspace.gpa_for_text, undo_stack);
                                     try launchTestcase(testcase_index, undo_stack);
                                 },
                                 .launch_testcase => {
@@ -8891,7 +8890,7 @@ const Workspace = struct {
                     const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null or
                         fnkbox_index.get().specific.fnkbox.hasExecutionOverTestcase(cur);
                     if (is_visible) {
-                        cur = try ensureLoadedTestcase(cur, scratch, undo_stack);
+                        cur = try ensureLoadedTestcase(cur, scratch, workspace.gpa_for_text, undo_stack);
                     } else {
                         cur = tryToUnloadTestcase(cur, undo_stack) orelse cur;
                     }
@@ -9437,7 +9436,7 @@ const Workspace = struct {
         return garland;
     }
 
-    fn ensureLoadedTestcase(testcase_index: Lego.Index, scratch: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
+    fn ensureLoadedTestcase(testcase_index: Lego.Index, scratch: std.mem.Allocator, text_allocator: std.mem.Allocator, undo_stack: ?*UndoStack) !Lego.Index {
         if (testcase_index.hasTag(.testcase)) return testcase_index;
         assert(testcase_index.hasTag(.unloaded_testcase));
         var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
@@ -9445,7 +9444,7 @@ const Workspace = struct {
         // TODO(optim-late): tune this number
         // try pool.preheat(1_000_000);
         const source = testcase_index.get().specific.unloaded_testcase.source;
-        const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch)).?;
+        const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch, text_allocator)).?;
 
         const new = try Toybox.buildTestcase(.{ .existing = .{
             .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, sample.input, false, false, undo_stack),
@@ -9736,7 +9735,7 @@ const Workspace = struct {
                                 const level_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
                                 const sample_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
                                 // 'orelse' only engaged if tests were deleted between versions
-                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch)) orelse continue;
+                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch, dst.gpa_for_text)) orelse continue;
 
                                 testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .unloaded = .build(
                                     level_index,

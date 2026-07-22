@@ -762,3 +762,13 @@ meta_duplicate {
         ( ( (var . second)  . (var . second) ) . ( @n . nil ) )
     ))));
 }
+
+fillAllVariablesWithA {
+    (var . @x) -> a;
+    (lit . @x) -> @x;
+    (@x . @y) -> fillAllVariablesWithA: @x {
+        @x2 -> fillAllVariablesWithA: @y {
+            @y2 -> (@x2 . @y2);
+        }
+    }
+}
