@@ -147,6 +147,18 @@ const Helpers = struct {
             .pair => |pair| 1 + @max(maxDepth(pair.left), maxDepth(pair.right)),
         };
     }
+
+    fn fillAllWithSame(template: *const Sexpr, value: *const Sexpr, pool: *SexprPool) !*const Sexpr {
+        switch (template.*) {
+            .atom_var => return value,
+            .atom_lit, .empty => return template,
+            .pair => |templ| {
+                const left = try fillAllWithSame(templ.left, value, pool);
+                const right = try fillAllWithSame(templ.right, value, pool);
+                return try store(pool, .doPair(left, right));
+            },
+        }
+    }
 };
 
 /// OJO: can't add new levels between existing ones
@@ -2297,27 +2309,27 @@ pub const levels: []const Level = &.{
             // TODO(bug): change text_gpa to something that interns atom names
             fn generate_sample(sample_index: usize, pool: *SexprPool, _: std.mem.Allocator, text_gpa: std.mem.Allocator) core.OoM!?Sample {
                 if (sample_index > 20) return null;
-                var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
-                const random = random_instance.random();
-                var atoms: [6]*const Sexpr = undefined;
-                @memcpy(atoms[0..3], Vals.abc);
-                for (atoms[3..6]) |*dst| {
-                    const var_name = try text_gpa.alloc(u8, 32);
-                    const rnd: kommon.math.Random = .init(random);
-                    rnd.alphanumeric_bytes(var_name);
-                    dst.* = try store(pool, .doVar(var_name));
-                }
-                const true_input = try randomSexpr(pool, &atoms, random, 0, 2);
+                const some_samples: []const *const Sexpr = &.{
+                    Vals.abc[1],
+                    Vals.vars.other,
+                    &.doPair(Vals.abc[2], Vals.vars.tail),
+                };
+                const true_input = safeAt(some_samples, sample_index) orelse blk: {
+                    var random_instance: std.Random.DefaultPrng = .init(@intCast(sample_index));
+                    const random = random_instance.random();
+                    var atoms: [6]*const Sexpr = undefined;
+                    @memcpy(atoms[0..3], Vals.abc);
+                    for (atoms[3..6]) |*dst| {
+                        const var_name = try text_gpa.alloc(u8, 32);
+                        const rnd: kommon.math.Random = .init(random);
+                        rnd.alphanumeric_bytes(var_name);
+                        dst.* = try store(pool, .doVar(var_name));
+                    }
+                    break :blk try randomSexpr(pool, &atoms, random, 0, 3);
+                };
                 return .{
                     .input = try core.externalFromInternal(true_input, pool),
-                    .expected = core.fillTemplateV2(true_input, &.{
-                        .{ .name = atoms[3].atom_var.value, .value = Vals.abc[0] },
-                        .{ .name = atoms[4].atom_var.value, .value = Vals.abc[0] },
-                        .{ .name = atoms[5].atom_var.value, .value = Vals.abc[0] },
-                    }, pool) catch |err| switch (err) {
-                        inline else => |x| return x,
-                        error.UsedUndefinedVariable => unreachable,
-                    },
+                    .expected = try Helpers.fillAllWithSame(true_input, Vals.abc[0], pool),
                 };
             }
         }.generate_sample,
