@@ -752,3 +752,13 @@ calculator_into_unary {
         }
     }
 }
+
+shiftback_with_meta_duplicate {
+    @x -> (meta_duplicate . changeLowercaseToNextCyclingOnC): @x;
+}
+
+meta_duplicate {
+    @n -> ((((var . first) . (var . first)) . (@n . (
+        ( ( (var . second)  . (var . second) ) . ( @n . nil ) )
+    ))));
+}
