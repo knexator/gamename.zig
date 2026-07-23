@@ -442,6 +442,8 @@ const AtomVisualCache = struct {
         .do("end", .{ .display = "end" }),
         .do("+1", .{ .display = "+1" }),
         .do("-1", .{ .display = "-1" }),
+        .do("lit", .{ .display = "lit", .color = .fromHex("#00a2ff") }),
+        .do("var", .{ .display = "var", .color = .fromHex("#ff9a00") }),
         // TODO: the debug web build crashes without this!
         .do("other", .{
             .color = .fromHex("#9955ff"),
