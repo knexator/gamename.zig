@@ -4248,7 +4248,7 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(8.1, 1.2));
             postit.addFromText(postit_pos, &.{ "Experiment", "with them,", "get a feel!" });
 
-            postit_pos = .new(-3, 1);
+            postit_pos = .new(-4, 1);
             Toybox.addChildLast(bp, try Toybox.buildSexpr(
                 .{ .pos = postit_pos.add(.new(-3.4, -1.7)) },
                 .{ .atom_lit = "a" },
@@ -4281,6 +4281,13 @@ const Workspace = struct {
                 .{ .pos = postit_pos.add(.new(7.4, -0.4)) },
                 "((b . c) . a)",
                 false,
+                false,
+                undo_stack,
+            ), undo_stack);
+            Toybox.addChildLast(bp, try Toybox.buildSexprFromText(
+                .{ .pos = postit_pos.add(.new(12.4, 0.2)) },
+                "((b . c) . a)",
+                true,
                 false,
                 undo_stack,
             ), undo_stack);
