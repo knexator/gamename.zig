@@ -469,6 +469,7 @@ pub const Lego = struct {
             hint_for: [2]Lego.Index = @splat(.nothing),
             requested_hints: bool = false,
             has_hints: bool = false,
+            remaining_reset_anim_t: f32 = 0,
 
             pub const FulfillCondition = union(enum) {
                 all_scorers_solved,
@@ -7026,6 +7027,17 @@ const Workspace = struct {
                             assert(inside_postit);
                             inside_postit = false;
                         },
+                        .bubble => |bubble| {
+                            if (bubble.remaining_reset_anim_t > 0) {
+                                const area = bubble.blueprint.get().specific.area;
+                                switch (area.bg) {
+                                    .all, .none => unreachable,
+                                    .local_rect => |rect| {
+                                        drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect).plusMargin(-0.25 * lego.absolute_point.scale), FColor.gray(0.5).withAlpha(bubble.remaining_reset_anim_t));
+                                    },
+                                }
+                            }
+                        },
                         else => {},
                     }
                 } else {
@@ -8107,6 +8119,7 @@ const Workspace = struct {
                                         Toybox.findAncestor(row, .area), fnkbox, undo_stack);
                                 },
                                 .reset_bubble => {
+                                    workspace.grabbing.index.get().tree.parent.get().specific.bubble.remaining_reset_anim_t = 1;
                                     const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
                                     const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, true, undo_stack);
                                     Toybox.changeChild(original_instanced, new_instanced, undo_stack);
@@ -8295,8 +8308,10 @@ const Workspace = struct {
                         done = math.lerpTowardsWithFinish(&sexpr.jiggling_t, 0, .fast, delta_seconds, eps) and done;
                     },
                     .executor => |*executor| {
-                        math.towards(&executor.garland_appearing_t, 1, delta_seconds / 0.4);
-                        done = done and (@abs(executor.garland_appearing_t - 1) < eps);
+                        done = math.towardsWithFinish(&executor.garland_appearing_t, 1, delta_seconds / 0.4) and done;
+                    },
+                    .bubble => |*bubble| {
+                        done = math.towardsWithFinish(&bubble.remaining_reset_anim_t, 0, delta_seconds / 0.2) and done;
                     },
                     .scorer,
                     .scorer_row,
@@ -8328,7 +8343,6 @@ const Workspace = struct {
                     .executor_brake,
                     .executor_crank,
                     .fnkname_holder,
-                    .bubble,
                     .bubble_connection,
                     => {},
                 }

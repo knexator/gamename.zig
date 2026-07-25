@@ -41,6 +41,20 @@ pub fn remapTo01Clamped(value: f32, old_min: f32, old_max: f32) f32 {
     return remapClamped(value, old_min, old_max, 0, 1);
 }
 
+/// returns `true` when v reached the goal
+pub fn towardsWithFinish(v: *f32, goal: f32, max_delta: f32) bool {
+    if (@abs(v.* - goal) <= max_delta) {
+        v.* = goal;
+        return true;
+    } else if (v.* < goal) {
+        v.* += max_delta;
+        return false;
+    } else {
+        v.* -= max_delta;
+        return false;
+    }
+}
+
 pub fn towards(v: *f32, goal: f32, max_delta: f32) void {
     if (max_delta <= 0) return;
     if (@abs(v.* - goal) <= max_delta) {
