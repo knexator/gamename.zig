@@ -4331,8 +4331,8 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(-3.2, 6.7));
 
             postit.addFromParts(postit_pos, &.{
-                .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "As a warmup,", "make both Vaus", "match:" } } },
-                .{ .point = .{ .pos = .new(2, 4.8) }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                .{ .point = .{ .pos = .new(3, 2) }, .part = .{ .paragraph = &.{ "As a warmup,", "make that Vau", "match this:" } } },
+                .{ .point = .{ .pos = .new(3, 4.8) }, .part = .{ .thing = try Toybox.buildSexprFromText(
                     .{},
                     "(a . (b . c))",
                     true,
@@ -6966,6 +6966,7 @@ const Workspace = struct {
         active_text_selection: TextSelection,
     ) !void {
         for (roots_in_draw_order) |root| {
+            var inside_postit = false;
             var it = Toybox.treeIterator(root, true);
             while (it.next()) |step| {
                 const cur = step.index;
@@ -7020,6 +7021,10 @@ const Workspace = struct {
                         },
                         .fnkbox_box => {
                             drawer.canvas.borderRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, 0.05, .inner, .black);
+                        },
+                        .postit => {
+                            assert(inside_postit);
+                            inside_postit = false;
                         },
                         else => {},
                     }
@@ -7080,7 +7085,7 @@ const Workspace = struct {
                                 {
                                     try drawer.drawPlaceholder(camera, point, sexpr.is_pattern, alpha);
                                 },
-                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, alpha),
+                                .atom_lit => try drawer.drawAtom(camera, point, sexpr.is_pattern, sexpr.atom_name, inside_postit, alpha),
                                 .pair => try drawer.drawPairHolder(camera, point, sexpr.is_pattern, alpha),
                                 .atom_var => {
                                     const extra_alpha = 1.0 - sexpr.emerging_value_t;
@@ -7176,6 +7181,8 @@ const Workspace = struct {
                             }
                         },
                         .postit => {
+                            assert(!inside_postit);
+                            inside_postit = true;
                             const t: f32 = 2.0 + lego.hot_t * 0.7 + lego.active_t * 1.2;
                             drawer.canvas.fillShape(camera_relative, .{ .pos = .zero, .scale = 6.0 / 2.0 }, try drawer.canvas.tmpShape(&.{
                                 .new(-1, -1),

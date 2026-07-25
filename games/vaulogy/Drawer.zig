@@ -602,15 +602,15 @@ pub fn drawHoldedFnk(drawer: *Drawer, camera: Rect, fnk_point: Point, is_main: f
     }
 }
 
-pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, alpha: f32) !void {
+pub fn drawAtom(drawer: *Drawer, camera: Rect, point: Point, is_pattern: bool, name: []const u8, is_drawing: bool, alpha: f32) !void {
     const visuals = drawer.atom_visuals_cache.getAtomVisuals(name, drawer.canvas.gl) catch {
         std.log.err("error getting visuals for atom literal: {s}", .{name});
         return;
     };
     if (is_pattern) {
-        try drawer.drawPatternAtom(camera, point, visuals, alpha);
+        try drawer.drawPatternAtom(camera, point, visuals, is_drawing, alpha);
     } else {
-        try drawer.drawTemplateAtom(camera, point, visuals, alpha);
+        try drawer.drawTemplateAtom(camera, point, visuals, is_drawing, alpha);
     }
 }
 
@@ -775,8 +775,8 @@ pub fn drawTemplatePairHolder(drawer: *Drawer, camera: Rect, point: Point, alpha
     );
 }
 
-fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    if (DRAW_ATOMS_PLAINLY) {
+fn drawTemplateAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, is_drawing: bool, alpha: f32) !void {
+    if (is_drawing or DRAW_ATOMS_PLAINLY) {
         try drawer.drawShapeV3(
             camera,
             point,
@@ -864,8 +864,8 @@ pub fn drawPatternAtomSolidColor(drawer: *Drawer, camera: Rect, point: Point, at
     );
 }
 
-fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, alpha: f32) !void {
-    if (DRAW_ATOMS_PLAINLY) {
+fn drawPatternAtom(drawer: *Drawer, camera: Rect, point: Point, visuals: AtomVisuals, is_drawing: bool, alpha: f32) !void {
+    if (is_drawing or DRAW_ATOMS_PLAINLY) {
         try drawer.drawShapeV3(
             camera,
             point,
