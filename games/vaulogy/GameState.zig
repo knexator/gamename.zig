@@ -819,6 +819,10 @@ pub const Lego = struct {
             emerging_value: Lego.Index = .nothing,
             emerging_value_t: f32 = 0,
 
+            /// another Lego with a connected 'hotness' to this one
+            /// for example, two sexpr values in both sides of the list viewer
+            hot_sibling: Index = .nothing,
+
             // reset each frame
             bindings_all: std.ArrayListUnmanaged([]const u8) = .empty,
             bindings_unbound: std.ArrayListUnmanaged([]const u8) = .empty,
@@ -1029,6 +1033,15 @@ pub const Lego = struct {
                         },
                     }
                 }
+            }
+
+            fn connectHots(a: Lego.Index, b: Lego.Index, undo_stack: ?*UndoStack) void {
+                if (undo_stack) |s| {
+                    s.storeAllData(a);
+                    s.storeAllData(b);
+                }
+                a.get().specific.sexpr.hot_sibling = b;
+                b.get().specific.sexpr.hot_sibling = a;
             }
         };
 
@@ -2111,11 +2124,13 @@ pub const Lego = struct {
                                 try Toybox.new(.{}, .{ .scrollable_list_inbetween = .{ .kind = .listviewer_sexprs } }, undo_stack),
                                 undo_stack,
                             );
+                            const foo = try Toybox.dupeIntoFloating(left, true, undo_stack);
                             Toybox.addChildLast(
                                 lego_children.scrollable_list,
-                                try Toybox.dupeIntoFloating(left, true, undo_stack),
+                                foo,
                                 undo_stack,
                             );
+                            Lego.Specific.Sexpr.connectHots(foo, left, undo_stack);
                         }
                         Toybox.addChildLast(
                             lego_children.scrollable_list,
@@ -2124,6 +2139,7 @@ pub const Lego = struct {
                         );
                         const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, true, undo_stack);
                         new_sentinel.get().local_point = lego_children.sentinel.get().local_point;
+                        Lego.Specific.Sexpr.connectHots(new_sentinel, cur_parent, undo_stack);
                         Toybox.changeChild(lego_children.sentinel, new_sentinel, undo_stack);
                     }
                     // + 0.5 to give a bit of extra for adding at the end
@@ -2147,9 +2163,11 @@ pub const Lego = struct {
                         // TODO(optim): avoid this by directly creating either a pair or an empty
                         if (undo_stack) |s| s.storeAllData(cur_parent);
                         cur_parent.get().specific.sexpr.kind = .pair;
-                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .up), cur_parent, try Toybox.dupeIntoFloating(cur_item, true, undo_stack), undo_stack);
+                        const foo = try Toybox.dupeIntoFloating(cur_item, true, undo_stack);
+                        Toybox.addChildLastV2(ViewHelper.offsetFor(false, .up), cur_parent, foo, undo_stack);
                         Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent, undo_stack);
                         cur_parent = next_parent;
+                        Lego.Specific.Sexpr.connectHots(foo, cur_item, undo_stack);
                     }
                     // + 0.5 to give a bit of extra for adding at the end
                     lego_children.scrollbar.get().specific.scrollbar.total_length = count + 0.5;
@@ -8277,6 +8295,11 @@ const Workspace = struct {
 
         const undo_stack = &workspace.undo_stack;
 
+        const other_hot: Lego.Index = if (hot_and_dropzone.hot.hasTag(.sexpr))
+            hot_and_dropzone.hot.get().specific.sexpr.hot_sibling
+        else
+            .nothing;
+
         if (true) { // update _t and other simple things that could be done in parallel
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
             defer zone.deinit();
@@ -8288,7 +8311,7 @@ const Workspace = struct {
                 var done = true;
 
                 const eps: f32 = 0.0001;
-                done = math.lerpTowardsWithFinish(&lego.hot_t, if (lego.index == hot_and_dropzone.hot) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.hot_t, if (lego.index == hot_and_dropzone.hot or lego.index == other_hot) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != .nothing) 1 else 0, .fast, delta_seconds, eps) and done;
@@ -9848,6 +9871,8 @@ const Workspace = struct {
             null,
             scratch,
         );
+
+        assert(dst.valid(scratch));
     }
 
     pub fn canAutosaveNow(workspace: *const Workspace) bool {
