@@ -5,6 +5,8 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 // Causes of bugs:
 // - functions that take a pointer and allocate memory might invalidate that pointer
 
+// TODO(game): gradual computation of solutions, avoid freezing
+
 // TODO(bug): max stack size in toOldCoreValue :((((
 
 // TODO(polish): undo for text changes
@@ -507,7 +509,8 @@ pub const Lego = struct {
             score: ?Score = null,
             score_computed_at: struct {
                 all_fnks_hash: u32,
-            } = .{ .all_fnks_hash = 0 },
+                all_fnkname_rows_hash: u32,
+            } = .{ .all_fnks_hash = 0, .all_fnkname_rows_hash = 0 },
 
             pub const Score = struct {
                 total_time: usize,
@@ -533,7 +536,18 @@ pub const Lego = struct {
                 defer zone.deinit();
 
                 assert(scorer_index.hasTag(.scorer));
-                if (scorer_index.get().specific.scorer.score_computed_at.all_fnks_hash == all_fnks_hash) return;
+                const all_scorer_fnknames_hash: u32 = blk: {
+                    var hasher = std.hash.Wyhash.init(0);
+                    const scorer_rows = scorer_index.children(.scorer).scorer_rows;
+                    var cur = scorer_rows.get().tree.first;
+                    while (cur != .nothing) : (cur = cur.get().tree.next) {
+                        assert(cur.hasTag(.scorer_row));
+                        hasher.update(std.mem.asBytes(&Sexpr.hash(cur.children(.scorer_row).fnkname)));
+                    }
+                    break :blk @truncate(hasher.final());
+                };
+                if (scorer_index.get().specific.scorer.score_computed_at.all_fnks_hash == all_fnks_hash and
+                    scorer_index.get().specific.scorer.score_computed_at.all_fnkname_rows_hash == all_scorer_fnknames_hash) return;
 
                 var mem: core.VeryPermamentGameStuff = .init(scratch);
                 var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &mem);
@@ -612,6 +626,7 @@ pub const Lego = struct {
                     };
                 scorer_index.get().specific.scorer.score_computed_at = .{
                     .all_fnks_hash = all_fnks_hash,
+                    .all_fnkname_rows_hash = all_scorer_fnknames_hash,
                 };
             }
         };
@@ -4387,7 +4402,7 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "The real", "magic of Vaus", "is manipulating", "them with", "Strands." });
 
             postit_pos = .new(-7.4, 0.2);
-            postit.addFromText(postit_pos, &.{ "Here is an", "example Strand:" });
+            postit.addFromText(postit_pos.add(.new(0.5, -0.5)), &.{ "Here is an", "example Strand:" });
             postit_pos.addInPlace(.new(8, 0));
             Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
                 try Toybox.buildCase(.{}, .{
@@ -4403,7 +4418,7 @@ const Workspace = struct {
                     .next = null,
                 }, undo_stack),
             }, undo_stack), undo_stack);
-            postit_pos.addInPlace(.new(5.8, 1.3));
+            postit_pos.addInPlace(.new(5.8, -0.4));
             postit.addFromText(postit_pos, &.{ "This one turns", "'a' into 'b',", "and", "'b' into 'c'" });
 
             postit_pos = .new(-7.4, 0.2);
