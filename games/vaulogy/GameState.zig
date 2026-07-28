@@ -6605,6 +6605,9 @@ const Workspace = struct {
                             if (p.specific.tag() == .garland and lego.specific.tag() == .sexpr) {
                                 // special case: ignore sexpr with garland parent (it's the fnkname)
                                 assert(lego.immutable);
+                            } else if (p.specific.tag() == .testcase and p.specific.testcase.source != .nothing) {
+                                // special case: for now, builtin cases are inmutable
+                                lego.immutable = true;
                             } else if (p.specific.tag() == .testcase and p.index.children(.testcase).actual == cur) {
                                 // special case: the 'actual' sexpr in a testcase is always immutable
                                 lego.immutable = true;
