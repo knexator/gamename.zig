@@ -4894,6 +4894,7 @@ const Workspace = struct {
         bubble_pos.addInPlace(path_next_close);
         const final_tutorial = try buildBubbleSimple(bubble_pos, intro_to_mixing_both_tricks, &.{"shiftPair"}, &.{
             &.{ "You now know", "everything!" },
+            &.{ "Take some fresh", "cases from the", "left toolbar", "and build a", "solution" },
             &.{"Good luck!"},
         }, undo_stack);
         Toybox.addChildLast(dst.main_area, final_tutorial, undo_stack);
