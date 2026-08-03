@@ -6132,14 +6132,15 @@ const Workspace = struct {
                 if (debug_all_bubbles_unlocked) {
                     lego.specific.bubble.locked = false;
                 } else {
-                    lego.specific.bubble.locked = if (lego.specific.bubble.prev_bubble.getSafe()) |prev|
-                        prev.specific.bubble.locked or !prev.specific.bubble.fulfilled
-                    else for (lego.specific.bubble.hint_for) |harder| {
-                        if (harder == .nothing) continue;
-                        if (harder.get().specific.bubble.requested_hints) break false;
-                    } else for (lego.specific.bubble.hint_for) |harder| {
-                        if (harder != .nothing) break true;
-                    } else false;
+                    lego.specific.bubble.locked = lego.specific.bubble.locked and
+                        if (lego.specific.bubble.prev_bubble.getSafe()) |prev|
+                            prev.specific.bubble.locked or !prev.specific.bubble.fulfilled
+                        else for (lego.specific.bubble.hint_for) |harder| {
+                            if (harder == .nothing) continue;
+                            if (harder.get().specific.bubble.requested_hints) break false;
+                        } else for (lego.specific.bubble.hint_for) |harder| {
+                            if (harder != .nothing) break true;
+                        } else false;
                 }
 
                 const area = lego.index.children(.bubble).instanced;
