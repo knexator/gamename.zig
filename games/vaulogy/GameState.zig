@@ -244,9 +244,9 @@ test "solutions" {
         while (try samples_it.next(&pool, scratch.allocator(), scratch.allocator())) |item| {
             defer _ = pool.reset(.retain_capacity);
 
-            var exec: core.ExecutionThread = try .init(item.input, &.doLit(level.fnk_name), &scoring, .new);
+            var exec: core.ExecutionThread = try .init(item.input, &.doLit(level.fnk_name), &scoring, .new_very_long);
             defer exec.deinit();
-            const actual = exec.getFinalResultBoundedV2(&scoring, .new) catch |err| switch (err) {
+            const actual = exec.getFinalResultBoundedV2(&scoring, .new_very_long) catch |err| switch (err) {
                 else => {
                     if (std.testing.backend_can_print) {
                         std.debug.print(

@@ -953,6 +953,13 @@ pub const ExecutionThread = struct {
             .max_steps = 10_000,
         };
 
+        pub const new_very_long: Config = .{
+            .allow_no_cases = true,
+            .allow_unbound_variables = true,
+            .allow_undefined_fnks = true,
+            .max_steps = 1_000_000,
+        };
+
         pub const old: Config = .{
             .allow_no_cases = false,
             .allow_unbound_variables = false,
