@@ -365,41 +365,7 @@ pub const Lego = struct {
 
         // TODO(design): try to simplify these
         garland_newcases: void,
-        editable_textline: struct {
-            inner_text: std.ArrayListUnmanaged(u8),
-            /// resets each frame
-            cursor_points: std.ArrayListUnmanaged(CursorPoint) = .empty,
-
-            config: Config,
-            const Config = struct {
-                local_position: Canvas.TextRenderer.TextPosition,
-                em: f32,
-                text_if_empty: []const u8,
-
-                pub const fnkbox_description: Config = .{
-                    .local_position = .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
-                    .em = 0.8,
-                    .text_if_empty = "<no description>",
-                };
-
-                pub const searchbox: Config = .{
-                    .local_position = .{
-                        .hor = .left,
-                        .ver = .baseline,
-                        .pos = .new(2.1, 0.9),
-                    },
-                    .em = 0.5,
-                    .text_if_empty = "Search...",
-                };
-            };
-
-            pub fn text(this: @This()) ?[]const u8 {
-                return if (this.inner_text.items.len > 0)
-                    this.inner_text.items
-                else
-                    null;
-            }
-        },
+        editable_textline: EditableTextline,
         fnkslist_element: FnkslistElement,
         postit_text: struct {
             text: []const u8,
@@ -648,6 +614,42 @@ pub const Lego = struct {
                     .create_fnkname_button = asdf[0],
                     .fnkname = asdf[1],
                 };
+            }
+        };
+
+        pub const EditableTextline = struct {
+            inner_text: std.ArrayListUnmanaged(u8),
+            /// resets each frame
+            cursor_points: std.ArrayListUnmanaged(CursorPoint) = .empty,
+
+            config: Config,
+            const Config = struct {
+                local_position: Canvas.TextRenderer.TextPosition,
+                em: f32,
+                text_if_empty: []const u8,
+
+                pub const fnkbox_description: Config = .{
+                    .local_position = .centeredAt(.new(0, 0.75 + Lego.Specific.FnkboxBox.text_height / 2.0)),
+                    .em = 0.8,
+                    .text_if_empty = "<no description>",
+                };
+
+                pub const searchbox: Config = .{
+                    .local_position = .{
+                        .hor = .left,
+                        .ver = .baseline,
+                        .pos = .new(2.1, 0.9),
+                    },
+                    .em = 0.5,
+                    .text_if_empty = "Search...",
+                };
+            };
+
+            pub fn text(this: @This()) ?[]const u8 {
+                return if (this.inner_text.items.len > 0)
+                    this.inner_text.items
+                else
+                    null;
             }
         };
 
