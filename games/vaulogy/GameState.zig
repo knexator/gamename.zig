@@ -7740,6 +7740,24 @@ const Workspace = struct {
             std.log.debug("total legos: {d}", .{toybox.all_legos.count()});
         }
 
+        if (true and platform.keyboard.wasPressed(.KeyQ)) {
+            const children = try Toybox.getChildrenUnknown(scratch, workspace.floating_inputs_layer);
+            std.log.debug("floating children: {d}", .{children.len});
+            for (children) |index| {
+                const lego = index.get();
+                assert(lego.exists);
+                std.log.debug("{d} \t{s} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d}\tfree next: {d}", .{
+                    index,
+                    @tagName(lego.specific.tag()),
+                    lego.tree.parent.asI32(),
+                    lego.tree.next.asI32(),
+                    lego.tree.prev.asI32(),
+                    lego.tree.first.asI32(),
+                    lego.free_next.asI32(),
+                });
+            }
+        }
+
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
             std.log.debug("-----", .{});
             var lego_it = toybox.all_legos.constIterator(0);
@@ -9243,6 +9261,8 @@ const Workspace = struct {
                         animation.garland_fnkname,
                         undo_stack,
                     ), undo_stack);
+                    Toybox.pop(animation.active_case, undo_stack);
+                    Toybox.destroyFloating(animation.active_case, undo_stack);
                 }
                 undo_stack.storeAllData(executor_index);
                 executor.animation = null;
