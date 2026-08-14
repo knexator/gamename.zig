@@ -4300,6 +4300,25 @@ const Workspace = struct {
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, @src());
         dst.floating_inputs_layer.get().immutable = true;
 
+        try dst.setupBubbles(scratch.allocator(), gpa);
+
+        assert(try dst.valid(scratch.allocator()));
+
+        try updateNonInteractive(
+            dst,
+            Rect
+                .fromCenterAndSize(.zero, .both(2))
+                .withAspectRatio(stuff.metadata.desired_aspect_ratio, .grow, .center),
+            0,
+            .{ .over_background = dst.main_area },
+            null,
+            scratch.allocator(),
+        );
+
+        assert(try dst.valid(scratch.allocator()));
+    }
+
+    fn setupBubbles(dst: *Workspace, scratch: std.mem.Allocator, gpa: std.mem.Allocator) !void {
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 15 }, true);
 
         const path_next_close: Vec2 = .new(30, 0);
@@ -4617,7 +4636,7 @@ const Workspace = struct {
                 try dst.findFnkname(.{}, true, levels[0].fnk_name.atom_lit.value),
                 levels[0],
                 false,
-                scratch.allocator(),
+                scratch,
                 dst.gpa_for_atom_names,
             );
             fnkbox.children(.fnkbox).executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
@@ -4910,7 +4929,7 @@ const Workspace = struct {
             Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
                 .{ .pos = postit_pos },
                 levels[level_index].bubble_definition.?,
-                scratch.allocator(),
+                scratch,
             ));
 
             const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{level_index}, &.{.new(0, 8.5)});
@@ -4943,7 +4962,7 @@ const Workspace = struct {
             Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
                 .{ .pos = postit_pos },
                 levels[level_index].bubble_definition.?,
-                scratch.allocator(),
+                scratch,
             ));
 
             const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{level_index}, &.{.new(0, 8.5)});
@@ -5327,7 +5346,7 @@ const Workspace = struct {
                 try dst.findFnkname(.{}, true, level.fnk_name),
                 level_index,
                 false,
-                scratch.allocator(),
+                scratch,
                 dst.gpa_for_atom_names,
             ));
 
@@ -6101,23 +6120,6 @@ const Workspace = struct {
                 }
             }
         }
-
-        var arena: std.heap.ArenaAllocator = .init(gpa);
-        defer arena.deinit();
-        assert(try dst.valid(arena.allocator()));
-
-        try updateNonInteractive(
-            dst,
-            Rect
-                .fromCenterAndSize(.zero, .both(2))
-                .withAspectRatio(stuff.metadata.desired_aspect_ratio, .grow, .center),
-            0,
-            .{ .over_background = dst.main_area },
-            null,
-            scratch.allocator(),
-        );
-
-        assert(try dst.valid(arena.allocator()));
     }
 
     fn buildBubbleSimple(bubble_pos: Vec2, prev: Lego.Index, comptime level_names: []const []const u8, postits: []const []const []const u8) !Lego.Index {
