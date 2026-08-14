@@ -3243,6 +3243,17 @@ pub const Toybox = struct {
 
         const new_index: Lego.Index = .{ .index = index.index, .generation = index.generation + 1 };
         const lego = Toybox.get(index);
+
+        // special cases
+        switch (lego.specific) {
+            else => {},
+            .sexpr => |*sexpr| {
+                if (sexpr.emerging_value != nothing) {
+                    destroyFloating(sexpr.emerging_value);
+                }
+            },
+        }
+
         lego.* = undefined;
         lego.index = new_index;
         lego.exists = false;
@@ -9315,6 +9326,8 @@ const Workspace = struct {
                                     if (!sexpr.is_pattern) {
                                         sexpr.emerging_value.get().local_point = cur.get().local_point;
                                         Toybox.changeChild(cur, sexpr.emerging_value);
+                                        cur.get().specific.sexpr.emerging_value = .nothing;
+                                        Toybox.destroyFloating(cur);
                                     }
                                 }
                             }
