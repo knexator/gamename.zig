@@ -26,6 +26,7 @@ const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
 const OVERWRITING_TOPLEVEL_SEXPRS_ENABLED = false;
+const INCLUDE_DEBUG_FIELDS = @import("builtin").mode == .Debug;
 
 const Level = @import("levels_new.zig").Level;
 const levels = @import("levels_new.zig").levels;
@@ -332,8 +333,7 @@ pub const Lego = struct {
 
     created_at: CreationTag,
 
-    // TODO(perf-late): remove in release builds
-    pub const CreationTag = struct {
+    pub const CreationTag = if (INCLUDE_DEBUG_FIELDS) struct {
         sources: std.BoundedArray(std.builtin.SourceLocation, 64),
 
         pub fn new(src: std.builtin.SourceLocation) CreationTag {
@@ -344,7 +344,7 @@ pub const Lego = struct {
 
         pub fn plus(tag: CreationTag, src: std.builtin.SourceLocation) CreationTag {
             var result = tag;
-            result.sources.append(src) catch @panic("too deep creationtag");
+            result.sources.append(src) catch {};
             return result;
         }
 
@@ -359,6 +359,17 @@ pub const Lego = struct {
             for (self.sources.constSlice()) |src| {
                 try writer.print("line {d}, ", .{src.line});
             }
+        }
+    } else struct {
+        pub fn new(src: std.builtin.SourceLocation) CreationTag {
+            _ = src;
+            return .{};
+        }
+
+        pub fn plus(tag: CreationTag, src: std.builtin.SourceLocation) CreationTag {
+            _ = tag;
+            _ = src;
+            return .{};
         }
     };
 
