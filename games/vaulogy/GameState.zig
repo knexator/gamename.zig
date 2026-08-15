@@ -8098,15 +8098,12 @@ const Workspace = struct {
                     grabbed_element_index = .nothing;
                     plucked = false;
 
-                    for (try workspace.allFnkboxes(false, scratch)) |fnkbox_index| {
-                        if (Lego.Specific.Sexpr.equalValue(fnkbox_index.children(.fnkbox).fnkname, hot_index)) {
-                            const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(fnkbox_index.get().absolute_point);
-                            workspace.centerCameraAt(p.applyToLocalPoint(.{
-                                .scale = 8,
-                                .pos = .new(0, 6),
-                            }), false);
-                            break;
-                        }
+                    if (try workspace.fnkboxWithName(hot_index, scratch)) |fnkbox_index| {
+                        const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(fnkbox_index.get().absolute_point);
+                        workspace.centerCameraAt(p.applyToLocalPoint(.{
+                            .scale = 8,
+                            .pos = .new(0, 6),
+                        }), false);
                     } else {
                         // fnk not found, TODO(game): handle better
                     }
@@ -9555,6 +9552,14 @@ const Workspace = struct {
         // fnkbox.executor.enqueued_stack.clearRetainingCapacity();
 
         return result;
+    }
+
+    fn fnkboxWithName(workspace: *Workspace, name: Lego.Index, scratch: std.mem.Allocator) !?Lego.Index {
+        for (try workspace.allFnkboxes(false, scratch)) |fnkbox_index| {
+            if (Lego.Specific.Sexpr.equalValue(fnkbox_index.children(.fnkbox).fnkname, name)) {
+                return fnkbox_index;
+            }
+        } else return null;
     }
 
     fn allFnkboxes(workspace: *Workspace, include_locked: bool, allocator: std.mem.Allocator) ![]const Lego.Index {
