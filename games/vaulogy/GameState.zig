@@ -388,7 +388,6 @@ pub const Lego = struct {
         fnkbox: Fnkbox,
         fnkbox_box: FnkboxBox,
         testcase: Testcase,
-        unloaded_testcase: UnloadedTestcase,
         microscope: Microscope,
         lens: Lens,
         postit: Postit,
@@ -541,7 +540,7 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(scorer_index: Lego.Index, all_fnks: core.FnkCollection, all_fnks_hash: u32, scratch: std.mem.Allocator) !void {
+            pub fn updateStatus(workspace: *Workspace, scorer_index: Lego.Index, all_fnks: core.FnkCollection, all_fnks_hash: u32, scratch: std.mem.Allocator) !void {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for scorer" });
                 defer zone.deinit();
 
@@ -569,8 +568,19 @@ pub const Lego = struct {
                     max_stack: usize,
                 } = .{ .time = 0, .max_stack = 0 };
                 var failed_any: bool = false;
+                var depended_on_fnkbox: bool = false;
                 for (rows) |row| {
                     const fnkname_index = row.children(.scorer_row).fnkname;
+
+                    const maybe_fnkbox = try workspace.fnkboxWithName(fnkname_index, scratch);
+                    if (maybe_fnkbox) |fnkbox_index| {
+                        if (fnkbox_index.get().specific.fnkbox.status != .solved) {
+                            failed_any = true;
+                            depended_on_fnkbox = true;
+                            break;
+                        }
+                    }
+
                     const fnkname = try fnkname_index.get().specific.sexpr.toOldCoreValue(scratch);
 
                     const level_index = row.get().specific.scorer_row.level_index;
@@ -623,6 +633,18 @@ pub const Lego = struct {
                         }
                     }
 
+                    if (try workspace.fnkboxWithName(fnkname_index, scratch)) |fnkbox_index| {
+                        if (fnkbox_index.get().specific.fnkbox.status != .solved) {
+                            failed_any = true;
+                            depended_on_fnkbox = true;
+                            break;
+                        }
+                    }
+
+                    if (maybe_fnkbox) |fnkbox| {
+                        if (!failed_any) fnkbox.get().specific.fnkbox.require_manual_execution = false;
+                    }
+
                     if (failed_any) break;
                 }
                 scorer_index.get().specific.scorer.score = if (failed_any)
@@ -634,7 +656,7 @@ pub const Lego = struct {
                         .code_size = scoring_run.score.code_size,
                         .compile_time = scoring_run.score.compile_time,
                     };
-                scorer_index.get().specific.scorer.score_computed_at = .{
+                if (!depended_on_fnkbox) scorer_index.get().specific.scorer.score_computed_at = .{
                     .all_fnks_hash = all_fnks_hash,
                     .all_fnkname_rows_hash = all_scorer_fnknames_hash,
                 };
@@ -714,7 +736,7 @@ pub const Lego = struct {
 
             const core = @import("core.zig");
             pub fn build(count: usize, fnkbox: Lego.Index) !Lego.Index {
-                const fnkname = try Toybox.dupeIntoFloating(Fnkbox.children(fnkbox).fnkname, true);
+                const fnkname = try Toybox.dupeIntoFloating(Fnkbox.children(fnkbox).fnkname, .new(@src()));
                 fnkname.get().local_point = .{ .pos = .new(1.5, 0.65), .scale = 0.5, .turns = 0.25 };
                 fnkname.get().specific.sexpr.is_pattern = false;
                 return try Toybox.createWithChildren(.{ .pos = .new(0, tof32(count) * height) }, .{
@@ -753,6 +775,10 @@ pub const Lego = struct {
             enabled: bool = true,
             /// only applies to toggle_skip_fnk
             latched: bool = false,
+            extra_info: union(enum) {
+                none,
+                see_failing_testcase: Lego.Specific.Fnkbox.Status,
+            } = .none,
 
             pub fn instant(button: Button) bool {
                 return switch (button.action) {
@@ -861,6 +887,7 @@ pub const Lego = struct {
             /// kind of a collider
             bg: Bg,
             style: enum { none, main_area, toolbar, bubble },
+            non_interactable: bool = false,
 
             pub const Bg = union(enum) {
                 none,
@@ -1442,6 +1469,7 @@ pub const Lego = struct {
         };
 
         pub const Executor = struct {
+            used_for_bg_computation: bool,
             controlled_by_parent_fnkbox: bool,
             animation: ?struct {
                 t: f32 = 0,
@@ -1610,15 +1638,25 @@ pub const Lego = struct {
                 state_t: f32,
             } = null,
             status: Status,
+            require_manual_execution: bool = false,
 
             const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
             const relative_executor_point: Point = .{ .pos = .new(-3, 1 + FnkboxBox.box_height) };
 
             pub const Status = union(enum) {
+                /// first still-running testcase
+                undetermined: Lego.Index,
                 /// the failing testcase
                 unsolved: Lego.Index,
                 // TODO(game): score
                 solved,
+
+                fn bad(status: Status) Lego.Index {
+                    return switch (status) {
+                        .solved => unreachable,
+                        .undetermined, .unsolved => |i| i,
+                    };
+                }
             };
 
             pub fn hasExecutionOverTestcase(fnkbox: Fnkbox, testcase: Lego.Index) bool {
@@ -1655,141 +1693,170 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, scratch: std.mem.Allocator, gpa_for_atom_names: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32) !void {
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, gpa_for_atom_names: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32, remaining_budget_for_unloaded_testcases: *usize) !void {
+                // TODO(clean): remove
+                _ = all_fnks;
+                // const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
+
                 const zone = tracy.initZone(@src(), .{ .name = "update status for fnkbox" });
                 defer zone.deinit();
 
-                // TODO(optim): gradual update?
                 const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
-                const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
-                var temp_mem: core.VeryPermamentGameStuff = .init(scratch);
-                defer temp_mem.deinit();
-                var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &temp_mem);
-                defer scoring_run.deinit(false);
 
-                // Update 'actual' values
+                // update state
                 var cur_testcase = FnkboxBox.children(children(fnkbox_index).box).testcases_area.get().tree.first;
                 while (cur_testcase != nothing) : (cur_testcase = cur_testcase.get().tree.next) {
                     switch (cur_testcase.get().specific) {
                         else => unreachable,
                         .button => |button| assert(button.action == .add_testcase),
-                        .unloaded_testcase => {},
                         .testcase => |*testcase| {
-                            const t = Testcase.children(cur_testcase);
-                            const input_hash = Lego.Specific.Sexpr.hash(t.input);
-                            if (input_hash == testcase.actual_computed_at.input_hash and
-                                all_fnks_hash == testcase.actual_computed_at.all_fnks_hash)
+                            const input_hash = if (testcase.source != null) 0 else Sexpr.hash(cur_testcase.children(.testcase).input);
+                            if (input_hash == testcase.actual_and_solved_computed_at.input_hash and
+                                all_fnks_hash == testcase.actual_and_solved_computed_at.all_fnks_hash)
                             {
                                 continue;
                             }
 
-                            const input_value = try t.input.get().specific.sexpr.toOldCoreValue(scratch);
-                            const actual_value = try t.actual.get().specific.sexpr.toOldCoreValue(scratch);
-                            var exec = try core.ExecutionThread.init(input_value, fnkname_value, &scoring_run, .new);
-                            defer exec.deinit();
+                            testcase.computed = false;
 
-                            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
-                                error.FnkNotFound,
-                                error.UsedUndefinedVariable,
-                                error.InvalidMetaFnk,
-                                error.TookTooLong,
-                                => core.Sexpr.builtin.empty,
-                                error.OutOfMemory => return err,
-                                error.BAD_INPUT => @panic("panic"),
-                                error.NoMatchingCase => unreachable,
-                            };
-                            if (!actual_output.equals(actual_value) and !fnkbox.hasExecutionOverTestcase(cur_testcase)) {
-                                Toybox.changeChild(t.actual, try Sexpr.buildFromOldCoreValue(
-                                    t.actual.get().local_point,
-                                    actual_output,
-                                    false,
-                                    false,
-                                    .new(@src()),
-                                ));
-                                Toybox.destroyFloating(t.actual);
-                                Toybox.refreshAbsolutePoints(&.{cur_testcase});
+                            if (fnkbox.hasExecutionOverTestcase(cur_testcase)) continue;
+
+                            const outdated = cur_testcase.children(.testcase).actual.hasTag(.sexpr) or
+                                input_hash != testcase.started_computation_at.input_hash or
+                                all_fnks_hash != testcase.started_computation_at.all_fnks_hash;
+
+                            if (outdated) {
+                                Toybox.changeChildAndDestroyOld(cur_testcase.children(.testcase).actual, try Toybox.buildSexpr(Lego.Specific.Testcase.relative_actual_point, .empty, false, false, .new(@src())));
+                                testcase.solved = false;
+                                testcase.computed = false;
+                                testcase.started_computation_at = .never;
+                                testcase.actual_and_solved_computed_at = .never;
                             }
-                            testcase.actual_computed_at.input_hash = input_hash;
-                            testcase.actual_computed_at.all_fnks_hash = all_fnks_hash;
+
+                            if (fnkbox.require_manual_execution and fnkbox.execution == null and !testcase.just_manually_executed) continue;
+
+                            if (!testcase.loaded and remaining_budget_for_unloaded_testcases.* == 0) continue;
+
+                            if (outdated) {
+                                const input = if (testcase.loaded)
+                                    try Toybox.dupeIntoFloating(cur_testcase.children(.testcase).input, .new(@src()))
+                                else blk: {
+                                    var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                                    defer pool.deinit();
+                                    const source = testcase.source.?;
+                                    const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch, gpa_for_atom_names)).?;
+                                    break :blk try Lego.Specific.Sexpr.buildFromOldCoreValue(
+                                        Lego.Specific.Testcase.relative_input_point,
+                                        sample.input,
+                                        false,
+                                        false,
+                                        .new(@src()),
+                                    );
+                                };
+                                Toybox.changeChildAndDestroyOld(cur_testcase.children(.testcase).actual, try Toybox.buildExecutor(
+                                    .{},
+                                    false,
+                                    true,
+                                    input,
+                                    try workspace.getGarlandForFnk(fnkbox_index.children(.fnkbox).fnkname, .{}, scratch),
+                                ));
+                                testcase.solved = false;
+                                testcase.computed = false;
+                                testcase.started_computation_at = .{ .all_fnks_hash = all_fnks_hash, .input_hash = input_hash };
+                            }
+
+                            for (0..100) |_| {
+                                const total_before = toybox.all_legos.len;
+                                try workspace.advanceExecutorAnimation(cur_testcase.children(.testcase).actual, undefined, scratch);
+                                if (!testcase.loaded) remaining_budget_for_unloaded_testcases.* -|= 1;
+                                if (remaining_budget_for_unloaded_testcases.* == 0) break;
+                                if (cur_testcase.children(.testcase).actual.get().specific.executor.animation == null) break;
+                                const total_after = toybox.all_legos.len;
+                                // TODO(bug): do a better job about limiting expensive executions
+                                if (total_after > total_before + 1000) break;
+                            }
+
+                            if (cur_testcase.children(.testcase).actual.get().specific.executor.animation == null) {
+                                const new_actual = cur_testcase.children(.testcase).actual.children(.executor).input;
+                                Toybox.pop(new_actual);
+                                Toybox.changeChildAndDestroyOld(
+                                    cur_testcase.children(.testcase).actual,
+                                    new_actual,
+                                );
+                                new_actual.get().local_point = Lego.Specific.Testcase.relative_actual_point;
+                                Toybox.refreshAbsolutePoints(&.{cur_testcase});
+
+                                testcase.just_manually_executed = false;
+                                testcase.computed = true;
+                                testcase.actual_and_solved_computed_at = .{ .input_hash = input_hash, .all_fnks_hash = all_fnks_hash };
+                                if (testcase.loaded) {
+                                    testcase.solved = Lego.Specific.Sexpr.equalValue(new_actual, cur_testcase.children(.testcase).expected);
+                                } else {
+                                    var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                                    defer pool.deinit();
+                                    const source = testcase.source.?;
+                                    const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch, gpa_for_atom_names)).?;
+                                    const expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(
+                                        Lego.Specific.Testcase.relative_input_point,
+                                        sample.expected,
+                                        false,
+                                        false,
+                                        .new(@src()),
+                                    );
+                                    testcase.solved = Lego.Specific.Sexpr.equalValue(new_actual, expected);
+                                    Toybox.destroyFloating(expected);
+                                }
+                            }
                         },
                     }
                 }
 
-                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
-                defer pool.deinit();
-
                 // Get the actual status and update testcases solved
                 const box_index = children(fnkbox_index).box;
                 cur_testcase = FnkboxBox.children(box_index).testcases_area.get().tree.first;
-                var wrote_first_wrong = false;
+                var all_good = true;
                 while (cur_testcase != nothing) : (cur_testcase = cur_testcase.get().tree.next) {
-                    const correct = blk: switch (cur_testcase.get().specific) {
+                    const correct, const computed = switch (cur_testcase.get().specific) {
                         else => unreachable,
                         .button => |button| {
                             assert(button.action == .add_testcase);
                             continue;
                         },
-                        .unloaded_testcase => |*unloaded_testcase| {
-                            if (all_fnks_hash == unloaded_testcase.solved_computed_at.all_fnks_hash) {
-                                break :blk unloaded_testcase.solved;
-                            }
-
-                            const sample = (try levels[unloaded_testcase.source.level].generate_sample(unloaded_testcase.source.sample, &pool, scratch, gpa_for_atom_names)).?;
-                            var exec = try core.ExecutionThread.init(sample.input, fnkname_value, &scoring_run, .new);
-                            defer exec.deinit();
-                            const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
-                                error.TookTooLong => break :blk false,
-                                error.OutOfMemory => return err,
-                                error.FnkNotFound,
-                                error.UsedUndefinedVariable,
-                                error.InvalidMetaFnk,
-                                error.BAD_INPUT,
-                                => @panic("panic"),
-                                error.NoMatchingCase => unreachable,
-                            };
-                            const correct = actual_output.equals(sample.expected);
-                            unloaded_testcase.solved = correct;
-                            unloaded_testcase.solved_computed_at.all_fnks_hash = all_fnks_hash;
-                            _ = pool.reset(.retain_capacity);
-                            break :blk correct;
-                        },
-                        .testcase => |*testcase| {
-                            const actual: Lego.Index = if (fnkbox.execution) |execution|
-                                switch (execution.source) {
-                                    .testcase => |source| if (source == cur_testcase)
-                                        execution.old_testcase_actual_value
-                                    else
-                                        Testcase.children(cur_testcase).actual,
-                                    .input => Testcase.children(cur_testcase).actual,
-                                }
-                            else
-                                Testcase.children(cur_testcase).actual;
-
-                            const expected = Testcase.children(cur_testcase).expected;
-
-                            const correct = Sexpr.equalValue(actual, expected);
-                            testcase.solved = correct;
-                            break :blk correct;
-                        },
+                        .testcase => |testcase| .{ testcase.solved, testcase.computed },
                     };
-                    if (!correct and !wrote_first_wrong) {
+                    if (!computed) {
+                        fnkbox.status = .{ .undetermined = cur_testcase };
+                        all_good = false;
+                        break;
+                    }
+                    if (!correct) {
                         fnkbox.status = .{ .unsolved = cur_testcase };
-                        wrote_first_wrong = true;
+                        all_good = false;
+                        break;
                     }
                 }
-                if (!wrote_first_wrong) {
+                if (all_good) {
                     fnkbox.status = .solved;
                 }
             }
         };
 
-        pub const UnloadedTestcase = struct {
+        pub const Testcase = struct {
             solved: bool = false,
-            source: Source,
+            computed: bool = false,
+            source: ?Source,
+            loaded: bool,
+            just_manually_executed: bool = false,
 
-            solved_computed_at: struct {
+            started_computation_at: CodeState = .never,
+            actual_and_solved_computed_at: CodeState = .never,
+
+            pub const CodeState = struct {
                 all_fnks_hash: u32,
-            } = .{ .all_fnks_hash = 0 },
+                input_hash: u32,
+
+                pub const never: CodeState = .{ .all_fnks_hash = 0, .input_hash = 0 };
+            };
 
             pub const Source = struct {
                 level: usize,
@@ -1806,18 +1873,6 @@ pub const Lego = struct {
                     };
                 }
             };
-        };
-
-        pub const Testcase = struct {
-            solved: bool = false,
-
-            /// points to an unloaded_testcase, if it came from there
-            source: Lego.Index,
-
-            actual_computed_at: struct {
-                all_fnks_hash: u32,
-                input_hash: u32,
-            } = .{ .all_fnks_hash = 0, .input_hash = 0 },
 
             pub const Children = struct {
                 input: Lego.Index,
@@ -2190,7 +2245,7 @@ pub const Lego = struct {
                                 lego_children.scrollable_list,
                                 try Toybox.new(.{}, .{ .scrollable_list_inbetween = .{ .kind = .listviewer_sexprs } }, .new(@src())),
                             );
-                            const foo = try Toybox.dupeIntoFloating(left, true);
+                            const foo = try Toybox.dupeIntoFloating(left, .new(@src()));
                             Toybox.addChildLast(
                                 lego_children.scrollable_list,
                                 foo,
@@ -2201,7 +2256,7 @@ pub const Lego = struct {
                             lego_children.scrollable_list,
                             try Toybox.new(.{}, .{ .scrollable_list_inbetween = .{ .kind = .listviewer_sexprs } }, .new(@src())),
                         );
-                        const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, true);
+                        const new_sentinel = try Toybox.dupeIntoFloating(cur_parent, .new(@src()));
                         new_sentinel.get().local_point = lego_children.sentinel.get().local_point;
                         Lego.Specific.Sexpr.connectHots(new_sentinel, cur_parent);
                         Toybox.changeChildAndDestroyOld(lego_children.sentinel, new_sentinel);
@@ -2227,7 +2282,7 @@ pub const Lego = struct {
                         // TODO(optim): avoid this by directly creating either a pair or an empty
                         toybox.undo_stack.storeAllData(cur_parent);
                         cur_parent.get().specific.sexpr.kind = .pair;
-                        const foo = try Toybox.dupeIntoFloating(cur_item, true);
+                        const foo = try Toybox.dupeIntoFloating(cur_item, .new(@src()));
                         Toybox.addChildLastV2(ViewHelper.offsetFor(false, .up), cur_parent, foo);
                         Toybox.addChildLastV2(ViewHelper.offsetFor(false, .down), cur_parent, next_parent);
                         cur_parent = next_parent;
@@ -2236,7 +2291,7 @@ pub const Lego = struct {
                     // + 0.5 to give a bit of extra for adding at the end
                     lego_children.scrollbar.get().specific.scrollbar.total_length = count + 0.5;
 
-                    const sentinel = try Toybox.dupeIntoFloating(lego_children.sentinel, true);
+                    const sentinel = try Toybox.dupeIntoFloating(lego_children.sentinel, .new(@src()));
                     sentinel.get().local_point = cur_parent.get().local_point;
                     const sentinel_is_wrong = sentinel.get().specific.sexpr.kind == .pair;
 
@@ -2466,7 +2521,6 @@ pub const Lego = struct {
             .fnkslist_element,
             .executor,
             .testcase,
-            .unloaded_testcase,
             .pill,
             .postit,
             .postit_text,
@@ -2591,7 +2645,6 @@ pub const Lego = struct {
             .area,
             .scrollable_list_inbetween,
             .testcase,
-            .unloaded_testcase,
             .pill,
             .postit_text,
             .postit_drawing,
@@ -2633,7 +2686,6 @@ pub const Lego = struct {
             .newcase,
             .area,
             .testcase,
-            .unloaded_testcase,
             .pill,
             .postit_text,
             .postit_drawing,
@@ -2645,7 +2697,7 @@ pub const Lego = struct {
         return switch (lego.specific) {
             else => .infinite,
             .sexpr => .fromRect(.fromCenterAndSize(.zero, .new(5, 2.5))),
-            .testcase, .unloaded_testcase => .fromRect(Specific.Testcase.relative_bounding_box),
+            .testcase => .fromRect(Specific.Testcase.relative_bounding_box),
             .scrollable_list => |scrollable_list| if (scrollable_list.clip()) .fromRect(scrollable_list.rect()) else .infinite,
             .fnkbox => Bounds.fromRect(Specific.FnkboxBox.relative_box)
                 // for the garland
@@ -3249,7 +3301,39 @@ pub const Toybox = struct {
             else => {},
             .sexpr => |*sexpr| {
                 if (sexpr.emerging_value != nothing) {
-                    destroyFloating(sexpr.emerging_value);
+                    destroyFloatingInner(sexpr.emerging_value, undo);
+                }
+            },
+            .executor => |*executor| {
+                if (executor.animation) |*animation| {
+                    inline for (.{ animation.active_case, animation.garland_fnkname, animation.invoked_fnk }) |thing| {
+                        if (thing != nothing) {
+                            popInner(thing, undo);
+                            destroyFloatingInner(thing, undo);
+                        }
+                    }
+                }
+
+                if (true) { // remove pills
+                    var cur = executor.first_pill;
+                    executor.first_pill = .nothing;
+                    while (cur != nothing) {
+                        const next = cur.get().specific.pill.next_pill;
+                        Toybox.popInner(cur, undo);
+                        destroyFloatingInner(cur, undo);
+                        cur = next;
+                    }
+                }
+
+                if (true) { // remove enqueued
+                    var cur = executor.first_enqueued;
+                    executor.first_enqueued = .nothing;
+                    while (cur != nothing) {
+                        const next = cur.get().specific.garland.next_enqueued;
+                        Toybox.popInner(cur, undo);
+                        Toybox.destroyFloatingInner(cur, undo);
+                        cur = next;
+                    }
                 }
             },
         }
@@ -3271,22 +3355,20 @@ pub const Toybox = struct {
         lego.* = data;
     }
 
-    pub fn dupeIntoFloatingWithoutChangingPos(original: Lego.Index, dupe_children: bool) !Lego.Index {
-        const result = try Toybox.dupeIntoFloating(original, dupe_children);
+    pub fn dupeIntoFloatingWithoutChangingPos(original: Lego.Index, tag: Lego.CreationTag) !Lego.Index {
+        const result = try Toybox.dupeIntoFloating(original, tag);
         Toybox.get(result).local_point = Toybox.get(original).absolute_point;
         return result;
     }
 
-    // TODO(easy): remove the dupe_children parameter
-    pub fn dupeIntoFloating(original: Lego.Index, dupe_children: bool) !Lego.Index {
+    pub fn dupeIntoFloating(original: Lego.Index, tag: Lego.CreationTag) !Lego.Index {
         assert(original.get().exists);
-        assert(dupe_children);
 
         if (original.hasTag(.fnkbox)) {
             assert(!original.get().specific.fnkbox.editable);
         }
 
-        const result_index = try Toybox.new(undefined, undefined, .new(@src()));
+        const result_index = try Toybox.new(undefined, undefined, tag.plus(@src()));
         const result = Toybox.get(result_index);
         result.* = Toybox.get(original).*;
         result.index = result_index;
@@ -3294,18 +3376,17 @@ pub const Toybox = struct {
         result.tree.next = .nothing;
         result.tree.prev = .nothing;
         result.free_next = .nothing;
+        result.created_at = tag.plus(@src());
 
-        if (dupe_children) {
+        // dupe children
+        if (true) {
             var cur = result.tree.first;
             result.tree.first = .nothing;
             result.tree.last = .nothing;
             while (cur != nothing) : (cur = Toybox.get(cur).tree.next) {
-                const new_child_index = try Toybox.dupeIntoFloating(cur, true);
+                const new_child_index = try Toybox.dupeIntoFloating(cur, tag);
                 Toybox.addChildLast(result_index, new_child_index);
             }
-        } else {
-            result.tree.first = .nothing;
-            result.tree.last = .nothing;
         }
 
         // special cases
@@ -3313,7 +3394,7 @@ pub const Toybox = struct {
             else => {},
             .sexpr => |*sexpr| {
                 if (sexpr.emerging_value != nothing) {
-                    sexpr.emerging_value = try dupeIntoFloating(sexpr.emerging_value, true);
+                    sexpr.emerging_value = try dupeIntoFloating(sexpr.emerging_value, tag);
                 }
                 // sexpr.emerging_value = .nothing;
                 // sexpr.emerging_value_t = 0;
@@ -3801,10 +3882,20 @@ pub const Toybox = struct {
 
         for (roots) |root| {
             var cur: Lego.Index = root;
-            while (cur != nothing) : (cur = next_preordered(cur, root).next) {
-                Toybox.get(cur).absolute_point = parentAbsolutePoint(cur)
-                    .applyToLocalPoint(Toybox.get(cur).local_point)
-                    .applyToLocalPoint(Toybox.get(cur).visual_offset);
+            while (cur != nothing) {
+                const skip = switch (cur.get().specific) {
+                    else => false,
+                    .area => |area| area.non_interactable,
+                    .executor => |executor| executor.used_for_bg_computation,
+                };
+                if (skip) {
+                    cur = cur.get().tree.next;
+                } else {
+                    Toybox.get(cur).absolute_point = parentAbsolutePoint(cur)
+                        .applyToLocalPoint(Toybox.get(cur).local_point)
+                        .applyToLocalPoint(Toybox.get(cur).visual_offset);
+                    cur = next_preordered(cur, root).next;
+                }
             }
         }
     }
@@ -3906,27 +3997,28 @@ pub const Toybox = struct {
     }
 
     pub fn buildTestcase(kind: union(enum) {
-        unloaded: Lego.Specific.UnloadedTestcase.Source,
-        existing: struct { input: Lego.Index, expected: Lego.Index, unloaded: Lego.Index },
+        unloaded: Lego.Specific.Testcase.Source,
+        existing: struct { input: Lego.Index, expected: Lego.Index, unloaded: ?Lego.Specific.Testcase.Source },
     }, tag: Lego.CreationTag) !Lego.Index {
-        switch (kind) {
-            .unloaded => |source| {
-                const testcase = try Toybox.new(.{}, .{ .unloaded_testcase = .{ .source = source } }, tag.plus(@src()));
-                return testcase;
-            },
-            .existing => |existing| {
-                const testcase = try Toybox.new(.{}, .{ .testcase = .{ .source = existing.unloaded } }, tag.plus(@src()));
-                const Testcase = Lego.Specific.Testcase;
-                Toybox.addChildLastV2(Testcase.relative_input_point, testcase, existing.input);
-                Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, existing.expected);
-                Toybox.addChildLastV2(Testcase.relative_actual_point, testcase, try Toybox.buildSexpr(.{}, .empty, false, false, tag.plus(@src())));
-                Toybox.addChildLast(testcase, try Toybox.new(.{}, .{ .button = .{
-                    .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
-                    .action = .launch_testcase,
-                } }, tag.plus(@src())));
-                return testcase;
-            },
-        }
+        const testcase = try Toybox.new(.{}, .{ .testcase = .{ .source = switch (kind) {
+            .unloaded => |s| s,
+            .existing => |s| s.unloaded,
+        }, .loaded = std.meta.activeTag(kind) != .unloaded } }, tag.plus(@src()));
+        const Testcase = Lego.Specific.Testcase;
+        Toybox.addChildLastV2(Testcase.relative_input_point, testcase, switch (kind) {
+            .unloaded => try Toybox.buildSexpr(.{}, .empty, false, false, tag.plus(@src())),
+            .existing => |e| e.input,
+        });
+        Toybox.addChildLastV2(Testcase.relative_expected_point, testcase, switch (kind) {
+            .unloaded => try Toybox.buildSexpr(.{}, .empty, false, false, tag.plus(@src())),
+            .existing => |e| e.expected,
+        });
+        Toybox.addChildLastV2(Testcase.relative_actual_point, testcase, try Toybox.buildSexpr(.{}, .empty, false, false, tag.plus(@src())));
+        Toybox.addChildLast(testcase, try Toybox.new(.{}, .{ .button = .{
+            .local_rect = .fromCenterAndSize(.new(-6, 0), .one),
+            .action = .launch_testcase,
+        } }, tag.plus(@src())));
+        return testcase;
     }
 
     pub fn buildFnkboxFromLevel(
@@ -3958,7 +4050,7 @@ pub const Toybox = struct {
             break :blk try samples.toOwnedSlice(scratch);
         };
 
-        return try Toybox.buildFnkbox(
+        const result = try Toybox.buildFnkbox(
             local_point,
             fnkname,
             editable,
@@ -3969,6 +4061,9 @@ pub const Toybox = struct {
             else
                 null,
         );
+        result.get().specific.fnkbox.require_manual_execution = level.require_manual_execution;
+
+        return result;
     }
 
     /// Children are:
@@ -4027,7 +4122,7 @@ pub const Toybox = struct {
         fnkname.get().specific.sexpr.is_pattern = true;
         fnkname.get().specific.sexpr.is_fnkname = true;
 
-        const executor = try buildExecutor(Fnkbox.relative_executor_point, true, initial_definition);
+        const executor = try buildExecutor(Fnkbox.relative_executor_point, true, false, null, initial_definition);
 
         if (fnkname.isTheSexprLit("swap")) {
             executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
@@ -4043,14 +4138,16 @@ pub const Toybox = struct {
     pub fn buildExecutor(
         point: Point,
         controlled_by_parent_fnkbox: bool,
+        used_for_bg_computation: bool,
+        initial_value: ?Lego.Index,
         initial_definition: ?Lego.Index,
     ) !Lego.Index {
         const Executor = Lego.Specific.Executor;
         if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
         return try Toybox.createWithChildren(point, .{
-            .executor = .{ .controlled_by_parent_fnkbox = controlled_by_parent_fnkbox },
+            .executor = .{ .controlled_by_parent_fnkbox = controlled_by_parent_fnkbox, .used_for_bg_computation = used_for_bg_computation },
         }, &.{
-            try Toybox.buildSexpr(Executor.relative_input_point, .empty, false, false, .new(@src())),
+            initial_value orelse try Toybox.buildSexpr(Executor.relative_input_point, .empty, false, false, .new(@src())),
             initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, .new(@src())),
             blk: {
                 const controls = try Toybox.new(Executor.relative_crank_center, .executor_controls, .new(@src()));
@@ -4122,7 +4219,7 @@ pub const Toybox = struct {
 
     pub fn buildBubble(point: Point, prev: Lego.Index, goal: Lego.Specific.Bubble.FulfillCondition, blueprint: Lego.Index) !Lego.Index {
         assert(blueprint.hasTag(.area));
-        const instanced = try Toybox.dupeIntoFloating(blueprint, true);
+        const instanced = try Toybox.dupeIntoFloating(blueprint, .new(@src()));
         return try Toybox.createWithChildren(point, .{ .bubble = .{
             .blueprint = blueprint,
             .prev_bubble = prev,
@@ -4213,6 +4310,7 @@ const Workspace = struct {
     toolbar_fnks_unfolded_t: f32 = 0,
     lenses_layer: Lego.Index,
     floating_inputs_layer: Lego.Index,
+    invisible_floating_inputs_layer: Lego.Index,
     hand_layer: Lego.Index = .nothing,
 
     grabbing: Grabbing = .nothing,
@@ -4347,6 +4445,8 @@ const Workspace = struct {
         dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, .new(@src()));
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, .new(@src()));
         dst.floating_inputs_layer.get().immutable = true;
+        dst.invisible_floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none, .non_interactable = true } }, .new(@src()));
+        dst.invisible_floating_inputs_layer.get().immutable = true;
 
         if (true) {
             try dst.setupBubbles(scratch.allocator(), gpa);
@@ -4643,7 +4743,7 @@ const Workspace = struct {
             ));
 
             postit_pos = .new(0, -3);
-            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, try Toybox.buildGarland(.{}, &.{
+            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, false, null, try Toybox.buildGarland(.{}, &.{
                 try Toybox.buildCase(.{}, .{
                     .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, .new(@src())),
                     .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, .new(@src())),
@@ -4718,7 +4818,7 @@ const Workspace = struct {
             postit_pos = .new(4, 0);
             const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("changeLowercaseToNextCyclingOnC")});
             const old_fnkname = scorer.children(.scorer).scorer_rows.get().tree.first.children(.scorer_row).fnkname;
-            const new_fnkname = try Toybox.dupeIntoFloating(fnkbox.children(.fnkbox).fnkname, true);
+            const new_fnkname = try Toybox.dupeIntoFloating(fnkbox.children(.fnkbox).fnkname, .new(@src()));
             new_fnkname.get().local_point = old_fnkname.get().local_point;
             new_fnkname.get().specific.sexpr.is_pattern = false;
             new_fnkname.get().immutable = false;
@@ -4816,7 +4916,11 @@ const Workspace = struct {
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{"Try on your own!"});
             postit_pos = .new(7.3, 7.7);
-            postit.addFromText(postit_pos, &.{ "(I promise", "the assignments", "will get more", "interesting)" });
+            // postit.addFromText(postit_pos, &.{ "(I promise", "the assignments", "will get more", "interesting)" });
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "check your", "solution" } } },
+                .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
+            });
 
             postit_pos = .new(0.2, -10.4);
             Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos }, &.{
@@ -6239,8 +6343,8 @@ const Workspace = struct {
 
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
         // when scrolling a lot of cases and tracy is active, this crashes :(
-        // const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
-        // defer zone.deinit();
+        const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
+        defer zone.deinit();
 
         const all_fnks: core.FnkCollection, const all_fnks_hash = try workspace.getAllFnks(scratch);
 
@@ -6248,12 +6352,16 @@ const Workspace = struct {
         // TODO(design): this wouldn't be needed if we stored sexprs in the level file
         const debug_skip_has_sexpr_unlocks = all_fnks.count() > 0;
 
-        var lego_it = toybox.all_legos.iterator(0);
-        while (lego_it.next()) |lego| {
+        // TODO(design-late): revisit
+        var remaining_budget_for_unloaded_testcases: usize = 500;
+
+        // reverse order so that fnkboxes get updated before scorers, and those before bubbles
+        var lego_it = toybox.all_legos.iterator(toybox.all_legos.len - 1);
+        while (lego_it.prev()) |lego| {
             if (!lego.exists) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(scratch, workspace.gpa_for_atom_names, all_fnks, all_fnks_hash);
+                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.gpa_for_atom_names, all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases);
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
@@ -6263,7 +6371,7 @@ const Workspace = struct {
                 try Lego.Specific.MetaViewer.canonize(lego.index, scratch);
             }
             if (lego.specific.tag() == .scorer) {
-                try Lego.Specific.Scorer.updateStatus(lego.index, all_fnks, all_fnks_hash, scratch);
+                try Lego.Specific.Scorer.updateStatus(workspace, lego.index, all_fnks, all_fnks_hash, scratch);
             }
             if (lego.specific.tag() == .bubble) {
                 if (debug_all_bubbles_unlocked) {
@@ -6359,6 +6467,8 @@ const Workspace = struct {
                 const relative_needle_pos = absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
                 const unhoverable = switch (lego.specific) {
                     else => false,
+                    .area => |area| area.non_interactable,
+                    .executor => |executor| executor.used_for_bg_computation,
                     .bubble => |bubble| bubble.locked,
                 };
                 if (unhoverable and !step.children_already_visited) {
@@ -6465,11 +6575,6 @@ const Workspace = struct {
                             }
                         }
                     },
-                    .unloaded_testcase => {
-                        // if we got here, it means that the testcase hasn't been expanded in time,
-                        //  or that the culling isn't working
-                        panic("unexpected unloaded testcase while interacting!", .{});
-                    },
                     .editable_textline => |editable_textline| {
                         if (Toybox.findAncestor(cur, .fnkbox).getSafe()) |f| {
                             if (!f.specific.fnkbox.editable) continue;
@@ -6493,6 +6598,20 @@ const Workspace = struct {
                             return .{ .hot = cur, .text_index = best_index, .over_background = root };
                         }
                     },
+                    .testcase => |t| {
+                        if (!t.loaded) {
+                            // if we got here, it means that the testcase hasn't been expanded in time,
+                            //  or that the culling isn't working
+                            panic("unexpected unloaded testcase while interacting!", .{});
+                        }
+                    },
+                    .executor => |executor| {
+                        if (executor.used_for_bg_computation) {
+                            it.skipChildren();
+                            _ = it.next();
+                            continue;
+                        }
+                    },
                     // TODO(optim): check that scrollable_list ignores clipped elements
                     .scrollable_list,
                     .scrollable_list_inbetween,
@@ -6500,11 +6619,9 @@ const Workspace = struct {
                     .newcase,
                     .garland,
                     .garland_newcases,
-                    .executor,
                     .fnkbox,
                     .fnkbox_box,
                     .fnkslist_element,
-                    .testcase,
                     .pill,
                     .postit_text,
                     .postit_drawing,
@@ -6540,7 +6657,6 @@ const Workspace = struct {
                             .executor,
                             .fnkbox_box,
                             .testcase,
-                            .unloaded_testcase,
                             .pill,
                             .postit,
                             .postit_text,
@@ -6736,9 +6852,22 @@ const Workspace = struct {
 
         for (roots_in_draw_order) |root| {
             var cur: Lego.Index = root;
-            while (cur != nothing) : (cur = Toybox.next_preordered(cur, root).next) {
+            var next: Lego.Index = undefined;
+            while (cur != nothing) : (cur = next) {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
+
+                const skip = switch (cur.get().specific) {
+                    else => false,
+                    .area => |area| area.non_interactable,
+                    .executor => |executor| executor.used_for_bg_computation,
+                };
+
+                if (skip) {
+                    next = cur.get().tree.next;
+                } else {
+                    next = Toybox.next_preordered(cur, root).next;
+                }
 
                 // inherit immutability from parent, sometimes
                 switch (lego.specific) {
@@ -6749,7 +6878,7 @@ const Workspace = struct {
                             if (p.specific.tag() == .garland and lego.specific.tag() == .sexpr) {
                                 // special case: ignore sexpr with garland parent (it's the fnkname)
                                 assert(lego.immutable);
-                            } else if (p.specific.tag() == .testcase and p.specific.testcase.source != nothing) {
+                            } else if (p.specific.tag() == .testcase and p.specific.testcase.source != null) {
                                 // special case: for now, builtin cases are inmutable
                                 lego.immutable = true;
                             } else if (p.specific.tag() == .testcase and p.index.children(.testcase).actual == cur) {
@@ -7068,7 +7197,6 @@ const Workspace = struct {
                     .meta_viewer,
                     .fnkslist_element,
                     .testcase,
-                    .unloaded_testcase,
                     .pill,
                     .area,
                     .microscope,
@@ -7465,17 +7593,29 @@ const Workspace = struct {
                                     }, 0.05, .black);
                                 },
                                 .see_failing_testcase => {
-                                    if (button.enabled) {
-                                        drawer.canvas.rectGradient(
-                                            camera_relative,
-                                            button.local_rect,
-                                            .gray(0.75 + lego.hot_t * 0.2 - lego.active_t * 0.1),
-                                            .gray(0.95 - lego.hot_t * 0.2 - lego.active_t * 0.1),
-                                        );
-                                        try drawer.canvas.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
-                                    } else {
-                                        drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.7));
-                                        try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
+                                    switch (button.extra_info.see_failing_testcase) {
+                                        .solved => {
+                                            drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.7));
+                                            try drawer.canvas.drawText(0, camera_relative, "Solved!", .centeredAt(button.local_rect.getCenter()), 0.8, .black);
+                                        },
+                                        .unsolved => {
+                                            drawer.canvas.rectGradient(
+                                                camera_relative,
+                                                button.local_rect,
+                                                .gray(0.75 + lego.hot_t * 0.2 - lego.active_t * 0.1),
+                                                .gray(0.95 - lego.hot_t * 0.2 - lego.active_t * 0.1),
+                                            );
+                                            try drawer.canvas.drawText(0, camera_relative, "Unsolved!", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                        },
+                                        .undetermined => {
+                                            drawer.canvas.rectGradient(
+                                                camera_relative,
+                                                button.local_rect,
+                                                .gray(0.7),
+                                                .gray(0.8),
+                                            );
+                                            try drawer.canvas.drawText(0, camera_relative, "Checking...", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                        },
                                     }
                                 },
                                 .scroll_up, .scroll_down => {
@@ -7724,14 +7864,16 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .unloaded_testcase => {
-                            // TODO(optim-late): if we had better culling, this would be unreachable
-                            // panic("unexpected unloaded testcase while drawing!", .{});
+                        .executor => |executor| {
+                            if (executor.used_for_bg_computation) {
+                                it.skipChildren();
+                                _ = it.next();
+                                continue;
+                            }
                         },
                         .scrollable_list_inbetween,
                         .executor_controls,
                         .garland_newcases,
-                        .executor,
                         .fnkbox,
                         .pill,
                         .scorer_rows,
@@ -7743,6 +7885,9 @@ const Workspace = struct {
     }
 
     pub fn valid(workspace: *const Workspace, scratch: std.mem.Allocator) !bool {
+        const zone = tracy.initZone(@src(), .{ .name = "checking valid" });
+        defer zone.deinit();
+
         if (toybox.free_head != nothing and Toybox.getUnsafe(toybox.free_head).exists) {
             std.debug.panic("Free head is {any}, but that element exists!", .{toybox.free_head});
         }
@@ -7869,25 +8014,43 @@ const Workspace = struct {
         }
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
-            workspace.debugLogState();
+            Workspace.debugLogState();
         }
 
         if (true and platform.keyboard.wasPressed(.KeyQ)) {
-            var alive_count: usize = 0;
+            var total: usize = 0;
+            var counts: std.EnumArray(Lego.Specific.Tag, usize) = .initFill(0);
             var lego_it = toybox.all_legos.constIterator(0);
             var k: usize = 0;
             while (lego_it.next()) |lego| {
                 defer k += 1;
                 assert(lego.index.index == k);
                 if (lego.exists) {
-                    alive_count += 1;
+                    counts.getPtr(lego.specific.tag()).* += 1;
+                    total += 1;
                 }
             }
-            std.log.debug("total alive legos: {d}", .{alive_count});
-            std.log.debug("total legos: {d}", .{toybox.all_legos.count()});
+            var it = counts.iterator();
+            std.log.debug("counts:", .{});
+            while (it.next()) |entry| {
+                std.log.debug("{s}:\t{d}", .{ @tagName(entry.key), entry.value.* });
+            }
+            std.log.debug("total: {d}", .{total});
         }
 
-        if (true and platform.keyboard.wasPressed(.KeyQ)) {
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
+            var seen: usize = 0;
+            var k = toybox.all_legos.len - 1;
+            while (seen < 100) : (k -= 1) {
+                const lego = toybox.all_legos.at(k);
+                if (lego.exists) {
+                    std.log.debug("{d}-to-last lego created {d} was {s} by {}", .{ seen, lego.index.index, @tagName(lego.specific.tag()), lego.created_at });
+                    seen += 1;
+                }
+            }
+        }
+
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
             const children = try Toybox.getChildrenUnknown(scratch, workspace.floating_inputs_layer);
             std.log.debug("floating children: {d}", .{children.len});
             for (children) |index| {
@@ -7903,6 +8066,21 @@ const Workspace = struct {
                     lego.free_next.asU32(),
                 });
             }
+        }
+
+        if (true and platform.keyboard.wasPressed(.KeyQ)) {
+            var alive_count: usize = 0;
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
+                assert(lego.index.index == k);
+                if (lego.exists) {
+                    alive_count += 1;
+                }
+            }
+            std.log.debug("total alive legos: {d}", .{alive_count});
+            std.log.debug("total legos: {d}", .{toybox.all_legos.count()});
         }
 
         if (false and platform.keyboard.wasPressed(.KeyQ)) {
@@ -8111,7 +8289,7 @@ const Workspace = struct {
                     // Case A.0: duplicating
                     switch (hot_index.get().canDuplicate()) {
                         .yes => {
-                            const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, true);
+                            const new_element_index = try Toybox.dupeIntoFloatingWithoutChangingPos(hot_index, .new(@src()));
                             // std.log.debug("duplicated {d} into {d}", .{ hot_index.asI32(), new_element_index.asI32() });
                             grabbed_element_index = new_element_index;
                         },
@@ -8309,7 +8487,7 @@ const Workspace = struct {
                                         else
                                             .{ .pos = p.applyToLocalPosition(.new(0, 5)) },
                                         // .{ .pos = row.get().absolute_point.applyToLocalPosition(offset orelse .new(0, 5)) },
-                                        try Toybox.dupeIntoFloating(new_fnkname, true),
+                                        try Toybox.dupeIntoFloating(new_fnkname, .new(@src())),
                                         true,
                                         level.description,
                                         samples,
@@ -8318,6 +8496,7 @@ const Workspace = struct {
                                         else
                                             null,
                                     );
+                                    fnkbox.get().specific.fnkbox.require_manual_execution = level.require_manual_execution;
                                     Toybox.addChildLast(if (row.get().specific.scorer_row.offset == null)
                                         workspace.main_area
                                     else
@@ -8326,7 +8505,7 @@ const Workspace = struct {
                                 .reset_bubble => {
                                     workspace.grabbing.index.get().tree.parent.get().specific.bubble.remaining_reset_anim_t = 1;
                                     const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
-                                    const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, true);
+                                    const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, .new(@src()));
                                     Toybox.changeChild(original_instanced, new_instanced);
                                     Toybox.destroyFloating(original_instanced);
                                 },
@@ -8336,7 +8515,8 @@ const Workspace = struct {
                                 },
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
-                                    const testcase_index = try ensureLoadedTestcase(fnkbox.get().specific.fnkbox.status.unsolved, scratch, workspace.gpa_for_atom_names);
+                                    const testcase_index = fnkbox.get().specific.fnkbox.status.bad();
+                                    try ensureLoadedTestcase(testcase_index, scratch, workspace.gpa_for_atom_names);
                                     try launchTestcase(testcase_index);
                                 },
                                 .launch_testcase => {
@@ -8359,7 +8539,7 @@ const Workspace = struct {
                                     Toybox.addChildLast(fnkbox_testcases, try Toybox.buildTestcase(.{ .existing = .{
                                         .input = try Toybox.buildSexpr(.{}, .empty, false, false, .new(@src())),
                                         .expected = try Toybox.buildSexpr(.{}, .empty, false, false, .new(@src())),
-                                        .unloaded = .nothing,
+                                        .unloaded = null,
                                     } }, .new(@src())));
                                     Toybox.addChildLast(fnkbox_testcases, index);
                                 },
@@ -8545,7 +8725,6 @@ const Workspace = struct {
                     .button,
                     .scrollbar,
                     .testcase,
-                    .unloaded_testcase,
                     .postit,
                     .postit_text,
                     .postit_drawing,
@@ -8808,7 +8987,7 @@ const Workspace = struct {
                                     const offset_from_top: f32 = (Toybox.get(testcase).local_point.pos.y - Lego.Specific.FnkboxBox.relative_top_testcase_pos.y - 2) / 2.5;
                                     const offset_error = offset_from_top - math.clamp(offset_from_top, 0, Lego.Specific.FnkboxBox.visible_testcases - 1);
                                     if (offset_error == 0) {
-                                        const new_input = try Toybox.dupeIntoFloating(Lego.Specific.Testcase.children(testcase).input, true);
+                                        const new_input = try Toybox.dupeIntoFloating(Lego.Specific.Testcase.children(testcase).input, .new(@src()));
                                         Toybox.changeCoordinates(new_input, Toybox.get(testcase).absolute_point, Toybox.get(workspace.floating_inputs_layer).absolute_point);
                                         Toybox.addChildLast(workspace.floating_inputs_layer, new_input);
                                         undo_stack.storeAllData(lego.index);
@@ -8843,7 +9022,7 @@ const Workspace = struct {
                                     }
                                 },
                                 .executing => {
-                                    try advanceExecutorAnimation(executor_index, workspace, delta_seconds, scratch);
+                                    try workspace.advanceExecutorAnimation(executor_index, delta_seconds, scratch);
                                     if (Toybox.get(executor_index).specific.executor.animation == null) {
                                         undo_stack.storeAllData(lego.index);
                                         execution.state = .ending;
@@ -8872,9 +9051,7 @@ const Workspace = struct {
                                     Toybox.get(final_result).local_point = .lerp(
                                         execution.original_or_final_input_point,
                                         Toybox.get(workspace.floating_inputs_layer).absolute_point.inverseApplyGetLocal(
-                                            Toybox.get(
-                                                Lego.Specific.Testcase.children(testcase).actual,
-                                            ).absolute_point,
+                                            testcase.get().absolute_point.applyToLocalPoint(Lego.Specific.Testcase.relative_actual_point),
                                         ),
                                         execution.state_t,
                                     );
@@ -8900,11 +9077,14 @@ const Workspace = struct {
                                         if (execution.old_testcase_actual_value != nothing) Toybox.destroyFloating(execution.old_testcase_actual_value);
                                         fnkbox.execution = null;
                                         Toybox.refreshAbsolutePoints(&.{new_actual});
+
+                                        // TODO(bug): less hacky
+                                        testcase.get().specific.testcase.just_manually_executed = true;
                                     }
                                 },
                             },
                             .input => {
-                                try advanceExecutorAnimation(executor_index, workspace, delta_seconds, scratch);
+                                try workspace.advanceExecutorAnimation(executor_index, delta_seconds, scratch);
                                 if (Toybox.get(executor_index).specific.executor.animation == null) {
                                     const result = try resetExecutorAndExtractResult(executor_index, execution.original_garland);
                                     undo_stack.storeAllData(lego.index);
@@ -8920,7 +9100,7 @@ const Workspace = struct {
                         const executor_index = Lego.Specific.Fnkbox.children(lego.index).executor;
                         if (Lego.Specific.Executor.shouldStartExecution(executor_index)) {
                             const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
-                            const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true);
+                            const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, .new(@src()));
 
                             undo_stack.storeAllData(lego.index);
                             fnkbox.execution = .{
@@ -8941,7 +9121,7 @@ const Workspace = struct {
                             // } } });
                             // try workspace.canonizeAfterChanges(mem);
                         }
-                        assert(try workspace.valid(scratch));
+                        // assert(try workspace.valid(scratch));
                     }
                 }
             }
@@ -8955,8 +9135,10 @@ const Workspace = struct {
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor| {
+                    assert(!(executor.controlled_by_parent_fnkbox and executor.used_for_bg_computation));
                     if (executor.controlled_by_parent_fnkbox) continue;
-                    try advanceExecutorAnimation(lego.index, workspace, delta_seconds, scratch);
+                    // if (executor.used_for_bg_computation) continue;
+                    try workspace.advanceExecutorAnimation(lego.index, delta_seconds, scratch);
                 }
             }
         }
@@ -8971,12 +9153,16 @@ const Workspace = struct {
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         .launch_testcase, .delete_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
-                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status == .unsolved,
+                        .see_failing_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status != .solved,
                         .scroll_up, .scroll_down, .reset_bubble, .add_testcase => true,
                         .unlock_hint => lego.tree.parent.get().specific.bubble.visibleUnlockHints(),
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
                         .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
+                    };
+                    button.extra_info = switch (button.action) {
+                        else => .none,
+                        .see_failing_testcase => .{ .see_failing_testcase = Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.status },
                     };
                     button.latched = switch (button.action) {
                         .launch_testcase,
@@ -9116,16 +9302,16 @@ const Workspace = struct {
                 const child_box: Bounds = .fromRect(Lego.Specific.Testcase.relative_bounding_box);
                 var cur = testcases_parent.get().tree.first;
                 while (cur != nothing) : (cur = cur.get().tree.next) {
-                    if (!cur.hasTag(.testcase) and !cur.hasTag(.unloaded_testcase)) {
+                    if (!cur.hasTag(.testcase)) {
                         assert(cur.get().specific.button.action == .add_testcase);
                         continue;
                     }
                     const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null or
                         fnkbox_index.get().specific.fnkbox.hasExecutionOverTestcase(cur);
                     if (is_visible) {
-                        cur = try ensureLoadedTestcase(cur, scratch, workspace.gpa_for_atom_names);
+                        try ensureLoadedTestcase(cur, scratch, workspace.gpa_for_atom_names);
                     } else {
-                        cur = tryToUnloadTestcase(cur) orelse cur;
+                        tryToUnloadTestcase(cur);
                     }
                 }
                 Toybox.refreshAbsolutePoints(&.{testcases_parent});
@@ -9165,22 +9351,23 @@ const Workspace = struct {
                 while (cur != nothing) : (cur = next) {
                     next = cur.get().tree.next;
                     if (!cur.hasTag(.testcase)) continue;
-                    const source = cur.get().specific.testcase.source;
-                    if (source == nothing) continue;
 
-                    const mangled = source.get().specific.unloaded_testcase.source.input_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).input) or
-                        source.get().specific.unloaded_testcase.source.expected_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).expected);
+                    if (!cur.get().specific.testcase.loaded) continue;
+                    if (cur.get().specific.testcase.source) |source| {
+                        const mangled = source.input_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).input) or
+                            source.expected_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).expected);
 
-                    if (mangled) {
-                        Toybox.pop(cur);
-                        Toybox.destroyFloating(cur);
+                        if (mangled) {
+                            Toybox.pop(cur);
+                            Toybox.destroyFloating(cur);
+                        }
                     }
                 }
             }
         }
 
         const something_happened = undo_stack.anyChangesThisFrame();
-        if (something_happened or !workspace.did_first_frame) {
+        if (true or something_happened or !workspace.did_first_frame) {
             try workspace.canonizeAfterChanges(scratch);
         }
 
@@ -9303,13 +9490,19 @@ const Workspace = struct {
         workspace.hand_layer = index;
     }
 
-    fn advanceExecutorAnimation(executor_index: Lego.Index, workspace: *Workspace, delta_seconds: f32, scratch: std.mem.Allocator) !void {
-        const floating_inputs_layer = workspace.floating_inputs_layer;
+    fn advanceExecutorAnimation(workspace: *Workspace, executor_index: Lego.Index, delta_seconds: f32, scratch: std.mem.Allocator) !void {
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
+        const visible = !executor.used_for_bg_computation;
+        // const floating_inputs_layer = workspace.floating_inputs_layer;
+        const floating_inputs_layer = if (visible) workspace.floating_inputs_layer else workspace.invisible_floating_inputs_layer;
         if (executor.animation) |*animation| {
             toybox.undo_stack.storeAllData(executor_index);
-            animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
+            if (visible) {
+                animation.t += delta_seconds * Executor.Controls.speedScale(Executor.getBrakeT(executor_index));
+            } else {
+                animation.t = 1;
+            }
             if (animation.t >= 1) {
                 Toybox.popWithUndoAndChangingCoords(animation.garland_fnkname);
                 if (animation.matching) {
@@ -9380,16 +9573,23 @@ const Workspace = struct {
                     Toybox.destroyFloating(old_garland);
 
                     toybox.undo_stack.storeAllData(executor_index);
-                    executor.first_pill = try Lego.Specific.Pill.build(old_case_parts.pattern.get().absolute_point, executor.first_pill, .{
-                        .pattern = old_case_parts.pattern,
-                        .input = old_input,
-                        .fnkname_holder_call = old_case_parts.fnkname_holder,
-                        .fnkname_response = animation.garland_fnkname,
-                        // TODO(game)
-                        // They don't include previous bindings, since they have now been merged
-                        // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
-                    });
-                    Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill);
+                    if (visible) {
+                        executor.first_pill = try Lego.Specific.Pill.build(old_case_parts.pattern.get().absolute_point, executor.first_pill, .{
+                            .pattern = old_case_parts.pattern,
+                            .input = old_input,
+                            .fnkname_holder_call = old_case_parts.fnkname_holder,
+                            .fnkname_response = animation.garland_fnkname,
+                            // TODO(game)
+                            // They don't include previous bindings, since they have now been merged
+                            // .bindings = try mem.gpa.dupe(Binding, animation.new_bindings),
+                        });
+                        Toybox.addChildLastWithoutChangingAbsPoint(floating_inputs_layer, executor.first_pill);
+                    } else {
+                        Toybox.destroyFloating(old_case_parts.pattern);
+                        Toybox.destroyFloating(old_input);
+                        Toybox.destroyFloating(old_case_parts.fnkname_holder);
+                        Toybox.destroyFloating(animation.garland_fnkname);
+                    }
                 } else {
                     assert(animation.new_bindings.len == 0);
                     Toybox.destroyFloating(try Lego.Specific.Garland.stealFnkname(
@@ -9413,7 +9613,7 @@ const Workspace = struct {
             assert(first_segment.hasTag(.newcase));
             const first_case = Toybox.get(first_segment).tree.first;
             Lego.Specific.Garland.popCase(first_case);
-            Toybox.addChildLast(workspace.floating_inputs_layer, first_case);
+            Toybox.addChildLast(floating_inputs_layer, first_case);
 
             const pattern = Lego.Specific.Case.children(first_case).pattern;
 
@@ -9431,10 +9631,10 @@ const Workspace = struct {
                 const function_point = Lego.Specific.Executor.relative_garland_point
                     .applyToLocalPoint(.{ .pos = .new(2 * offset + 6, 6 * offset) });
                 if (try workspace.getSkippedExecution(first_case.case().template, new_bindings_slice, first_case.case().fnkname_holder, function_point, scratch)) |garland| {
-                    Toybox.addChildLast(workspace.floating_inputs_layer, garland);
+                    Toybox.addChildLast(floating_inputs_layer, garland);
                     break :blk garland;
                 } else if (try workspace.getGarlandForFnk(first_case.case().fnkname_holder.children(.fnkname_holder).fnkname, function_point, scratch)) |garland| {
-                    Toybox.addChildLast(workspace.floating_inputs_layer, garland);
+                    Toybox.addChildLast(floating_inputs_layer, garland);
                     break :blk garland;
                 } else {
                     break :blk .nothing;
@@ -9459,7 +9659,7 @@ const Workspace = struct {
                             for (new_bindings_slice) |binding| {
                                 if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
                                     toybox.undo_stack.storeAllData(cur);
-                                    sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, true);
+                                    sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, .new(@src()));
                                     Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
                                     Toybox.refreshAbsolutePoints(&.{sexpr.emerging_value});
                                 }
@@ -9477,7 +9677,7 @@ const Workspace = struct {
                         for (new_bindings_slice) |binding| {
                             if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
                                 toybox.undo_stack.storeAllData(cur);
-                                sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, true);
+                                sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, .new(@src()));
                                 Lego.Specific.Sexpr.setIsPattern(sexpr.emerging_value, true);
                                 sexpr.emerging_value.get().specific.sexpr.is_pattern_t = 1;
                                 Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
@@ -9617,7 +9817,7 @@ const Workspace = struct {
         const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(new_point, fnkbody.*, scratch, .new(@src()));
         const original_fnkname = try Lego.Specific.Garland.stealFnkname(
             garland,
-            try Toybox.dupeIntoFloating(fnkname, true),
+            try Toybox.dupeIntoFloating(fnkname, .new(@src())),
         );
         assert(original_fnkname.get().specific.sexpr.kind == .empty);
         Toybox.destroyFloating(original_fnkname);
@@ -9663,53 +9863,66 @@ const Workspace = struct {
         }, .new(@src()));
         const original_fnkname = try Lego.Specific.Garland.stealFnkname(
             garland,
-            try Toybox.dupeIntoFloating(fnkname, true),
+            try Toybox.dupeIntoFloating(fnkname, .new(@src())),
         );
         assert(original_fnkname.get().specific.sexpr.kind == .empty);
         Toybox.destroyFloating(original_fnkname);
         return garland;
     }
 
-    fn ensureLoadedTestcase(testcase_index: Lego.Index, scratch: std.mem.Allocator, text_allocator: std.mem.Allocator) !Lego.Index {
-        if (testcase_index.hasTag(.testcase)) return testcase_index;
-        assert(testcase_index.hasTag(.unloaded_testcase));
+    fn ensureLoadedTestcase(testcase_index: Lego.Index, scratch: std.mem.Allocator, text_allocator: std.mem.Allocator) !void {
+        if (testcase_index.get().specific.testcase.loaded) return;
         var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
         defer pool.deinit();
         // TODO(optim-late): tune this number
         // try pool.preheat(1_000_000);
-        const source = testcase_index.get().specific.unloaded_testcase.source;
+        const source = testcase_index.get().specific.testcase.source.?;
         const sample = (try levels[source.level].generate_sample(source.sample, &pool, scratch, text_allocator)).?;
 
-        const new = try Toybox.buildTestcase(.{ .existing = .{
-            .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, sample.input, false, false, .new(@src())),
-            .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, sample.expected, false, false, .new(@src())),
-            .unloaded = testcase_index,
-        } }, .new(@src()));
-        new.get().local_point = testcase_index.get().local_point;
-        new.get().visual_offset = testcase_index.get().visual_offset;
-        Toybox.changeChild(testcase_index, new);
-
-        return new;
+        Toybox.changeChildAndDestroyOld(testcase_index.children(.testcase).input, try Lego.Specific.Sexpr.buildFromOldCoreValue(
+            Lego.Specific.Testcase.relative_input_point,
+            sample.input,
+            false,
+            false,
+            .new(@src()),
+        ));
+        Toybox.changeChildAndDestroyOld(testcase_index.children(.testcase).expected, try Lego.Specific.Sexpr.buildFromOldCoreValue(
+            Lego.Specific.Testcase.relative_expected_point,
+            sample.expected,
+            false,
+            false,
+            .new(@src()),
+        ));
+        testcase_index.get().specific.testcase.loaded = true;
     }
 
-    fn tryToUnloadTestcase(testcase_index: Lego.Index) ?Lego.Index {
-        if (testcase_index.hasTag(.unloaded_testcase)) return testcase_index;
-        assert(testcase_index.hasTag(.testcase));
+    fn tryToUnloadTestcase(testcase_index: Lego.Index) void {
+        if (!testcase_index.get().specific.testcase.loaded) return;
 
-        const source = testcase_index.get().specific.testcase.source;
-        if (source == nothing) return null;
+        if (testcase_index.get().specific.testcase.source) |source| {
+            if (source.input_hash != Lego.Specific.Sexpr.hash(testcase_index.children(.testcase).input) or
+                source.expected_hash != Lego.Specific.Sexpr.hash(testcase_index.children(.testcase).expected))
+            {
+                testcase_index.get().specific.testcase.source = null;
+                return;
+            }
 
-        if (source.get().specific.unloaded_testcase.source.input_hash != Lego.Specific.Sexpr.hash(testcase_index.children(.testcase).input) or
-            source.get().specific.unloaded_testcase.source.expected_hash != Lego.Specific.Sexpr.hash(testcase_index.children(.testcase).expected))
-        {
-            // TODO(optim-late): measure if setting the source to .nothing is a worthy tradeoff
-            return null;
+            Toybox.changeChildAndDestroyOld(testcase_index.children(.testcase).input, try Toybox.buildSexpr(
+                Lego.Specific.Testcase.relative_input_point,
+                .empty,
+                false,
+                false,
+                .new(@src()),
+            ));
+            Toybox.changeChildAndDestroyOld(testcase_index.children(.testcase).expected, try Toybox.buildSexpr(
+                Lego.Specific.Testcase.relative_expected_point,
+                .empty,
+                false,
+                false,
+                .new(@src()),
+            ));
+            testcase_index.get().specific.testcase.loaded = false;
         }
-
-        source.get().local_point = testcase_index.get().local_point;
-        Toybox.changeChild(testcase_index, source);
-        Toybox.destroyFloating(testcase_index);
-        return source;
     }
 
     fn launchTestcase(testcase_index: Lego.Index) !void {
@@ -9720,11 +9933,11 @@ const Workspace = struct {
         const executor_index = Lego.Specific.Fnkbox.children(fnkbox_index).executor;
 
         const old_actual = Lego.Specific.Testcase.children(testcase_index).actual;
-        const new_actual = try Toybox.buildSexpr(Toybox.get(old_actual).local_point, .empty, false, false, .new(@src()));
+        const new_actual = try Toybox.buildSexpr(Lego.Specific.Testcase.relative_actual_point, .empty, false, false, .new(@src()));
         Toybox.changeChild(old_actual, new_actual);
 
         const original_garland_index = Lego.Specific.Executor.children(executor_index).garland;
-        const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, true);
+        const backup_garland_index = try Toybox.dupeIntoFloating(original_garland_index, .new(@src()));
 
         toybox.undo_stack.storeAllData(fnkbox_index);
         fnkbox.execution = .{
@@ -9800,7 +10013,7 @@ const Workspace = struct {
             if (true) { // write testcases
                 const testcases_area = cur.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
                 var testcases: std.ArrayListUnmanaged(union(enum) {
-                    default: Lego.Specific.UnloadedTestcase.Source,
+                    default: Lego.Specific.Testcase.Source,
                     custom: Lego.Specific.Testcase.Children,
                 }) = try .initCapacity(scratch, Toybox.childCount(testcases_area));
                 defer testcases.deinit(scratch);
@@ -9810,18 +10023,18 @@ const Workspace = struct {
                     switch (cur_testcase.get().specific) {
                         else => unreachable,
                         .button => |button| assert(button.action == .add_testcase),
-                        .unloaded_testcase => |unloaded| {
-                            testcases.appendAssumeCapacity(.{ .default = unloaded.source });
-                        },
                         .testcase => |testcase| {
-                            const source = testcase.source;
-                            if (source == nothing or
-                                source.get().specific.unloaded_testcase.source.input_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).input) or
-                                source.get().specific.unloaded_testcase.source.expected_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).expected))
-                            {
-                                testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
+                            if (testcase.source) |source| {
+                                if (testcase.loaded and
+                                    (source.input_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).input) or
+                                        source.expected_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).expected)))
+                                {
+                                    testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
+                                } else {
+                                    testcases.appendAssumeCapacity(.{ .default = source });
+                                }
                             } else {
-                                testcases.appendAssumeCapacity(.{ .default = source.get().specific.unloaded_testcase.source });
+                                testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
                             }
                         },
                     }
@@ -9984,7 +10197,7 @@ const Workspace = struct {
                                 testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .existing = .{
                                     .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, input, false, false, .new(@src())),
                                     .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, expected, false, false, .new(@src())),
-                                    .unloaded = .nothing,
+                                    .unloaded = null,
                                 } }, .new(@src())));
                             },
                         }
@@ -10078,7 +10291,7 @@ const Workspace = struct {
         var k: usize = 0;
         while (lego_it.next()) |lego| {
             defer k += 1;
-            assert(lego.index == @as(Lego.Index, @enumFromInt(k)));
+            assert(lego.index.index == k);
             if (lego.exists) {
                 alive_count += 1;
                 std.log.debug("{d} \t{s} \tparent: {d} \tnext: {d} \tprev: {d} \tfirst: {d}\tfree next: {d}", .{
@@ -10097,13 +10310,13 @@ const Workspace = struct {
                 });
             }
         }
-        std.log.debug("-----", .{});
-        for (toybox.undo_stack.commands.items, 0..) |cmd, k2| {
-            std.log.debug("{d} \t{any}", .{ k2, cmd });
-        }
-        std.log.debug("-----", .{});
-        std.log.debug("{d} alive legos, {d} undo stack len", .{ alive_count, toybox.undo_stack.commands.items.len });
-        std.log.debug("-----", .{});
+        // std.log.debug("-----", .{});
+        // for (toybox.undo_stack.commands.items, 0..) |cmd, k2| {
+        //     std.log.debug("{d} \t{any}", .{ k2, cmd });
+        // }
+        // std.log.debug("-----", .{});
+        // std.log.debug("{d} alive legos, {d} undo stack len", .{ alive_count, toybox.undo_stack.commands.items.len });
+        // std.log.debug("-----", .{});
     }
 
     pub fn getAllFnks(workspace: *Workspace, scratch: std.mem.Allocator) !std.meta.Tuple(&.{ core.FnkCollection, u32 }) {
@@ -10308,11 +10521,11 @@ pub fn init(
         const inputs = @import("buggy_recording.zig").inputs;
         for (inputs, 0..) |input, turn_index| {
             std.log.debug("--- Turn {d}, before ---", .{turn_index});
-            dst.workspace.debugLogState();
+            Workspace.debugLogState();
             std.log.debug("Applying input: left {any}, right {any}, z {any}", .{ input.mouse_left_down, input.mouse_right_down, input.z_down });
             try player.advance(input);
             std.log.debug("--- Turn {d}, after ---", .{turn_index});
-            dst.workspace.debugLogState();
+            Workspace.debugLogState();
         }
     }
 }

@@ -26,6 +26,7 @@ pub const Level = struct {
     initial_definition_lit: ?[]const u8 = null,
     bubble_definition: ?core.FnkBodyV2 = null,
     generate_sample: *const fn (k: usize, pool: *SexprPool, arena: std.mem.Allocator, atom_mem: std.mem.Allocator) core.OoM!?Sample,
+    require_manual_execution: bool = false,
 
     pub fn initialDefinition(level: Level, pool: *SexprPool, allocator_for_cases: std.mem.Allocator) !?core.FnkBodyV2 {
         return level.initial_definition orelse if (level.initial_definition_lit) |src| blk: {
@@ -199,6 +200,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .require_manual_execution = true,
         .fnk_name = "changeLowercaseToPrevCyclingOnC",
         .description = "Shift back: c into b, b into a, a into c.",
         .initial_definition = if (true) null else .{ .cases = &.{
@@ -215,6 +217,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .require_manual_execution = true,
         .fnk_name = "swap",
         .description = "Swap both vau halves",
         .initial_definition = if (true) null else .{ .cases = &.{.{
@@ -263,6 +266,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .require_manual_execution = true,
         .fnk_name = "shiftTopHalf",
         .description = "Shift the pair's top half",
         .initial_definition = null,
@@ -414,6 +418,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .require_manual_execution = true,
         .fnk_name = "startWithB",
         .description = "Check if the top half is 'b'",
         .initial_definition = null,
@@ -549,6 +554,7 @@ pub const levels: []const Level = &.{
         }.generate_sample,
     },
     .{
+        .require_manual_execution = true,
         .fnk_name = "withBottomShifted",
         .description = "Same pair but with the lower half shifted",
         .initial_definition = null,
