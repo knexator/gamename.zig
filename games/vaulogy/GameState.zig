@@ -4947,7 +4947,7 @@ const Workspace = struct {
             // postit.addFromText(postit_pos, &.{ "(I promise", "the assignments", "will get more", "interesting)" });
             postit.addFromParts(postit_pos, &.{
                 .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "check your", "solution" } } },
-                .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
+                .{ .point = .{ .pos = .new(4.7, 1.5) }, .part = .launch_testcase_button },
             });
 
             postit_pos = .new(0.2, -10.4);
