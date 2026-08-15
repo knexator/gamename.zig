@@ -421,12 +421,19 @@ pub const Lego = struct {
             piece_center,
         },
         executor_controls: struct {
-            pub fn brake(executor_controls: *const @This()) Lego.Index {
-                return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[0];
-            }
+            pub const Children = struct {
+                stop: Lego.Index,
+                brake: Lego.Index,
+                crank: Lego.Index,
+            };
 
-            pub fn crank(executor_controls: *const @This()) Lego.Index {
-                return Toybox.getChildrenExact(2, Lego.fromSpecificConst(.executor_controls, executor_controls).index)[1];
+            pub fn children(index: Lego.Index) Children {
+                const asdf = Toybox.getChildrenExact(3, index);
+                return .{
+                    .stop = asdf[0],
+                    .brake = asdf[1],
+                    .crank = asdf[2],
+                };
             }
         },
         executor_brake: struct {
@@ -771,6 +778,8 @@ pub const Lego = struct {
                 add_testcase,
                 /// assumes that the testcase is the direct parent
                 delete_testcase,
+                /// assumes that executor controls is the direct parent
+                stop_execution,
             },
             enabled: bool = true,
             /// only applies to toggle_skip_fnk
@@ -791,6 +800,7 @@ pub const Lego = struct {
                     .unlock_hint,
                     .create_fnkbox_for_row,
                     .add_testcase,
+                    .stop_execution,
                     => false,
                     .toggle_skip_fnk,
                     => true,
@@ -1525,7 +1535,7 @@ pub const Lego = struct {
             }
 
             pub fn getBrakeT(executor_index: Lego.Index) f32 {
-                return children(executor_index).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t;
+                return children(executor_index).controls.children(.executor_controls).brake.get().specific.executor_brake.brake_t;
             }
 
             pub fn shouldStartExecution(executor_index: Lego.Index) bool {
@@ -4125,7 +4135,7 @@ pub const Toybox = struct {
         const executor = try buildExecutor(Fnkbox.relative_executor_point, true, false, null, initial_definition);
 
         if (fnkname.isTheSexprLit("swap")) {
-            executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+            executor.children(.executor).controls.children(.executor_controls).brake.get().specific.executor_brake.brake_t = 0.9;
         }
 
         return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .editable = editable } }, &.{
@@ -4151,6 +4161,10 @@ pub const Toybox = struct {
             initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, .new(@src())),
             blk: {
                 const controls = try Toybox.new(Executor.relative_crank_center, .executor_controls, .new(@src()));
+                Toybox.addChildLast(controls, try Toybox.new(.{}, .{ .button = .{
+                    .action = .stop_execution,
+                    .local_rect = .fromCenterAndSize(.new(0, 2), .both(0.6)),
+                } }, .new(@src())));
                 Toybox.addChildLast(controls, try Toybox.new(.{}, .{ .executor_brake = .{ .brake_t = 0.5 } }, .new(@src())));
                 Toybox.addChildLast(controls, try Toybox.new(.{}, .{ .executor_crank = .{ .value = 0.0 } }, .new(@src())));
                 break :blk controls;
@@ -4763,7 +4777,7 @@ const Workspace = struct {
                     .next = null,
                 }, .new(@src())),
             }, .new(@src())));
-            executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
+            executor.children(.executor).controls.children(.executor_controls).brake.get().specific.executor_brake.brake_t = 0.9;
             Toybox.addChildLast(bp, executor);
             postit.addFromText(postit_pos.add(.new(-6.5, 6)), &.{ "Use the crank", "and brake", "to control", "execution speed" });
             postit_pos.addInPlace(.new(8.5, 11.5));
@@ -7566,6 +7580,21 @@ const Workspace = struct {
                         },
                         .button => |button| {
                             switch (button.action) {
+                                .stop_execution => {
+                                    // TODO(game): nicer
+                                    drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.4));
+                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                    const center = button.local_rect.get(.center);
+                                    const s = button.local_rect.size.min() * 0.3;
+                                    drawer.canvas.line(camera_relative, &.{
+                                        center.add(.new(-s, -s)),
+                                        center.add(.new(s, s)),
+                                    }, 0.05, .black);
+                                    drawer.canvas.line(camera_relative, &.{
+                                        center.add(.new(s, -s)),
+                                        center.add(.new(-s, s)),
+                                    }, 0.05, .black);
+                                },
                                 .launch_testcase => {
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.4));
                                     const rect = button.local_rect.move(Vec2.new(-1, -1).scale((1 - lego.hot_t) * 0.05 + (1 - @min(lego.active_t, lego.hot_t)) * 0.1));
@@ -8448,6 +8477,7 @@ const Workspace = struct {
                         if (hot_and_dropzone.hot == workspace.grabbing.index) {
                             switch (button.action) {
                                 .toggle_skip_fnk => unreachable,
+                                .stop_execution => try forcefullyStopExecutor(Toybox.findAncestor(hot_and_dropzone.hot, .executor)),
                                 .create_fnkbox_for_row => {
                                     const row = workspace.grabbing.index.get().tree.parent;
                                     assert(row.hasTag(.scorer_row));
@@ -9159,6 +9189,7 @@ const Workspace = struct {
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
                         .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
+                        .stop_execution => true,
                     };
                     button.extra_info = switch (button.action) {
                         else => .none,
@@ -9174,6 +9205,7 @@ const Workspace = struct {
                         .unlock_hint,
                         .create_fnkbox_for_row,
                         .add_testcase,
+                        .stop_execution,
                         => false,
                         .toggle_skip_fnk => button.latched,
                     };
@@ -9490,6 +9522,40 @@ const Workspace = struct {
         workspace.hand_layer = index;
     }
 
+    fn forcefullyStopExecutor(executor_index: Lego.Index) !void {
+        const executor = &Toybox.get(executor_index).specific.executor;
+        if (executor.animation) |*animation| {
+            const old_current = executor_index.children(.executor).garland;
+            Toybox.changeChildAndDestroyOld(old_current, try Toybox.buildGarland(
+                old_current.get().local_point,
+                &.{},
+                .new(@src()),
+            ));
+
+            const old_invoked = animation.invoked_fnk;
+            if (old_invoked != nothing) {
+                const new_invoked = try Toybox.buildGarland(
+                    old_invoked.get().local_point,
+                    &.{},
+                    .new(@src()),
+                );
+                Toybox.changeChildAndDestroyOld(old_invoked, new_invoked);
+                animation.invoked_fnk = new_invoked;
+            }
+
+            if (true) { // remove enqueued
+                var cur = executor.first_enqueued;
+                executor.first_enqueued = .nothing;
+                while (cur != nothing) {
+                    const next = cur.get().specific.garland.next_enqueued;
+                    Toybox.pop(cur);
+                    Toybox.destroyFloating(cur);
+                    cur = next;
+                }
+            }
+        }
+    }
+
     fn advanceExecutorAnimation(workspace: *Workspace, executor_index: Lego.Index, delta_seconds: f32, scratch: std.mem.Allocator) !void {
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
@@ -9712,7 +9778,7 @@ const Workspace = struct {
             }
         }
 
-        const crank = Executor.children(executor_index).controls.get().specific.executor_controls.crank();
+        const crank = Executor.children(executor_index).controls.children(.executor_controls).crank;
         const new_crank_value = if (executor.animation) |anim| anim.t else 0;
         if (new_crank_value != crank.get().specific.executor_crank.value) {
             toybox.undo_stack.storeAllData(crank);
