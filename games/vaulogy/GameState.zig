@@ -2511,6 +2511,20 @@ pub const Lego = struct {
             const sexpr = index.get().specific.sexpr;
             return sexpr.kind == .atom_lit and std.mem.eql(u8, sexpr.atom_name, lit);
         }
+
+        pub fn getTheSexprVar(index: Index) ?[]const u8 {
+            if (!index.hasTag(.sexpr)) return null;
+            const sexpr = index.get().specific.sexpr;
+            return if (sexpr.kind == .atom_var) sexpr.atom_name else null;
+        }
+
+        pub fn isTheSexprVar(index: Index, maybe_varname: ?[]const u8) bool {
+            if (maybe_varname) |varname| {
+                if (!index.hasTag(.sexpr)) return false;
+                const sexpr = index.get().specific.sexpr;
+                return sexpr.kind == .atom_var and std.mem.eql(u8, sexpr.atom_name, varname);
+            } else return false;
+        }
     };
 
     pub fn handle(lego: *const Lego) ?Handle {
@@ -8696,6 +8710,7 @@ const Workspace = struct {
             hot_and_dropzone.hot.get().specific.sexpr.hot_sibling
         else
             .nothing;
+        const hot_variable: ?[]const u8 = hot_and_dropzone.hot.getTheSexprVar();
 
         if (true) { // update _t and other simple things that could be done in parallel
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
@@ -8708,7 +8723,7 @@ const Workspace = struct {
                 var done = true;
 
                 const eps: f32 = 0.0001;
-                done = math.lerpTowardsWithFinish(&lego.hot_t, if (lego.index == hot_and_dropzone.hot or lego.index == other_hot) 1 else 0, .fast, delta_seconds, eps) and done;
+                done = math.lerpTowardsWithFinish(&lego.hot_t, if (lego.index == hot_and_dropzone.hot or lego.index == other_hot or lego.index.isTheSexprVar(hot_variable)) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.active_t, if (lego.index == workspace.grabbing.index) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.dropzone_t, if (lego.index == hot_and_dropzone.dropzone) 1 else 0, .fast, delta_seconds, eps) and done;
                 done = math.lerpTowardsWithFinish(&lego.dropping_t, if (lego.index == workspace.grabbing.index and hot_and_dropzone.dropzone != nothing) 1 else 0, .fast, delta_seconds, eps) and done;
