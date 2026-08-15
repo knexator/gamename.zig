@@ -26,7 +26,7 @@ const EXECUTOR_MOVES_LEFT = true;
 const SEQUENTIAL_GOES_DOWN = true;
 const CRANKS_ENABLED = true;
 const OVERWRITING_TOPLEVEL_SEXPRS_ENABLED = false;
-const INCLUDE_DEBUG_FIELDS = @import("builtin").mode == .Debug;
+const INCLUDE_DEBUG_FIELDS = @import("builtin").mode == .Debug and !@import("builtin").target.cpu.arch.isWasm();
 
 const Level = @import("levels_new.zig").Level;
 const levels = @import("levels_new.zig").levels;
