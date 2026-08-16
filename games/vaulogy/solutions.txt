@@ -17,9 +17,9 @@ shiftTopHalf {
 }
 
 shiftInUnknownDirection {
-    (a . @x) -> changeLowercaseToNextCyclingOnC: @x;
+    (a . @x) -> changeLowercaseToPrevCyclingOnC: @x;
     (b . @x) -> @x;
-    (c . @x) -> changeLowercaseToPrevCyclingOnC: @x;
+    (c . @x) -> changeLowercaseToNextCyclingOnC: @x;
 }
 
 uppercase {
