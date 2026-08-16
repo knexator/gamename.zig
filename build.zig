@@ -28,28 +28,31 @@ pub fn build(b: *std.Build) !void {
         try build_game(b, active_folder);
     }
 
-    // TODO(eternal): delete this step by getting a build.zig for msdf
-    const fonts_step = b.step("fonts", "Compile the fonts (only available on win64)");
-    // TODO: make msdf an optional dependency
-    const msdf = b.dependency("msdf", .{});
+    if (b.graph.host.result.os.tag == .windows) {
+        if (b.lazyDependency("msdf", .{})) |msdf| {
+            // TODO(eternal): delete this step by getting a build.zig for msdf
+            const fonts_step = b.step("fonts", "Compile the fonts (only available on win64)");
+            // TODO: make msdf an optional dependency
 
-    const wf = b.addUpdateSourceFiles();
-    // wf.addCopyFileToSource(msdf.path("msdf-atlas-gen.exe"), "ungit/msdf-atlas-gen.exe");
-    inline for (fonts) |font_name| {
-        const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
-        run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
-        // TODO: -chars [0x20, 0x7e],ñ does not work, open github issue
-        run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2", "-charset", "monorepo/tools/font_chars.txt" });
-        run_msdf.addArg("-font");
-        run_msdf.addFileArg(b.path("fonts/raw/" ++ font_name ++ ".ttf"));
-        run_msdf.addArg("-json");
-        const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
-        run_msdf.addArg("-imageout");
-        const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
-        wf.addCopyFileToSource(font_json, "fonts/compiled/" ++ font_name ++ ".json");
-        wf.addCopyFileToSource(font_atlas, "fonts/compiled/" ++ font_name ++ ".png");
+            const wf = b.addUpdateSourceFiles();
+            // wf.addCopyFileToSource(msdf.path("msdf-atlas-gen.exe"), "ungit/msdf-atlas-gen.exe");
+            inline for (fonts) |font_name| {
+                const run_msdf = std.Build.Step.Run.create(b, "run_msdf");
+                run_msdf.addFileArg(msdf.path("msdf-atlas-gen.exe"));
+                // TODO: -chars [0x20, 0x7e],ñ does not work, open github issue
+                run_msdf.addArgs(&.{ "-type", "msdf", "-size", "32", "-yorigin", "top", "-outerpxpadding", "2", "-charset", "monorepo/tools/font_chars.txt" });
+                run_msdf.addArg("-font");
+                run_msdf.addFileArg(b.path("fonts/raw/" ++ font_name ++ ".ttf"));
+                run_msdf.addArg("-json");
+                const font_json = run_msdf.addOutputFileArg(font_name ++ ".json");
+                run_msdf.addArg("-imageout");
+                const font_atlas = run_msdf.addOutputFileArg(font_name ++ ".png");
+                wf.addCopyFileToSource(font_json, "fonts/compiled/" ++ font_name ++ ".json");
+                wf.addCopyFileToSource(font_atlas, "fonts/compiled/" ++ font_name ++ ".png");
+            }
+            fonts_step.dependOn(&wf.step);
+        }
     }
-    fonts_step.dependOn(&wf.step);
     // TODO
     // const asdf = run_msdf.captureStdErr();
     // const expected_stderr =
