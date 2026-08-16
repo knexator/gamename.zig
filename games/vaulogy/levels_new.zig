@@ -290,7 +290,7 @@ pub const levels: []const Level = &.{
             .{
                 .pattern = &.doPair(Vals.abc[0], &.doVar("any")),
                 .template = &.doVar("any"),
-                .fnk_name = &.doLit("changeLowercaseToNextCyclingOnC"),
+                .fnk_name = &.doLit("changeLowercaseToPrevCyclingOnC"),
                 .next = null,
             },
             .{
@@ -315,9 +315,9 @@ pub const levels: []const Level = &.{
                         .input = try store(pool, Sexpr.doPair(Vals.abc[k2], Vals.abc[k1])),
                         .expected = Vals.abc[
                             switch (k2) {
-                                0 => @mod(k1 + 1, Vals.abc.len),
+                                0 => @mod(k1 + Vals.abc.len - 1, Vals.abc.len),
                                 1 => k1,
-                                2 => @mod(k1 + Vals.abc.len - 1, Vals.abc.len),
+                                2 => @mod(k1 + 1, Vals.abc.len),
                                 else => unreachable,
                             }
                         ],

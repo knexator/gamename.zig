@@ -5010,8 +5010,8 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(7.8, -1.4));
             Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos }, &.{
                 try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexprFromText(.{}, "(@x . @y)", true, false, .new(@src())),
-                    .template = try Toybox.buildSexprFromText(.{}, "(@y . @x)", false, false, .new(@src())),
+                    .pattern = try Toybox.buildSexprFromText(.{}, "(@up . @down)", true, false, .new(@src())),
+                    .template = try Toybox.buildSexprFromText(.{}, "(@down . @up)", false, false, .new(@src())),
                     .fnkname = null,
                     .next = null,
                 }, .new(@src())),
@@ -5150,7 +5150,6 @@ const Workspace = struct {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-
                 .new(@src()),
             );
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
@@ -5180,10 +5179,53 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks);
 
         bubble_pos.addInPlace(path_next_close);
-        const final_tutorial = try buildBubbleSimple(bubble_pos, intro_to_mixing_both_tricks, &.{"shiftPair"}, &.{
-            &.{ "You now know", "everything!" },
-            &.{ "Take some fresh", "cases from the", "left toolbar", "and build a", "solution" },
-            &.{"Good luck!"},
+        const final_tutorial = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_mixing_both_tricks, .all_scorers_solved, blk: {
+            const bp = try Toybox.new(
+                .{},
+                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+                .new(@src()),
+            );
+            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
+
+            const postits: []const []const []const u8 = &.{
+                &.{ "You now know", "everything!" },
+                &.{ "Take some fresh", "cases from the", "left toolbar", "and build a", "solution" },
+                &.{"Good luck!"},
+            };
+            const positions: []const Vec2 = &.{
+                .new(-8, -8),
+                .new(-0.3, -7.2),
+                .new(7.7, -7.1),
+            };
+
+            for (postits, positions) |lines, pos| {
+                postit.addFromText(pos, lines);
+            }
+
+            var postit_pos: Vec2 = .new(7.5, 6);
+            postit.addFromText(postit_pos, &.{ "Nested strands", "can have", "nested strands" });
+            postit_pos.addInPlace(.new(0.1, 0.2));
+            postit.addFromParts(postit_pos, &.{
+                .{ .point = .{ .pos = .new(3, 1.8) }, .part = .{ .paragraph = &.{"You will need"} } },
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{"to call    "} } },
+                .{ .point = .{ .pos = .new(3, 4.2) }, .part = .{ .paragraph = &.{"twice"} } },
+                .{ .point = .{ .pos = .new(4.6, 2.65), .scale = 0.5, .turns = 0.25 }, .part = .{ .thing = try Toybox.buildSexprFromText(
+                    .{},
+                    "changeLowercaseToNextCyclingOnC",
+                    false,
+                    true,
+                    .new(@src()),
+                ) } },
+            });
+            postit_pos.addInPlace(.new(0.1, 0.2));
+            postit.addFromText(postit_pos, &.{ "Below this", "I've left", "some hints,", "just in case" });
+
+            const k = 0;
+            const level_index = levelIndex("shiftPair");
+            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos.addY(5 * k) }, &.{level_index}, &.{.new(k * 4, 8.5 + tof32(k) * 2)});
+            Toybox.addChildLast(bp, scorer);
+
+            break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, final_tutorial);
 
@@ -6436,7 +6478,9 @@ const Workspace = struct {
                                 it.skipChildren();
                             }
                             if (cur.hasTag(.sexpr)) {
-                                if (Lego.Specific.Sexpr.equalValue(cur, sexpr)) {
+                                if (Lego.Specific.Sexpr.equalValue(cur, sexpr) and
+                                    cur.get().specific.sexpr.is_pattern == sexpr.get().specific.sexpr.is_pattern)
+                                {
                                     break :blk true;
                                 } else {
                                     it.skipChildren();
