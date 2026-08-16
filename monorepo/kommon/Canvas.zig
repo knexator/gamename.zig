@@ -1683,6 +1683,10 @@ pub const TextRenderer = struct {
     renderable: Gl.Renderable,
     font_info: std.json.Parsed(FontJsonInfo),
 
+    default_glyph_info: FontJsonInfo.Glyph,
+    glyph_info_from_unicode: std.AutoHashMap(u21, FontJsonInfo.Glyph),
+    kernings: std.AutoHashMap(std.meta.Tuple(&.{ u21, u21 }), f32),
+
     pub const TextPosition = struct {
         hor: enum { left, center, right },
         ver: enum { baseline, ascender, descender, median },
@@ -1734,29 +1738,48 @@ pub const TextRenderer = struct {
             /// ??
             underlineThickness: f32,
         },
-        glyphs: []struct {
-            unicode: u21,
-            advance: f32,
-            planeBounds: ?RectSides = null,
-            atlasBounds: ?RectSides = null,
-        },
+        glyphs: []Glyph,
         kerning: []struct {
             unicode1: u21,
             unicode2: u21,
             advance: f32,
         },
+
+        const Glyph = struct {
+            unicode: u21,
+            advance: f32,
+            planeBounds: ?RectSides = null,
+            atlasBounds: ?RectSides = null,
+        };
     };
 
     pub fn init(font_json: []const u8, gpa: std.mem.Allocator, gl: Gl, atlas_image: *const anyopaque) !TextRenderer {
+        const font_info = try std.json.parseFromSlice(
+            FontJsonInfo,
+            gpa,
+            font_json,
+            .{},
+        );
+        var map: std.AutoHashMap(u21, FontJsonInfo.Glyph) = .init(gpa);
+        for (font_info.value.glyphs) |glyph| {
+            try map.putNoClobber(glyph.unicode, glyph);
+        }
+        var kerning_map: std.AutoHashMap(std.meta.Tuple(&.{ u21, u21 }), f32) = .init(gpa);
+        for (font_info.value.kerning) |entry| {
+            try kerning_map.putNoClobber(.{ entry.unicode1, entry.unicode2 }, entry.advance);
+        }
+
         return .{
+            .kernings = kerning_map,
+            .glyph_info_from_unicode = map,
+            .default_glyph_info = blk: {
+                for (font_info.value.glyphs) |glyph| {
+                    if (glyph.unicode == '?') break :blk glyph;
+                } else unreachable;
+            },
             .atlas_texture = gl.buildTexture2D(atlas_image, false),
             // TODO: parse the font data at comptime
-            .font_info = try std.json.parseFromSlice(
-                FontJsonInfo,
-                gpa,
-                font_json,
-                .{},
-            ),
+            .font_info = font_info,
             .renderable = try gl.buildRenderable(
                 sprite_renderable_vertex_src,
                 \\precision highp float;
@@ -1813,16 +1836,12 @@ pub const TextRenderer = struct {
 
     pub fn deinit(self: *TextRenderer) void {
         self.font_info.deinit();
+        self.glyph_info_from_unicode.deinit();
+        self.kernings.deinit();
         // TODO
         // gl.destroyRenderable(self.renderable);
         // TODO
         // gl.DeleteTextures(1, @ptrCast(&self.texture));
-    }
-
-    fn kerningOf(self: TextRenderer, a: u21, b: u21) ?f32 {
-        for (self.font_info.value.kerning) |entry| {
-            if (entry.unicode1 == a and entry.unicode2 == b) return entry.advance;
-        } else return null;
     }
 
     /// how to move quads that were placed with the cursor at .zero
@@ -1867,7 +1886,7 @@ pub const TextRenderer = struct {
         var prev: ?u21 = null;
         while (utf8.nextCodepoint()) |codepoint| {
             if (prev) |p| {
-                cursor.x += em * (self.kerningOf(p, codepoint) orelse 0);
+                cursor.x += em * (self.kernings.get(.{ p, codepoint }) orelse 0);
             }
             cursor, const quad = self.addLetter(cursor, codepoint, em, color);
             if (quad) |q| quads.appendAssumeCapacity(q);
@@ -1878,7 +1897,7 @@ pub const TextRenderer = struct {
 
         // for (text, 0..) |char, k| {
         //     if (k != 0) {
-        //         cursor.x += self.kerningOf(text[k - 1], char) orelse 0;
+        //         cursor.x += self.kernings.get(.{text[k - 1], char}) orelse 0;
         //     }
         //     cursor, const quad = self.addLetter(cursor, char, em, color);
         //     if (quad) |q| quads.appendAssumeCapacity(q);
@@ -2012,17 +2031,7 @@ pub const TextRenderer = struct {
         em: f32,
         color: FColor,
     ) std.meta.Tuple(&.{ Vec2, ?Quad }) {
-        const default_glyph_info = blk: {
-            for (self.font_info.value.glyphs) |glyph| {
-                if (glyph.unicode == '?') break :blk glyph;
-            } else unreachable;
-        };
-        // TODO: use a map
-        const glyph_info = blk: {
-            for (self.font_info.value.glyphs) |glyph| {
-                if (glyph.unicode == letter) break :blk glyph;
-            } else break :blk default_glyph_info;
-        };
+        const glyph_info = self.glyph_info_from_unicode.get(letter) orelse self.default_glyph_info;
         const quad: ?Quad = if (glyph_info.atlasBounds) |b| blk: {
             const s = UVec2.new(
                 self.font_info.value.atlas.width,

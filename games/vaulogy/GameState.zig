@@ -10495,8 +10495,14 @@ const Workspace = struct {
     }
 
     pub fn isFreefloating(workspace: *const Workspace, index: Lego.Index) bool {
-        for (workspace.roots(.all).constSlice()) |root| {
-            if (Toybox.isAncestor(root, index)) return false;
+        if (INCLUDE_DEBUG_FIELDS) {
+            for (workspace.roots(.all).constSlice()) |root| {
+                assert(root.get().tree.parent == nothing);
+            }
+        }
+        const root = Toybox.oldestAncestor(index);
+        for (workspace.roots(.all).constSlice()) |r| {
+            if (r == root) return false;
         } else return true;
     }
 };
