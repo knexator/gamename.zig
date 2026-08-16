@@ -3309,7 +3309,7 @@ pub const Toybox = struct {
         // TODO(optim): avoid recursion
         while (index.get().tree.first != nothing) {
             const child = index.get().tree.first;
-            Toybox.pop(child);
+            Toybox.popInner(child, undo);
             Toybox.destroyFloatingInner(child, undo);
         }
 
@@ -4516,7 +4516,10 @@ const Workspace = struct {
             scratch.allocator(),
         );
 
+        toybox.undo_stack.commands.clear();
+
         assert(try dst.valid(scratch.allocator()));
+        assert(toybox.undo_stack.commands.isEmpty());
     }
 
     fn setupBubbles(dst: *Workspace, scratch: std.mem.Allocator, gpa: std.mem.Allocator) !void {
@@ -10497,7 +10500,7 @@ const Workspace = struct {
     pub fn isFreefloating(workspace: *const Workspace, index: Lego.Index) bool {
         if (INCLUDE_DEBUG_FIELDS) {
             for (workspace.roots(.all).constSlice()) |root| {
-                assert(root.get().tree.parent == nothing);
+                assert(root == nothing or root.get().tree.parent == nothing);
             }
         }
         const root = Toybox.oldestAncestor(index);
