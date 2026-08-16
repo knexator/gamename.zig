@@ -46,6 +46,11 @@ pub fn RingBuffer(comptime T: type) type {
             self.write -= 1;
             return self.data[self.write % self.data.len];
         }
+
+        pub fn clear(self: *Self) void {
+            self.read = 0;
+            self.write = 0;
+        }
     };
 }
 
