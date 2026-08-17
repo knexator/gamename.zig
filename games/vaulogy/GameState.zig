@@ -2439,7 +2439,8 @@ pub const Lego = struct {
         }
     };
 
-    const INCLUDE_GENERATION = INCLUDE_DEBUG_FIELDS;
+    // TODO(bug): enable these, and find out why they cause undo-related bugs
+    const INCLUDE_GENERATION = false and INCLUDE_DEBUG_FIELDS;
     pub const Index = packed struct(if (INCLUDE_GENERATION) u64 else u32) {
         index: u32,
         generation: Generation,
