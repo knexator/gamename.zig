@@ -2439,15 +2439,30 @@ pub const Lego = struct {
         }
     };
 
-    // TODO(perf-late): remove 'generation' in optimized build
-    pub const Index = packed struct(u64) {
-        generation: u32,
+    const INCLUDE_GENERATION = INCLUDE_DEBUG_FIELDS;
+    pub const Index = packed struct(if (INCLUDE_GENERATION) u64 else u32) {
         index: u32,
+        generation: Generation,
+
+        const Generation = if (INCLUDE_GENERATION) u32 else void;
 
         pub const nothing: Index = .{
             .index = std.math.maxInt(u32),
-            .generation = std.math.maxInt(u32),
+            .generation = if (INCLUDE_GENERATION) std.math.maxInt(u32) else {},
         };
+
+        pub fn firstGen(index: u32) Index {
+            return .{
+                .index = index,
+                .generation = if (INCLUDE_GENERATION) 0 else {},
+            };
+        }
+
+        pub fn nextGen(original: Index) Index {
+            var new = original;
+            if (INCLUDE_GENERATION) new.generation += 1;
+            return new;
+        }
 
         pub fn asU32(index: Index) u32 {
             return index.index;
@@ -3202,7 +3217,7 @@ pub const Toybox = struct {
         } else blk: {
             if (toybox.all_legos.count() >= std.math.maxInt(i31)) OoM();
             const result = toybox.all_legos.addOne(toybox.all_legos_arena.allocator()) catch OoM();
-            break :blk .{ result, .{ .index = @intCast(toybox.all_legos.count() - 1), .generation = 0 } };
+            break :blk .{ result, .firstGen(@intCast(toybox.all_legos.count() - 1)) };
         };
 
         result.* = .{
@@ -3323,7 +3338,7 @@ pub const Toybox = struct {
 
         if (toybox.private_arenas.fetchRemove(index)) |kv| kv.value.deinit();
 
-        const new_index: Lego.Index = .{ .index = index.index, .generation = index.generation + 1 };
+        const new_index: Lego.Index = .nextGen(index);
         const lego = Toybox.get(index);
 
         // special cases
