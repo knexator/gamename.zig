@@ -2458,6 +2458,11 @@ pub const Lego = struct {
             return Toybox.get(index).specific.tag() == tag;
         }
 
+        pub fn exists(index: Lego.Index) bool {
+            if (index == Lego.Index.nothing) return false;
+            return Toybox.getUnsafe(index).exists;
+        }
+
         pub fn get(index: Index) *Lego {
             return Toybox.get(index);
         }
@@ -3192,6 +3197,7 @@ pub const Toybox = struct {
             const result = Toybox.getUnsafe(result_index);
             assert(result.exists == false);
             toybox.free_head = result.free_next;
+            assert(!toybox.free_head.exists());
             break :blk .{ result, result_index };
         } else blk: {
             if (toybox.all_legos.count() >= std.math.maxInt(i31)) OoM();
@@ -3366,7 +3372,9 @@ pub const Toybox = struct {
         lego.index = new_index;
         lego.exists = false;
         lego.free_next = toybox.free_head;
+        assert(!toybox.free_head.exists());
         toybox.free_head = new_index;
+        assert(!toybox.free_head.exists());
     }
 
     pub fn recreateFloating(data: Lego) void {
@@ -3375,6 +3383,7 @@ pub const Toybox = struct {
         assert(!lego.exists);
         if (toybox.free_head == data.index) {
             toybox.free_head = lego.free_next;
+            assert(!toybox.free_head.exists());
         }
         lego.* = data;
     }
@@ -7989,6 +7998,7 @@ const Workspace = struct {
             while (lego_it.next()) |lego| {
                 defer k += 1;
                 assert(lego.index.index == k);
+                assert(!lego.free_next.exists());
                 if (lego.exists) {
                     assert(lego.free_next == nothing);
                 } else {
