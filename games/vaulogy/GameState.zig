@@ -326,6 +326,8 @@ pub const Lego = struct {
     /// for now, only used for sexprs/cases/garlands
     /// means that it can be duplicated, but not modified
     immutable: bool = false,
+    /// set to false for legos used by background executors; also implies non-physical children
+    physical: bool = true,
 
     tree: Tree = .empty,
 
@@ -897,7 +899,6 @@ pub const Lego = struct {
             /// kind of a collider
             bg: Bg,
             style: enum { none, main_area, toolbar, bubble },
-            non_interactable: bool = false,
 
             pub const Bg = union(enum) {
                 none,
@@ -1479,7 +1480,6 @@ pub const Lego = struct {
         };
 
         pub const Executor = struct {
-            used_for_bg_computation: bool,
             controlled_by_parent_fnkbox: bool,
             animation: ?struct {
                 t: f32 = 0,
@@ -1763,13 +1763,14 @@ pub const Lego = struct {
                                         .new(@src()),
                                     );
                                 };
-                                Toybox.changeChildAndDestroyOld(cur_testcase.children(.testcase).actual, try Toybox.buildExecutor(
+                                const new_executor = try Toybox.buildExecutor(
                                     .{},
                                     false,
-                                    true,
                                     input,
                                     try workspace.getGarlandForFnk(fnkbox_index.children(.fnkbox).fnkname, .{}, scratch),
-                                ));
+                                );
+                                Toybox.setPhysicalRecursive(new_executor, false);
+                                Toybox.changeChildAndDestroyOld(cur_testcase.children(.testcase).actual, new_executor);
                                 testcase.solved = false;
                                 testcase.computed = false;
                                 testcase.started_computation_at = .{ .all_fnks_hash = all_fnks_hash, .input_hash = input_hash };
@@ -1786,13 +1787,16 @@ pub const Lego = struct {
                                 if (total_after > total_before + 1000) break;
                             }
 
-                            if (cur_testcase.children(.testcase).actual.get().specific.executor.animation == null) {
+                            if (cur_testcase.children(.testcase).actual.get().specific.executor.animation == null and
+                                testcase.loaded)
+                            {
                                 const new_actual = cur_testcase.children(.testcase).actual.children(.executor).input;
                                 Toybox.pop(new_actual);
                                 Toybox.changeChildAndDestroyOld(
                                     cur_testcase.children(.testcase).actual,
                                     new_actual,
                                 );
+                                Toybox.setPhysicalRecursive(new_actual, true);
                                 new_actual.get().local_point = Lego.Specific.Testcase.relative_actual_point;
                                 Toybox.refreshAbsolutePoints(&.{cur_testcase});
 
@@ -2439,8 +2443,7 @@ pub const Lego = struct {
         }
     };
 
-    // TODO(bug): enable these, and find out why they cause undo-related bugs
-    const INCLUDE_GENERATION = false and INCLUDE_DEBUG_FIELDS;
+    const INCLUDE_GENERATION = INCLUDE_DEBUG_FIELDS;
     pub const Index = packed struct(if (INCLUDE_GENERATION) u64 else u32) {
         index: u32,
         generation: Generation,
@@ -2476,7 +2479,7 @@ pub const Lego = struct {
 
         pub fn exists(index: Lego.Index) bool {
             if (index == Lego.Index.nothing) return false;
-            return Toybox.getUnsafe(index).exists;
+            return Toybox.getUnsafe(index).exists and Toybox.getUnsafe(index).index == index;
         }
 
         pub fn get(index: Index) *Lego {
@@ -3397,7 +3400,7 @@ pub const Toybox = struct {
         assert(data.tree.isFloating());
         const lego = Toybox.getUnsafe(data.index);
         assert(!lego.exists);
-        if (toybox.free_head == data.index) {
+        if (toybox.free_head.index == data.index.index) {
             toybox.free_head = lego.free_next;
             assert(!toybox.free_head.exists());
         }
@@ -3929,24 +3932,25 @@ pub const Toybox = struct {
         const zone = tracy.initZone(@src(), .{ .name = "refresh absolute points" });
         defer zone.deinit();
 
+        // TODO(perf-late): remove this eventually
+        var n_processed: usize = 0;
+
         for (roots) |root| {
             var cur: Lego.Index = root;
             while (cur != nothing) {
-                const skip = switch (cur.get().specific) {
-                    else => false,
-                    .area => |area| area.non_interactable,
-                    .executor => |executor| executor.used_for_bg_computation,
-                };
-                if (skip) {
+                if (!cur.get().physical) {
                     cur = cur.get().tree.next;
                 } else {
                     Toybox.get(cur).absolute_point = parentAbsolutePoint(cur)
                         .applyToLocalPoint(Toybox.get(cur).local_point)
                         .applyToLocalPoint(Toybox.get(cur).visual_offset);
                     cur = next_preordered(cur, root).next;
+                    n_processed += 1;
                 }
             }
         }
+
+        tracy.plot(u32, "n processed by refreshAbsolutePoints", @intCast(n_processed));
     }
 
     pub fn changeCoordinates(index: Lego.Index, old_parent: Point, new_parent: Point) void {
@@ -4171,7 +4175,7 @@ pub const Toybox = struct {
         fnkname.get().specific.sexpr.is_pattern = true;
         fnkname.get().specific.sexpr.is_fnkname = true;
 
-        const executor = try buildExecutor(Fnkbox.relative_executor_point, true, false, null, initial_definition);
+        const executor = try buildExecutor(Fnkbox.relative_executor_point, true, null, initial_definition);
 
         if (fnkname.isTheSexprLit("swap")) {
             executor.children(.executor).controls.children(.executor_controls).brake.get().specific.executor_brake.brake_t = 0.9;
@@ -4187,14 +4191,13 @@ pub const Toybox = struct {
     pub fn buildExecutor(
         point: Point,
         controlled_by_parent_fnkbox: bool,
-        used_for_bg_computation: bool,
         initial_value: ?Lego.Index,
         initial_definition: ?Lego.Index,
     ) !Lego.Index {
         const Executor = Lego.Specific.Executor;
         if (initial_definition) |d| d.get().local_point = Executor.relative_garland_point;
         return try Toybox.createWithChildren(point, .{
-            .executor = .{ .controlled_by_parent_fnkbox = controlled_by_parent_fnkbox, .used_for_bg_computation = used_for_bg_computation },
+            .executor = .{ .controlled_by_parent_fnkbox = controlled_by_parent_fnkbox },
         }, &.{
             initial_value orelse try Toybox.buildSexpr(Executor.relative_input_point, .empty, false, false, .new(@src())),
             initial_definition orelse try Toybox.buildGarland(Executor.relative_garland_point, &.{}, .new(@src())),
@@ -4303,6 +4306,13 @@ pub const Toybox = struct {
         assert(current.equalsAbs(new_local_point.applyToLocalPoint(new_visual_offset), 0.001));
         index.get().local_point = new_local_point;
         index.get().visual_offset = new_visual_offset;
+    }
+
+    pub fn setPhysicalRecursive(index: Lego.Index, physical: bool) void {
+        var cur = index;
+        while (cur != nothing) : (cur = next_preordered(cur, index).next) {
+            cur.get().physical = physical;
+        }
     }
 };
 
@@ -4498,8 +4508,9 @@ const Workspace = struct {
         dst.lenses_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, .new(@src()));
         dst.floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, .new(@src()));
         dst.floating_inputs_layer.get().immutable = true;
-        dst.invisible_floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none, .non_interactable = true } }, .new(@src()));
+        dst.invisible_floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, .new(@src()));
         dst.invisible_floating_inputs_layer.get().immutable = true;
+        dst.invisible_floating_inputs_layer.get().physical = false;
 
         if (true) {
             try dst.setupBubbles(scratch.allocator(), gpa);
@@ -4799,7 +4810,7 @@ const Workspace = struct {
             ));
 
             postit_pos = .new(0, -3);
-            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, false, null, try Toybox.buildGarland(.{}, &.{
+            const executor = try Toybox.buildExecutor(.{ .pos = postit_pos }, false, null, try Toybox.buildGarland(.{}, &.{
                 try Toybox.buildCase(.{}, .{
                     .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, .new(@src())),
                     .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, .new(@src())),
@@ -6457,6 +6468,7 @@ const Workspace = struct {
         var lego_it = toybox.all_legos.iterator(toybox.all_legos.len - 1);
         while (lego_it.prev()) |lego| {
             if (!lego.exists) continue;
+            if (!lego.physical) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
                 try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.gpa_for_atom_names, all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases);
@@ -6565,10 +6577,8 @@ const Workspace = struct {
                 assert(lego.exists);
                 const absolute_point = Point.inverseApplyToLocalPoint(lego.absolute_point, lego.visual_offset); // lego.absolute_point;
                 const relative_needle_pos = absolute_point.inverseApplyGetLocalPosition(absolute_needle_pos);
-                const unhoverable = switch (lego.specific) {
+                const unhoverable = !lego.physical or switch (lego.specific) {
                     else => false,
-                    .area => |area| area.non_interactable,
-                    .executor => |executor| executor.used_for_bg_computation,
                     .bubble => |bubble| bubble.locked,
                 };
                 if (unhoverable and !step.children_already_visited) {
@@ -6705,13 +6715,6 @@ const Workspace = struct {
                             panic("unexpected unloaded testcase while interacting!", .{});
                         }
                     },
-                    .executor => |executor| {
-                        if (executor.used_for_bg_computation) {
-                            it.skipChildren();
-                            _ = it.next();
-                            continue;
-                        }
-                    },
                     // TODO(optim): check that scrollable_list ignores clipped elements
                     .scrollable_list,
                     .scrollable_list_inbetween,
@@ -6725,6 +6728,7 @@ const Workspace = struct {
                     .pill,
                     .postit_text,
                     .postit_drawing,
+                    .executor,
                     .executor_controls,
                     .executor_brake,
                     .executor_crank,
@@ -6957,14 +6961,9 @@ const Workspace = struct {
                 const lego = Toybox.get(cur);
                 defer lego.absolute_point = Toybox.parentAbsolutePoint(cur).applyToLocalPoint(lego.local_point);
 
-                const skip = switch (cur.get().specific) {
-                    else => false,
-                    .area => |area| area.non_interactable,
-                    .executor => |executor| executor.used_for_bg_computation,
-                };
-
-                if (skip) {
+                if (!lego.physical) {
                     next = cur.get().tree.next;
+                    continue;
                 } else {
                     next = Toybox.next_preordered(cur, root).next;
                 }
@@ -7379,7 +7378,8 @@ const Workspace = struct {
                 const max_resolution = 2000;
                 const local_bounds = lego.localBoundingBoxThatContainsSelfAndAllChildren();
                 const absolute_bounds = lego.absolute_point.applyToLocalBounds(local_bounds);
-                if (camera.asBounds().intersect(absolute_bounds) == null or
+                if (!lego.physical or
+                    camera.asBounds().intersect(absolute_bounds) == null or
                     camera.size.div(absolute_bounds.size()).normLInf() > max_resolution)
                 {
                     it.skipChildren();
@@ -7979,13 +7979,7 @@ const Workspace = struct {
                                 continue;
                             }
                         },
-                        .executor => |executor| {
-                            if (executor.used_for_bg_computation) {
-                                it.skipChildren();
-                                _ = it.next();
-                                continue;
-                            }
-                        },
+                        .executor,
                         .scrollable_list_inbetween,
                         .executor_controls,
                         .garland_newcases,
@@ -8731,6 +8725,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.constIterator(0);
             const over_scrollable_element: Lego.Index = while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.tag() == .scrollable_list and lego.specific.scrollable_list.rect().contains(
                     lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
                 )) {
@@ -8792,6 +8787,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
 
                 var done = true;
 
@@ -8871,6 +8867,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 switch (lego.specific) {
                     .pill => |*pill| {
                         pill.remaining_lifetime -= delta_seconds;
@@ -8899,6 +8896,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.as(.garland)) |garland| {
                     garland.visible =
                         (grabbing_garland_or_case and !Toybox.isAncestor(workspace.grabbing.index, lego.index)) or
@@ -9096,6 +9094,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
                         const executor_index = lego.index.children(.fnkbox).executor;
@@ -9253,9 +9252,9 @@ const Workspace = struct {
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor| {
-                    assert(!(executor.controlled_by_parent_fnkbox and executor.used_for_bg_computation));
+                    assert(!(executor.controlled_by_parent_fnkbox and !lego.physical));
                     if (executor.controlled_by_parent_fnkbox) continue;
-                    // if (executor.used_for_bg_computation) continue;
+                    // if (!lego.physical) continue;
                     try workspace.advanceExecutorAnimation(lego.index, delta_seconds, scratch);
                 }
             }
@@ -9268,6 +9267,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         .launch_testcase, .delete_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
@@ -9319,6 +9319,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 switch (lego.specific) {
                     .fnkname_holder => |*fnkname_holder| {
                         fnkname_holder.fnkbox = map.get(Lego.Specific.Sexpr.hash(
@@ -9338,6 +9339,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.as(.case)) |case| {
                     case.next_point_extra = .{};
                     case.fnkname_holder_extra = .{};
@@ -9361,6 +9363,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.tag() == .sexpr and lego.specific.sexpr.kind == .atom_var) {
                     const name = lego.specific.sexpr.atom_name;
                     const unbound = lego.specific.sexpr.emerging_value == nothing;
@@ -9414,6 +9417,8 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "load/unload testcases" });
             defer zone.deinit();
 
+            // TODO(perf-late): remove
+            var n_changed: usize = 0;
             const fnkboxes = try workspace.allFnkboxes(false, scratch);
             for (fnkboxes) |fnkbox_index| {
                 const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
@@ -9426,6 +9431,7 @@ const Workspace = struct {
                         assert(cur.get().specific.button.action == .add_testcase);
                         continue;
                     }
+                    const old_loaded = cur.get().specific.testcase.loaded;
                     const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null or
                         fnkbox_index.get().specific.fnkbox.hasExecutionOverTestcase(cur);
                     if (is_visible) {
@@ -9433,9 +9439,11 @@ const Workspace = struct {
                     } else {
                         tryToUnloadTestcase(cur);
                     }
+                    const new_loaded = cur.get().specific.testcase.loaded;
+                    if (old_loaded != new_loaded) n_changed += 1;
                 }
-                Toybox.refreshAbsolutePoints(&.{testcases_parent});
             }
+            tracy.plot(u32, "n changed testcases", @intCast(n_changed));
         }
 
         if (true) { // for all testcases, set the correct button (launch or delete)
@@ -9501,6 +9509,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.iterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.tag() == .editable_textline) {
                     const cursor_points = &lego.specific.editable_textline.cursor_points;
                     assert(cursor_points.items.len == 0);
@@ -9647,7 +9656,7 @@ const Workspace = struct {
     fn advanceExecutorAnimation(workspace: *Workspace, executor_index: Lego.Index, delta_seconds: f32, scratch: std.mem.Allocator) !void {
         const Executor = Lego.Specific.Executor;
         const executor = &Toybox.get(executor_index).specific.executor;
-        const visible = !executor.used_for_bg_computation;
+        const visible = executor_index.get().physical;
         // const floating_inputs_layer = workspace.floating_inputs_layer;
         const floating_inputs_layer = if (visible) workspace.floating_inputs_layer else workspace.invisible_floating_inputs_layer;
         if (executor.animation) |*animation| {
@@ -9670,6 +9679,7 @@ const Workspace = struct {
                                     if (!sexpr.is_pattern) {
                                         sexpr.emerging_value.get().local_point = cur.get().local_point;
                                         Toybox.changeChild(cur, sexpr.emerging_value);
+                                        if (!visible) Toybox.setPhysicalRecursive(sexpr.emerging_value, false);
                                         cur.get().specific.sexpr.emerging_value = .nothing;
                                         Toybox.destroyFloating(cur);
                                     }
@@ -9796,6 +9806,11 @@ const Workspace = struct {
             };
             const garland_fnkname = try Lego.Specific.Garland.stealFnkname(garland_index, null);
             Toybox.addChildLast(floating_inputs_layer, garland_fnkname);
+            if (!visible) {
+                Toybox.setPhysicalRecursive(first_case, false);
+                Toybox.setPhysicalRecursive(invoked_fnk, false);
+                Toybox.setPhysicalRecursive(garland_fnkname, false);
+            }
             toybox.undo_stack.storeAllData(executor_index);
             executor.animation = .{
                 .matching = matching,
@@ -9814,6 +9829,7 @@ const Workspace = struct {
                                 if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
                                     toybox.undo_stack.storeAllData(cur);
                                     sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, .new(@src()));
+                                    if (!visible) Toybox.setPhysicalRecursive(sexpr.emerging_value, false);
                                     Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
                                     Toybox.refreshAbsolutePoints(&.{sexpr.emerging_value});
                                 }
@@ -9832,6 +9848,7 @@ const Workspace = struct {
                             if (std.mem.eql(u8, binding.name, sexpr.atom_name)) {
                                 toybox.undo_stack.storeAllData(cur);
                                 sexpr.emerging_value = try Toybox.dupeIntoFloating(binding.value, .new(@src()));
+                                if (!visible) Toybox.setPhysicalRecursive(sexpr.emerging_value, false);
                                 Lego.Specific.Sexpr.setIsPattern(sexpr.emerging_value, true);
                                 sexpr.emerging_value.get().specific.sexpr.is_pattern_t = 1;
                                 Toybox.setAbsolutePoint(sexpr.emerging_value, Toybox.get(cur).absolute_point);
@@ -9922,6 +9939,7 @@ const Workspace = struct {
         var lego_it = toybox.all_legos.iterator(0);
         while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
+            if (!lego.physical) continue;
             if (lego.specific.tag() != .fnkbox) continue;
             // don't include fnkboxes that are part of a blueprint, or other strange situations
             if (workspace.isFreefloating(lego.index)) continue;
@@ -10047,7 +10065,11 @@ const Workspace = struct {
             false,
             .new(@src()),
         ));
+        if (testcase_index.children(.testcase).actual.hasTag(.sexpr)) {
+            Toybox.setPhysicalRecursive(testcase_index.children(.testcase).actual, true);
+        }
         testcase_index.get().specific.testcase.loaded = true;
+        Toybox.refreshAbsolutePoints(&.{testcase_index});
     }
 
     fn tryToUnloadTestcase(testcase_index: Lego.Index) void {
@@ -10075,6 +10097,7 @@ const Workspace = struct {
                 false,
                 .new(@src()),
             ));
+            Toybox.setPhysicalRecursive(testcase_index.children(.testcase).actual, false);
             testcase_index.get().specific.testcase.loaded = false;
         }
     }
@@ -10223,6 +10246,7 @@ const Workspace = struct {
             var lego_it = toybox.all_legos.constIterator(0);
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
+                if (!lego.physical) continue;
                 if (lego.specific.tag() != .scorer_row) continue;
                 // don't include stuff in a blueprint
                 if (workspace.isFreefloating(lego.index)) continue;
@@ -10390,6 +10414,7 @@ const Workspace = struct {
                 var lego_it = toybox.all_legos.constIterator(0);
                 while (lego_it.next()) |lego| {
                     if (!lego.exists) continue;
+                    if (!lego.physical) continue;
                     if (lego.specific.tag() != .scorer_row) continue;
                     const fnkname = fnkname_from_scorer_row_magic_id.get(lego.specific.scorer_row.magic_id) orelse continue;
                     const old_fnkname_element = lego.index.children(.scorer_row).fnkname;
@@ -10428,6 +10453,7 @@ const Workspace = struct {
         var lego_it = toybox.all_legos.iterator(0);
         while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
+            if (!lego.physical) continue;
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 if (fnkbox.execution != null) return false;
             }
@@ -10501,6 +10527,7 @@ const Workspace = struct {
         var lego_it = toybox.all_legos.iterator(0);
         while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
+            if (!lego.physical) continue;
             if (lego.specific.tag() != .fnkbox) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             const existing = lego.index.children(.fnkbox).fnkname;
