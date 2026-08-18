@@ -2439,8 +2439,7 @@ pub const Lego = struct {
         }
     };
 
-    // TODO(bug): enable these, and find out why they cause undo-related bugs
-    const INCLUDE_GENERATION = false and INCLUDE_DEBUG_FIELDS;
+    const INCLUDE_GENERATION = INCLUDE_DEBUG_FIELDS;
     pub const Index = packed struct(if (INCLUDE_GENERATION) u64 else u32) {
         index: u32,
         generation: Generation,
@@ -2476,7 +2475,7 @@ pub const Lego = struct {
 
         pub fn exists(index: Lego.Index) bool {
             if (index == Lego.Index.nothing) return false;
-            return Toybox.getUnsafe(index).exists;
+            return Toybox.getUnsafe(index).exists and Toybox.getUnsafe(index).index == index;
         }
 
         pub fn get(index: Index) *Lego {
@@ -3397,7 +3396,7 @@ pub const Toybox = struct {
         assert(data.tree.isFloating());
         const lego = Toybox.getUnsafe(data.index);
         assert(!lego.exists);
-        if (toybox.free_head == data.index) {
+        if (toybox.free_head.index == data.index.index) {
             toybox.free_head = lego.free_next;
             assert(!toybox.free_head.exists());
         }
