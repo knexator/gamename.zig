@@ -5,6 +5,8 @@ pub export const game_api: kommon.engine.CApiFor(GameState) = .{};
 // Causes of bugs:
 // - functions that take a pointer and allocate memory might invalidate that pointer
 
+// TODO(perf-late): non-physical legos should be closer to 0 cost
+
 // TODO(game): gradual computation of solutions, avoid freezing
 
 // TODO(bug): max stack size in toOldCoreValue :((((
@@ -1703,7 +1705,7 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, gpa_for_atom_names: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32, remaining_budget_for_unloaded_testcases: *usize) !void {
+            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, gpa_for_atom_names: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32, remaining_budget_for_unloaded_testcases: *usize, debug_n_work: *usize) !void {
                 // TODO(clean): remove
                 _ = all_fnks;
                 // const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
@@ -1727,6 +1729,8 @@ pub const Lego = struct {
                                 continue;
                             }
 
+                            debug_n_work.* += 1;
+
                             testcase.computed = false;
 
                             if (fnkbox.hasExecutionOverTestcase(cur_testcase)) continue;
@@ -1741,6 +1745,8 @@ pub const Lego = struct {
                                 testcase.computed = false;
                                 testcase.started_computation_at = .never;
                                 testcase.actual_and_solved_computed_at = .never;
+
+                                debug_n_work.* += 100_000;
                             }
 
                             if (fnkbox.require_manual_execution and fnkbox.execution == null and !testcase.just_manually_executed) continue;
@@ -1787,18 +1793,16 @@ pub const Lego = struct {
                                 if (total_after > total_before + 1000) break;
                             }
 
-                            if (cur_testcase.children(.testcase).actual.get().specific.executor.animation == null and
-                                testcase.loaded)
-                            {
+                            if (cur_testcase.children(.testcase).actual.get().specific.executor.animation == null) {
                                 const new_actual = cur_testcase.children(.testcase).actual.children(.executor).input;
                                 Toybox.pop(new_actual);
                                 Toybox.changeChildAndDestroyOld(
                                     cur_testcase.children(.testcase).actual,
                                     new_actual,
                                 );
-                                Toybox.setPhysicalRecursive(new_actual, true);
+                                Toybox.setPhysicalRecursive(new_actual, testcase.loaded);
                                 new_actual.get().local_point = Lego.Specific.Testcase.relative_actual_point;
-                                Toybox.refreshAbsolutePoints(&.{cur_testcase});
+                                if (testcase.loaded) Toybox.refreshAbsolutePoints(&.{cur_testcase});
 
                                 testcase.just_manually_executed = false;
                                 testcase.computed = true;
@@ -4516,27 +4520,7 @@ const Workspace = struct {
             try dst.setupBubbles(scratch.allocator(), gpa);
         } else {
             dst.centerCameraAt(.{ .pos = .zero, .scale = 15 }, true);
-            const executor = try Toybox.buildExecutor(.{ .pos = .zero }, false, try Toybox.buildGarland(.{}, &.{
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, .new(@src())),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, .new(@src())),
-                    .fnkname = null,
-                    .next = null,
-                }, .new(@src())),
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, .new(@src())),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, .new(@src())),
-                    .fnkname = null,
-                    .next = null,
-                }, .new(@src())),
-                try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, .new(@src())),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, .new(@src())),
-                    .fnkname = null,
-                    .next = null,
-                }, .new(@src())),
-            }, .new(@src())));
-            Toybox.addChildLast(dst.main_area, executor);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildScorer(.{}, &.{0}, &.{null}));
         }
 
         assert(try dst.valid(scratch.allocator()));
@@ -6464,6 +6448,9 @@ const Workspace = struct {
         // TODO(design-late): revisit
         var remaining_budget_for_unloaded_testcases: usize = 500;
 
+        // TODO(perf-late): remove
+        var debug_done_work: usize = 0;
+
         // reverse order so that fnkboxes get updated before scorers, and those before bubbles
         var lego_it = toybox.all_legos.iterator(toybox.all_legos.len - 1);
         while (lego_it.prev()) |lego| {
@@ -6471,7 +6458,7 @@ const Workspace = struct {
             if (!lego.physical) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.gpa_for_atom_names, all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases);
+                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.gpa_for_atom_names, all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases, &debug_done_work);
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
@@ -6532,6 +6519,11 @@ const Workspace = struct {
                 };
             }
         }
+
+        if (debug_done_work > 0) {
+            std.log.debug("still doing work", .{});
+        }
+        tracy.plot(u32, "testcases that implied work", @intCast(debug_done_work));
     }
 
     pub fn deinit(workspace: *Workspace) void {
@@ -8087,6 +8079,15 @@ const Workspace = struct {
     pub fn update(workspace: *Workspace, platform: PlatformGives, drawer: ?*Drawer, scratch: std.mem.Allocator) !void {
         assert(try workspace.valid(scratch));
 
+        if (false) tracy.plot(u32, "total physical and alive legos", blk: {
+            var res: u32 = 0;
+            var it = toybox.all_legos.iterator(0);
+            while (it.next()) |l| {
+                if (l.exists and l.physical) res += 1;
+            }
+            break :blk res;
+        });
+        tracy.plot(u32, "total legos", @intCast(toybox.all_legos.len));
         tracy.plot(u32, "undo stack size", @intCast(toybox.undo_stack.commands.len()));
         // tracy.plot(u32, "canvas frame arena capacity in mb", @intCast(@divFloor(drawer.?.canvas.frame_arena.queryCapacity(), 1024 * 1024)));
 
@@ -8127,7 +8128,43 @@ const Workspace = struct {
             Workspace.debugLogState();
         }
 
-        if (true and platform.keyboard.wasPressed(.KeyQ)) {
+        if (true and INCLUDE_DEBUG_FIELDS and platform.keyboard.wasPressed(.KeyQ)) {
+            var total: usize = 0;
+            var counts: std.AutoHashMap(std.BoundedArray(u32, 4), usize) = .init(scratch);
+            defer counts.deinit();
+            var lego_it = toybox.all_legos.constIterator(0);
+            var k: usize = 0;
+            while (lego_it.next()) |lego| {
+                defer k += 1;
+                assert(lego.index.index == k);
+                if (lego.exists) {
+                    var key: std.BoundedArray(u32, 4) = .{};
+                    for (lego.created_at.sources.constSlice()) |src| {
+                        key.append(src.line) catch break;
+                    }
+                    const gop = try counts.getOrPut(key);
+                    if (!gop.found_existing) gop.value_ptr.* = 0;
+                    gop.value_ptr.* += 1;
+                    total += 1;
+                }
+            }
+            var it = counts.iterator();
+            // var printer: std.ArrayList(u8) = .init(scratch);
+            // var writer = printer.writer();
+            std.log.debug("counts by line:", .{});
+            tracy.print("counts by line:", .{});
+            while (it.next()) |entry| {
+                std.log.debug("line {d}:\t{d}", .{ entry.key_ptr.*.constSlice(), entry.value_ptr.* });
+                tracy.print("line {d}:\t{d}", .{ entry.key_ptr.*.constSlice(), entry.value_ptr.* });
+                // try writer.print("line {d}:\t{d}", .{ entry.key_ptr.*, entry.value_ptr.* });
+            }
+            std.log.debug("total: {d}", .{total});
+            // try writer.print("total: {d}", .{total});
+
+            // tracy.print("{s}", .{try printer.toOwnedSliceSentinel(0)});
+        }
+
+        if (false and platform.keyboard.wasPressed(.KeyQ)) {
             var total: usize = 0;
             var counts: std.EnumArray(Lego.Specific.Tag, usize) = .initFill(0);
             var lego_it = toybox.all_legos.constIterator(0);
@@ -8180,6 +8217,7 @@ const Workspace = struct {
 
         if (true and platform.keyboard.wasPressed(.KeyQ)) {
             var alive_count: usize = 0;
+            var physical_count: usize = 0;
             var lego_it = toybox.all_legos.constIterator(0);
             var k: usize = 0;
             while (lego_it.next()) |lego| {
@@ -8188,7 +8226,11 @@ const Workspace = struct {
                 if (lego.exists) {
                     alive_count += 1;
                 }
+                if (lego.physical) {
+                    physical_count += 1;
+                }
             }
+            std.log.debug("total physical legos: {d}", .{physical_count});
             std.log.debug("total alive legos: {d}", .{alive_count});
             std.log.debug("total legos: {d}", .{toybox.all_legos.count()});
         }
