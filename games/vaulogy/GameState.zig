@@ -8734,7 +8734,10 @@ const Workspace = struct {
                     }
                 }.anon;
 
+                var any_unlocked = false;
+
                 if (isUnlocked(workspace.toolbar_unlocks.case_with_wildcards)) { // add a fresh case
+                    any_unlocked = true;
                     const new_name_1 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
                     const new_name_2 = try workspace.arena_for_atom_names.allocator().alloc(u8, 32);
                     math.Random.init(workspace.random_instance.random()).alphanumeric_bytes(new_name_1);
@@ -8757,6 +8760,7 @@ const Workspace = struct {
                 }
 
                 if (isUnlocked(workspace.toolbar_unlocks.lenses)) { // add a fresh lens
+                    any_unlocked = true;
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildMicroscope(
                         .new(1, 13),
                         .new(2.5, 12.5),
@@ -8765,6 +8769,7 @@ const Workspace = struct {
                 }
 
                 if (isUnlocked(workspace.toolbar_unlocks.list_viewer)) { // add a listviewer
+                    any_unlocked = true;
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildListViewer(
                         .{ .pos = .new(2, 6), .scale = 0.5 },
                         null,
@@ -8772,9 +8777,16 @@ const Workspace = struct {
                 }
 
                 if (isUnlocked(workspace.toolbar_unlocks.meta_viewer)) { // add a metaviewer
+                    any_unlocked = true;
                     Toybox.addChildLast(workspace.toolbar_left, try Toybox.buildMetaViewer(
                         .{ .pos = .new(1.5, 9), .scale = 0.5 },
                     ));
+                }
+
+                if (!any_unlocked) {
+                    const postit: Lego.Specific.Postit.Helper = .{ .main_area = workspace.toolbar_left };
+                    postit.addFromText(.new(3, 3), &.{ "Nothing", "here", "yet..." });
+                    workspace.toolbar_left.get().tree.last.get().local_point.scale = 0.75;
                 }
             }
 
