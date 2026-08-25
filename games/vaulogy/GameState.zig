@@ -3290,6 +3290,7 @@ pub const Toybox = struct {
         lego.exists = false;
         lego.physical = false;
         toybox.field__physical_and_exists.set(new_index.index, false);
+        syncPhysicalBit(new_index);
         lego.free_next = toybox.free_head;
         assert(!toybox.free_head.exists());
         toybox.free_head = new_index;
@@ -4407,6 +4408,14 @@ const Workspace = struct {
             try dst.setupBubbles(scratch.allocator(), gpa);
         } else {
             dst.centerCameraAt(.{ .pos = .zero, .scale = 15 }, true);
+            Toybox.addChildLast(dst.main_area, try Toybox.buildExecutor(.{}, false, null, try Toybox.buildGarland(.{}, &.{
+                try Toybox.buildCase(.{}, .{
+                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "true" }, true, false, .new(@src())),
+                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "false" }, false, false, .new(@src())),
+                    .fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, true, .new(@src())),
+                    .next = null,
+                }, .new(@src())),
+            }, .new(@src()))));
         }
 
         assert(try dst.valid(scratch.allocator()));
@@ -7234,6 +7243,21 @@ const Workspace = struct {
                                 lego.absolute_point.applyToLocalPosition(.xneg),
                                 lego.absolute_point.applyToLocalPosition(.xpos),
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            const fnkname = cur.children(.case).fnkname_holder.children(.fnkname_holder).fnkname;
+                            if (fnkname.get().specific.sexpr.kind != .empty) {
+                                drawer.canvas.line(camera, &.{
+                                    lego.absolute_point.applyToLocalPosition(.new(0.35, 0)),
+                                    lego.absolute_point.applyToLocalPosition(.new(0.50, -0.55)),
+                                    lego.absolute_point.applyToLocalPosition(.new(0.65, -0.75)),
+                                    lego.absolute_point.applyToLocalPosition(.new(0.9, -0.95)),
+                                    lego.absolute_point.applyToLocalPosition(.new(1.2, -1.05)),
+                                    // lego.absolute_point.applyToLocalPosition(.new(1.5, -1.1)),
+                                    fnkname.get().absolute_point.applyToLocalPosition(.new(-0.8, 0.2)),
+                                    fnkname.get().absolute_point.applyToLocalPosition(.new(-0.8, 0.1)),
+                                    fnkname.get().absolute_point.applyToLocalPosition(.new(-0.75, 0)),
+                                    fnkname.get().absolute_point.applyToLocalPosition(.new(-0.5, 0)),
+                                }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
+                            }
                             const next_garland = cur.children(.case).next;
                             if (next_garland.get().specific.garland.visible) {
                                 // TODO(game): draw variables in the cable
@@ -8640,7 +8664,7 @@ const Workspace = struct {
         if (true) { // pills decay
             var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                assert(lego.exists and lego.physical);
+                if (!lego.exists or !lego.physical) continue;
                 switch (lego.specific) {
                     .pill => |*pill| {
                         pill.remaining_lifetime -= delta_seconds;
