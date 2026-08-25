@@ -218,6 +218,7 @@ pub const Parser = struct {
             this.skipWhitespaceNew();
             if (this.remaining_text.len == 0) break;
             const fnk = try this.parseFnkNew(pool, allocator_for_cases);
+            if (result.contains(fnk.name)) std.log.err("repeated fnk {f}", .{fnk.name});
             try result.put(fnk.name, fnk.body);
         }
     }

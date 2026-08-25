@@ -41,6 +41,20 @@ pub fn remapTo01Clamped(value: f32, old_min: f32, old_max: f32) f32 {
     return remapClamped(value, old_min, old_max, 0, 1);
 }
 
+/// returns `true` when v reached the goal
+pub fn towardsWithFinish(v: *f32, goal: f32, max_delta: f32) bool {
+    if (@abs(v.* - goal) <= max_delta) {
+        v.* = goal;
+        return true;
+    } else if (v.* < goal) {
+        v.* += max_delta;
+        return false;
+    } else {
+        v.* -= max_delta;
+        return false;
+    }
+}
+
 pub fn towards(v: *f32, goal: f32, max_delta: f32) void {
     if (max_delta <= 0) return;
     if (@abs(v.* - goal) <= max_delta) {
@@ -199,10 +213,16 @@ pub fn ZVec2(T: type) type {
 
         pub const zero = new(0, 0);
         pub const one = new(1, 1);
+
         pub const e1 = new(1, 0);
         pub const e2 = new(0, 1);
         pub const ne1 = if (signed(T)) new(-1, 0) else undefined;
         pub const ne2 = if (signed(T)) new(0, -1) else undefined;
+
+        pub const xpos = e1;
+        pub const ypos = e2;
+        pub const xneg = ne1;
+        pub const yneg = ne2;
 
         pub const cardinal_directions = [4]IVec2{
             .new(1, 0),
@@ -303,6 +323,10 @@ pub fn ZVec2(T: type) type {
             return new(a.x, a.y + b);
         }
 
+        pub fn taxiMag(v: Self) usize {
+            return @abs(v.x) + @abs(v.y);
+        }
+
         pub fn magSq(v: Self) Scalar {
             return dot(v, v);
         }
@@ -350,6 +374,101 @@ pub fn ZVec2(T: type) type {
         }
     };
 }
+
+pub const HalfPlane = struct {
+    origin: Vec2,
+    /// normalized
+    normal_outside: Vec2,
+
+    pub fn signedDistance(self: HalfPlane, pos: Vec2) f32 {
+        assert(self.normal_outside.isNormalized());
+        return pos.sub(self.origin).dot(self.normal_outside);
+    }
+
+    pub fn contains(self: HalfPlane, point: Vec2) bool {
+        return self.signedDistance(point) >= 0.0;
+    }
+};
+
+comptime {
+    std.testing.refAllDecls(Segment);
+}
+
+pub const Segment = struct {
+    a: Vec2,
+    b: Vec2,
+
+    pub fn inverted(original: Segment) Segment {
+        return .{ .a = original.b, .b = original.a };
+    }
+
+    pub fn clipToBeOutsideRect(original: Segment, rect: Rect) Segment {
+        const clip_from_a = rect.contains(original.a);
+        const clip_from_b = rect.contains(original.b);
+        if (clip_from_a == clip_from_b) return original;
+        assert(clip_from_a != clip_from_b); // xor
+
+        if (clip_from_a) {
+            return .{ .a = original.intersectionWithRectFromInside(rect).?, .b = original.b };
+        } else {
+            return .{ .a = original.a, .b = original.inverted().intersectionWithRectFromInside(rect).? };
+        }
+    }
+
+    test clipToBeOutsideRect {
+        const original: Segment = .{ .a = .zero, .b = .new(2, -1) };
+        const clipped = original.clipToBeOutsideRect(.fromCenterAndSize(.zero, .both(2)));
+        const expected: Segment = .{ .a = .new(1, -0.5), .b = .new(2, -1) };
+
+        try Vec2.expectApproxEqAbs(expected.a, clipped.a, 0.001);
+        try Vec2.expectApproxEqAbs(expected.b, clipped.b, 0.001);
+    }
+
+    pub fn intersectionWithRectFromInside(original: Segment, rect: Rect) ?Vec2 {
+        assert(rect.contains(original.a));
+        assert(!rect.contains(original.b));
+
+        var min_t: f32 = std.math.inf(f32);
+        for (Rect.Side.all) |side| {
+            const t = original.intersectionWithHalfPlane(rect.halfPlaneOutside(side)) orelse continue;
+            if (t < min_t) {
+                min_t = t;
+            }
+        }
+        assert(in01(min_t));
+
+        return original.at(min_t);
+    }
+
+    pub fn intersectionWithHalfPlane(original: Segment, half_plane: HalfPlane) ?f32 {
+        const start_dist = half_plane.signedDistance(original.a);
+        const end_dist = half_plane.signedDistance(original.b);
+        const denom = start_dist - end_dist;
+        if (denom == 0.0) return null;
+
+        const t = start_dist / denom;
+        if (!in01(t)) return null;
+        return t;
+    }
+
+    test "segment intersection with rect from inside" {
+        const rect: Rect = .unit;
+        const inside: Vec2 = .half;
+
+        const seg_right: Segment = .{ .a = inside, .b = inside.addX(2) };
+        const right_hit = seg_right.intersectionWithRectFromInside(rect) orelse return error.FailedTest;
+        try Vec2.expectApproxEqAbs(.new(1.0, 0.5), right_hit, 0.001);
+
+        const seg_bottom_right: Segment = .{ .a = inside, .b = .one };
+        const corner = seg_bottom_right.intersectionWithRectFromInside(rect) orelse return error.FailedTest;
+        try Vec2.expectApproxEqAbs(.one, corner, 0.001);
+    }
+
+    pub fn at(segment: Segment, t: f32) Vec2 {
+        assert(in01(t));
+        return .lerp(segment.a, segment.b, t);
+    }
+};
 
 const GrowOrShrink = enum { grow, shrink };
 pub const Vec2 = extern struct {
@@ -712,6 +831,10 @@ pub const Vec2 = extern struct {
             @min(a.x, b.x),
             @min(a.y, b.y),
         );
+    }
+
+    pub fn max(v: Vec2) f32 {
+        return @max(v.x, v.y);
     }
 
     pub fn maxEach(a: Vec2, b: Vec2) Vec2 {
@@ -1253,6 +1376,7 @@ pub const Rect = extern struct {
     size: Vec2,
 
     pub const unit: Rect = .{ .top_left = .zero, .size = .one };
+    pub const zero: Rect = .{ .top_left = .zero, .size = .zero };
 
     pub fn asBounds(rect: Rect) Bounds {
         return .fromRect(rect);
@@ -1419,6 +1543,15 @@ pub const Rect = extern struct {
             };
         }
     };
+
+    pub fn halfPlaneOutside(self: Rect, side: Side) HalfPlane {
+        return switch (side) {
+            .left => .{ .origin = self.get(.top_left), .normal_outside = .new(1, 0) },
+            .top => .{ .origin = self.get(.top_left), .normal_outside = .new(0, 1) },
+            .right => .{ .origin = self.get(.bottom_right), .normal_outside = .new(-1, 0) },
+            .bottom => .{ .origin = self.get(.bottom_right), .normal_outside = .new(0, -1) },
+        };
+    }
 
     pub const MeasureKind = enum {
         top_left,
@@ -1617,6 +1750,10 @@ pub const Rect = extern struct {
 
     pub fn withSize(original: Rect, size: Vec2, keep: MeasureKind) Rect {
         return .fromPivotAndSize(original.get(keep), keep.asPivot(), size);
+    }
+
+    pub fn withSize2(original: Rect, size: Vec2, keep_pivot: Vec2) Rect {
+        return .fromPivotAndSize(original.getAt(keep_pivot), keep_pivot, size);
     }
 
     pub fn withSize1d(original: Rect, which: enum { width, height }, size: f32, keep: MeasureKind) Rect {
