@@ -3160,6 +3160,9 @@ pub const Toybox = struct {
     all_legos: std.SegmentedList(Lego, 0),
     all_legos_arena: std.heap.ArenaAllocator,
     free_head: Lego.Index = .nothing,
+    // TODO(design): remove this and extract both 'phyisical' and 'exists'
+    /// extracted property: alive & physical
+    field__physical_and_exists: FieldBitset,
 
     undo_stack: UndoStack,
     gpa_for_undo_stack: std.mem.Allocator,
@@ -3169,6 +3172,54 @@ pub const Toybox = struct {
 
     gpa_for_private_arenas: std.mem.Allocator,
     private_arenas: std.AutoHashMapUnmanaged(Lego.Index, std.heap.ArenaAllocator) = .empty,
+
+    /// One bit per lego slot, set iff that lego is both `exists` and `physical`.
+    /// Maintained incrementally (see `syncPhysicalBit`), so that `iteratorPhysical`
+    /// can dismiss 64 uninteresting legos per word instead of touching every `Lego`.
+    pub const FieldBitset = struct {
+        // TODO(optim-late): maybe use a fancy arena thing
+        allocator: std.mem.Allocator,
+        bitset: std.DynamicBitSetUnmanaged,
+
+        const Word = u64;
+        const bits_per_word = @bitSizeOf(Word);
+
+        pub fn init(gpa: std.mem.Allocator) FieldBitset {
+            return .{ .allocator = gpa, .bitset = .{} };
+        }
+
+        pub fn deinit(self: *FieldBitset) void {
+            self.bitset.deinit(self.allocator);
+        }
+
+        fn ensureSlot(self: *FieldBitset, slot: u32) void {
+            defer assert(self.bitset.bit_length > slot);
+            if (self.bitset.bit_length > slot) return;
+            self.bitset.resize(self.allocator, slot + 1, false) catch OoM();
+        }
+
+        pub fn set(self: *FieldBitset, slot: u32, value: bool) void {
+            self.ensureSlot(slot);
+            assert(self.bitset.bit_length > slot);
+            if (value) {
+                self.bitset.set(slot);
+            } else {
+                self.bitset.unset(slot);
+            }
+        }
+
+        pub fn get(self: *const FieldBitset, slot: u32) bool {
+            if (slot >= self.bitset.bit_length) return false;
+            return self.bitset.isSet(slot);
+        }
+    };
+
+    /// Call after any write to a lego's `exists` or `physical`, including whole-struct
+    /// assignments (dupe, undo, ...). Idempotent.
+    pub fn syncPhysicalBit(index: Lego.Index) void {
+        const lego = Toybox.getUnsafe(index);
+        toybox.field__physical_and_exists.set(index.index, lego.exists and lego.physical);
+    }
 
     pub fn init(dst: *Toybox, gpa: std.mem.Allocator) !void {
         // TODO(optim-late): tune this number
@@ -3180,6 +3231,7 @@ pub const Toybox = struct {
             .gpa_for_private_arenas = gpa,
             .gpa_for_undo_stack = gpa,
             .undo_stack = try .init(gpa, undo_stack_capacity),
+            .field__physical_and_exists = .init(gpa),
         };
         // TODO(optim-late): tweak this number
         try dst.all_legos.growCapacity(
@@ -3193,6 +3245,7 @@ pub const Toybox = struct {
         self.all_legos.deinit(self.all_legos_arena.allocator());
         self.all_legos_arena.deinit();
         self.undo_stack.deinit(self.gpa_for_undo_stack);
+        self.field__physical_and_exists.deinit();
     }
 
     pub fn OoM() noreturn {
@@ -3236,6 +3289,7 @@ pub const Toybox = struct {
             .specific = specific,
             .created_at = tag,
         };
+        toybox.field__physical_and_exists.set(index.index, true);
         toybox.undo_stack.append(.{ .destroy_floating = index });
         return index;
     }
@@ -3394,6 +3448,8 @@ pub const Toybox = struct {
         lego.* = undefined;
         lego.index = new_index;
         lego.exists = false;
+        lego.physical = false;
+        toybox.field__physical_and_exists.set(new_index.index, false);
         lego.free_next = toybox.free_head;
         assert(!toybox.free_head.exists());
         toybox.free_head = new_index;
@@ -3409,6 +3465,7 @@ pub const Toybox = struct {
             assert(!toybox.free_head.exists());
         }
         lego.* = data;
+        Toybox.syncPhysicalBit(data.index);
     }
 
     pub fn dupeIntoFloatingWithoutChangingPos(original: Lego.Index, tag: Lego.CreationTag) !Lego.Index {
@@ -3433,6 +3490,7 @@ pub const Toybox = struct {
         result.tree.prev = .nothing;
         result.free_next = .nothing;
         result.created_at = tag.plus(@src());
+        Toybox.syncPhysicalBit(result_index);
 
         // dupe children
         if (true) {
@@ -3932,6 +3990,19 @@ pub const Toybox = struct {
         return Toybox.get(parent).absolute_point;
     }
 
+    pub const PhysicalIterator = struct {
+        inner_iterator: std.DynamicBitSetUnmanaged.Iterator(.{}),
+
+        pub fn next(it: *PhysicalIterator) ?*Lego {
+            const slot = it.inner_iterator.next() orelse return null;
+            return toybox.all_legos.at(slot);
+        }
+    };
+
+    pub fn iteratorPhysical() PhysicalIterator {
+        return .{ .inner_iterator = toybox.field__physical_and_exists.bitset.iterator(.{}) };
+    }
+
     pub fn refreshAbsolutePoints(roots: []const Lego.Index) void {
         const zone = tracy.initZone(@src(), .{ .name = "refresh absolute points" });
         defer zone.deinit();
@@ -4316,6 +4387,7 @@ pub const Toybox = struct {
         var cur = index;
         while (cur != nothing) : (cur = next_preordered(cur, index).next) {
             cur.get().physical = physical;
+            Toybox.syncPhysicalBit(cur);
         }
     }
 };
@@ -4515,6 +4587,7 @@ const Workspace = struct {
         dst.invisible_floating_inputs_layer = try Toybox.new(undefined, .{ .area = .{ .bg = .none, .style = .none } }, .new(@src()));
         dst.invisible_floating_inputs_layer.get().immutable = true;
         dst.invisible_floating_inputs_layer.get().physical = false;
+        Toybox.syncPhysicalBit(dst.invisible_floating_inputs_layer);
 
         if (true) {
             try dst.setupBubbles(scratch.allocator(), gpa);
@@ -6451,6 +6524,7 @@ const Workspace = struct {
         // TODO(perf-late): remove
         var debug_done_work: usize = 0;
 
+        // TODO(perf): use physicaliterator
         // reverse order so that fnkboxes get updated before scorers, and those before bubbles
         var lego_it = toybox.all_legos.iterator(toybox.all_legos.len - 1);
         while (lego_it.prev()) |lego| {
@@ -7992,6 +8066,15 @@ const Workspace = struct {
         if (toybox.free_head != nothing and Toybox.getUnsafe(toybox.free_head).exists) {
             std.debug.panic("Free head is {any}, but that element exists!", .{toybox.free_head});
         }
+        if (true and @import("builtin").mode == .Debug) { // check that field__physical_and_exists is in sync
+            var it = toybox.all_legos.constIterator(0);
+            var slot: u32 = 0;
+            while (it.next()) |lego| : (slot += 1) {
+                const expected = lego.exists and lego.physical;
+                const actual = toybox.field__physical_and_exists.get(slot);
+                assert(expected == actual);
+            }
+        }
         if (true and @import("builtin").mode == .Debug) { // check that free_next pointers are unique
             var seen_indices: std.AutoHashMap(Lego.Index, void) = .init(scratch);
             defer seen_indices.deinit();
@@ -8387,6 +8470,7 @@ const Workspace = struct {
                         const original_tree = Toybox.get(data.index).tree;
                         Toybox.get(data.index).* = data;
                         Toybox.get(data.index).tree = original_tree;
+                        Toybox.syncPhysicalBit(data.index);
                     },
                     .pop => |index| {
                         Toybox.popInner(index, false);
@@ -8661,6 +8745,7 @@ const Workspace = struct {
                                     const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, .new(@src()));
                                     Toybox.changeChild(original_instanced, new_instanced);
                                     Toybox.destroyFloating(original_instanced);
+                                    Toybox.setPhysicalRecursive(new_instanced, true);
                                 },
                                 .unlock_hint => {
                                     const bubble = &workspace.grabbing.index.get().tree.parent.get().specific.bubble;
@@ -8764,10 +8849,9 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "move camera" });
             defer zone.deinit();
 
-            var lego_it = toybox.all_legos.constIterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             const over_scrollable_element: Lego.Index = while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.tag() == .scrollable_list and lego.specific.scrollable_list.rect().contains(
                     lego.absolute_point.inverseApplyGetLocalPosition(mouse.cur.position),
                 )) {
@@ -8826,8 +8910,9 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "update _t" });
             defer zone.deinit();
 
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
+                assert(lego.exists and lego.physical);
                 if (!lego.exists) continue;
                 if (!lego.physical) continue;
 
@@ -8906,10 +8991,9 @@ const Workspace = struct {
         // }
 
         if (true) { // pills decay
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 switch (lego.specific) {
                     .pill => |*pill| {
                         pill.remaining_lifetime -= delta_seconds;
@@ -8935,10 +9019,9 @@ const Workspace = struct {
                 .case, .garland => true,
                 else => false,
             };
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.as(.garland)) |garland| {
                     garland.visible =
                         (grabbing_garland_or_case and !Toybox.isAncestor(workspace.grabbing.index, lego.index)) or
@@ -9133,10 +9216,9 @@ const Workspace = struct {
 
             assert(try workspace.valid(scratch));
 
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.as(.fnkbox)) |fnkbox| {
                     if (fnkbox.execution) |*execution| {
                         const executor_index = lego.index.children(.fnkbox).executor;
@@ -9306,10 +9388,9 @@ const Workspace = struct {
             const zone = tracy.initZone(@src(), .{ .name = "enable/disable buttons" });
             defer zone.deinit();
 
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.as(.button)) |button| {
                     button.enabled = switch (button.action) {
                         .launch_testcase, .delete_testcase => Toybox.get(Toybox.findAncestor(lego.index, .fnkbox)).specific.fnkbox.execution == null,
@@ -9358,10 +9439,9 @@ const Workspace = struct {
                 map.putAssumeCapacityNoClobber(fnkname_hash, index);
             }
 
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 switch (lego.specific) {
                     .fnkname_holder => |*fnkname_holder| {
                         fnkname_holder.fnkbox = map.get(Lego.Specific.Sexpr.hash(
@@ -9378,10 +9458,9 @@ const Workspace = struct {
             defer zone.deinit();
 
             // TODO(optim): there must be better ways to do this
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.as(.case)) |case| {
                     case.next_point_extra = .{};
                     case.fnkname_holder_extra = .{};
@@ -9402,10 +9481,9 @@ const Workspace = struct {
         }
 
         if (true) { // update bindings names
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.tag() == .sexpr and lego.specific.sexpr.kind == .atom_var) {
                     const name = lego.specific.sexpr.atom_name;
                     const unbound = lego.specific.sexpr.emerging_value == nothing;
@@ -9548,10 +9626,9 @@ const Workspace = struct {
         defer assert(!undo_stack.anyChangesThisFrame());
 
         if (drawer) |drwr| { // recompute cursor_points
-            var lego_it = toybox.all_legos.iterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.tag() == .editable_textline) {
                     const cursor_points = &lego.specific.editable_textline.cursor_points;
                     assert(cursor_points.items.len == 0);
@@ -9978,10 +10055,9 @@ const Workspace = struct {
     fn allFnkboxes(workspace: *Workspace, include_locked: bool, allocator: std.mem.Allocator) ![]const Lego.Index {
         var result: std.ArrayListUnmanaged(Lego.Index) = .empty;
 
-        var lego_it = toybox.all_legos.iterator(0);
+        var lego_it = Toybox.iteratorPhysical();
         while (lego_it.next()) |lego| {
-            if (!lego.exists) continue;
-            if (!lego.physical) continue;
+            assert(lego.exists and lego.physical);
             if (lego.specific.tag() != .fnkbox) continue;
             // don't include fnkboxes that are part of a blueprint, or other strange situations
             if (workspace.isFreefloating(lego.index)) continue;
@@ -10285,10 +10361,9 @@ const Workspace = struct {
         if (true) { // store which fnk was used for each scorer
             var scorers: std.ArrayListUnmanaged(struct { id: u32, fnkname: *const core.Sexpr }) = .empty;
             defer scorers.deinit(scratch);
-            var lego_it = toybox.all_legos.constIterator(0);
+            var lego_it = Toybox.iteratorPhysical();
             while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (!lego.physical) continue;
+                assert(lego.exists and lego.physical);
                 if (lego.specific.tag() != .scorer_row) continue;
                 // don't include stuff in a blueprint
                 if (workspace.isFreefloating(lego.index)) continue;
@@ -10453,10 +10528,9 @@ const Workspace = struct {
                     fnkname_from_scorer_row_magic_id.putAssumeCapacityNoClobber(scorer_row_magic_id, fnkbox_value);
                 }
 
-                var lego_it = toybox.all_legos.constIterator(0);
+                var lego_it = Toybox.iteratorPhysical();
                 while (lego_it.next()) |lego| {
-                    if (!lego.exists) continue;
-                    if (!lego.physical) continue;
+                    assert(lego.exists and lego.physical);
                     if (lego.specific.tag() != .scorer_row) continue;
                     const fnkname = fnkname_from_scorer_row_magic_id.get(lego.specific.scorer_row.magic_id) orelse continue;
                     const old_fnkname_element = lego.index.children(.scorer_row).fnkname;
@@ -10492,10 +10566,9 @@ const Workspace = struct {
     pub fn canAutosaveNow(workspace: *const Workspace) bool {
         if (workspace.grabbing.index != nothing) return false;
         // find any active animations at fnkboxes/executors
-        var lego_it = toybox.all_legos.iterator(0);
+        var lego_it = Toybox.iteratorPhysical();
         while (lego_it.next()) |lego| {
-            if (!lego.exists) continue;
-            if (!lego.physical) continue;
+            assert(lego.exists and lego.physical);
             if (lego.specific.as(.fnkbox)) |fnkbox| {
                 if (fnkbox.execution != null) return false;
             }
@@ -10566,10 +10639,9 @@ const Workspace = struct {
     }
 
     pub fn isFnknameTaken(workspace: *Workspace, fnkname: Lego.Index) bool {
-        var lego_it = toybox.all_legos.iterator(0);
+        var lego_it = Toybox.iteratorPhysical();
         while (lego_it.next()) |lego| {
-            if (!lego.exists) continue;
-            if (!lego.physical) continue;
+            assert(lego.exists and lego.physical);
             if (lego.specific.tag() != .fnkbox) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             const existing = lego.index.children(.fnkbox).fnkname;
