@@ -4465,8 +4465,6 @@ const Workspace = struct {
 
     // TODO(design): remove
     gpa_for_bindings: std.mem.Allocator,
-    // TODO(design): remove
-    gpa_for_atom_names: std.mem.Allocator,
     gpa_for_big_buffers: std.mem.Allocator,
 
     display_fps: bool = false,
@@ -4556,7 +4554,6 @@ const Workspace = struct {
         dst.arena_for_atom_names = .init(gpa);
         dst.arena_for_oneframe_data = .init(gpa);
         dst.gpa_for_bindings = gpa;
-        dst.gpa_for_atom_names = gpa;
         dst.gpa_for_big_buffers = gpa;
 
         var scratch: std.heap.ArenaAllocator = .init(gpa);
@@ -4934,7 +4931,7 @@ const Workspace = struct {
                 levels[0],
                 false,
                 scratch,
-                dst.gpa_for_atom_names,
+                dst.arena_for_atom_names.allocator(),
             );
             fnkbox.children(.fnkbox).executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
             Toybox.addChildLast(bp, fnkbox);
@@ -5692,7 +5689,7 @@ const Workspace = struct {
                 level_index,
                 false,
                 scratch,
-                dst.gpa_for_atom_names,
+                dst.arena_for_atom_names.allocator(),
             ));
 
             break :blk bp;
@@ -6532,7 +6529,7 @@ const Workspace = struct {
             if (!lego.physical) continue;
             if (workspace.isFreefloating(lego.index)) continue;
             if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.gpa_for_atom_names, all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases, &debug_done_work);
+                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.arena_for_atom_names.allocator(), all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases, &debug_done_work);
             }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
@@ -8702,7 +8699,7 @@ const Workspace = struct {
                                         var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
                                         try samples.ensureUnusedCapacity(scratch, 100);
                                         var sample_index: usize = 0;
-                                        while (try level.generate_sample(sample_index, &pool, scratch, workspace.gpa_for_atom_names)) |sample| {
+                                        while (try level.generate_sample(sample_index, &pool, scratch, workspace.arena_for_atom_names.allocator())) |sample| {
                                             try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .build(
                                                 level_index,
                                                 sample_index,
@@ -8754,7 +8751,7 @@ const Workspace = struct {
                                 .see_failing_testcase => {
                                     const fnkbox = Toybox.findAncestor(workspace.grabbing.index, .fnkbox);
                                     const testcase_index = fnkbox.get().specific.fnkbox.status.bad();
-                                    try ensureLoadedTestcase(testcase_index, scratch, workspace.gpa_for_atom_names);
+                                    try ensureLoadedTestcase(testcase_index, scratch, workspace.arena_for_atom_names.allocator());
                                     try launchTestcase(testcase_index);
                                 },
                                 .launch_testcase => {
@@ -9555,7 +9552,7 @@ const Workspace = struct {
                     const is_visible = cur.get().local_point.applyToLocalBounds(child_box).intersect(parent_box) != null or
                         fnkbox_index.get().specific.fnkbox.hasExecutionOverTestcase(cur);
                     if (is_visible) {
-                        try ensureLoadedTestcase(cur, scratch, workspace.gpa_for_atom_names);
+                        try ensureLoadedTestcase(cur, scratch, workspace.arena_for_atom_names.allocator());
                     } else {
                         tryToUnloadTestcase(cur);
                     }
@@ -10416,7 +10413,7 @@ const Workspace = struct {
         }
 
         if (config.is_text_based) {
-            var input: []const u8 = try in.readAllAlloc(dst.gpa_for_atom_names, std.math.maxInt(usize));
+            var input: []const u8 = try in.readAllAlloc(dst.arena_for_atom_names.allocator(), std.math.maxInt(usize));
             var x: f32 = 0;
             while (input.len > 0) {
                 defer x += 40;
@@ -10475,7 +10472,7 @@ const Workspace = struct {
                                 const level_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
                                 const sample_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
                                 // 'orelse' only engaged if tests were deleted between versions
-                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch, dst.gpa_for_atom_names)) orelse continue;
+                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch, dst.arena_for_atom_names.allocator())) orelse continue;
 
                                 testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .unloaded = .build(
                                     level_index,
