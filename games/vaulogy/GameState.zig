@@ -399,10 +399,6 @@ pub const Lego = struct {
         meta_viewer: MetaViewer,
         bubble: Bubble,
         bubble_connection: BubbleConnection,
-        scorer: Scorer,
-        scorer_row: ScorerRow,
-        // TODO(design): simplify this
-        scorer_rows: void,
 
         // TODO(design): could this be something else?
         scrollable_list_inbetween: struct {
@@ -494,7 +490,7 @@ pub const Lego = struct {
             remaining_reset_anim_t: f32 = 0,
 
             pub const FulfillCondition = union(enum) {
-                all_scorers_solved,
+                all_bp_fnkboxes_solved,
                 has_sexpr: Lego.Index,
             };
 
@@ -518,180 +514,24 @@ pub const Lego = struct {
             pub fn visibleUnlockHints(self: *const Bubble) bool {
                 return self.has_hints and !self.requested_hints;
             }
+
+            pub fn ownedLevels(self: *const Bubble) std.BoundedArray(usize, 4) {
+                var result: std.BoundedArray(usize, 4) = .{};
+                var cur = self.blueprint;
+                while (cur != nothing) : (cur = Toybox.next_preordered(cur, self.blueprint).next) {
+                    if (cur.hasTag(.fnkbox)) {
+                        if (cur.get().specific.fnkbox.premade_level) |level| {
+                            result.appendAssumeCapacity(level);
+                        }
+                    }
+                }
+                return result;
+            }
         };
 
         pub const BubbleConnection = struct {
             source: Lego.Index,
             target: Lego.Index,
-        };
-
-        pub const Scorer = struct {
-            score: ?Score = null,
-            score_computed_at: struct {
-                all_fnks_hash: u32,
-                all_fnkname_rows_hash: u32,
-            } = .{ .all_fnks_hash = 0, .all_fnkname_rows_hash = 0 },
-
-            pub const Score = struct {
-                total_time: usize,
-                max_stack: usize,
-                code_size: usize,
-                compile_time: usize,
-            };
-
-            pub const Children = struct {
-                scorer_rows: Lego.Index,
-            };
-
-            pub fn children(index: Lego.Index) Children {
-                assert(Toybox.get(index).specific.tag() == .scorer);
-                const asdf = Toybox.getChildrenExact(1, index);
-                return .{
-                    .scorer_rows = asdf[0],
-                };
-            }
-
-            pub fn updateStatus(workspace: *Workspace, scorer_index: Lego.Index, all_fnks: core.FnkCollection, all_fnks_hash: u32, scratch: std.mem.Allocator) !void {
-                const zone = tracy.initZone(@src(), .{ .name = "update status for scorer" });
-                defer zone.deinit();
-
-                assert(scorer_index.hasTag(.scorer));
-                const all_scorer_fnknames_hash: u32 = blk: {
-                    var hasher = std.hash.Wyhash.init(0);
-                    const scorer_rows = scorer_index.children(.scorer).scorer_rows;
-                    var cur = scorer_rows.get().tree.first;
-                    while (cur != nothing) : (cur = cur.get().tree.next) {
-                        assert(cur.hasTag(.scorer_row));
-                        hasher.update(std.mem.asBytes(&Sexpr.hash(cur.children(.scorer_row).fnkname)));
-                    }
-                    break :blk @truncate(hasher.final());
-                };
-                if (scorer_index.get().specific.scorer.score_computed_at.all_fnks_hash == all_fnks_hash and
-                    scorer_index.get().specific.scorer.score_computed_at.all_fnkname_rows_hash == all_scorer_fnknames_hash) return;
-
-                var mem: core.VeryPermamentGameStuff = .init(scratch);
-                var scoring_run: core.ScoringRun = try .initFromFnks(all_fnks, &mem);
-                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
-
-                const rows = try Toybox.getChildrenUnknown(scratch, children(scorer_index).scorer_rows);
-                var score: struct {
-                    time: usize,
-                    max_stack: usize,
-                } = .{ .time = 0, .max_stack = 0 };
-                var failed_any: bool = false;
-                var depended_on_fnkbox: bool = false;
-                for (rows) |row| {
-                    const fnkname_index = row.children(.scorer_row).fnkname;
-
-                    const maybe_fnkbox = try workspace.fnkboxWithName(fnkname_index, scratch);
-                    if (maybe_fnkbox) |fnkbox_index| {
-                        if (fnkbox_index.get().specific.fnkbox.status != .solved) {
-                            failed_any = true;
-                            depended_on_fnkbox = true;
-                            break;
-                        }
-                    }
-
-                    const fnkname = try fnkname_index.get().specific.sexpr.toOldCoreValue(scratch);
-
-                    const level_index = row.get().specific.scorer_row.level_index;
-                    const level = levels[level_index];
-                    var samples_it = level.samplesIterator();
-                    while (try samples_it.next(&pool, scratch, scratch)) |sample| {
-                        defer _ = pool.reset(.retain_capacity);
-
-                        var exec = core.ExecutionThread.init(sample.input, fnkname, &scoring_run, .new) catch |err| switch (err) {
-                            // error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
-                            //     failed_any = true;
-                            //     break;
-                            // },
-                            error.NoMatchingCase,
-                            error.InvalidMetaFnk,
-                            error.UsedUndefinedVariable,
-                            error.FnkNotFound,
-                            error.TookTooLong,
-                            error.BAD_INPUT,
-                            => panic("unreachable? {s}", .{@errorName(err)}),
-                            error.OutOfMemory => |x| return x,
-                        };
-                        defer exec.deinit();
-
-                        const actual_output = exec.getFinalResultBoundedV2(&scoring_run, .new) catch |err| switch (err) {
-                            error.TookTooLong => {
-                                failed_any = true;
-                                break;
-                            },
-                            // error.NoMatchingCase, error.InvalidMetaFnk, error.UsedUndefinedVariable, error.FnkNotFound, error.TookTooLong => {
-                            //     failed_any = true;
-                            //     break;
-                            // },
-                            error.NoMatchingCase,
-                            error.InvalidMetaFnk,
-                            error.UsedUndefinedVariable,
-                            error.FnkNotFound,
-                            error.BAD_INPUT,
-                            => return err,
-                            // => panic("unreachable? {s}", .{@errorName(err)}),
-                            error.OutOfMemory => |x| return x,
-                        };
-
-                        if (!actual_output.equals(sample.expected)) {
-                            failed_any = true;
-                            break;
-                        } else {
-                            score.time += exec.score.successful_matches;
-                            score.max_stack = @max(score.max_stack, exec.score.max_stack);
-                        }
-                    }
-
-                    if (try workspace.fnkboxWithName(fnkname_index, scratch)) |fnkbox_index| {
-                        if (fnkbox_index.get().specific.fnkbox.status != .solved) {
-                            failed_any = true;
-                            depended_on_fnkbox = true;
-                            break;
-                        }
-                    }
-
-                    if (maybe_fnkbox) |fnkbox| {
-                        if (!failed_any) fnkbox.get().specific.fnkbox.require_manual_execution = false;
-                    }
-
-                    if (failed_any) break;
-                }
-                scorer_index.get().specific.scorer.score = if (failed_any)
-                    null
-                else
-                    .{
-                        .total_time = score.time,
-                        .max_stack = score.max_stack,
-                        .code_size = scoring_run.score.code_size,
-                        .compile_time = scoring_run.score.compile_time,
-                    };
-                if (!depended_on_fnkbox) scorer_index.get().specific.scorer.score_computed_at = .{
-                    .all_fnks_hash = all_fnks_hash,
-                    .all_fnkname_rows_hash = all_scorer_fnknames_hash,
-                };
-            }
-        };
-
-        pub const ScorerRow = struct {
-            level_index: usize,
-            offset: ?Vec2,
-            magic_id: u32,
-
-            pub const Children = struct {
-                create_fnkname_button: Lego.Index,
-                fnkname: Lego.Index,
-            };
-
-            pub fn children(index: Lego.Index) Children {
-                assert(Toybox.get(index).specific.tag() == .scorer_row);
-                const asdf = Toybox.getChildrenExact(2, index);
-                return .{
-                    .create_fnkname_button = asdf[0],
-                    .fnkname = asdf[1],
-                };
-            }
         };
 
         pub const EditableTextline = struct {
@@ -776,8 +616,6 @@ pub const Lego = struct {
                 reset_bubble,
                 /// assumes that bubble is the direct parent
                 unlock_hint,
-                /// assumes that scorer_row is the direct parent
-                create_fnkbox_for_row,
                 /// assumes that the scrollable_list of testcases is the direct parent
                 add_testcase,
                 /// assumes that the testcase is the direct parent
@@ -802,7 +640,6 @@ pub const Lego = struct {
                     .scroll_down,
                     .reset_bubble,
                     .unlock_hint,
-                    .create_fnkbox_for_row,
                     .add_testcase,
                     .stop_execution,
                     => false,
@@ -1029,7 +866,7 @@ pub const Lego = struct {
                     }
 
                     if (sexpr.emerging_value != nothing) {
-                        std.log.err("TODO(now)", .{});
+                        std.log.err("TODO(bug)?", .{});
                         updateLocalPositionsAndOfChildren(sexpr.emerging_value);
                     }
                 }
@@ -1631,8 +1468,7 @@ pub const Lego = struct {
         };
 
         pub const Fnkbox = struct {
-            // TODO(bug): this should also make the garland non-editable
-            editable: bool,
+            premade_level: ?usize,
             execution: ?struct {
                 original_garland: Lego.Index,
                 source: union(enum) {
@@ -1651,6 +1487,14 @@ pub const Lego = struct {
             } = null,
             status: Status,
             require_manual_execution: bool = false,
+
+            // TODO(game): add score to fnkboxes
+            // pub const Score = struct {
+            //     total_time: usize,
+            //     max_stack: usize,
+            //     code_size: usize,
+            //     compile_time: usize,
+            // };
 
             const relative_fnkname_point: Point = .{ .pos = .new(-1, 1), .scale = 0.5, .turns = 0.25 };
             const relative_executor_point: Point = .{ .pos = .new(-3, 1 + FnkboxBox.box_height) };
@@ -1705,7 +1549,7 @@ pub const Lego = struct {
                 };
             }
 
-            pub fn updateStatus(fnkbox: *Fnkbox, workspace: *Workspace, scratch: std.mem.Allocator, gpa_for_atom_names: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32, remaining_budget_for_unloaded_testcases: *usize, debug_n_work: *usize) !void {
+            pub fn updateStatus(fnkbox_index: Lego.Index, workspace: *Workspace, scratch: std.mem.Allocator, gpa_for_atom_names: std.mem.Allocator, all_fnks: core.FnkCollection, all_fnks_hash: u32, remaining_budget_for_unloaded_testcases: *usize, debug_n_work: *usize) !void {
                 // TODO(clean): remove
                 _ = all_fnks;
                 // const fnkname_value = try Toybox.get(children(fnkbox_index).fnkname).specific.sexpr.toOldCoreValue(scratch);
@@ -1713,7 +1557,7 @@ pub const Lego = struct {
                 const zone = tracy.initZone(@src(), .{ .name = "update status for fnkbox" });
                 defer zone.deinit();
 
-                const fnkbox_index = Lego.fromSpecificConst(.fnkbox, fnkbox).index;
+                const fnkbox = &fnkbox_index.get().specific.fnkbox;
 
                 // update state
                 var cur_testcase = FnkboxBox.children(children(fnkbox_index).box).testcases_area.get().tree.first;
@@ -1855,6 +1699,7 @@ pub const Lego = struct {
                 }
                 if (all_good) {
                     fnkbox.status = .solved;
+                    fnkbox.require_manual_execution = false;
                 }
             }
         };
@@ -2553,15 +2398,16 @@ pub const Lego = struct {
                 return sexpr.kind == .atom_var and std.mem.eql(u8, sexpr.atom_name, varname);
             } else return false;
         }
+
+        pub fn sexprHash(index: Index) u32 {
+            return Lego.Specific.Sexpr.hash(index);
+        }
     };
 
     pub fn handle(lego: *const Lego) ?Handle {
         const kind: Handle.Kind = switch (lego.specific) {
             .bubble,
             .bubble_connection,
-            .scorer,
-            .scorer_row,
-            .scorer_rows,
             .sexpr,
             .area,
             .microscope,
@@ -2591,8 +2437,8 @@ pub const Lego = struct {
             .list_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
             .meta_viewer => .{ .circle = Handle.Kind.default.circle.scale(2) },
             // TODO(game): maybe fnkbox tabs
-            .fnkbox => |fnkbox| if (fnkbox.editable) .default else return null,
-            // .fnkbox => |fnkbox| if (fnkbox.editable) .fnkbox_tab else return null,
+            .fnkbox => .default,
+            // .fnkbox => .fnkbox_tab,
         };
         const enabled: bool = switch (lego.specific) {
             else => true,
@@ -2683,11 +2529,8 @@ pub const Lego = struct {
             },
             .bubble,
             .bubble_connection,
-            .scorer,
-            .scorer_row,
             .fnkname_holder,
             .garland_newcases,
-            .scorer_rows,
             .executor_controls,
             .microscope,
             .fnkbox_box,
@@ -2723,9 +2566,6 @@ pub const Lego = struct {
             => false,
             .bubble,
             .bubble_connection,
-            .scorer,
-            .scorer_row,
-            .scorer_rows,
             .fnkname_holder,
             .garland_newcases,
             .executor_controls,
@@ -3477,10 +3317,6 @@ pub const Toybox = struct {
     pub fn dupeIntoFloating(original: Lego.Index, tag: Lego.CreationTag) !Lego.Index {
         assert(original.get().exists);
 
-        if (original.hasTag(.fnkbox)) {
-            assert(!original.get().specific.fnkbox.editable);
-        }
-
         const result_index = try Toybox.new(undefined, undefined, tag.plus(@src()));
         const result = Toybox.get(result_index);
         result.* = Toybox.get(original).*;
@@ -4151,9 +3987,8 @@ pub const Toybox = struct {
 
     pub fn buildFnkboxFromLevel(
         local_point: Point,
-        fnkname: Lego.Index,
         level_index: usize,
-        editable: bool,
+        overwritten_definition: ?Lego.Index,
         scratch: std.mem.Allocator,
         atomnames_allocator: std.mem.Allocator,
     ) !Lego.Index {
@@ -4180,11 +4015,13 @@ pub const Toybox = struct {
 
         const result = try Toybox.buildFnkbox(
             local_point,
-            fnkname,
-            editable,
+            try Toybox.buildSexpr(.{}, .{ .atom_lit = levels[level_index].fnk_name }, true, true, .new(@src())),
+            level_index,
             level.description,
             samples,
-            if (try level.initialDefinition(&pool, scratch)) |definition|
+            if (overwritten_definition) |garland|
+                garland
+            else if (try level.initialDefinition(&pool, scratch)) |definition|
                 try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch, .new(@src()))
             else
                 null,
@@ -4202,7 +4039,7 @@ pub const Toybox = struct {
         local_point: Point,
         // TODO(design): take *const Sepxr
         fnkname: Lego.Index,
-        editable: bool,
+        premade_level: ?usize,
         text: []const u8,
         /// must be Testcase or UnloadedTestcase
         testcases: []const Lego.Index,
@@ -4231,16 +4068,18 @@ pub const Toybox = struct {
             } }, .new(@src())),
             scrollbar,
             blk: {
-                // TODO(now)
+                // TODO(bug)?
                 const fnkbox_testcases = try Toybox.new(.{}, .{ .scrollable_list = .{ .kind = .fnkbox_testcases } }, .new(@src()));
                 for (testcases) |testcase| {
                     assert(isFloating(testcase));
                     Toybox.addChildLast(fnkbox_testcases, testcase);
                 }
-                Toybox.addChildLast(fnkbox_testcases, try Toybox.new(.{}, .{ .button = .{
-                    .local_rect = .fromCenterAndSize(.zero, .one),
-                    .action = .add_testcase,
-                } }, .new(@src())));
+                if (premade_level == null) {
+                    Toybox.addChildLast(fnkbox_testcases, try Toybox.new(.{}, .{ .button = .{
+                        .local_rect = .fromCenterAndSize(.zero, .one),
+                        .action = .add_testcase,
+                    } }, .new(@src())));
+                }
                 break :blk fnkbox_testcases;
             },
         });
@@ -4256,7 +4095,7 @@ pub const Toybox = struct {
             executor.children(.executor).controls.children(.executor_controls).brake.get().specific.executor_brake.brake_t = 0.9;
         }
 
-        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .editable = editable } }, &.{
+        return try Toybox.createWithChildren(local_point, .{ .fnkbox = .{ .status = undefined, .premade_level = premade_level } }, &.{
             box,
             fnkname,
             executor,
@@ -4324,33 +4163,11 @@ pub const Toybox = struct {
         });
     }
 
-    pub fn buildScorer(point: Point, levels_indices: []const usize, create_at_offsets: []const ?Vec2) !Lego.Index {
-        const rows_holder = try Toybox.new(.{}, .scorer_rows, .new(@src()));
-        var y: f32 = 0;
-        const magic_id = if (levels_indices.len == 1)
-            hashString(levels[levels_indices[0]].fnk_name)
-        else
-            @panic("TODO");
-        for (levels_indices, create_at_offsets) |level_index, offset| {
-            const new_row = try Toybox.createWithChildren(.{ .pos = .new(0, y) }, .{ .scorer_row = .{
-                .level_index = level_index,
-                .offset = offset,
-                .magic_id = magic_id,
-            } }, &.{
-                try Toybox.new(.{}, .{ .button = .{ .local_rect = .fromCenterAndSize(.zero, .one), .action = .create_fnkbox_for_row } }, .new(@src())),
-                try buildSexpr(.{ .pos = .new(0, -0.5), .scale = 0.5, .turns = 0.25 }, .empty, false, true, .new(@src())),
-            });
-            Toybox.addChildLast(rows_holder, new_row);
-            y += 2;
-        }
-        return try createWithChildren(point, .{ .scorer = .{} }, &.{
-            rows_holder,
-        });
-    }
-
     pub fn buildBubble(point: Point, prev: Lego.Index, goal: Lego.Specific.Bubble.FulfillCondition, blueprint: Lego.Index) !Lego.Index {
         assert(blueprint.hasTag(.area));
         const instanced = try Toybox.dupeIntoFloating(blueprint, .new(@src()));
+        Toybox.setPhysicalRecursive(blueprint, false);
+        Toybox.setPhysicalRecursive(instanced, true);
         return try Toybox.createWithChildren(point, .{ .bubble = .{
             .blueprint = blueprint,
             .prev_bubble = prev,
@@ -4590,7 +4407,6 @@ const Workspace = struct {
             try dst.setupBubbles(scratch.allocator(), gpa);
         } else {
             dst.centerCameraAt(.{ .pos = .zero, .scale = 15 }, true);
-            Toybox.addChildLast(dst.main_area, try Toybox.buildScorer(.{}, &.{0}, &.{null}));
         }
 
         assert(try dst.valid(scratch.allocator()));
@@ -4613,6 +4429,99 @@ const Workspace = struct {
     }
 
     fn setupBubbles(dst: *Workspace, scratch: std.mem.Allocator, gpa: std.mem.Allocator) !void {
+        const FnkboxBuilderHelperAsdf = struct {
+            workspace: *Workspace,
+            scratch: std.mem.Allocator,
+            atomnames_allocator: std.mem.Allocator,
+
+            pub fn maybeAddV2(self: @This(), local_point: Point, level_index: usize) !?Lego.Index {
+                const fnkname = try Toybox.buildSexpr(.{}, .{ .atom_lit = levels[level_index].fnk_name }, true, true, .new(@src()));
+                assert(!isFnknameTaken(self.workspace, fnkname));
+                return try Toybox.buildFnkboxFromLevel(
+                    local_point,
+                    level_index,
+                    null,
+                    self.scratch,
+                    self.atomnames_allocator,
+                );
+            }
+
+            pub fn maybeAdd(self: @This(), local_pos: Vec2, level_index: usize, bp: Lego.Index) !void {
+                if (try self.maybeAddV2(.{ .pos = local_pos }, level_index)) |fnkbox| {
+                    Toybox.addChildLast(bp, fnkbox);
+                }
+            }
+
+            fn buildBubbleSimple(self: @This(), bubble_pos: Vec2, prev: Lego.Index, comptime level_names: []const []const u8, postits: []const []const []const u8) !Lego.Index {
+                const postit_pos: []const Vec2 = if (level_names.len == 0) &.{
+                    .new(-8, -8),
+                    .new(-0.3, -7.2),
+                    .new(7.7, -7.1),
+                    .new(-7.2, -0.3),
+                    .new(0.15, 0.0),
+                    .new(7.8, 0.3),
+                    .new(-6.9, 7.3),
+                    .new(0.5, 7.5),
+                    .new(7.8, 7.9),
+                } else &.{
+                    .new(-8, -8),
+                    .new(-0.3, -7.2),
+                    .new(7.7, -7.1),
+                    .new(-6.9, 5.8),
+                    .new(0.5, 5.9),
+                    .new(7.8, 5.8),
+                };
+                const fnkboxes_pos: []const Vec2 = switch (level_names.len) {
+                    0 => &.{},
+                    1 => if (postits.len == 4) &.{.new(6, 0)} else &.{.new(0, 0)},
+                    2 => &.{ .new(-8, -3), .new(8.8, 2.8) },
+                    3 => if (std.mem.eql(u8, level_names[0], "calculator_sum"))
+                        &.{
+                            .new(-12.8, 2),
+                            .new(0, -2),
+                            .new(13.9, 2.5),
+                        }
+                    else if (std.mem.eql(u8, level_names[0], "unary_from_naive"))
+                        &.{
+                            .new(-8.6, 5.2),
+                            .new(8.6, 5),
+                            .new(4, -11),
+                        }
+                    else
+                        panic("unhandled: {d} levels, for levels {s}", .{ level_names.len, level_names }),
+                    else => panic("unhandled: {d} levels, for levels {s}", .{ level_names.len, level_names }),
+                };
+                return try Toybox.buildBubble(.{ .pos = bubble_pos }, prev, .all_bp_fnkboxes_solved, blk: {
+                    const bp = try Toybox.new(
+                        .{},
+                        .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
+
+                        .new(@src()),
+                    );
+
+                    const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
+                    for (postits, 0..) |lines, k| {
+                        postit.addFromText(postit_pos[k], lines);
+                    }
+
+                    inline for (level_names, fnkboxes_pos) |level_name, pos| {
+                        try self.maybeAdd(
+                            pos,
+                            levelIndex(level_name),
+                            bp,
+                        );
+                    }
+
+                    break :blk bp;
+                });
+            }
+        };
+        const helper: FnkboxBuilderHelperAsdf = .{
+            .workspace = dst,
+            .scratch = scratch,
+            .atomnames_allocator = dst.arena_for_atom_names.allocator(),
+        };
+
         dst.centerCameraAt(.{ .pos = .new(4, 0), .scale = 15 }, true);
 
         const path_next_close: Vec2 = .new(30, 0);
@@ -4621,7 +4530,7 @@ const Workspace = struct {
         const path_down: Vec2 = .new(60, 30);
 
         var bubble_pos: Vec2 = .zero;
-        const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .nothing, .all_scorers_solved, blk: {
+        const welcome_to_the_lab = try Toybox.buildBubble(.{ .pos = bubble_pos }, .nothing, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4699,9 +4608,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, welcome_to_the_lab);
 
         bubble_pos.addInPlace(path_next_close);
-        const simple_warmup = try Toybox.buildBubble(.{ .pos = bubble_pos }, welcome_to_the_lab, .{
-            .has_sexpr = try Toybox.buildSexprFromText(.{}, "(a . (b . c))", false, false, .new(@src())),
-        }, blk: {
+        const simple_warmup = try Toybox.buildBubble(.{ .pos = bubble_pos }, welcome_to_the_lab, .{ .has_sexpr = try Toybox.buildSexprFromText(.{}, "(a . (b . c))", false, false, .new(@src())) }, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4751,7 +4658,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, simple_warmup);
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, simple_warmup, .all_scorers_solved, blk: {
+        const intro_to_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, simple_warmup, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4826,7 +4733,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, intro_to_strands);
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_executors = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_strands, .all_scorers_solved, blk: {
+        const intro_to_executors = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_strands, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4836,7 +4743,7 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
 
             var postit_pos: Vec2 = .new(-6, -8);
-            postit.addFromText(postit_pos, &.{ "Take one of", "these vaus,", "and place it", "next to", "the strand:" });
+            postit.addFromText(postit_pos, &.{ "Take one of", "these Vaus,", "and place it", "next to", "the Strand:" });
             postit_pos.addInPlace(.new(8, 1));
             Toybox.addChildLast(bp, try Toybox.buildSexpr(
                 .{ .pos = postit_pos.add(.new(-3.4, -1.7)) },
@@ -4894,61 +4801,10 @@ const Workspace = struct {
         });
         Toybox.addChildLast(dst.main_area, intro_to_executors);
 
-        const scorer_pos: Vec2 = .new(-7, 0);
+        const scorer_pos: Vec2 = .new(0, 4);
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_executors, .all_scorers_solved, if (false) blk: {
-            const bp = try Toybox.new(
-                .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-
-                .new(@src()),
-            );
-            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
-
-            var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands" });
-            postit_pos.addInPlace(.new(7.4, 0.9));
-            postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new strand to", "solve each one." });
-            postit_pos.addInPlace(.new(7.6, 0.8));
-            postit.addFromParts(postit_pos, &.{
-                .{ .point = .{ .pos = .new(3, 2.5) }, .part = .{ .paragraph = &.{ "This is the first", "assignment,", "already solved", "as an example." } } },
-                .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
-            });
-            postit_pos = .new(-6.5, 0);
-            postit.addFromText(postit_pos, &.{ "The box below", "is the solution", "to the assignment." });
-            postit_pos.addInPlace(.new(6.6, 2.8));
-            postit.addFromParts(postit_pos, &.{
-                .{ .point = .{ .pos = .new(3, 2.5) }, .part = .{ .paragraph = &.{ "That green vau", "is the name", "of the strand" } } },
-                .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
-                .{ .point = .{ .pos = .new(5, 1) }, .part = .arrow },
-            });
-
-            postit_pos = .new(0, 6);
-            const fnkbox = try Toybox.buildFnkboxFromLevel(
-                .{ .pos = postit_pos },
-                try dst.findFnkname(.{}, true, levels[0].fnk_name.atom_lit.value),
-                levels[0],
-                false,
-                scratch,
-                dst.arena_for_atom_names.allocator(),
-            );
-            fnkbox.children(.fnkbox).executor.children(.executor).controls.get().specific.executor_controls.brake().get().specific.executor_brake.brake_t = 0.9;
-            Toybox.addChildLast(bp, fnkbox);
-
-            postit_pos = .new(4, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = postit_pos }, &.{levelIndex("changeLowercaseToNextCyclingOnC")});
-            const old_fnkname = scorer.children(.scorer).scorer_rows.get().tree.first.children(.scorer_row).fnkname;
-            const new_fnkname = try Toybox.dupeIntoFloating(fnkbox.children(.fnkbox).fnkname, .new(@src()));
-            new_fnkname.get().local_point = old_fnkname.get().local_point;
-            new_fnkname.get().specific.sexpr.is_pattern = false;
-            new_fnkname.get().immutable = false;
-            Toybox.changeChild(old_fnkname, new_fnkname);
-            Toybox.destroyFloating(old_fnkname);
-            Toybox.addChildLast(bp, scorer);
-
-            break :blk bp;
-        } else blk: {
+        const intro_to_fnkboxes = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_executors, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -4958,7 +4814,7 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
 
             var postit_pos: Vec2 = .new(-8, -7);
-            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new strands" });
+            postit.addFromText(postit_pos, &.{ "Your main job", "will be designing", "new Strands" });
             postit_pos.addInPlace(.new(7.4, 0.9));
             postit.addFromText(postit_pos, &.{ "I will give you", "assignments.", "You must make", "a new strand to", "solve each one." });
             postit_pos.addInPlace(.new(7.6, 0.8));
@@ -4967,65 +4823,29 @@ const Workspace = struct {
                 .{ .point = .{ .pos = .new(3, 5), .turns = 0.25 }, .part = .arrow },
             });
 
-            const strand_already_in_box = true;
-            if (!strand_already_in_box) {
-                postit_pos = .new(-7.8, 2.4);
-                postit.addFromText(postit_pos, &.{ "This strand", "solves it:" });
-                postit_pos.addInPlace(.new(1, 4.7));
-                Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1, -2.5)) }, &.{
-                    try Toybox.buildCase(.{}, .{
-                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, true, false, .new(@src())),
-                        .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, false, false, .new(@src())),
-                        .fnkname = null,
-                        .next = null,
-                    }, .new(@src())),
-                    try Toybox.buildCase(.{}, .{
-                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, .new(@src())),
-                        .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, .new(@src())),
-                        .fnkname = null,
-                        .next = null,
-                    }, .new(@src())),
-                    try Toybox.buildCase(.{}, .{
-                        .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, true, false, .new(@src())),
-                        .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "a" }, false, false, .new(@src())),
-                        .fnkname = null,
-                        .next = null,
-                    }, .new(@src())),
-                }, .new(@src())));
+            postit_pos = .new(5.5, -2);
+            if (try helper.maybeAddV2(.{ .pos = postit_pos }, 0)) |fnkbox| {
+                fnkbox.children(.fnkbox).executor.children(.executor).controls.children(.executor_controls).brake.get().specific.executor_brake.brake_t = 0.9;
+                Toybox.addChildLast(bp, fnkbox);
             }
 
-            postit_pos = .new(0, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = if (strand_already_in_box) scorer_pos else postit_pos }, &.{levelIndex("changeLowercaseToNextCyclingOnC")}, &.{.new(4.5, 8.5)});
-            Toybox.addChildLast(bp, scorer);
+            postit_pos = .new(-6.8, 5.8);
+            postit.addFromText(postit_pos, &.{ "Complete the", "strand to", "solve it." });
 
-            postit_pos.addInPlace(.new(if (strand_already_in_box) -7 else 0, 4.5));
-            postit.addFromParts(postit_pos, &.{
-                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the +", "button to create", "a new 'solution'" } } },
-                .{ .point = .{ .pos = .new(3, 1), .turns = -0.25 }, .part = .arrow },
-            });
-            postit_pos.addInPlace(.new(6.8, 0.4));
-            if (strand_already_in_box) {
-                postit.addFromText(postit_pos, &.{ "And complete the", "strand, solving", "the assignment." });
-            } else {
-                postit.addFromText(postit_pos, &.{ "And move the", "strand to it,", "solving the", "assignment." });
-            }
-
-            if (strand_already_in_box) {
-                postit_pos.addInPlace(.new(7, 0));
-                Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos }, .{
-                    .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, .new(@src())),
-                    .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, .new(@src())),
-                    .fnkname = null,
-                    .next = null,
-                }, .new(@src())));
-            }
+            postit_pos.addInPlace(.new(-0.5, 4.5));
+            Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos }, .{
+                .pattern = try Toybox.buildSexpr(.{}, .{ .atom_lit = "b" }, true, false, .new(@src())),
+                .template = try Toybox.buildSexpr(.{}, .{ .atom_lit = "c" }, false, false, .new(@src())),
+                .fnkname = null,
+                .next = null,
+            }, .new(@src())));
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, intro_to_fnkboxes);
 
         bubble_pos.addInPlace(path_next_close);
-        const player_creates_fnkbox = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_fnkboxes, .all_scorers_solved, blk: {
+        const player_creates_solution = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_fnkboxes, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5036,7 +4856,7 @@ const Workspace = struct {
 
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{"Try on your own!"});
-            postit_pos = .new(7.3, 7.7);
+            postit_pos = .new(-7.4, 7.3);
             // postit.addFromText(postit_pos, &.{ "(I promise", "the assignments", "will get more", "interesting)" });
             postit.addFromParts(postit_pos, &.{
                 .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "check your", "solution" } } },
@@ -5061,7 +4881,7 @@ const Workspace = struct {
             }, .new(@src())));
             postit_pos.addInPlace(.new(4.6, 1.2));
             Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos }, .{ .atom_lit = "b" }, false, false, .new(@src())));
-            postit_pos = .new(-6, 4);
+            postit_pos = .new(-5, -2);
             Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos }, .{
                 .pattern = try Toybox.buildSexpr(.{}, .empty, true, false, .new(@src())),
                 .template = try Toybox.buildSexpr(.{}, .empty, false, false, .new(@src())),
@@ -5072,21 +4892,20 @@ const Workspace = struct {
             Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos }, .{
                 .atom_lit = "a",
             }, true, false, .new(@src())));
-            postit_pos = .new(-6, 4);
+            postit_pos = .new(-5, -2);
             postit_pos.addInPlace(.new(1.4, -0.7));
             Toybox.addChildLast(bp, try Toybox.buildSexpr(.{ .pos = postit_pos }, .{
                 .atom_lit = "c",
             }, false, false, .new(@src())));
 
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{levelIndex("changeLowercaseToPrevCyclingOnC")}, &.{.new(0, 8.5)});
-            Toybox.addChildLast(bp, scorer);
+            try helper.maybeAdd(.new(4.5, 0), levelIndex("changeLowercaseToPrevCyclingOnC"), bp);
 
             break :blk bp;
         });
-        Toybox.addChildLast(dst.main_area, player_creates_fnkbox);
+        Toybox.addChildLast(dst.main_area, player_creates_solution);
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_wildcards = try Toybox.buildBubble(.{ .pos = bubble_pos }, player_creates_fnkbox, .all_scorers_solved, blk: {
+        const intro_to_wildcards = try Toybox.buildBubble(.{ .pos = bubble_pos }, player_creates_solution, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5099,6 +4918,8 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "This next assignment", "has too many cases", "to be hardcoded." });
             postit_pos.addInPlace(.new(6.8, 0.4));
             postit.addFromText(postit_pos, &.{ "Fear not!", "We can solve it", "elegantly, with", "Wildcards." });
+            postit_pos.addInPlace(.new(-3.2, 6.9));
+            postit.addFromText(postit_pos, &.{ "Wildcards match", "with any Vau,", "and can", "recreate it." });
 
             postit_pos.addInPlace(.new(7.8, -1.4));
             Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos }, &.{
@@ -5110,24 +4931,18 @@ const Workspace = struct {
                 }, .new(@src())),
             }, .new(@src())));
 
-            postit_pos = .new(-8, -8);
-            postit_pos.addInPlace(.new(1.8, 7.8));
-            postit_pos.addInPlace(.new(0, 6));
-            postit.addFromText(postit_pos, &.{ "Wildcards match", "with any value,", "and can", "recreate it." });
-
-            postit_pos = .new(8.1, 7.7);
-            postit.addFromText(postit_pos, &.{ "By the way,", "right click", "to duplicate", "anything" });
+            // postit_pos = .new(8.1, 7.7);
+            // postit.addFromText(postit_pos, &.{ "By the way,", "right click", "to duplicate", "anything" });
 
             postit_pos = .new(0, 0);
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{levelIndex("swap")}, &.{.new(0, 8.5)});
-            Toybox.addChildLast(bp, scorer);
+            try helper.maybeAdd(.new(0, 4), levelIndex("swap"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, intro_to_wildcards);
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_calling = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_wildcards, .all_scorers_solved, blk: {
+        const intro_to_calling = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_wildcards, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5141,32 +4956,37 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(7.2, 0.3));
             postit.addFromText(postit_pos, &.{ "You can use", "old solutions", "as part of", "new solutions" });
             postit_pos.addInPlace(.new(7.1, 0.2));
+            postit.addFromText(postit_pos.add(.new(0.5, 0.7)), &.{ "(the one about", "shifting 'a'", "into 'b', etc)" });
             postit.addFromText(postit_pos, &.{ "For example", "this assignment", "is almost already", "solved by the", "first assignment" });
 
-            postit_pos = .new(-6.7, 4.25);
+            postit_pos.addInPlace(.new(-10.2, 7.2));
             postit.addFromParts(postit_pos, &.{
-                .{ .point = .{ .pos = .new(3, 2.5), .scale = 0.95 }, .part = .{ .paragraph = &.{ "That's the 'name'", "of your solution", "to the first", "assignment" } } },
-                .{ .point = .{ .pos = .new(4, 5), .turns = 0.18 }, .part = .arrow },
+                .{ .point = .{ .pos = .new(3, 2.5), .scale = 0.95 }, .part = .{ .paragraph = &.{ "That's the 'name'", "of the first", "assignment" } } },
+                .{ .point = .{ .pos = .new(4, 4.5), .turns = 0.18 }, .part = .arrow },
             });
             postit.addFromText(postit_pos.add(.new(7.6, 1.3)), &.{ "Control-click it", "to see its", "definition" });
             Toybox.addChildLast(bp, try Toybox.buildGarland(.{ .pos = postit_pos.add(.new(-1.5, 3.8)) }, &.{
                 try Toybox.buildCase(.{}, .{
-                    .pattern = try Toybox.buildSexprFromText(.{}, "(@f . <empty>)", true, false, .new(@src())),
-                    .template = try Toybox.buildSexprFromText(.{}, "@f", false, false, .new(@src())),
+                    .pattern = try Toybox.buildSexprFromText(.{}, "(@head . <empty>)", true, false, .new(@src())),
+                    .template = try Toybox.buildSexprFromText(.{}, "@head", false, false, .new(@src())),
                     .fnkname = try Toybox.buildSexprFromText(.{}, levels[0].fnk_name, false, false, .new(@src())),
                     .next = null,
                 }, .new(@src())),
             }, .new(@src())));
 
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{levelIndex("shiftTopHalf")}, &.{.new(4, 9.5)});
-            Toybox.addChildLast(bp, scorer);
+            postit.addFromParts(postit_pos.add(.new(7.6, 1.3)).add(.new(5.3, 6.9)), &.{
+                .{ .point = .{ .pos = .new(3, 3) }, .part = .{ .paragraph = &.{ "Click the     ", "buttons to", "see it in action!" } } },
+                .{ .point = .{ .pos = .new(4.7, 2) }, .part = .launch_testcase_button },
+            });
+
+            try helper.maybeAdd(.new(-3.4, 7.5), levelIndex("shiftTopHalf"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, intro_to_calling);
 
         bubble_pos.addInPlace(path_next_close);
-        const calling_exercise = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_calling, .all_scorers_solved, blk: {
+        const calling_exercise = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_calling, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5178,12 +4998,13 @@ const Workspace = struct {
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{ "Time to prove", "you're learning" });
             postit_pos.addInPlace(.new(7.2, 0.2));
-            postit.addFromText(postit_pos, &.{ "In the", "left toolbar", "you have fresh", "pieces and", "wildcards" });
+            postit.addFromText(postit_pos, &.{ "In the", "left toolbar", "you have fresh", "pieces and", "Wildcards" });
             postit_pos.addInPlace(.new(7.1, 0.1));
             postit.addFromText(postit_pos, &.{ "On the right one", "you have all your", "solutions so far" });
-
-            postit_pos = .new(-6, 5);
+            postit_pos.addInPlace(.new(-10.3, 7.2));
             postit.addFromText(postit_pos, &.{ "Carefully", "study the", "examples", "to understand", "the assignment" });
+            postit_pos.addInPlace(.new(7.2, 0.2));
+            postit.addFromText(postit_pos, &.{ "It's almost", "solved!" });
 
             if (false) {
                 postit_pos = .new(-6, 1);
@@ -5196,8 +5017,7 @@ const Workspace = struct {
                 }, false, true, .new(@src())));
             }
 
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{levelIndex("shiftInUnknownDirection")}, &.{.new(0, 8.5)});
-            Toybox.addChildLast(bp, scorer);
+            try helper.maybeAdd(.new(0, 4), levelIndex("shiftInUnknownDirection"), bp);
 
             break :blk bp;
         });
@@ -5206,7 +5026,7 @@ const Workspace = struct {
         dst.toolbar_unlocks.case_with_wildcards = calling_exercise;
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_nested_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, calling_exercise, .all_scorers_solved, blk: {
+        const intro_to_nested_strands = try Toybox.buildBubble(.{ .pos = bubble_pos }, calling_exercise, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5218,28 +5038,19 @@ const Workspace = struct {
             var postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{"Final concept!"});
             postit_pos.addInPlace(.new(7.2, 0.3));
-            postit.addFromText(postit_pos, &.{ "Strands can be", "nested inside", "other strands" });
+            postit.addFromText(postit_pos, &.{ "Strands can be", "nested inside", "other Strands" });
             postit_pos.addInPlace(.new(7.2, 0.3));
-            postit.addFromText(postit_pos, &.{ "It's easier to", "see than to", "explain, try", "it out" });
+            postit.addFromText(postit_pos, &.{ "It's easier to", "see than to", "explain,", "try it out" });
 
             const level_index = levelIndex("startWithB");
-            postit_pos = .new(-5, 2);
-            Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
-                .{ .pos = postit_pos },
-                levels[level_index].bubble_definition.?,
-                scratch,
-                .new(@src()),
-            ));
-
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{level_index}, &.{.new(0, 8.5)});
-            Toybox.addChildLast(bp, scorer);
+            try helper.maybeAdd(.new(0, -2), level_index, bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, intro_to_nested_strands);
 
         bubble_pos.addInPlace(path_next_close);
-        const intro_to_mixing_both_tricks = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_nested_strands, .all_scorers_solved, blk: {
+        const intro_to_mixing_both_tricks = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_nested_strands, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5248,7 +5059,7 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "That's all!", "You're now", "an expert in", "vau manipulation" });
+            postit.addFromText(postit_pos, &.{ "That's all!", "You're now", "an expert in", "using Strands" });
 
             postit_pos.addInPlace(.new(8.2, 0.3));
             postit.addFromText(postit_pos, &.{ "These last two", "'tricks' can be", "mixed:" });
@@ -5256,7 +5067,7 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "call a previous", "solution,", "and then match", "on the result" });
 
             const level_index = levelIndex("withBottomShifted");
-            postit_pos = .new(-7.6, 2);
+            postit_pos = .new(-4.2, -2);
             Toybox.addChildLast(bp, try Lego.Specific.Garland.buildFromOldCoreValue(
                 .{ .pos = postit_pos },
                 levels[level_index].bubble_definition.?,
@@ -5264,15 +5075,14 @@ const Workspace = struct {
                 .new(@src()),
             ));
 
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos }, &.{level_index}, &.{.new(0, 8.5)});
-            Toybox.addChildLast(bp, scorer);
+            try helper.maybeAdd(scorer_pos, level_index, bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, intro_to_mixing_both_tricks);
 
         bubble_pos.addInPlace(path_next_close);
-        const final_tutorial = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_mixing_both_tricks, .all_scorers_solved, blk: {
+        const final_tutorial = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_mixing_both_tricks, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5295,8 +5105,8 @@ const Workspace = struct {
                 postit.addFromText(pos, lines);
             }
 
-            var postit_pos: Vec2 = .new(7.5, 6);
-            postit.addFromText(postit_pos, &.{ "Nested strands", "can have", "nested strands" });
+            var postit_pos: Vec2 = .new(7.7, 7.5);
+            postit.addFromText(postit_pos, &.{ "Nested Strands", "can have", "nested Strands" });
             postit_pos.addInPlace(.new(0.1, 0.2));
             postit.addFromParts(postit_pos, &.{
                 .{ .point = .{ .pos = .new(3, 1.8) }, .part = .{ .paragraph = &.{"You will need"} } },
@@ -5311,12 +5121,9 @@ const Workspace = struct {
                 ) } },
             });
             postit_pos.addInPlace(.new(0.1, 0.2));
-            postit.addFromText(postit_pos, &.{ "Below this", "I've left", "some hints,", "just in case" });
+            postit.addFromText(postit_pos, &.{ "I've left some", "hints here,", "just in case" });
 
-            const k = 0;
-            const level_index = levelIndex("shiftPair");
-            const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos.addY(5 * k) }, &.{level_index}, &.{.new(k * 4, 8.5 + tof32(k) * 2)});
-            Toybox.addChildLast(bp, scorer);
+            try helper.maybeAdd(.new(-4, -2.2), levelIndex("shiftPair"), bp);
 
             break :blk bp;
         });
@@ -5324,7 +5131,7 @@ const Workspace = struct {
 
         var old_bubble_pos = bubble_pos;
         bubble_pos.addInPlace(path_up);
-        const first_recursion_cruel = try buildBubbleSimple(bubble_pos, final_tutorial, &.{ "shiftAll", "mirrorTree" }, &.{
+        const first_recursion_cruel = try helper.buildBubbleSimple(bubble_pos, final_tutorial, &.{ "shiftAll", "mirrorTree" }, &.{
             &.{ "From now on,", "I won't always", "tell you", "all you need", "to know" },
             &.{ "Instead of", "going from", "easy to hard", "assignments..." },
             &.{ "...I will give you", "unreasonable", "hard ones first and", "hide the tutorial", "behind that", "'hint?' button" },
@@ -5334,14 +5141,14 @@ const Workspace = struct {
         });
         Toybox.addChildLast(dst.main_area, first_recursion_cruel);
 
-        const first_recursion_nicer = try buildBubbleSimple(bubble_pos.add(path_down.neg()), .nothing, &.{"hasSomeB"}, &.{
+        const first_recursion_nicer = try helper.buildBubbleSimple(bubble_pos.add(path_down.neg()), .nothing, &.{"hasSomeB"}, &.{
             &.{ "Many problems", "can be solved", "by a function", "that invokes", "itself" },
             &.{ "(these are", "'recursive'", "functions)" },
         });
         Toybox.addChildLast(dst.main_area, first_recursion_nicer);
         addHint(first_recursion_nicer, first_recursion_cruel);
 
-        const optional = try Toybox.buildBubble(.{ .pos = old_bubble_pos.add(path_down) }, final_tutorial, .all_scorers_solved, blk: {
+        const optional = try Toybox.buildBubble(.{ .pos = old_bubble_pos.add(path_down) }, final_tutorial, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5357,34 +5164,25 @@ const Workspace = struct {
             postit.addFromText(postit_pos, &.{ "They will be a bit", "spoiled by later", "assignments,", "so it's more fun to", "try them now" });
             postit_pos.addInPlace(.new(7.7, 0.2));
             postit.addFromText(postit_pos, &.{ "But don't", "expect to", "succeed!" });
-            postit_pos = .new(-7, 7);
-            postit.addFromText(postit_pos, &.{ "You can", "right click", "functions to", "create your", "own helpers" });
+            postit_pos.addInPlace(.new(-3.2, 6.8));
+            postit.addFromText(postit_pos, &.{ "You can", "right click", "assignments", "to create your", "own helpers" });
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, -2) }, &.{
-                levelIndex("biggestHalf"),
-            }, &.{
-                .new(-6, 8.5),
-            }));
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-4, 2) }, &.{
-                levelIndex("deepestHalf"),
-            }, &.{
-                .new(6, 8.5),
-            }));
+            try helper.maybeAdd(.new(-8, -2), levelIndex("biggestHalf"), bp);
+            try helper.maybeAdd(.new(8.8, 3.8), levelIndex("deepestHalf"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, optional);
 
         bubble_pos.addInPlace(path_next);
-        const double_recursion = try buildBubbleSimple(bubble_pos, first_recursion_cruel, &.{"sameShape?"}, &.{
+        const double_recursion = try helper.buildBubbleSimple(bubble_pos, first_recursion_cruel, &.{"sameShape?"}, &.{
             &.{ "Now that you know", "how to recurse", "on a tree..." },
             &.{ "...let's see how", "you recurse on", "two trees at once" },
         });
         Toybox.addChildLast(dst.main_area, double_recursion);
 
         bubble_pos.addInPlace(path_next);
-        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, double_recursion, .all_scorers_solved, blk: {
+        const intro_to_lists = try Toybox.buildBubble(.{ .pos = bubble_pos }, double_recursion, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5422,7 +5220,7 @@ const Workspace = struct {
         dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
 
         bubble_pos.addInPlace(path_next);
-        const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_lists, .all_scorers_solved, blk: {
+        const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_lists, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5430,21 +5228,14 @@ const Workspace = struct {
                 .new(@src()),
             );
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, -8) }, &.{
-                levelIndex("second"),
-            }, &.{.new(8, -4.5)}));
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, -3) }, &.{
-                levelIndex("pairToList"),
-            }, &.{.new(-8, -4.5)}));
+            try helper.maybeAdd(.new(-8.6, -11.3), levelIndex("second"), bp);
+            try helper.maybeAdd(.new(9.8, -10.1), levelIndex("pairToList"), bp);
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
 
-            const postit_pos: Vec2 = .new(-3, 4);
+            const postit_pos: Vec2 = .new(-6.3, 5.3);
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, postit_pos.y + 4.5) }, &.{
-                levelIndex("prepend"),
-            }, &.{.new(0, 10.5)}));
+            try helper.maybeAdd(postit_pos.add(.new(3.5, 3.3)), levelIndex("prepend"), bp);
 
             postit.addFromText(postit_pos, &.{ "Top half is", "the list,", "bottom half is", "the element" });
 
@@ -5453,7 +5244,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, lists_1);
 
         bubble_pos.addInPlace(path_next);
-        const lists_1_5 = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_1, .all_scorers_solved, blk: {
+        const lists_1_5 = try Toybox.buildBubble(.{ .pos = bubble_pos }, lists_1, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5463,7 +5254,7 @@ const Workspace = struct {
 
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
 
-            const postit_pos: Vec2 = .new(-5, -5);
+            const postit_pos: Vec2 = .new(-5, -7);
             postit.addFromText(postit_pos, &.{ "Note that this list", "has three", "elements,", "none of them 'b'" });
             Toybox.addChildLast(bp, try Toybox.buildListViewer(.{ .pos = postit_pos.add(.new(5, 0)) }, try Toybox.buildSexprFromText(
                 .{ .scale = 2 },
@@ -5474,20 +5265,15 @@ const Workspace = struct {
                 .new(@src()),
             )));
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 3) }, &.{
-                levelIndex("listHasSomeB"),
-            }, &.{.new(0, 8.5)}));
-
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
-                levelIndex("last"),
-            }, &.{.new(5, 10.5)}));
+            try helper.maybeAdd(.new(-8, -2), levelIndex("listHasSomeB"), bp);
+            try helper.maybeAdd(.new(8.8, 3.8), levelIndex("last"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, lists_1_5);
 
         bubble_pos.addInPlace(path_up);
-        const lists_remove_last_b = try buildBubbleSimple(bubble_pos, lists_1_5, &.{"removeLastB"}, &.{
+        const lists_remove_last_b = try helper.buildBubbleSimple(bubble_pos, lists_1_5, &.{"removeLastB"}, &.{
             &.{ "I don't expect", "you to get", "this one", "without", "the hints" },
             &.{ "Remember you", "can right click", "functions to", "create your", "own helpers" },
         });
@@ -5495,23 +5281,23 @@ const Workspace = struct {
 
         old_bubble_pos = bubble_pos;
         old_bubble_pos.addInPlace(path_down.neg());
-        const hints_for_lists_remove_last_b = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "reverse", "removeFirstB" }, &.{});
+        const hints_for_lists_remove_last_b = try helper.buildBubbleSimple(old_bubble_pos, .nothing, &.{ "reverse", "removeFirstB" }, &.{});
         Toybox.addChildLast(dst.main_area, hints_for_lists_remove_last_b);
         addHint(hints_for_lists_remove_last_b, lists_remove_last_b);
 
         old_bubble_pos.addInPlace(path_next.neg());
-        const hint_for_reverse = try buildBubbleSimple(old_bubble_pos, .nothing, &.{"append"}, &.{});
+        const hint_for_reverse = try helper.buildBubbleSimple(old_bubble_pos, .nothing, &.{"append"}, &.{});
         Toybox.addChildLast(dst.main_area, hint_for_reverse);
         addHint(hint_for_reverse, hints_for_lists_remove_last_b);
 
         old_bubble_pos = bubble_pos.add(path_up.neg()).add(path_down);
-        const lists_middle_element = try buildBubbleSimple(old_bubble_pos, lists_1_5, &.{"middleElement"}, &.{
+        const lists_middle_element = try helper.buildBubbleSimple(old_bubble_pos, lists_1_5, &.{"middleElement"}, &.{
             &.{ "Not hard, but", "the best solution", "requires some", "ingenuity" },
         });
         Toybox.addChildLast(dst.main_area, lists_middle_element);
 
         old_bubble_pos.addInPlace(path_up.neg());
-        const hint_for_lists_middle_element = try buildBubbleSimple(old_bubble_pos, .nothing, &.{"evenLength?"}, &.{
+        const hint_for_lists_middle_element = try helper.buildBubbleSimple(old_bubble_pos, .nothing, &.{"evenLength?"}, &.{
             &.{ "Two key ideas", "for the best", "solution:" },
             &.{ "Eating two", "elements on", "each step" },
             &.{ "Recursing", "on two lists", "at once" },
@@ -5521,19 +5307,19 @@ const Workspace = struct {
         addHint(hint_for_lists_middle_element, lists_middle_element);
 
         bubble_pos.addInPlace(path_up);
-        const lists_final = try buildBubbleSimple(bubble_pos, lists_remove_last_b, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{
+        const lists_final = try helper.buildBubbleSimple(bubble_pos, lists_remove_last_b, &.{ "mostCommonBoolean", "findSecondLongest" }, &.{
             &.{ "Try to get", "these ones", "without hints!" },
         });
         Toybox.addChildLast(dst.main_area, lists_final);
 
         old_bubble_pos = bubble_pos;
         old_bubble_pos.addInPlace(path_down.neg());
-        const hint_for_lists_final = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "separateBooleans", "findTopTwoLongest" }, &.{});
+        const hint_for_lists_final = try helper.buildBubbleSimple(old_bubble_pos, .nothing, &.{ "separateBooleans", "findTopTwoLongest" }, &.{});
         Toybox.addChildLast(dst.main_area, hint_for_lists_final);
         addHint(hint_for_lists_final, lists_final);
 
         bubble_pos.addInPlace(path_next);
-        const breather = try buildBubbleSimple(bubble_pos, lists_final, &.{}, &.{
+        const breather = try helper.buildBubbleSimple(bubble_pos, lists_final, &.{}, &.{
             &.{ "You've come", "so far!" },
             &.{ "You're almost", "ready for", "your actual", "assignment" },
             &.{ "But first,", "one last", "tutorial" },
@@ -5541,7 +5327,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, breather);
 
         bubble_pos.addInPlace(path_up);
-        const calculator = try buildBubbleSimple(bubble_pos, breather, &.{"calculator"}, &.{
+        const calculator = try helper.buildBubbleSimple(bubble_pos, breather, &.{"calculator"}, &.{
             &.{ "There are two", "lessons here" },
             &.{ "The hints will", "show you the", "details of", "the first one:", "numbers" },
             &.{ "The second", "lesson", "is more subtle", "and needs", "no hint" },
@@ -5550,7 +5336,7 @@ const Workspace = struct {
 
         old_bubble_pos = bubble_pos;
         old_bubble_pos.addInPlace(path_down.neg());
-        const calculator_hints_1 = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "calculator_sum", "calculator_mul", "calculator_sub" }, &.{
+        const calculator_hints_1 = try helper.buildBubbleSimple(old_bubble_pos, .nothing, &.{ "calculator_sum", "calculator_mul", "calculator_sub" }, &.{
             &.{ "These default", "solutions", "are not", "enough!" },
             &.{ "You'll need to", "handle all", "numbers, not", "just 1 to 9" },
             &.{ "The hint can", "show you how" },
@@ -5559,14 +5345,14 @@ const Workspace = struct {
         addHint(calculator_hints_1, calculator);
 
         old_bubble_pos.addInPlace(path_next.neg());
-        const calculator_hints_2 = try buildBubbleSimple(old_bubble_pos, .nothing, &.{ "unary_from_naive", "naive_from_unary", "sum_unary" }, &.{
+        const calculator_hints_2 = try helper.buildBubbleSimple(old_bubble_pos, .nothing, &.{ "unary_from_naive", "naive_from_unary", "sum_unary" }, &.{
             &.{ "These are", "the only", "hardcoded", "strands", "you need!" },
         });
         Toybox.addChildLast(dst.main_area, calculator_hints_2);
         addHint(calculator_hints_2, calculator_hints_1);
 
         bubble_pos.addInPlace(path_up);
-        const explicit_second_lesson = try buildBubbleSimple(bubble_pos, calculator, &.{}, &.{
+        const explicit_second_lesson = try helper.buildBubbleSimple(bubble_pos, calculator, &.{}, &.{
             &.{ "Assignments", "have you write", "code that", "manipulates", "data" },
             &.{ "But that line", "got blurred", "in the calculator" },
             &.{ "The data itself", "told you what", "code to run" },
@@ -5579,7 +5365,7 @@ const Workspace = struct {
         });
         Toybox.addChildLast(dst.main_area, explicit_second_lesson);
 
-        const optional_brainfuck = try buildBubbleSimple(bubble_pos.add(path_down), explicit_second_lesson, &.{"brainfuck"}, &.{
+        const optional_brainfuck = try helper.buildBubbleSimple(bubble_pos.add(path_down), explicit_second_lesson, &.{"brainfuck"}, &.{
             &.{ "This assignment", "is about", "Brainf*ck,", "a programming", "language" },
             &.{ "Search online", "how it works" },
             &.{ "The top half", "is the code,", "the lower half", "is the stdin;", "return the stdout" },
@@ -5587,7 +5373,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, optional_brainfuck);
 
         bubble_pos.addInPlace(path_up);
-        const meta_play = try Toybox.buildBubble(.{ .pos = bubble_pos }, explicit_second_lesson, .all_scorers_solved, blk: {
+        const meta_play = try Toybox.buildBubble(.{ .pos = bubble_pos }, explicit_second_lesson, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5632,7 +5418,7 @@ const Workspace = struct {
         dst.toolbar_unlocks.meta_viewer = meta_play;
 
         bubble_pos.addInPlace(path_next);
-        const meta_duplicate = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_scorers_solved, blk: {
+        const meta_duplicate = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5680,24 +5466,15 @@ const Workspace = struct {
                 }, .new(@src())),
             }, .new(@src())));
 
-            const level_index = levelIndex("meta_duplicate");
-            const level = levels[level_index];
             postit_pos = .new(-7, 8);
-            Toybox.addChildLast(bp, try Toybox.buildFnkboxFromLevel(
-                .{ .pos = postit_pos },
-                try dst.findFnkname(.{}, true, level.fnk_name),
-                level_index,
-                false,
-                scratch,
-                dst.arena_for_atom_names.allocator(),
-            ));
+            try helper.maybeAdd(postit_pos, levelIndex("meta_duplicate"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, meta_duplicate);
 
         bubble_pos.addInPlace(path_next_close);
-        const meta_duplicate_usage = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate, .all_scorers_solved, blk: {
+        const meta_duplicate_usage = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5728,16 +5505,14 @@ const Workspace = struct {
                 }, .new(@src())),
             }, .new(@src())));
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
-                levelIndex("shiftback_with_meta_duplicate"),
-            }, &.{.new(0, 12)}));
+            try helper.maybeAdd(.new(-7, 8), levelIndex("shiftback_with_meta_duplicate"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, meta_duplicate_usage);
 
         bubble_pos.addInPlace(path_next_close);
-        const meta_implementation_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate_usage, .all_scorers_solved, blk: {
+        const meta_implementation_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate_usage, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5806,7 +5581,7 @@ const Workspace = struct {
         Toybox.addChildLast(dst.main_area, meta_implementation_1);
 
         bubble_pos.addInPlace(path_next_close);
-        const meta_implementation_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_duplicate_usage, .all_scorers_solved, blk: {
+        const meta_implementation_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_implementation_1, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5870,15 +5645,13 @@ const Workspace = struct {
             postit_pos.addInPlace(.new(6.8, 0.3));
             postit.addFromText(postit_pos, &.{ "(with the", "bottom half", "being some", "random atom)" });
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
-                levelIndex("fillAllVariablesWithA"),
-            }, &.{.new(0, 12)}));
+            try helper.maybeAdd(.new(-7, 8), levelIndex("fillAllVariablesWithA"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, meta_implementation_2);
 
-        if (false) _ = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_scorers_solved, blk: {
+        if (false) _ = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_play, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5942,14 +5715,12 @@ const Workspace = struct {
                 }, .new(@src())),
             }, .new(@src())));
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-7, 8) }, &.{
-                levelIndex("meta_invert_map"),
-            }, &.{.new(0, 10)}));
+            try helper.maybeAdd(.new(-7, 8), levelIndex("meta_invert_map"), bp);
 
             break :blk bp;
         });
 
-        // const meta_encoding = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down.neg()) }, .nothing, .all_scorers_solved, blk: {
+        // const meta_encoding = try Toybox.buildBubble(.{ .pos = bubble_pos.add(path_down.neg()) }, .nothing, .all_bp_fnkboxes_solved, blk: {
         //     const bp = try Toybox.new(
         //         .{},
         //         .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5983,7 +5754,7 @@ const Workspace = struct {
         // addHint(meta_encoding, meta_play);
 
         bubble_pos.addInPlace(path_next);
-        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_implementation_2, .all_scorers_solved, blk: {
+        const meta_2 = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_implementation_2, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -5996,16 +5767,14 @@ const Workspace = struct {
             const postit_pos: Vec2 = .new(-8, -8);
             postit.addFromText(postit_pos, &.{ "Time to write", "code that", "generates", "code :)" });
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
-                levelIndex("meta_hardcoded_map"),
-            }, &.{.new(8, 11.5)}));
+            try helper.maybeAdd(.new(-8, 8), levelIndex("meta_hardcoded_map"), bp);
 
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, meta_2);
 
         bubble_pos.addInPlace(path_next);
-        const meta_final = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_2, .all_scorers_solved, blk: {
+        const meta_final = try Toybox.buildBubble(.{ .pos = bubble_pos }, meta_2, .all_bp_fnkboxes_solved, blk: {
             const bp = try Toybox.new(
                 .{},
                 .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
@@ -6020,9 +5789,7 @@ const Workspace = struct {
             // postit_pos.addInPlace(.new(7.7, 0.2));
             // postit.addFromText(postit_pos, &.{ "In other words,", "you can make strands", "that operate", "on strands!" });
 
-            Toybox.addChildLast(bp, try Toybox.buildScorer(.{ .pos = .new(-8, 8) }, &.{
-                levelIndex("interpreter"),
-            }, &.{.new(8, 11.5)}));
+            try helper.maybeAdd(.new(-8, 8), levelIndex("interpreter"), bp);
 
             break :blk bp;
         });
@@ -6042,7 +5809,7 @@ const Workspace = struct {
             dst.unlock_connections.appendAssumeCapacity(.{
                 .source = bubble_1,
                 .target = bubble_2,
-                .condition = .all_scorers_solved,
+                .condition = .all_bp_fnkboxes_solved,
             });
         }
 
@@ -6461,49 +6228,6 @@ const Workspace = struct {
         }
     }
 
-    fn buildBubbleSimple(bubble_pos: Vec2, prev: Lego.Index, comptime level_names: []const []const u8, postits: []const []const []const u8) !Lego.Index {
-        const scorer_pos: Vec2 = .new(-7, 0);
-        const postit_pos: []const Vec2 = if (level_names.len == 0) &.{
-            .new(-8, -8),
-            .new(-0.3, -7.2),
-            .new(7.7, -7.1),
-            .new(-7.2, -0.3),
-            .new(0.15, 0.0),
-            .new(7.8, 0.3),
-            .new(-6.9, 7.3),
-            .new(0.5, 7.5),
-            .new(7.8, 7.9),
-        } else &.{
-            .new(-8, -8),
-            .new(-0.3, -7.2),
-            .new(7.7, -7.1),
-            .new(-6.9, 5.8),
-            .new(0.5, 5.9),
-            .new(7.8, 5.8),
-        };
-        return try Toybox.buildBubble(.{ .pos = bubble_pos }, prev, .all_scorers_solved, blk: {
-            const bp = try Toybox.new(
-                .{},
-                .{ .area = .{ .bg = .{ .local_rect = .fromCenterAndSize(.zero, .both(24)) }, .style = .bubble } },
-
-                .new(@src()),
-            );
-
-            const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
-            for (postits, 0..) |lines, k| {
-                postit.addFromText(postit_pos[k], lines);
-            }
-
-            inline for (level_names, 0..) |level_name, k| {
-                const level_index = levelIndex(level_name);
-                const scorer = try Toybox.buildScorer(.{ .pos = scorer_pos.addY(5 * k) }, &.{level_index}, &.{.new(k * 4, 8.5 + tof32(k) * 2)});
-                Toybox.addChildLast(bp, scorer);
-            }
-
-            break :blk bp;
-        });
-    }
-
     pub fn canonizeAfterChanges(workspace: *Workspace, scratch: std.mem.Allocator) !void {
         // when scrolling a lot of cases and tracy is active, this crashes :(
         const zone = tracy.initZone(@src(), .{ .name = "canonize after changes" });
@@ -6521,27 +6245,37 @@ const Workspace = struct {
         // TODO(perf-late): remove
         var debug_done_work: usize = 0;
 
-        // TODO(perf): use physicaliterator
-        // reverse order so that fnkboxes get updated before scorers, and those before bubbles
-        var lego_it = toybox.all_legos.iterator(toybox.all_legos.len - 1);
-        while (lego_it.prev()) |lego| {
+        const all_fnkboxes = try workspace.allFnkboxes(false, scratch);
+        if (true) { // first, update all fnkboxes
+            const zone2 = tracy.initZone(@src(), .{ .name = "canonize fnkboxes" });
+            defer zone2.deinit();
+            tracy.plot(u32, "number of fnkboxes", @intCast((try workspace.allFnkboxes(false, scratch)).len));
+            for (all_fnkboxes) |fnkbox_index| {
+                try Lego.Specific.Fnkbox.updateStatus(fnkbox_index, workspace, scratch, workspace.arena_for_atom_names.allocator(), all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases, &debug_done_work);
+            }
+        }
+
+        const fnkbox_from_level = try workspace.existingFnkboxesForLevels(scratch);
+
+        var lego_it = Toybox.iteratorPhysical();
+        while (lego_it.next()) |lego| {
             if (!lego.exists) continue;
             if (!lego.physical) continue;
             if (workspace.isFreefloating(lego.index)) continue;
-            if (lego.specific.tag() == .fnkbox) {
-                try lego.specific.fnkbox.updateStatus(workspace, scratch, workspace.arena_for_atom_names.allocator(), all_fnks, all_fnks_hash, &remaining_budget_for_unloaded_testcases, &debug_done_work);
-            }
             // TODO(optim): move this to interaction?
             if (lego.specific.tag() == .list_viewer) {
+                const zone2 = tracy.initZone(@src(), .{ .name = "canonize listviewer" });
+                defer zone2.deinit();
                 try Lego.Specific.ListViewer.canonize(lego.index);
             }
             if (lego.specific.tag() == .meta_viewer) {
+                const zone2 = tracy.initZone(@src(), .{ .name = "canonize metaviewer" });
+                defer zone2.deinit();
                 try Lego.Specific.MetaViewer.canonize(lego.index, scratch);
             }
-            if (lego.specific.tag() == .scorer) {
-                try Lego.Specific.Scorer.updateStatus(workspace, lego.index, all_fnks, all_fnks_hash, scratch);
-            }
             if (lego.specific.tag() == .bubble) {
+                const zone2 = tracy.initZone(@src(), .{ .name = "canonize bubble" });
+                defer zone2.deinit();
                 if (debug_all_bubbles_unlocked) {
                     lego.specific.bubble.locked = false;
                 } else {
@@ -6558,12 +6292,11 @@ const Workspace = struct {
 
                 const area = lego.index.children(.bubble).instanced;
                 lego.specific.bubble.fulfilled = switch (lego.specific.bubble.goal) {
-                    .all_scorers_solved => blk: {
-                        var cur = area;
-                        while (cur != nothing) : (cur = Toybox.next_preordered(cur, area).next) {
-                            if (cur.hasTag(.scorer)) {
-                                if (cur.get().specific.scorer.score == null) break :blk false;
-                            }
+                    .all_bp_fnkboxes_solved => blk: {
+                        for (lego.specific.bubble.ownedLevels().constSlice()) |level_index| {
+                            const fnkbox: Lego.Index = fnkbox_from_level[level_index];
+                            if (!fnkbox.exists()) break :blk false;
+                            if (fnkbox.get().specific.fnkbox.status != .solved) break :blk false;
                         }
                         break :blk true;
                     },
@@ -6750,7 +6483,7 @@ const Workspace = struct {
                     },
                     .editable_textline => |editable_textline| {
                         if (Toybox.findAncestor(cur, .fnkbox).getSafe()) |f| {
-                            if (!f.specific.fnkbox.editable) continue;
+                            if (f.specific.fnkbox.premade_level != null) continue;
                         }
                         var best_index: usize = 0;
                         var best_dist: f32 = 1.0; // don't go too far, horizontally
@@ -6798,9 +6531,6 @@ const Workspace = struct {
                     .list_viewer,
                     .meta_viewer,
                     .fnkname_holder,
-                    .scorer,
-                    .scorer_row,
-                    .scorer_rows,
                     .bubble,
                     .bubble_connection,
                     => {},
@@ -6810,9 +6540,6 @@ const Workspace = struct {
                         const overlappable: bool, const kind: enum { hot, drop } = switch (lego.specific) {
                             .bubble,
                             .bubble_connection,
-                            .scorer,
-                            .scorer_row,
-                            .scorer_rows,
                             .sexpr,
                             .area,
                             .microscope,
@@ -7369,9 +7096,6 @@ const Workspace = struct {
                     .postit_text,
                     .postit_drawing,
                     .fnkname_holder,
-                    .scorer,
-                    .scorer_row,
-                    .scorer_rows,
                     .bubble,
                     .bubble_connection,
                     => {},
@@ -7813,7 +7537,7 @@ const Workspace = struct {
                                         try drawer.canvas.drawText(0, camera_relative, "Hint?", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
                                     }
                                 },
-                                .create_fnkbox_for_row, .add_testcase => if (button.enabled) {
+                                .add_testcase => if (button.enabled) {
                                     // TODO(game): nicer
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
@@ -7907,36 +7631,6 @@ const Workspace = struct {
                                     );
                                 }
                             }
-                        },
-                        .scorer => |scorer| {
-                            const n_rows = Toybox.childCount(cur.children(.scorer).scorer_rows);
-                            const rect: Rect = .{
-                                .top_left = .new(-1, -1),
-                                .size = .new(16, 2 * tof32(n_rows)),
-                            };
-                            drawer.canvas.fillRect(camera_relative, rect, COLORS.bg);
-                            drawer.canvas.strokeRect(camera_relative, rect, 0.1, .black);
-                            try drawer.canvas.drawText(
-                                0,
-                                camera_relative,
-                                if (scorer.score) |score|
-                                    try std.fmt.allocPrint(drawer.canvas.frame_arena.allocator(), "Size {d}, Time {d}", .{ score.code_size, score.total_time })
-                                else
-                                    "unsolved!",
-                                .leftCenterAt(.new(1, -2)),
-                                0.75,
-                                .black,
-                            );
-                        },
-                        .scorer_row => |scorer_row| {
-                            try drawer.canvas.drawText(
-                                0,
-                                camera_relative,
-                                levels[scorer_row.level_index].description,
-                                .leftCenterAt(.new(1, 0)),
-                                0.75,
-                                .black,
-                            );
                         },
                         .fnkbox_box => {
                             drawer.canvas.fillRect(camera_relative, Lego.Specific.FnkboxBox.relative_box, COLORS.bg.withAlpha(0.65));
@@ -8048,7 +7742,6 @@ const Workspace = struct {
                         .garland_newcases,
                         .fnkbox,
                         .pill,
-                        .scorer_rows,
                         => {},
                     }
                 }
@@ -8138,19 +7831,22 @@ const Workspace = struct {
                 }
             }
         }
-        if (true and @import("builtin").mode == .Debug) { // check that there are no repeated magic_id among scorers
-            var seen_magics: std.AutoHashMap(u32, void) = .init(scratch);
-            defer seen_magics.deinit();
-            var lego_it = toybox.all_legos.constIterator(0);
-            while (lego_it.next()) |lego| {
-                if (!lego.exists) continue;
-                if (lego.specific.tag() != .scorer_row) continue;
-                // don't include stuff in a blueprint
-                if (workspace.isFreefloating(lego.index)) continue;
-                if (seen_magics.get(lego.specific.scorer_row.magic_id) != null) {
-                    panic("unexpected repeated fnk {s} in scorer_rows", .{levels[lego.specific.scorer_row.level_index].fnk_name});
+        if (true and @import("builtin").mode == .Debug) { // check that there are no repeated sources or fnknames among fnkboxes
+            var seen_sources: std.AutoHashMap(usize, void) = .init(scratch);
+            defer seen_sources.deinit();
+            var seen_names_hashes: std.AutoHashMap(u32, void) = .init(scratch);
+            defer seen_names_hashes.deinit();
+            const fnkboxes = try workspace.allFnkboxes(false, scratch);
+            for (fnkboxes) |fnkbox| {
+                const fnkname_hash = fnkbox.children(.fnkbox).fnkname.sexprHash();
+                const source = fnkbox.get().specific.fnkbox.premade_level;
+                if (source != null) {
+                    if (seen_sources.get(source.?) != null) {
+                        panic("unexpected repeated level fnkbox {s}", .{levels[source.?].fnk_name});
+                    }
+                    seen_sources.putNoClobber(source.?, {}) catch std.debug.panic("OoM", .{});
                 }
-                seen_magics.putNoClobber(lego.specific.scorer_row.magic_id, {}) catch std.debug.panic("OoM", .{});
+                seen_names_hashes.putNoClobber(fnkname_hash, {}) catch std.debug.panic("OoM", .{});
             }
         }
         return true;
@@ -8244,7 +7940,7 @@ const Workspace = struct {
             // tracy.print("{s}", .{try printer.toOwnedSliceSentinel(0)});
         }
 
-        if (false and platform.keyboard.wasPressed(.KeyQ)) {
+        if (true and platform.keyboard.wasPressed(.KeyQ)) {
             var total: usize = 0;
             var counts: std.EnumArray(Lego.Specific.Tag, usize) = .initFill(0);
             var lego_it = toybox.all_legos.constIterator(0);
@@ -8535,7 +8231,7 @@ const Workspace = struct {
                             const fnkbox = try Toybox.buildFnkbox(
                                 hot_index.get().absolute_point,
                                 try workspace.findFnkname(.{}, true, null),
-                                true,
+                                null,
                                 "Custom machine",
                                 &.{},
                                 null,
@@ -8682,64 +8378,21 @@ const Workspace = struct {
                             switch (button.action) {
                                 .toggle_skip_fnk => unreachable,
                                 .stop_execution => try forcefullyStopExecutor(Toybox.findAncestor(hot_and_dropzone.hot, .executor)),
-                                .create_fnkbox_for_row => {
-                                    const row = workspace.grabbing.index.get().tree.parent;
-                                    assert(row.hasTag(.scorer_row));
-                                    const level_index = row.get().specific.scorer_row.level_index;
-                                    const level = levels[level_index];
-                                    const old_fnkname = row.children(.scorer_row).fnkname;
-                                    assert(old_fnkname.get().specific.sexpr.kind == .empty);
-                                    const new_fnkname = try workspace.findFnkname(old_fnkname.get().local_point, false, level.fnk_name);
-                                    Toybox.changeChild(old_fnkname, new_fnkname);
-                                    Toybox.destroyFloating(old_fnkname);
-
-                                    var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
-                                    defer pool.deinit();
-                                    const samples: []const Lego.Index = blk: {
-                                        var samples: std.ArrayListUnmanaged(Lego.Index) = .empty;
-                                        try samples.ensureUnusedCapacity(scratch, 100);
-                                        var sample_index: usize = 0;
-                                        while (try level.generate_sample(sample_index, &pool, scratch, workspace.arena_for_atom_names.allocator())) |sample| {
-                                            try samples.append(scratch, try Toybox.buildTestcase(.{ .unloaded = .build(
-                                                level_index,
-                                                sample_index,
-                                                sample,
-                                            ) }, .new(@src())));
-                                            sample_index += 1;
-                                            _ = pool.reset(.retain_capacity);
-                                        }
-                                        break :blk try samples.toOwnedSlice(scratch);
-                                    };
-                                    std.log.debug("samples len: {d}", .{samples.len});
-
-                                    const p = workspace.main_area.get().absolute_point.inverseApplyGetLocal(row.get().absolute_point);
-
-                                    // TODO(game): better fnkbox positioning when not hardcoded
-                                    const fnkbox = try Toybox.buildFnkbox(
-                                        if (row.get().specific.scorer_row.offset) |offset|
-                                            .{ .pos = offset }
-                                        else
-                                            .{ .pos = p.applyToLocalPosition(.new(0, 5)) },
-                                        // .{ .pos = row.get().absolute_point.applyToLocalPosition(offset orelse .new(0, 5)) },
-                                        try Toybox.dupeIntoFloating(new_fnkname, .new(@src())),
-                                        true,
-                                        level.description,
-                                        samples,
-                                        if (try level.initialDefinition(&pool, scratch)) |definition|
-                                            try Lego.Specific.Garland.buildFromOldCoreValue(.{}, definition, scratch, .new(@src()))
-                                        else
-                                            null,
-                                    );
-                                    fnkbox.get().specific.fnkbox.require_manual_execution = level.require_manual_execution;
-                                    Toybox.addChildLast(if (row.get().specific.scorer_row.offset == null)
-                                        workspace.main_area
-                                    else
-                                        Toybox.findAncestor(row, .area), fnkbox);
-                                },
                                 .reset_bubble => {
-                                    workspace.grabbing.index.get().tree.parent.get().specific.bubble.remaining_reset_anim_t = 1;
+                                    const bubble = &workspace.grabbing.index.get().tree.parent.get().specific.bubble;
+
+                                    // destroy existing fnkboxes
+                                    const fnkbox_from_level = try workspace.existingFnkboxesForLevels(scratch);
+                                    for (bubble.ownedLevels().constSlice()) |level| {
+                                        const fnkbox: Lego.Index = fnkbox_from_level[level];
+                                        if (!fnkbox.exists()) continue;
+                                        Toybox.pop(fnkbox);
+                                        Toybox.destroyFloating(fnkbox);
+                                    }
+
+                                    bubble.remaining_reset_anim_t = 1;
                                     const original_instanced = workspace.grabbing.index.get().tree.parent.children(.bubble).instanced;
-                                    const new_instanced = try Toybox.dupeIntoFloating(workspace.grabbing.index.get().tree.parent.get().specific.bubble.blueprint, .new(@src()));
+                                    const new_instanced = try Toybox.dupeIntoFloating(bubble.blueprint, .new(@src()));
                                     Toybox.changeChild(original_instanced, new_instanced);
                                     Toybox.destroyFloating(original_instanced);
                                     Toybox.setPhysicalRecursive(new_instanced, true);
@@ -8941,9 +8594,6 @@ const Workspace = struct {
                     .bubble => |*bubble| {
                         done = math.towardsWithFinish(&bubble.remaining_reset_anim_t, 0, delta_seconds / 0.2) and done;
                     },
-                    .scorer,
-                    .scorer_row,
-                    .scorer_rows,
                     .list_viewer,
                     .meta_viewer,
                     .pill,
@@ -9373,9 +9023,9 @@ const Workspace = struct {
             while (lego_it.next()) |lego| {
                 if (!lego.exists) continue;
                 if (lego.specific.as(.executor)) |executor| {
-                    assert(!(executor.controlled_by_parent_fnkbox and !lego.physical));
+                    // assert(!(executor.controlled_by_parent_fnkbox and !lego.used_for_bg_execution));
                     if (executor.controlled_by_parent_fnkbox) continue;
-                    // if (!lego.physical) continue;
+                    // if (!lego.used_for_bg_execution) continue;
                     try workspace.advanceExecutorAnimation(lego.index, delta_seconds, scratch);
                 }
             }
@@ -9396,7 +9046,6 @@ const Workspace = struct {
                         .unlock_hint => lego.tree.parent.get().specific.bubble.visibleUnlockHints(),
                         // TODO(game): set this to true to use the toggle_skip ui
                         .toggle_skip_fnk => false,
-                        .create_fnkbox_for_row => lego.tree.parent.children(.scorer_row).fnkname.get().specific.sexpr.kind == .empty,
                         .stop_execution => true,
                     };
                     button.extra_info = switch (button.action) {
@@ -9411,7 +9060,6 @@ const Workspace = struct {
                         .scroll_down,
                         .reset_bubble,
                         .unlock_hint,
-                        .create_fnkbox_for_row,
                         .add_testcase,
                         .stop_execution,
                         => false,
@@ -9578,34 +9226,6 @@ const Workspace = struct {
                             .delete_testcase
                         else
                             .launch_testcase;
-                    }
-                }
-            }
-        }
-
-        if (true) { // delete testcases to avoid accidental damage
-            const zone = tracy.initZone(@src(), .{ .name = "delete mangled testcases" });
-            defer zone.deinit();
-
-            const fnkboxes = try workspace.allFnkboxes(false, scratch);
-            for (fnkboxes) |fnkbox_index| {
-                const testcases_parent = fnkbox_index.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
-                assert(testcases_parent.hasTag(.scrollable_list));
-                var cur = testcases_parent.get().tree.first;
-                var next: Lego.Index = undefined;
-                while (cur != nothing) : (cur = next) {
-                    next = cur.get().tree.next;
-                    if (!cur.hasTag(.testcase)) continue;
-
-                    if (!cur.get().specific.testcase.loaded) continue;
-                    if (cur.get().specific.testcase.source) |source| {
-                        const mangled = source.input_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).input) or
-                            source.expected_hash != Lego.Specific.Sexpr.hash(cur.children(.testcase).expected);
-
-                        if (mangled) {
-                            Toybox.pop(cur);
-                            Toybox.destroyFloating(cur);
-                        }
                     }
                 }
             }
@@ -10049,7 +9669,32 @@ const Workspace = struct {
         } else return null;
     }
 
-    fn allFnkboxes(workspace: *Workspace, include_locked: bool, allocator: std.mem.Allocator) ![]const Lego.Index {
+    fn deleteExistingSolution(existing_solutions: []const Lego.Index, level_index: ?usize) void {
+        if (level_index) |source| {
+            const fnkbox_index = existing_solutions[source];
+            if (fnkbox_index.exists()) {
+                Toybox.pop(fnkbox_index);
+                Toybox.destroyFloating(fnkbox_index);
+            }
+        }
+    }
+
+    // dict: level_index -> fnkbox_index
+    fn existingFnkboxesForLevels(workspace: *const Workspace, allocator: std.mem.Allocator) ![]const Lego.Index {
+        const result = try allocator.alloc(Lego.Index, levels.len);
+        @memset(result, .nothing);
+        const all_fnkboxes = try workspace.allFnkboxes(true, allocator);
+        defer allocator.free(all_fnkboxes);
+        for (all_fnkboxes) |fnkbox_index| {
+            if (fnkbox_index.get().specific.fnkbox.premade_level) |source| {
+                assert(result[source] == nothing);
+                result[source] = fnkbox_index;
+            }
+        }
+        return result;
+    }
+
+    fn allFnkboxes(workspace: *const Workspace, include_locked: bool, allocator: std.mem.Allocator) ![]const Lego.Index {
         var result: std.ArrayListUnmanaged(Lego.Index) = .empty;
 
         var lego_it = Toybox.iteratorPhysical();
@@ -10267,24 +9912,15 @@ const Workspace = struct {
 
     /// only saves fnkboxes
     pub fn save(workspace: *Workspace, out: std.io.AnyWriter, scratch: std.mem.Allocator) !void {
-        const version: u32 = 5;
+        const version: u32 = 7;
         try out.writeInt(u32, version, ENDIANNESS);
 
         try out.writeStructEndian(workspace.main_area.get().local_point, ENDIANNESS);
 
-        // TODO(design): rethink non-editable fnkboxes, probably
         const fnkboxes = try workspace.allFnkboxes(false, scratch);
-        const n_saved: usize = blk: {
-            var r: usize = 0;
-            for (fnkboxes) |cur| {
-                if (!cur.get().specific.fnkbox.editable) continue;
-                r += 1;
-            }
-            break :blk r;
-        };
+        const n_saved = fnkboxes.len;
         try writeLen(out, n_saved);
         for (fnkboxes) |cur| {
-            if (!cur.get().specific.fnkbox.editable) continue;
             const fnkname_value = try cur.children(.fnkbox).fnkname.get().specific.sexpr.toOldCoreValue(scratch);
             const garland = if (cur.get().specific.fnkbox.execution) |e|
                 e.original_garland
@@ -10299,80 +9935,64 @@ const Workspace = struct {
             try out.writeStructEndian(local_point_from_mainarea.pos, ENDIANNESS);
             std.log.info("wrote pos: {any}", .{local_point_from_mainarea.pos});
 
-            // write description
-            try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.editable_textline.inner_text.items);
+            const maybe_source = cur.get().specific.fnkbox.premade_level;
+            try writeBool(out, maybe_source == null);
 
-            if (true) { // write testcases
-                const testcases_area = cur.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
-                var testcases: std.ArrayListUnmanaged(union(enum) {
-                    default: Lego.Specific.Testcase.Source,
-                    custom: Lego.Specific.Testcase.Children,
-                }) = try .initCapacity(scratch, Toybox.childCount(testcases_area));
-                defer testcases.deinit(scratch);
+            if (maybe_source) |source| {
+                try writeBool(out, cur.get().specific.fnkbox.require_manual_execution);
+                try writeLen(out, source);
+            } else {
+                // write description
+                try writeString(out, cur.children(.fnkbox).box.children(.fnkbox_box).description.get().specific.editable_textline.inner_text.items);
 
-                var cur_testcase = testcases_area.get().tree.first;
-                while (cur_testcase != nothing) : (cur_testcase = cur_testcase.get().tree.next) {
-                    switch (cur_testcase.get().specific) {
-                        else => unreachable,
-                        .button => |button| assert(button.action == .add_testcase),
-                        .testcase => |testcase| {
-                            if (testcase.source) |source| {
-                                if (testcase.loaded and
-                                    (source.input_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).input) or
-                                        source.expected_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).expected)))
-                                {
-                                    testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
+                if (true) { // write testcases
+                    const testcases_area = cur.children(.fnkbox).box.children(.fnkbox_box).testcases_area;
+                    var testcases: std.ArrayListUnmanaged(union(enum) {
+                        default: Lego.Specific.Testcase.Source,
+                        custom: Lego.Specific.Testcase.Children,
+                    }) = try .initCapacity(scratch, Toybox.childCount(testcases_area));
+                    defer testcases.deinit(scratch);
+
+                    var cur_testcase = testcases_area.get().tree.first;
+                    while (cur_testcase != nothing) : (cur_testcase = cur_testcase.get().tree.next) {
+                        switch (cur_testcase.get().specific) {
+                            else => unreachable,
+                            .button => |button| assert(button.action == .add_testcase),
+                            .testcase => |testcase| {
+                                if (testcase.source) |source| {
+                                    if (testcase.loaded and
+                                        (source.input_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).input) or
+                                            source.expected_hash != Lego.Specific.Sexpr.hash(cur_testcase.children(.testcase).expected)))
+                                    {
+                                        testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
+                                    } else {
+                                        testcases.appendAssumeCapacity(.{ .default = source });
+                                    }
                                 } else {
-                                    testcases.appendAssumeCapacity(.{ .default = source });
+                                    testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
                                 }
-                            } else {
-                                testcases.appendAssumeCapacity(.{ .custom = cur_testcase.children(.testcase) });
-                            }
-                        },
+                            },
+                        }
                     }
-                }
 
-                try writeLen(out, testcases.items.len);
-                for (testcases.items) |testcase| {
-                    switch (testcase) {
-                        .default => |source| {
-                            try writeEnum(out, SavedTestcaseTag, .default, ENDIANNESS);
-                            try out.writeInt(u64, @intCast(source.level), ENDIANNESS);
-                            try out.writeInt(u64, @intCast(source.sample), ENDIANNESS);
-                        },
-                        .custom => |children| {
-                            try writeEnum(out, SavedTestcaseTag, .custom, ENDIANNESS);
-                            const input_sexpr = try Lego.Specific.Sexpr.toOldCoreValue(&children.input.get().specific.sexpr, scratch);
-                            const expected_sexpr = try Lego.Specific.Sexpr.toOldCoreValue(&children.expected.get().specific.sexpr, scratch);
-                            try writeFmt(out, scratch, "{any}\n", .{input_sexpr});
-                            try writeFmt(out, scratch, "{any}\n", .{expected_sexpr});
-                        },
+                    try writeLen(out, testcases.items.len);
+                    for (testcases.items) |testcase| {
+                        switch (testcase) {
+                            .default => unreachable,
+                            .custom => |children| {
+                                try writeEnum(out, SavedTestcaseTag, .custom, ENDIANNESS);
+                                const input_sexpr = try Lego.Specific.Sexpr.toOldCoreValue(&children.input.get().specific.sexpr, scratch);
+                                const expected_sexpr = try Lego.Specific.Sexpr.toOldCoreValue(&children.expected.get().specific.sexpr, scratch);
+                                try writeFmt(out, scratch, "{any}\n", .{input_sexpr});
+                                try writeFmt(out, scratch, "{any}\n", .{expected_sexpr});
+                            },
+                        }
                     }
                 }
             }
 
             const fnk = core.Fnk{ .name = fnkname_value, .body = definition };
             try writeFmt(out, scratch, "{any}\n", .{fnk});
-        }
-
-        if (true) { // store which fnk was used for each scorer
-            var scorers: std.ArrayListUnmanaged(struct { id: u32, fnkname: *const core.Sexpr }) = .empty;
-            defer scorers.deinit(scratch);
-            var lego_it = Toybox.iteratorPhysical();
-            while (lego_it.next()) |lego| {
-                assert(lego.exists and lego.physical);
-                if (lego.specific.tag() != .scorer_row) continue;
-                // don't include stuff in a blueprint
-                if (workspace.isFreefloating(lego.index)) continue;
-                const magic_id = lego.specific.scorer_row.magic_id;
-                const fnkname = try Lego.Specific.Sexpr.toOldCoreValue(&lego.index.children(.scorer_row).fnkname.get().specific.sexpr, scratch);
-                try scorers.append(scratch, .{ .id = magic_id, .fnkname = fnkname });
-            }
-            try writeLen(out, scorers.items.len);
-            for (scorers.items) |s| {
-                try out.writeInt(u32, s.id, ENDIANNESS);
-                try writeFmt(out, scratch, "{any}\n", .{s.fnkname});
-            }
         }
     }
 
@@ -10385,16 +10005,20 @@ const Workspace = struct {
             knows_n_fnkboxes: bool,
             includes_testcases: bool,
             includes_scorers: bool,
+            maybe_only_include_fnkbox_source: bool,
+            includes_require_manual_execution: bool,
             is_text_based: bool = false,
         };
         const config: Config = switch (version) {
-            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
-            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
-            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
-            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = false, .includes_scorers = false },
-            4 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = false },
-            5 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = true },
-            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false },
+            0 => .{ .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
+            1 => .{ .has_description = true, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
+            2 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
+            3 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = false, .includes_scorers = false, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
+            4 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = false, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
+            5 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = true, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
+            6 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = false, .maybe_only_include_fnkbox_source = true, .includes_require_manual_execution = false },
+            7 => .{ .has_description = true, .starts_with_camera_point = true, .includes_testcases = true, .knows_n_fnkboxes = true, .includes_scorers = false, .maybe_only_include_fnkbox_source = true, .includes_require_manual_execution = true },
+            text_magic => .{ .is_text_based = true, .has_description = false, .starts_with_camera_point = false, .includes_testcases = false, .knows_n_fnkboxes = false, .includes_scorers = false, .maybe_only_include_fnkbox_source = false, .includes_require_manual_execution = false },
             else => {
                 std.log.err("Unsupported file version {d}, ignoring savefile", .{version});
                 return;
@@ -10412,6 +10036,8 @@ const Workspace = struct {
             dst.main_area.get().local_point = try in.readStructEndian(Point, ENDIANNESS);
         }
 
+        const existing_solutions = try dst.existingFnkboxesForLevels(scratch);
+
         if (config.is_text_based) {
             var input: []const u8 = try in.readAllAlloc(dst.arena_for_atom_names.allocator(), std.math.maxInt(usize));
             var x: f32 = 0;
@@ -10423,12 +10049,16 @@ const Workspace = struct {
                 const pos: Vec2 = .new(x, 20);
                 const description: []const u8 = try std.fmt.allocPrint(scratch, "{any}", .{fnk.name});
 
+                const source = levelIndexFromCoreSexpr(fnk.name);
+                deleteExistingSolution(existing_solutions, source);
+
                 const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, .new(@src()));
                 const fnkbox = try Toybox.buildFnkbox(
                     .{ .pos = pos },
                     try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, .new(@src())),
-                    true,
+                    source,
                     description,
+                    // TODO(never): if the level exists, should be the correct testcases
                     &.{},
                     garland,
                 );
@@ -10451,97 +10081,105 @@ const Workspace = struct {
 
                 std.log.info("readed pos: {any}", .{pos});
 
-                const description_raw: []const u8 = if (config.has_description)
-                    try readString(in, scratch)
+                const created_by_player = if (config.maybe_only_include_fnkbox_source)
+                    try readBool(in)
                 else
-                    "Custom Machine";
+                    true;
 
-                const description = if (std.unicode.utf8ValidateSlice(description_raw)) description_raw else "Custom Machine";
+                if (created_by_player) {
+                    const description_raw: []const u8 = if (config.has_description)
+                        try readString(in, scratch)
+                    else
+                        "Custom Machine";
 
-                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                    const description = if (std.unicode.utf8ValidateSlice(description_raw)) description_raw else "Custom Machine";
 
-                var testcases: std.ArrayListUnmanaged(Lego.Index) = .empty;
-                if (config.includes_testcases) {
-                    const n_testcases = try readLen(in);
-                    try testcases.ensureUnusedCapacity(scratch, n_testcases);
-                    for (0..n_testcases) |_| {
-                        const tag = try readEnum(in, SavedTestcaseTag, ENDIANNESS);
-                        defer _ = pool.reset(.retain_capacity);
-                        switch (tag) {
-                            .default => {
-                                const level_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
-                                const sample_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
-                                // 'orelse' only engaged if tests were deleted between versions
-                                const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch, dst.arena_for_atom_names.allocator())) orelse continue;
+                    var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                    defer pool.deinit();
 
-                                testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .unloaded = .build(
-                                    level_index,
-                                    sample_index,
-                                    sample,
-                                ) }, .new(@src())));
-                            },
-                            .custom => {
-                                const input_ascii = try readString(in, dst.arena_for_atom_names.allocator());
-                                const expected_ascii = try readString(in, dst.arena_for_atom_names.allocator());
-                                const input = try core.parsing.parseSingleSexpr(input_ascii, &pool);
-                                const expected = try core.parsing.parseSingleSexpr(expected_ascii, &pool);
+                    var testcases: std.ArrayListUnmanaged(Lego.Index) = .empty;
+                    if (config.includes_testcases) {
+                        const n_testcases = try readLen(in);
+                        try testcases.ensureUnusedCapacity(scratch, n_testcases);
+                        for (0..n_testcases) |_| {
+                            const tag = try readEnum(in, SavedTestcaseTag, ENDIANNESS);
+                            defer _ = pool.reset(.retain_capacity);
+                            switch (tag) {
+                                .default => {
+                                    const level_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
+                                    const sample_index: usize = @intCast(try in.readInt(u64, ENDIANNESS));
+                                    // 'orelse' only engaged if tests were deleted between versions
+                                    const sample = (try levels[level_index].generate_sample(sample_index, &pool, scratch, dst.arena_for_atom_names.allocator())) orelse continue;
 
-                                testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .existing = .{
-                                    .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, input, false, false, .new(@src())),
-                                    .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, expected, false, false, .new(@src())),
-                                    .unloaded = null,
-                                } }, .new(@src())));
-                            },
+                                    testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .unloaded = .build(
+                                        level_index,
+                                        sample_index,
+                                        sample,
+                                    ) }, .new(@src())));
+                                },
+                                .custom => {
+                                    const input_ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                                    const expected_ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                                    const input = try core.parsing.parseSingleSexpr(input_ascii, &pool);
+                                    const expected = try core.parsing.parseSingleSexpr(expected_ascii, &pool);
+
+                                    testcases.appendAssumeCapacity(try Toybox.buildTestcase(.{ .existing = .{
+                                        .input = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, input, false, false, .new(@src())),
+                                        .expected = try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, expected, false, false, .new(@src())),
+                                        .unloaded = null,
+                                    } }, .new(@src())));
+                                },
+                            }
                         }
                     }
+
+                    const ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                    const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
+
+                    // only kept for backwards compatibility, should always be null for new saves
+                    const source = levelIndexFromCoreSexpr(fnk.name);
+                    deleteExistingSolution(existing_solutions, source);
+
+                    const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, .new(@src()));
+                    const fnkbox = try Toybox.buildFnkbox(
+                        .{ .pos = pos },
+                        try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, .new(@src())),
+                        source,
+                        description,
+                        testcases.items,
+                        garland,
+                    );
+
+                    Toybox.addChildLast(dst.main_area, fnkbox);
+                } else {
+                    const require_manual_execution: ?bool = if (config.includes_require_manual_execution) try readBool(in) else null;
+
+                    const level_index = try readLen(in);
+                    deleteExistingSolution(existing_solutions, level_index);
+
+                    var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
+                    defer pool.deinit();
+                    const ascii = try readString(in, dst.arena_for_atom_names.allocator());
+                    const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
+                    const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, .new(@src()));
+
+                    const fnkbox = try Toybox.buildFnkboxFromLevel(
+                        .{ .pos = pos },
+                        level_index,
+                        garland,
+                        scratch,
+                        dst.arena_for_atom_names.allocator(),
+                    );
+                    if (require_manual_execution) |v| fnkbox.get().specific.fnkbox.require_manual_execution = v;
+                    Toybox.addChildLast(dst.main_area, fnkbox);
                 }
-
-                const ascii = try readString(in, dst.arena_for_atom_names.allocator());
-                const fnk = try core.parsing.parseSingleFnk(ascii, &pool, scratch);
-
-                const garland = try Lego.Specific.Garland.buildFromOldCoreValueV0(.{}, fnk.body, scratch, .new(@src()));
-                const fnkbox = try Toybox.buildFnkbox(
-                    .{ .pos = pos },
-                    try Lego.Specific.Sexpr.buildFromOldCoreValue(.{}, fnk.name, true, true, .new(@src())),
-                    true,
-                    description,
-                    testcases.items,
-                    garland,
-                );
-                Toybox.addChildLast(dst.main_area, fnkbox);
             }
 
-            if (config.includes_scorers) {
-                var fnkname_from_scorer_row_magic_id: std.AutoHashMapUnmanaged(u32, *const core.Sexpr) = .empty;
-                var pool: std.heap.MemoryPool(core.Sexpr) = .init(scratch);
-                defer pool.deinit();
-
+            if (config.includes_scorers) { // now deprecated, but keep the same reads just in case
                 const n_scorer_rows = try readLen(in);
-                try fnkname_from_scorer_row_magic_id.ensureUnusedCapacity(scratch, @intCast(n_scorer_rows));
                 for (0..n_scorer_rows) |_| {
-                    const scorer_row_magic_id = try in.readInt(u32, ENDIANNESS);
-                    const fnkbox_name = try readString(in, dst.arena_for_atom_names.allocator());
-                    const fnkbox_value = try core.parsing.parseSingleSexpr(fnkbox_name, &pool);
-                    fnkname_from_scorer_row_magic_id.putAssumeCapacityNoClobber(scorer_row_magic_id, fnkbox_value);
-                }
-
-                var lego_it = Toybox.iteratorPhysical();
-                while (lego_it.next()) |lego| {
-                    assert(lego.exists and lego.physical);
-                    if (lego.specific.tag() != .scorer_row) continue;
-                    const fnkname = fnkname_from_scorer_row_magic_id.get(lego.specific.scorer_row.magic_id) orelse continue;
-                    const old_fnkname_element = lego.index.children(.scorer_row).fnkname;
-                    assert(old_fnkname_element.hasTag(.sexpr) and old_fnkname_element.get().specific.sexpr.kind == .empty);
-                    const new_fnkname_element = try Lego.Specific.Sexpr.buildFromOldCoreValue(
-                        old_fnkname_element.get().local_point,
-                        fnkname,
-                        old_fnkname_element.get().specific.sexpr.is_pattern,
-                        old_fnkname_element.get().specific.sexpr.is_fnkname,
-
-                        .new(@src()),
-                    );
-                    Toybox.changeChild(old_fnkname_element, new_fnkname_element);
-                    Toybox.destroyFloating(old_fnkname_element);
+                    _ = try in.readInt(u32, ENDIANNESS);
+                    _ = try readString(in, dst.arena_for_atom_names.allocator());
                 }
             }
         }
@@ -10558,6 +10196,16 @@ const Workspace = struct {
         );
 
         assert(try dst.valid(scratch));
+    }
+
+    fn levelIndexFromCoreSexpr(sexpr: *const core.Sexpr) ?usize {
+        const name: []const u8 = switch (sexpr.*) {
+            .atom_lit => |v| v.value,
+            else => return null,
+        };
+        for (levels, 0..) |level, k| {
+            if (std.mem.eql(u8, level.fnk_name, name)) return k;
+        } else return null;
     }
 
     pub fn canAutosaveNow(workspace: *const Workspace) bool {
@@ -10886,7 +10534,7 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
         }
     }
 
-    if (false and platform.keyboard.wasPressed(.KeyQ)) {
+    if (true and platform.keyboard.wasPressed(.KeyQ)) {
         var asdf: std.ArrayList(u8) = .init(platform.gpa);
         defer asdf.deinit();
         try self.workspace.save(asdf.writer().any(), self.usual.mem.frame.allocator());

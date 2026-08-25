@@ -219,7 +219,7 @@ pub const levels: []const Level = &.{
     .{
         .require_manual_execution = true,
         .fnk_name = "swap",
-        .description = "Swap both vau halves",
+        .description = "Swap both Vau halves",
         .initial_definition = if (true) null else .{ .cases = &.{.{
             .pattern = &.doPair(Sexpr.builtin.empty, Vals.vars.down),
             .template = &.doPair(Vals.vars.down, Vals.vars.up),
@@ -269,7 +269,12 @@ pub const levels: []const Level = &.{
         .require_manual_execution = true,
         .fnk_name = "shiftTopHalf",
         .description = "Shift the pair's top half",
-        .initial_definition = null,
+        .initial_definition = .{ .cases = &.{.{
+            .pattern = &.doPair(Vals.vars.head, Sexpr.builtin.empty),
+            .template = Vals.vars.head,
+            .fnk_name = &.doLit("changeLowercaseToNextCyclingOnC"),
+            .next = null,
+        }} },
         .generate_sample = struct {
             fn generate_sample(k: usize, pool: *SexprPool, _: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
                 const k1 = @mod(k, Vals.abc.len);
@@ -421,8 +426,7 @@ pub const levels: []const Level = &.{
         .require_manual_execution = true,
         .fnk_name = "startWithB",
         .description = "Check if the top half is 'b'",
-        .initial_definition = null,
-        .bubble_definition = .{ .cases = &.{
+        .initial_definition = .{ .cases = &.{
             .{
                 .pattern = &.doPair(&.doVar("left"), Sexpr.builtin.empty),
                 .template = &.doVar("left"),
@@ -1397,9 +1401,8 @@ pub const levels: []const Level = &.{
         .description = "Implement a Vaulogy interpreter.",
         .initial_definition = null,
         .generate_sample = struct {
-            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, _: std.mem.Allocator) core.OoM!?Sample {
-                // TODO: should be an argument?
-                const strings_pool = pool.arena.allocator();
+            // TODO(bug): change text_gpa to something that interns atom names
+            fn generate_sample(k: usize, pool: *SexprPool, arena: std.mem.Allocator, text_gpa: std.mem.Allocator) core.OoM!?Sample {
                 if (k != 0) return null;
                 var mem = core.VeryPermamentGameStuff.init(arena);
                 defer mem.deinit();
@@ -1422,7 +1425,7 @@ pub const levels: []const Level = &.{
                         true,
                         try core.sexprFromCases(fnk_def.cases.items, pool),
                         pool,
-                        strings_pool,
+                        text_gpa,
                     ),
                 ));
                 return .{
