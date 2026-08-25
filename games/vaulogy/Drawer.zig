@@ -1502,6 +1502,25 @@ pub fn fillRect(
     );
 }
 
+pub fn fillCircleV3(
+    self: *Drawer,
+    camera: Rect,
+    circle: math.Circle,
+    color: FColor,
+    resolution: enum { low, medium, high },
+) !void {
+    return self.fillShape(
+        camera,
+        .{ .pos = circle.center, .scale = circle.radius },
+        switch (resolution) {
+            .low => self.canvas.DEFAULT_SHAPES.circle_8,
+            .medium => self.canvas.DEFAULT_SHAPES.circle_32,
+            .high => self.canvas.DEFAULT_SHAPES.circle_128,
+        },
+        color,
+    );
+}
+
 pub fn fillCircleV2(
     drawer: *Drawer,
     camera: Rect,
@@ -1634,6 +1653,26 @@ pub fn strokeCircle(
         width,
         color,
     );
+}
+
+pub fn arrow(
+    self: *Drawer,
+    camera: Rect,
+    segment: math.Segment,
+    world_width: f32,
+    head_size: f32,
+    color: FColor,
+) !void {
+    try self.line(camera, &.{
+        segment.a,
+        segment.b,
+    }, world_width, color);
+    const angle = 1.0 / 8.0;
+    try self.line(camera, &.{
+        segment.b.towardsPure(segment.a, head_size).rotateAround(segment.b, angle),
+        segment.b,
+        segment.b.towardsPure(segment.a, head_size).rotateAround(segment.b, -angle),
+    }, world_width, color);
 }
 
 pub fn line(

@@ -2678,8 +2678,8 @@ pub const Handle = struct {
             switch (handle.kind) {
                 .circle => |radius| {
                     const r = std.math.lerp(radius.base, radius.hot, handle.hot_t);
-                    drawer.canvas.fillCircleV3(camera, .{ .center = handle.point.pos, .radius = handle.point.scale * r }, COLORS.bg.withAlpha(alpha), .low);
-                    drawer.canvas.strokeCircle(9, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
+                    try drawer.fillCircleV3(camera, .{ .center = handle.point.pos, .radius = handle.point.scale * r }, COLORS.bg.withAlpha(alpha), .low);
+                    try drawer.strokeCircle(9, camera, handle.point.pos, handle.point.scale * r, 0.05 * handle.point.scale, .blackAlpha(alpha));
                 },
                 // TODO(game): improve
                 .fnkbox_tab => {
@@ -7229,7 +7229,7 @@ const Workspace = struct {
                                 switch (area.bg) {
                                     .all, .none => unreachable,
                                     .local_rect => |rect| {
-                                        drawer.canvas.fillRect(camera, lego.absolute_point.applyToLocalRect(rect).plusMargin(-0.25 * lego.absolute_point.scale), FColor.gray(0.5).withAlpha(bubble.remaining_reset_anim_t));
+                                        try drawer.fillRect(camera, lego.absolute_point.applyToLocalRect(rect).plusMargin(-0.25 * lego.absolute_point.scale), FColor.gray(0.5).withAlpha(bubble.remaining_reset_anim_t));
                                     },
                                 }
                             }
@@ -7252,7 +7252,7 @@ const Workspace = struct {
                             }, 0.05 * lego.absolute_point.scale, .blackAlpha(alpha));
                             const fnkname = cur.children(.case).fnkname_holder.children(.fnkname_holder).fnkname;
                             if (fnkname.get().specific.sexpr.kind != .empty) {
-                                drawer.canvas.line(camera, &.{
+                                try drawer.line(camera, &.{
                                     lego.absolute_point.applyToLocalPosition(.new(0.35, 0)),
                                     lego.absolute_point.applyToLocalPosition(.new(0.50, -0.55)),
                                     lego.absolute_point.applyToLocalPosition(.new(0.65, -0.75)),
@@ -7437,7 +7437,7 @@ const Workspace = struct {
                             switch (kind) {
                                 .long_arrow => {
                                     const center: Point = lego.absolute_point;
-                                    drawer.canvas.line(camera, &.{
+                                    try drawer.line(camera, &.{
                                         center.applyToLocalPosition(.new(-1.0, 0)),
                                         center.applyToLocalPosition(.new(1.0, 0)),
                                         center.applyToLocalPosition(.new(0.5, 0.25)),
@@ -7490,15 +7490,15 @@ const Workspace = struct {
                             switch (button.action) {
                                 .stop_execution => {
                                     // TODO(game): nicer
-                                    drawer.canvas.fillRect(camera_relative, button.local_rect, .gray(0.4));
-                                    drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                    try drawer.fillRect(camera_relative, button.local_rect, .gray(0.4));
+                                    try drawer.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
                                     const center = button.local_rect.get(.center);
                                     const s = button.local_rect.size.min() * 0.3;
-                                    drawer.canvas.line(camera_relative, &.{
+                                    try drawer.line(camera_relative, &.{
                                         center.add(.new(-s, -s)),
                                         center.add(.new(s, s)),
                                     }, 0.05, .black);
-                                    drawer.canvas.line(camera_relative, &.{
+                                    try drawer.line(camera_relative, &.{
                                         center.add(.new(s, -s)),
                                         center.add(.new(-s, s)),
                                     }, 0.05, .black);
@@ -7567,9 +7567,9 @@ const Workspace = struct {
                                 },
                                 .unlock_hint => {
                                     if (button.enabled) {
-                                        drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
-                                        drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
-                                        try drawer.canvas.drawText(0, camera_relative, "Hint?", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
+                                        try drawer.fillRect(camera_relative, button.local_rect, COLORS.bg);
+                                        try drawer.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+                                        try drawer.drawText(0, camera_relative, "Hint?", .centeredAt(button.local_rect.getCenter()), 0.75, .black);
                                     }
                                 },
                                 .add_testcase => if (button.enabled) {
@@ -7739,7 +7739,7 @@ const Workspace = struct {
                         },
                         .bubble_connection => |bubble_connection| {
                             const s = bubble_connection.source.get().absolute_point.scale;
-                            drawer.canvas.arrow(camera, @as(math.Segment, .{
+                            try drawer.arrow(camera, @as(math.Segment, .{
                                 .a = bubble_connection.source.get().absolute_point.pos,
                                 .b = bubble_connection.target.get().absolute_point.pos,
                             }).clipToBeOutsideRect(bubble_connection.source.get().absolute_point.applyToLocalRect(
