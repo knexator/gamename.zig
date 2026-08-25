@@ -15,6 +15,7 @@
         .msdf = .{
             .url = "https://github.com/Chlumsky/msdf-atlas-gen/releases/download/v1.3/msdf-atlas-gen-1.3-win64.zip",
             .hash = "N-V-__8AAAAqGwDBahbF7AE0PTe55EFJQbSGScN84Bh-TNH8",
+            .lazy = true,
         },
         .zstbi = .{
             .url = "git+https://github.com/zig-gamedev/zstbi#094c4bba5cdbec167d3f6aaa98cccccd5c99145f",

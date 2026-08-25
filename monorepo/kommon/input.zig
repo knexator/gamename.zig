@@ -1,5 +1,6 @@
 const kommon = @import("kommon.zig");
 const Vec2 = kommon.math.Vec2;
+const IVec2 = kommon.math.IVec2;
 const Camera = kommon.math.Camera;
 const Rect = kommon.math.Rect;
 
@@ -182,7 +183,7 @@ pub const KeyboardButton = enum(u8) {
     }
 
     pub const directional_keys: [4]struct {
-        dir: Vec2,
+        dir: IVec2,
         keys: []const KeyboardButton,
     } = .{
         .{ .dir = .xpos, .keys = &.{

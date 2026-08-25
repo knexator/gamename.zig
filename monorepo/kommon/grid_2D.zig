@@ -146,17 +146,40 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             return try ascii_grid.map(allocator, T, map_fn);
         }
 
-        pub fn fromAscii(allocator: std.mem.Allocator, ascii: []const u8) !Self {
+        pub fn toAscii(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+            if (T != u8) @compileError("toAscii only works on Grid2D(u8)");
+            var result: std.ArrayListUnmanaged(u8) = try .initCapacity(allocator, (self.size.x + 1) * self.size.y);
+
+            for (0..self.size.y) |row_index| {
+                result.appendSliceAssumeCapacity(self.data[row_index * self.size.x .. (row_index + 1) * self.size.x]);
+                result.appendAssumeCapacity('\n');
+            }
+            assert(result.unusedCapacitySlice().len == 0);
+
+            return try result.toOwnedSlice(allocator);
+        }
+
+        // TODO:improve, less hacky, add tests
+        pub fn fromAscii(allocator: std.mem.Allocator, ascii_raw: []const u8) !Self {
             if (T != u8) @compileError("fromAscii only works on Grid2D(u8)");
-            // TODO: windows line endings
-            var lines = std.mem.splitScalar(u8, ascii, '\n');
+            const ascii = std.mem.trim(u8, ascii_raw, &std.ascii.whitespace);
+            var lines = if (std.mem.indexOf(u8, ascii, "\r\n") != null)
+                std.mem.splitSequence(u8, ascii, "\r\n")
+            else
+                std.mem.splitSequence(u8, ascii, "\n");
             const width = lines.peek().?.len;
             const height = kommon.itertools.iteratorLen(lines);
             const data = try allocator.alloc(T, width * height);
             errdefer allocator.free(data);
             var j: usize = 0;
             while (lines.next()) |line| {
-                if (line.len != width) return error.NotAnAsciiRectangle;
+                // if (line.len == 0 and lines.peek() == null) {
+                //     continue;
+                // }
+                if (line.len != width) {
+                    std.log.err("bad line len {d} for line {s}; size is {d}x{d}", .{ line.len, line, width, height });
+                    return error.NotAnAsciiRectangle;
+                }
                 std.mem.copyForwards(T, data[j * width ..], line);
                 j += 1;
             }
@@ -263,6 +286,10 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             );
         }
 
+        pub fn inEdge(self: Self, pos: IVec2) bool {
+            return pos.x == 0 or pos.y == 0 or pos.x + 1 == self.size.x or pos.y + 1 == self.size.y;
+        }
+
         pub fn findSingle(self: Self, value: T) !UVec2 {
             var result: ?UVec2 = null;
             var it = self.iterator();
@@ -282,6 +309,17 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
                     return std.mem.indexOfScalar(T, vs, v) != null;
                 }
             }.anon);
+        }
+
+        pub fn plusMargin(original: Self, allocator: std.mem.Allocator, margin: usize, default: T) !Self {
+            var result: Self = try .initFill(allocator, original.size.add(.both(margin * 2)), default);
+
+            var it = original.iterator();
+            while (it.next()) |pos| {
+                result.set(pos.add(.both(margin)), original.at2(pos));
+            }
+
+            return result;
         }
 
         pub fn cropped(original: Self, allocator: std.mem.Allocator, rect: kommon.math.URect) !Self {
@@ -310,6 +348,13 @@ pub fn Grid2D(T: type, max_size: ?UVec2) type {
             while (it.next()) |tile| {
                 if (self.getTileRect(whole_rect, tile).contains(pos)) return tile;
             } else return null;
+        }
+
+        pub fn tileSignedAt(self: Self, pos: kommon.math.Vec2, whole_rect: Rect) ?IVec2 {
+            return if (self.tileAt(pos, whole_rect)) |x|
+                x.cast(isize)
+            else
+                null;
         }
 
         pub fn inBoundsSigned(self: Self, pos: IVec2) bool {

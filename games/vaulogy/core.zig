@@ -654,7 +654,10 @@ pub const StackThing = struct {
         //         return err,
         // };
 
-        const fnkbody = (try scoring_run.findFunktion(fn_name, config)) orelse if (config.allow_undefined_fnks)
+        const fnkbody = (scoring_run.findFunktion(fn_name, config) catch |err| switch (err) {
+            error.InvalidMetaFnk => if (config.allow_undefined_fnks) null else return err,
+            else => return err,
+        }) orelse if (config.allow_undefined_fnks)
             return .{ .builtin = input }
         else
             return error.FnkNotFound;
@@ -946,8 +949,15 @@ pub const ExecutionThread = struct {
             .allow_no_cases = true,
             .allow_unbound_variables = true,
             .allow_undefined_fnks = true,
-            // TODO(game): increase
+            // TODO(game): remove this
             .max_steps = 10_000,
+        };
+
+        pub const new_very_long: Config = .{
+            .allow_no_cases = true,
+            .allow_unbound_variables = true,
+            .allow_undefined_fnks = true,
+            .max_steps = 1_000_000,
         };
 
         pub const old: Config = .{
@@ -1627,7 +1637,10 @@ pub fn sexprFromCase(case: MatchCaseDefinition, pool: *MemoryPool(Sexpr)) error{
             try externalFromInternal(case.template, pool),
         )),
         try storeSexprInPool(pool, Sexpr.doPair(
-            case.fnk_name,
+            if (case.fnk_name.equals(Sexpr.builtin.empty))
+                Sexpr.builtin.nil
+            else
+                case.fnk_name,
             if (case.next) |next|
                 try sexprFromCases(next.items, pool)
             else
@@ -1678,7 +1691,7 @@ fn fnkFromSexprHelper(s: *const Sexpr, arena: std.mem.Allocator, pool: *MemoryPo
                 const cur = cur_parent.left;
                 try cases.append(arena, try caseFromSexpr(cur, arena, pool));
                 switch (cur_parent.right.*) {
-                    .empty => @panic("TODO"),
+                    .empty => return error.InvalidMetaFnk,
                     .atom_lit => |a| {
                         if (a.equals(Sexpr.builtin.nil.atom_lit)) {
                             break;
@@ -1727,7 +1740,7 @@ fn internalFromExternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr
 }
 
 // (aaa . @bbb) => ((atom . aaa) . (var . bbb))
-fn externalFromInternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
+pub fn externalFromInternal(s: *const Sexpr, pool: *MemoryPool(Sexpr)) !*const Sexpr {
     return switch (s.*) {
         .atom_var => |v| storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.@"var", try storeSexprInPool(pool, Sexpr.doLit(v.value)))),
         .atom_lit, .empty => storeSexprInPool(pool, Sexpr.doPair(Sexpr.builtin.meta.lit, s)),

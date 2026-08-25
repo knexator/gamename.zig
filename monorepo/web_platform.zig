@@ -32,6 +32,7 @@ const js = struct {
         extern fn addTweakableFColor(index: usize, name_ptr: [*]const u8, name_len: usize, starting_r: f32, starting_g: f32, starting_b: f32) void;
         extern fn addTweakableFloat(index: usize, name_ptr: [*]const u8, name_len: usize, starting_v: f32, min: f32, max: f32) void;
         extern fn addTweakableTexture(index: usize, name_ptr: [*]const u8, name_len: usize) void;
+        extern fn addTweakableString(index: usize, name_ptr: [*]const u8, name_len: usize, starting_ptr: [*]const u8, starting_len: usize, max_len: usize) void;
     };
 
     pub const debug = struct {
@@ -488,6 +489,12 @@ const js = struct {
         /// returns the amount of bytes filled
         extern fn consumeTextInput(buf_ptr: [*]u8, buf_len: usize) usize;
     };
+
+    pub const clipboard = struct {
+        /// returns the amount of bytes filled
+        extern fn getClipboardText(buf_ptr: [*]u8, buf_len: usize) usize;
+        extern fn setClipboardText(text_ptr: [*]const u8, text_len: usize) void;
+    };
 };
 
 const js_better = struct {
@@ -591,6 +598,22 @@ const js_better = struct {
             return result;
         }
     };
+
+    pub const clipboard = struct {
+        // reused across calls; reading is async on web, so this holds whatever
+        // value JS had cached (from a previous read or a paste event)
+        var buffer: []u8 = undefined;
+
+        pub fn getClipboardText() ?[]const u8 {
+            const len = js.clipboard.getClipboardText(buffer.ptr, buffer.len);
+            if (len == 0) return null;
+            return buffer[0..len];
+        }
+
+        pub fn setClipboardText(text: []const u8) void {
+            js.clipboard.setClipboardText(text.ptr, text.len);
+        }
+    };
 };
 
 const GameState = @import("GameState");
@@ -624,6 +647,8 @@ var web_platform: PlatformGives = .{
     .startTextInput = js_better.text_input.startTextInput,
     .stopTextInput = js_better.text_input.stopTextInput,
     .consumeTextInput = js_better.text_input.consumeTextInput,
+    .getClipboardText = js_better.clipboard.getClipboardText,
+    .setClipboardText = js_better.clipboard.setClipboardText,
     .delta_seconds = 0,
     .aspect_ratio = undefined,
     .global_seconds = 0,
@@ -727,6 +752,7 @@ var other_images: std.SegmentedList(usize, 16) = .{};
 
 var tweakable_fcolors: std.ArrayList(*FColor) = undefined;
 var tweakable_floats: std.ArrayList(*f32) = undefined;
+var tweakable_strings: std.ArrayList([]u8) = undefined;
 var tweakable_textures: std.ArrayList(*Gl.Texture) = undefined;
 
 const web_gl = struct {
@@ -1270,6 +1296,9 @@ export fn init(random_seed: u32) void {
     tweakable_fcolors = .init(web_platform.gpa);
     tweakable_floats = .init(web_platform.gpa);
     tweakable_textures = .init(web_platform.gpa);
+    tweakable_strings = .init(web_platform.gpa);
+
+    js_better.clipboard.buffer = web_platform.gpa.alloc(u8, std.math.maxInt(u16)) catch @panic("OoM");
 
     my_game.init(.{
         .gpa = gpa,
@@ -1288,6 +1317,12 @@ export fn init(random_seed: u32) void {
                 const index = tweakable_floats.items.len;
                 tweakable_floats.append(ptr) catch std.debug.panic("OoM", .{});
                 js.tweak.addTweakableFloat(index, name.ptr, name.len, ptr.*, min, max);
+            }
+
+            pub fn string(name: []const u8, ptr: []u8, max_len: usize) void {
+                const index = tweakable_strings.items.len;
+                tweakable_strings.append(ptr) catch std.debug.panic("OoM", .{});
+                js.tweak.addTweakableString(index, name.ptr, name.len, ptr.ptr, ptr.len, max_len);
             }
 
             pub fn texture(name: []const u8, ptr: *Gl.Texture) void {

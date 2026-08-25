@@ -71,6 +71,8 @@ pub fn PlatformGivesFor(comptime GameState: type) type {
         startTextInput: *const fn (textinput_area_in_0101_coords: ?Rect) void,
         stopTextInput: *const fn () void,
         consumeTextInput: *const fn () ?std.BoundedArray(u8, 4),
+        getClipboardText: *const fn () ?[]const u8,
+        setClipboardText: *const fn (text: []const u8) void,
 
         pub fn getMouse(self: @This(), camera: Rect) Mouse {
             var result = self.mouse;

@@ -5,7 +5,8 @@ import GUI from './lil-gui.esm.min.js';
 const gui = new GUI();
 const TWEAKABLE = {};
 let params = new URLSearchParams(document.location.search);
-if (params.size == 0) gui.hide();
+const on_itch = window.location.hostname.endsWith('itch.io') || document.referrer.includes('itch.io')
+if (on_itch || params.size == 0) gui.hide();
 
 const container = document.querySelector("#canvas_container");
 const canvas = document.querySelector("#canvas");
@@ -48,6 +49,13 @@ function resizeCanvas() {
 let text_input_active = false;
 const text_input_element = document.createElement("input");
 let pending_text_input = [];
+
+// reading the clipboard is async, so we cache the latest known value and serve
+// that synchronously; it gets refreshed on paste events and on each read request
+let clipboard_text = "";
+window.addEventListener("paste", (e) => {
+  clipboard_text = (e.clipboardData || window.clipboardData).getData("text");
+});
 if (true) {
   text_input_element.setAttribute("type", "text");
   text_input_element.setAttribute("autocomplete", "off");
@@ -278,6 +286,14 @@ async function getWasm() {
         TWEAKABLE[name] = starting;
         gui.add(TWEAKABLE, name, min, max).onChange(value => {
           wasm_exports.setTweakableFloat(index, value);
+        });
+      },
+      addTweakableString: (index, name_ptr, name_len, starting_ptr, starting_len, max_len) => {
+        const name = getString(name_ptr, name_len);
+        TWEAKABLE[name] = getString(starting_ptr, starting_len);
+        gui.add(TWEAKABLE, name).onChange(value => {
+          // TODO: is starting_ptr a stable pointer?
+          storeString(value, starting_ptr, max_len);
         });
       },
       addTweakableTexture: (index, name_ptr, name_len) => {
@@ -586,6 +602,25 @@ async function getWasm() {
         const char = pending_text_input.shift();
         return text_encoder.encodeInto(char, getBytes(buf_ptr, buf_len)).written;
       },
+
+      // clipboard
+      getClipboardText: (buf_ptr, buf_len) => {
+        // readText is async, so refresh the cache for next time and return
+        // whatever we already had
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          navigator.clipboard.readText().then((text) => {
+            clipboard_text = text;
+          }).catch(() => {});
+        }
+        return text_encoder.encodeInto(clipboard_text, getBytes(buf_ptr, buf_len)).written;
+      },
+      setClipboardText: (text_ptr, text_len) => {
+        const text = getString(text_ptr, text_len);
+        clipboard_text = text;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => {});
+        }
+      },
     },
   });
   return wasm_module.instance.exports;
@@ -666,7 +701,7 @@ window.addEventListener('focus', () => wasm_exports.clearAllPressedKeys());
 
 document.addEventListener("keydown", (ev) => {
   if (ev.repeat) return;
-  console.log("keydown", ev);
+  // console.log("keydown", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keydown(key_num);
@@ -675,7 +710,7 @@ document.addEventListener("keydown", (ev) => {
 
 document.addEventListener("keyup", (ev) => {
   if (ev.repeat) return;
-  console.log("keyup", ev);
+  // console.log("keyup", ev);
   const key_num = keys[ev.code];
   if (key_num !== undefined) {
     wasm_exports.keyup(key_num);
