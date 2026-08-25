@@ -4924,7 +4924,7 @@ const Workspace = struct {
             const postit: Lego.Specific.Postit.Helper = .{ .main_area = bp };
 
             var postit_pos: Vec2 = .new(-8, -8);
-            postit.addFromText(postit_pos, &.{ "This next assignment", "has too many cases", "to be hardcoded." });
+            postit.addFromText(postit_pos, &.{ "This next", "assignment has", "too many cases", "to be hardcoded." });
             postit_pos.addInPlace(.new(6.8, 0.4));
             postit.addFromText(postit_pos, &.{ "Fear not!", "We can solve it", "elegantly, with", "Wildcards." });
             postit_pos.addInPlace(.new(-3.2, 6.9));
