@@ -268,8 +268,8 @@ pub const levels: []const Level = &.{
     .{
         .require_manual_execution = true,
         .fnk_name = "shiftTopHalf",
-        .description = "Shift the pair's top half",
-        .initial_definition = .{ .cases = &.{.{
+        .description = "Take the pair's top half and shift it",
+        .initial_definition = if (true) null else .{ .cases = &.{.{
             .pattern = &.doPair(Vals.vars.head, Sexpr.builtin.empty),
             .template = Vals.vars.head,
             .fnk_name = &.doLit("changeLowercaseToNextCyclingOnC"),

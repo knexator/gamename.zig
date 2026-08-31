@@ -4606,7 +4606,7 @@ const Workspace = struct {
             ));
 
             postit_pos = .new(-7, 6.4);
-            postit.addFromText(postit_pos, &.{ "Left click", "to grab them", "(and also", "these notes)" });
+            postit.addFromText(postit_pos, &.{ "Left click", "to grab them,", "right click", "to duplicate" });
             postit_pos.addInPlace(.new(7.5, 1.1));
             postit.addFromText(postit_pos, &.{ "Don't worry about", "losing them.", "The top left", "button resets", "the whole slide." });
             postit_pos.addInPlace(.new(7.6, -0.8));
@@ -4716,7 +4716,10 @@ const Workspace = struct {
             // postit_pos.addInPlace(.new(8.2, 1.1));
             // postit.addFromText(postit_pos, &.{ "And play around", "wit it! You", "can always undo,", "or reset the", "whole slide." });
 
-            Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = .new(7.8, 10.2) }, .{
+            postit_pos.addInPlace(.new(6.8, -0.8));
+            postit.addFromText(postit_pos, &.{ "Strands are", "made of Parts:", "", "" });
+
+            Toybox.addChildLast(bp, try Toybox.buildCase(.{ .pos = postit_pos.add(.new(-1, 0)) }, .{
                 .pattern = try Toybox.buildSexpr(
                     .{},
                     .{ .atom_lit = "c" },
@@ -5101,20 +5104,18 @@ const Workspace = struct {
 
             const postits: []const []const []const u8 = &.{
                 &.{ "You now know", "everything!" },
-                &.{ "Take some fresh", "cases from the", "left toolbar", "and build a", "solution" },
-                &.{"Good luck!"},
+                &.{ "Take some fresh", "parts from the", "left toolbar", "and build a", "solution" },
             };
             const positions: []const Vec2 = &.{
                 .new(-8, -8),
                 .new(-0.3, -7.2),
-                .new(7.7, -7.1),
             };
 
             for (postits, positions) |lines, pos| {
                 postit.addFromText(pos, lines);
             }
 
-            var postit_pos: Vec2 = .new(7.7, 7.5);
+            var postit_pos: Vec2 = .new(7.9, -6.8);
             postit.addFromText(postit_pos, &.{ "Nested Strands", "can have", "nested Strands" });
             postit_pos.addInPlace(.new(0.1, 0.2));
             postit.addFromParts(postit_pos, &.{
@@ -5131,6 +5132,8 @@ const Workspace = struct {
             });
             postit_pos.addInPlace(.new(0.1, 0.2));
             postit.addFromText(postit_pos, &.{ "I've left some", "hints here,", "just in case" });
+            postit_pos.addInPlace(.new(-0.4, -0.6));
+            postit.addFromText(postit_pos, &.{"Good luck!"});
 
             try helper.maybeAdd(.new(-4, -2.2), levelIndex("shiftPair"), bp);
 
@@ -5226,7 +5229,7 @@ const Workspace = struct {
             break :blk bp;
         });
         Toybox.addChildLast(dst.main_area, intro_to_lists);
-        dst.toolbar_unlocks.list_viewer = first_recursion_cruel;
+        dst.toolbar_unlocks.list_viewer = intro_to_lists;
 
         bubble_pos.addInPlace(path_next);
         const lists_1 = try Toybox.buildBubble(.{ .pos = bubble_pos }, intro_to_lists, .all_bp_fnkboxes_solved, blk: {
@@ -6248,8 +6251,8 @@ const Workspace = struct {
         // TODO(design): this wouldn't be needed if we stored sexprs in the level file
         const debug_skip_has_sexpr_unlocks = all_fnks.count() > 0;
 
-        // TODO(design-late): revisit
-        var remaining_budget_for_unloaded_testcases: usize = 500;
+        // TODO(design-late): revisit the exact number, or the general method
+        var remaining_budget_for_unloaded_testcases: usize = 30;
 
         // TODO(perf-late): remove
         var debug_done_work: usize = 0;
@@ -7548,6 +7551,15 @@ const Workspace = struct {
                                     // TODO(game): draw a better icon
                                     drawer.canvas.fillRect(camera_relative, button.local_rect, COLORS.bg);
                                     drawer.canvas.borderRect(camera_relative, button.local_rect, math.lerp(0.05, 0.1, @max(lego.hot_t, lego.active_t)), .inner, .black);
+
+                                    const center = button.local_rect.get(.center);
+                                    const d: f32 = if (button.action == .scroll_down) 1 else -1;
+                                    const s = button.local_rect.size.min() * 0.2;
+                                    drawer.canvas.line(camera_relative, &.{
+                                        center.add(.new(-s, d * -s / 1.5)),
+                                        center.add(.new(0, d * s / 1.5)),
+                                        center.add(.new(s, d * -s / 1.5)),
+                                    }, 0.05, .black);
                                 },
                                 .reset_bubble => {
                                     // TODO(game): nicer
