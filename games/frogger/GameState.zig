@@ -25,21 +25,51 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 usual: kommon.Usual,
 frames: std.ArrayList(FrameState),
 
-const FrameState = struct {
-    player_pos: Vec2,
+const CircularObstacle = struct {
+    path: math.Circle,
+    size: f32,
+    t: f32,
+    speed: f32,
 
-    pub const initial: FrameState = .{ .player_pos = .new(0, 0) };
+    fn body(self: CircularObstacle) math.Circle {
+        const center = self.path.center.add(Vec2.fromPolar(self.path.radius, self.t));
+        return .{ .center = center, .radius = self.size };
+    }
+};
+
+const FrameState = struct {
+    time: f32,
+    player_pos: Vec2,
+    obstacle: CircularObstacle,
+
+    pub const initial: FrameState = .{
+        .time = 0,
+        .player_pos = .new(0, 0),
+        .obstacle = .{
+            .path = .{ .center = .new(3, 3), .radius = 2 },
+            .size = 0.5,
+            .t = 0,
+            .speed = 0.2,
+        },
+    };
 
     fn next(self: *const FrameState, input: Vec2) ?FrameState {
-        const step_dist = 0.1;
+        const step_time = 1.0 / 30.0;
+        const step_dist = 1 * step_time;
         const new_pos, const reached = self.player_pos.towardsPureWithFinish(input, step_dist);
         if (reached) return null;
 
-        return .{ .player_pos = new_pos };
+        var result: FrameState = self.*;
+        result.time += step_time;
+        result.player_pos = new_pos;
+        result.obstacle.t += result.obstacle.speed * step_time;
+        std.log.debug("{d}", .{result.time});
+        return result;
     }
 
     fn draw(self: *const FrameState, camera: Rect, canvas: *Canvas) !void {
         canvas.fillCircle(camera, self.player_pos, 1.0, .white);
+        canvas.fillCircleV2(camera, self.obstacle.body(), .cyan);
     }
 };
 
