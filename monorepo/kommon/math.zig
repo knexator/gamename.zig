@@ -1,6 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const math = @This();
+
 pub fn inRange(value: anytype, min_inclusive: anytype, max_exclusive: anytype) bool {
     return min_inclusive <= value and value < max_exclusive;
 }
@@ -66,6 +68,17 @@ pub fn towards(v: *f32, goal: f32, max_delta: f32) void {
     }
 }
 
+pub fn towardsPure(v: f32, goal: f32, max_delta: f32) f32 {
+    if (max_delta <= 0) return v;
+    if (@abs(v - goal) <= max_delta) {
+        return goal;
+    } else if (v < goal) {
+        return v + max_delta;
+    } else {
+        return v - max_delta;
+    }
+}
+
 pub fn towards_range(v: *f32, min: f32, max: f32, max_delta: f32) void {
     assert(min <= max);
     if (v.* < min) {
@@ -100,9 +113,11 @@ pub const LerpSpeed = struct {
     duration: f32,
     precision: f32,
 
+    pub const instant: LerpSpeed = .{ .duration = 0, .precision = 1.0 };
     pub const old: LerpSpeed = .{ .duration = 1.0 / 60.0, .precision = 1.0 - 0.6 };
     pub const fast: LerpSpeed = old;
     pub const slow: LerpSpeed = .{ .duration = 0.2, .precision = 0.01 };
+    pub const sluw: LerpSpeed = .{ .duration = 0.5, .precision = 0.05 };
     pub const slug: LerpSpeed = .{ .duration = 1.0, .precision = 0.05 };
 
     pub fn halflife(speed: LerpSpeed) f32 {
@@ -127,8 +142,20 @@ pub fn lerpTowards(v: *f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) voi
 
 const lerpTowardsPureF32 = lerpTowardsPure;
 pub fn lerpTowardsPure(current: f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) f32 {
+    if (speed.duration == 0 or speed.precision == 1) return goal;
     assert(delta_seconds >= 0 and speed.halflife() >= 0);
     return goal + (current - goal) * std.math.exp2(-delta_seconds / speed.halflife());
+}
+
+pub fn lerpExponentiallyTowardsPure(current: f32, goal: f32, speed: LerpSpeed, delta_seconds: f32) f32 {
+    if (speed.duration == 0 or speed.precision == 1) return goal;
+    assert(current > 0 and goal > 0);
+    return @exp(lerpTowardsPure(
+        @log(current),
+        @log(goal),
+        speed,
+        delta_seconds,
+    ));
 }
 
 pub fn halflife_from_duration_and_precision(duration: f32, precision: f32) f32 {
@@ -398,6 +425,14 @@ pub const Segment = struct {
     a: Vec2,
     b: Vec2,
 
+    pub fn closestPosition(segment: Segment, position: Vec2) Vec2 {
+        const ab = segment.b.sub(segment.a);
+        const ab_mag_sq = ab.magSq();
+        if (ab_mag_sq == 0.0) return segment.a;
+        const t = clamp01(position.sub(segment.a).dot(ab) / ab_mag_sq);
+        return segment.at(t);
+    }
+
     pub fn inverted(original: Segment) Segment {
         return .{ .a = original.b, .b = original.a };
     }
@@ -511,6 +546,10 @@ pub const Vec2 = extern struct {
         return .{ .x = x, .y = y };
     }
 
+    pub fn toArray(v: Vec2) [2]f32 {
+        return .{ v.x, v.y };
+    }
+
     pub fn get(v: *Self, which: Coord) Scalar {
         return switch (which) {
             .x => v.x,
@@ -526,17 +565,27 @@ pub const Vec2 = extern struct {
     }
 
     pub fn towardsPure(v: Self, goal: Self, max_delta: f32) Self {
+        const result, _ = towardsPureWithFinish(v, goal, max_delta);
+        return result;
+    }
+
+    pub fn towardsPureWithFinish(v: Self, goal: Self, max_delta: f32) std.meta.Tuple(&.{ Self, bool }) {
         const delta = goal.sub(v);
         const delta_mag = delta.mag();
         if (delta_mag <= max_delta) {
-            return goal;
+            return .{ goal, true };
         } else {
-            return v.add(delta.scale(max_delta / delta_mag));
+            return .{ v.add(delta.scale(max_delta / delta_mag)), false };
         }
     }
 
     pub fn towards(v: *Self, goal: Self, max_delta: f32) void {
-        v.* = towardsPure(v.*, goal, max_delta);
+        v.* = Self.towardsPure(v.*, goal, max_delta);
+    }
+
+    pub fn towardsWithFinish(v: *Self, goal: Self, max_delta: f32) bool {
+        v.*, const result = towardsPureWithFinish(v.*, goal, max_delta);
+        return result;
     }
 
     pub fn lerpTowardsPure(v: Self, goal: Self, ratio: f32, delta_seconds: f32) Self {
@@ -548,6 +597,19 @@ pub const Vec2 = extern struct {
 
     pub fn lerpTowards(v: *Self, goal: Self, ratio: f32, delta_seconds: f32) void {
         v.* = Vec2.lerpTowardsPure(v.*, goal, ratio, delta_seconds);
+    }
+
+    pub fn lerpMagnitudeTowardsPure(v: Self, goal: Self, speed: LerpSpeed, delta_seconds: f32, acceptable_error: f32) Self {
+        const delta_old = v.sub(goal);
+        const delta_new = lerpMagnitudePure(delta_old, 0, speed, delta_seconds, acceptable_error);
+        return goal.add(delta_new);
+    }
+
+    pub fn lerpMagnitudePure(current: Self, goal: f32, speed: LerpSpeed, delta_seconds: f32, acceptable_error: f32) Self {
+        const old_mag = current.mag();
+        if (old_mag == goal) return current;
+        const new_mag = if (@abs(old_mag - goal) <= acceptable_error) goal else lerpTowardsPureF32(old_mag, goal, speed, delta_seconds);
+        return current.scale(new_mag / old_mag);
     }
 
     pub fn awayFrom(v: Self, goal: Self, min_dist: f32) Self {
@@ -614,6 +676,10 @@ pub const Vec2 = extern struct {
         return new(a.x, a.y + b);
     }
 
+    pub fn subX(a: Self, b: Scalar) Self {
+        return new(a.x - b, a.y);
+    }
+
     /// deprecated
     pub fn perpCW(v: Self) Self {
         return v.rotPosQuarter();
@@ -624,12 +690,21 @@ pub const Vec2 = extern struct {
     }
 
     pub fn rotNegQuarter(v: Self) Self {
-        return new(-v.y, v.x);
+        return new(v.y, -v.x);
     }
 
     test "rotate quarter" {
         try Vec2.expectApproxEqAbs(Vec2.e2, Vec2.e1.rotPosQuarter(), 0.001);
         try Vec2.expectApproxEqAbs(Vec2.e1.neg(), Vec2.e2.rotPosQuarter(), 0.001);
+
+        try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e2.rotNegQuarter(), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e2.neg(), Vec2.e1.rotNegQuarter(), 0.001);
+
+        try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e1.rotPosQuarter().rotNegQuarter(), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e1, Vec2.e1.rotNegQuarter().rotPosQuarter(), 0.001);
+
+        try Vec2.expectApproxEqAbs(Vec2.e1.neg(), Vec2.e1.rotPosQuarter().rotPosQuarter(), 0.001);
+        try Vec2.expectApproxEqAbs(Vec2.e1.neg(), Vec2.e1.rotNegQuarter().rotNegQuarter(), 0.001);
     }
 
     pub fn rotQuarters(v: Self, k: isize) Self {
@@ -782,14 +857,40 @@ pub const Vec2 = extern struct {
         );
     }
 
+    pub fn lerpAlongCircle(a: Self, b: Self, excentricity: f32, t: f32) Self {
+        const chord = b.sub(a);
+        const chord_len = chord.mag();
+        if (chord_len == 0 or @abs(excentricity) < 1e-6) return Self.lerp(a, b, t);
+
+        const half_chord = chord_len / 2;
+        const left_normal = chord.rotPosQuarter().scale(1 / chord_len);
+        const midpoint = Self.lerp(a, b, 0.5);
+
+        // distance from the chord midpoint to the circle center, positive towards the right side
+        const center_offset = half_chord * (1 - excentricity * excentricity) / (2 * excentricity);
+        const center = midpoint.sub(left_normal.scale(center_offset));
+
+        // the full arc spans 4 * atan(e) radians; a left bulge means travelling clockwise
+        const total_turns = 4 * std.math.atan(excentricity) / std.math.tau;
+        return a.rotateAround(center, -total_turns * t);
+    }
+
     pub fn atBezier(p0: Self, p1: Self, p2: Self, t: f32) Self {
         const pA: Self = .lerp(p0, p1, t);
         const pB: Self = .lerp(p1, p2, t);
         return .lerp(pA, pB, t);
     }
 
+    pub fn isZero(v: Self) bool {
+        return v.x == 0 and v.y == 0;
+    }
+
     pub fn equals(a: Self, b: Self) bool {
         return a.x == b.x and a.y == b.y;
+    }
+
+    pub fn abs(v: Vec2) Vec2 {
+        return .new(@abs(v.x), @abs(v.y));
     }
 
     pub fn aspectRatio(v: Self) f32 {
@@ -820,6 +921,46 @@ pub const Vec2 = extern struct {
 
         try expectApproxEqAbs(.new(6, 3), Vec2.new(4, 3).withAspectRatio(2, .grow), 0.0001);
         try expectApproxEqAbs(.new(4, 2), Vec2.new(4, 3).withAspectRatio(2, .shrink), 0.0001);
+    }
+
+    /// also returns how much change was needed
+    pub fn withAspectRatioV2(original: Vec2, target_ratio: f32, modify: Coord) std.meta.Tuple(&.{ Vec2, f32 }) {
+        assert(original.x != 0);
+        assert(original.y != 0);
+        assert(target_ratio != 0);
+        switch (modify) {
+            .x => {
+                const delta = target_ratio * original.y - original.x;
+                return .{ original.addX(delta), delta };
+            },
+            .y => {
+                const delta = (original.x - target_ratio * original.y) / target_ratio;
+                return .{ original.addY(delta), delta };
+            },
+        }
+    }
+
+    test "withAspectRatioV2" {
+        const Testcase = struct {
+            expected: std.meta.Tuple(&.{ Vec2, f32 }),
+            original: Vec2 = .one,
+            target_ratio: f32,
+            which: Coord,
+        };
+        const testcases: []const Testcase = &.{
+            .{ .expected = .{ .new(2, 1), 1 }, .target_ratio = 2, .which = .x },
+            .{ .expected = .{ .new(1, 0.5), -0.5 }, .target_ratio = 2, .which = .y },
+            .{ .expected = .{ .new(1, 2), 1 }, .target_ratio = 0.5, .which = .y },
+            .{ .expected = .{ .new(0.5, 1), -0.5 }, .target_ratio = 0.5, .which = .x },
+            // try expectApproxEqAbs(.new(6, 3), Vec2.new(4, 3).withAspectRatio(2, .grow), 0.0001);
+            // try expectApproxEqAbs(.new(4, 2), Vec2.new(4, 3).withAspectRatio(2, .shrink), 0.0001);
+        };
+        for (testcases) |testcase| {
+            const expected_vec, const expected_delta = testcase.expected;
+            const actual_vec, const actual_delta = testcase.original.withAspectRatioV2(testcase.target_ratio, testcase.which);
+            try expectApproxEqAbs(expected_vec, actual_vec, 0.0001);
+            try std.testing.expectApproxEqAbs(expected_delta, actual_delta, 0.0001);
+        }
     }
 
     pub fn min(v: Vec2) f32 {
@@ -1257,7 +1398,7 @@ pub const IBounds = struct {
     }
 };
 
-pub const Bounds = struct {
+pub const Bounds = extern struct {
     top: f32,
     bottom: f32,
     left: f32,
@@ -1276,6 +1417,11 @@ pub const Bounds = struct {
         .bottom = 0,
         .right = 0,
     };
+
+    pub fn empty(bounds: Bounds) bool {
+        assert(bounds.valid());
+        return bounds.right == bounds.left or bounds.top == bounds.bottom;
+    }
 
     pub fn valid(bounds: Bounds) bool {
         return bounds.left <= bounds.right and bounds.top <= bounds.bottom and
@@ -1299,6 +1445,15 @@ pub const Bounds = struct {
         };
         assert(result.valid());
         return result;
+    }
+
+    pub fn fromParentAndRect(parent: Point, rect: Rect) Bounds {
+        return .boundingPoints(&.{
+            parent.applyToLocalPosition(rect.top_left),
+            parent.applyToLocalPosition(rect.get(.top_right)),
+            parent.applyToLocalPosition(rect.get(.bottom_left)),
+            parent.applyToLocalPosition(rect.get(.bottom_right)),
+        });
     }
 
     pub fn plusMargin3(self: Bounds, which: enum { left, right, top, bottom }, amount: f32) Bounds {
@@ -1638,6 +1793,20 @@ pub const Rect = extern struct {
         );
     }
 
+    pub fn closestPointOnBorder(self: Rect, p: Vec2) Vec2 {
+        var best_dist_sq: f32 = std.math.inf(f32);
+        var best_pos: Vec2 = undefined;
+        inline for (Side.all) |side| {
+            const pos = self.getSideSegment(side).closestPosition(p);
+            const dist_sq = pos.sub(p).magSq();
+            if (dist_sq < best_dist_sq) {
+                best_dist_sq = dist_sq;
+                best_pos = pos;
+            }
+        }
+        return best_pos;
+    }
+
     pub fn plusMargin(self: Rect, v: f32) Rect {
         return self.plusMargin2(.both(v));
     }
@@ -1649,7 +1818,7 @@ pub const Rect = extern struct {
         };
     }
 
-    pub fn plusMargin3(self: Rect, which: enum { left, right, top, bottom }, amount: f32) Rect {
+    pub fn plusMargin3(self: Rect, which: Side, amount: f32) Rect {
         return switch (which) {
             .right => .{
                 .top_left = self.top_left,
@@ -1735,6 +1904,11 @@ pub const Rect = extern struct {
         }
     }
 
+    pub fn zoomV2(original: Rect, fixed_local_pos: Vec2, s: f32) Rect {
+        const new_size = original.size.scale(s);
+        return .fromPivotAndSize(original.getAt(fixed_local_pos), fixed_local_pos, new_size);
+    }
+
     pub fn zoom(original: Rect, fixed_world_pos: Vec2, s: f32) Rect {
         const new_size = original.size.scale(s);
         return .fromPivotAndSize(fixed_world_pos, original.localFromWorldPosition(fixed_world_pos), new_size);
@@ -1761,6 +1935,14 @@ pub const Rect = extern struct {
             .width => .new(size, original.size.y),
             .height => .new(original.size.x, size),
         }, keep);
+    }
+
+    pub fn withSize1dAndKeepAspectRatio(original: Rect, which: enum { width, height }, size: f32, keep: MeasureKind) Rect {
+        const old_side = switch (which) {
+            .width => original.size.x,
+            .height => original.size.y,
+        };
+        return original.withSize(original.size.scale(size / old_side), keep);
     }
 
     pub fn withCenter(original: Rect, center: Vec2) Rect {
@@ -1820,6 +2002,13 @@ pub const Rect = extern struct {
 
     pub fn scaleNonUniform(original: Rect, s: Vec2, keep: MeasureKind) Rect {
         return original.resizeRelNonUniform(s, keep);
+    }
+
+    pub fn moveTo(original: Rect, top_left: Vec2) Rect {
+        return .{
+            .top_left = top_left,
+            .size = original.size,
+        };
     }
 
     pub fn move(original: Rect, delta: Vec2) Rect {
@@ -1931,6 +2120,15 @@ pub const Rect = extern struct {
         };
     }
 
+    pub fn getSideSegment(self: Rect, side: Side) Segment {
+        return switch (side) {
+            .left => .{ .a = self.getAt(.zero), .b = self.getAt(.ypos) },
+            .right => .{ .a = self.getAt(.xpos), .b = self.getAt(.one) },
+            .top => .{ .a = self.getAt(.zero), .b = self.getAt(.xpos) },
+            .bottom => .{ .a = self.getAt(.ypos), .b = self.getAt(.one) },
+        };
+    }
+
     pub fn withSide(original: Rect, which: Side, v: f32) Rect {
         return switch (which) {
             .left => .fromMeasureAndSizeV2(.top_left, .new(v, original.getSide(.top)), original.size),
@@ -2031,6 +2229,10 @@ pub const FColor = extern struct {
 
     pub fn whiteAlpha(a: f32) FColor {
         return white.withAlpha(a);
+    }
+
+    pub fn grayAlpha(v: f32, a: f32) FColor {
+        return gray(v).withAlpha(a);
     }
 
     pub fn blackAlpha(a: f32) FColor {
@@ -2259,12 +2461,20 @@ pub const Point = extern struct {
     turns: f32 = 0,
     scale: f32 = 1,
 
+    pub fn isId(p: Point) bool {
+        return std.meta.eql(p, .{});
+    }
+
     pub fn withPos(original: Point, new_pos: Vec2) Point {
         return .{ .pos = new_pos, .turns = original.turns, .scale = original.scale };
     }
 
     pub fn moveAbs(original: Point, delta: Vec2) Point {
         return original.withPos(original.pos.add(delta));
+    }
+
+    pub fn moveRel(original: Point, delta: Vec2) Point {
+        return original.withPos(original.pos.add(delta.scale(original.scale)));
     }
 
     pub fn rotateAround(original: Point, center: Vec2, turns: f32) Point {
@@ -2316,6 +2526,14 @@ pub const Point = extern struct {
             .turns = lerpTowardsPureF32(current.turns, goal.turns, speed, delta_seconds),
             .scale = lerpTowardsPureF32(current.scale, goal.scale, speed, delta_seconds),
         };
+    }
+
+    pub fn towardsWithFinish(self: *Point, goal: Point, max_delta: f32) bool {
+        // TODO: scale should lerp on an exponential scale
+        const a = Vec2.towardsWithFinish(&self.pos, goal.pos, max_delta);
+        const b = math.towardsWithFinish(&self.turns, goal.turns, max_delta);
+        const c = math.towardsWithFinish(&self.scale, goal.scale, max_delta);
+        return a and b and c;
     }
 
     pub fn rotateAroundLocalPosition(point: Point, local_center: Vec2, turns: f32) Point {
@@ -2734,4 +2952,71 @@ pub fn projectPointOnLine(p: Vec2, line_origin: Vec2, line_dir: Vec2) f32 {
 
 test "projectPointOnLine" {
     try std.testing.expectEqual(1.5, projectPointOnLine(.new(3.5, 2), .new(2, 2), .new(1, 0)));
+}
+
+pub const ShaderCamera = extern struct {
+    origin: Vec2,
+    axis_x: Vec2,
+    axis_y: Vec2,
+
+    pub fn toNDC(camera: ShaderCamera, pos: Vec2) Vec2 {
+        return camera.origin
+            .add(camera.axis_x.scale(pos.x))
+            .add(camera.axis_y.scale(pos.y));
+    }
+
+    pub fn fromRectAndParent(camera: Rect, parent: Point) ShaderCamera {
+        const ndc_scale: Vec2 = .new(2.0 / camera.size.x, 2.0 / camera.size.y);
+        return .{
+            .origin = camera.localFromWorldPosition(parent.pos).scale(2).sub(.one),
+            .axis_x = Vec2.e1.scale(parent.scale).rotate(parent.turns).mul(ndc_scale),
+            .axis_y = Vec2.e2.scale(parent.scale).rotate(parent.turns).mul(ndc_scale),
+        };
+    }
+};
+
+test "ShaderCamera" {
+    const tests: []const struct { expected_ndc: Vec2, local_pos: Vec2, parent: Point, camera: Rect } = &.{
+        .{ .expected_ndc = .zero, .local_pos = .zero, .parent = .{}, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+        .{ .expected_ndc = .new(2, 3), .local_pos = .new(2, 3), .parent = .{}, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+        .{ .expected_ndc = .zero, .local_pos = .zero, .parent = .{}, .camera = .{ .top_left = .both(-2), .size = .both(4) } },
+        .{ .expected_ndc = .new(1, 0), .local_pos = .new(2, 0), .parent = .{}, .camera = .{ .top_left = .both(-2), .size = .both(4) } },
+
+        .{ .expected_ndc = .new(-1, -1), .local_pos = .zero, .parent = .{}, .camera = .unit },
+        .{ .expected_ndc = .new(1, 1), .local_pos = .new(1, 1), .parent = .{}, .camera = .unit },
+
+        .{ .expected_ndc = .both(-0.5), .local_pos = .zero, .parent = .{}, .camera = .{ .top_left = .both(-0.5), .size = .both(2) } },
+        .{ .expected_ndc = .both(0.5), .local_pos = .one, .parent = .{}, .camera = .{ .top_left = .both(-0.5), .size = .both(2) } },
+
+        .{ .expected_ndc = .new(1, 0), .local_pos = .new(1, 0), .parent = .{}, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+        .{ .expected_ndc = .new(2, 0), .local_pos = .new(1, 0), .parent = .{ .scale = 2 }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+        .{ .expected_ndc = .new(1, -1), .local_pos = .new(1, 0), .parent = .{ .scale = 1 }, .camera = .unit },
+        .{ .expected_ndc = .new(3, -1), .local_pos = .new(1, 0), .parent = .{ .scale = 2 }, .camera = .unit },
+
+        .{ .expected_ndc = .new(0, 1), .local_pos = .new(1, 0), .parent = .{ .turns = 0.25 }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+        .{ .expected_ndc = .zero, .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0) }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+        .{ .expected_ndc = .zero, .local_pos = .new(0.5, 0.5), .parent = .{}, .camera = .unit },
+        .{ .expected_ndc = .new(1, -1), .local_pos = .zero, .parent = .{ .pos = .new(1, 0) }, .camera = .unit },
+        .{ .expected_ndc = .zero, .local_pos = .new(-0.5, 0.5), .parent = .{ .pos = .new(1, 0) }, .camera = .unit },
+        // .{ .expected_ndc = .new(-1, -1), .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0) }, .camera = .unit },
+
+        // .{ .expected_ndc = .new(3, -1), .local_pos = .new(1, 0), .parent = .{ .pos = .new(1, 0), .scale = 2 }, .camera = .unit },
+
+        // .{ .expected_ndc = .zero, .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0) }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+        // .{ .expected_ndc = .zero, .local_pos = .new(-1, 0), .parent = .{ .pos = .new(1, 0), .turns = 0.25 }, .camera = .{ .top_left = .both(-1), .size = .both(2) } },
+
+        .{ .expected_ndc = .new(1, 1), .local_pos = .new(10, 1), .parent = .{}, .camera = .{ .top_left = .zero, .size = .new(10, 1) } },
+        .{ .expected_ndc = .new(0, 1), .local_pos = .new(1, 0), .parent = .{ .turns = 0.25 }, .camera = .fromCenterAndSize(.zero, .new(10, 2)) },
+    };
+
+    for (tests) |t| {
+        const actual_cam: ShaderCamera = .fromRectAndParent(t.camera, t.parent);
+        const actual_ndc = actual_cam.toNDC(t.local_pos);
+
+        try Vec2.expectApproxEqAbs(t.expected_ndc, actual_ndc, 0.001);
+    }
 }
