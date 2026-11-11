@@ -30,6 +30,14 @@ const FrameState = struct {
 
     pub const initial: FrameState = .{ .player_pos = .new(0, 0) };
 
+    fn next(self: *const FrameState, input: Vec2) ?FrameState {
+        const step_dist = 0.1;
+        const new_pos, const reached = self.player_pos.towardsPureWithFinish(input, step_dist);
+        if (reached) return null;
+
+        return .{ .player_pos = new_pos };
+    }
+
     fn draw(self: *const FrameState, camera: Rect, canvas: *Canvas) !void {
         canvas.fillCircle(camera, self.player_pos, 1.0, .white);
     }
@@ -68,6 +76,12 @@ pub fn afterHotReload(self: *GameState) !void {
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
     const camera: Rect = .withAspectRatio(.{ .top_left = .zero, .size = .new(6, 8) }, platform.aspect_ratio, .grow, .center);
+    const mouse = platform.getMouse(camera);
+    var cur = self.frames.getLast();
+    while (cur.next(mouse.cur.position)) |new| {
+        try self.frames.append(new);
+        cur = new;
+    }
     platform.gl.clear(.black);
     try self.frames.getLast().draw(camera, &self.usual.canvas);
     return false;
