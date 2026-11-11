@@ -4,7 +4,7 @@
 
 // butler push .\zig-out\web_static\ knexator/my-game-name:html
 
-const active_folder = "vaulogy";
+const active_folder = "frogger";
 
 const std = @import("std");
 const assetpack = @import("assetpack");
