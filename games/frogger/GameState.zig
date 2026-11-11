@@ -107,6 +107,14 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     const camera: Rect = .withAspectRatio(.{ .top_left = .zero, .size = .new(6, 8) }, platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
 
+    if (mouse.cur.isDown(.right)) {
+        var undoed_time: f32 = 0;
+        while (self.frames.items.len > 1 and undoed_time < platform.delta_seconds * 12) {
+            _ = self.frames.pop();
+            undoed_time += FrameState.step_time;
+        }
+    }
+
     if (mouse.cur.isDown(.left)) {
         self.accumulated_error.addInPlace(mouse.deltaPos());
     }
