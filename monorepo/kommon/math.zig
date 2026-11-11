@@ -2208,6 +2208,10 @@ pub const Rect = extern struct {
             new_parent.inverseApplyGetLocalPosition(original.get(.bottom_right)),
         );
     }
+
+    pub fn overlapsCircle(rect: Rect, circle: Circle) bool {
+        return rect.projectPos(circle.center).sub(circle.center).magSq() <= circle.radius * circle.radius;
+    }
 };
 
 pub const FColor = extern struct {

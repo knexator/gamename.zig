@@ -38,25 +38,41 @@ const CircularObstacle = struct {
     }
 };
 
+const CarlaneObstacle = struct {
+    period: f32,
+    t: f32,
+    path: math.Segment,
+    size: Vec2,
+
+    fn body(self: CarlaneObstacle) Rect {
+        return .fromCenterAndSize(self.path.at(self.t / self.period), self.size);
+    }
+};
+
 const FrameState = struct {
     time: f32,
-    player_pos: Vec2,
+    player: math.Circle,
     obstacle: CircularObstacle,
+    obstacles: [4]CarlaneObstacle,
     ever_lost: bool,
 
     pub const initial: FrameState = .{
         .time = 0,
-        .player_pos = .new(0, 0),
+        .player = .{ .center = .new(0, 0), .radius = 0.5 },
         .obstacle = .{
             .path = .{ .center = .new(3, 3), .radius = 2 },
             .size = 0.5,
             .t = 0,
             .speed = 0.2,
         },
+        .obstacles = .{
+            .{ .t = 0, .period = 12, .path = .{ .a = .new(0, 5), .b = .new(12, 5) }, .size = .one },
+            .{ .t = 4, .period = 12, .path = .{ .a = .new(0, 5), .b = .new(12, 5) }, .size = .new(2, 1) },
+            .{ .t = 8, .period = 12, .path = .{ .a = .new(0, 5), .b = .new(12, 5) }, .size = .one },
+            .{ .t = 3, .period = 14, .path = .{ .a = .new(0, 8), .b = .new(12, 8) }, .size = .one },
+        },
         .ever_lost = false,
     };
-
-    const player_radius: f32 = 1.0;
 
     const step_time = 1.0 / 30.0;
     const step_dist = 1 * step_time;
@@ -65,15 +81,18 @@ const FrameState = struct {
 
         var result: FrameState = self.*;
         result.time += step_time;
-        result.player_pos.addInPlace(delta);
+        result.player.center.addInPlace(delta);
         result.obstacle.t += result.obstacle.speed * step_time;
-        result.ever_lost = self.ever_lost or result.obstacle.body().overlaps(.{ .center = result.player_pos, .radius = player_radius });
+        for (&result.obstacles) |*obs| obs.t = @mod(obs.t + step_time, obs.period);
+        result.ever_lost = self.ever_lost or result.obstacle.body().overlaps(result.player);
+        for (result.obstacles) |obs| result.ever_lost = result.ever_lost or obs.body().overlapsCircle(result.player);
         return result;
     }
 
     fn draw(self: *const FrameState, camera: Rect, canvas: *Canvas) !void {
-        canvas.fillCircle(camera, self.player_pos, player_radius, .white);
+        canvas.fillCircleV2(camera, self.player, .white);
         canvas.fillCircleV2(camera, self.obstacle.body(), .cyan);
+        for (self.obstacles) |obs| canvas.fillRect(camera, obs.body(), .cyan);
         if (self.ever_lost) try canvas.drawText(0, camera, "Lost!", .centeredAt(.new(3, 1)), 1, .red);
     }
 };
@@ -110,7 +129,7 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
-    const camera: Rect = .withAspectRatio(.{ .top_left = .zero, .size = .new(6, 8) }, platform.aspect_ratio, .grow, .center);
+    const camera: Rect = .withAspectRatio(.{ .top_left = .zero, .size = .new(12, 16) }, platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
 
     if (mouse.cur.isDown(.right)) {
