@@ -23,6 +23,17 @@ pub const stuff = .{
 pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_images"));
 
 usual: kommon.Usual,
+frames: std.ArrayList(FrameState),
+
+const FrameState = struct {
+    player_pos: Vec2,
+
+    pub const initial: FrameState = .{ .player_pos = .new(0, 0) };
+
+    fn draw(self: *const FrameState, camera: Rect, canvas: *Canvas) !void {
+        canvas.fillCircle(camera, self.player_pos, 1.0, .white);
+    }
+};
 
 pub fn init(
     dst: *GameState,
@@ -35,6 +46,8 @@ pub fn init(
     const random_seed = runtime_params.random_seed;
 
     dst.usual.init(gpa, random_seed, try .init(gl, gpa, &.{@embedFile("fonts/Arial.json")}, &.{loaded_images.get(.arial_atlas)}));
+    dst.frames = .init(gpa);
+    try dst.frames.append(.initial);
 }
 
 // TODO: take gl parameter
@@ -54,6 +67,9 @@ pub fn afterHotReload(self: *GameState) !void {
 /// returns true if should quit
 pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
+    const camera: Rect = .withAspectRatio(.{ .top_left = .zero, .size = .new(6, 8) }, platform.aspect_ratio, .grow, .center);
+    platform.gl.clear(.black);
+    try self.frames.getLast().draw(camera, &self.usual.canvas);
     return false;
 }
 
