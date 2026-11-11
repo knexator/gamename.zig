@@ -24,6 +24,7 @@ pub const Images = std.meta.FieldEnum(@FieldType(@TypeOf(stuff), "preloaded_imag
 
 usual: kommon.Usual,
 frames: std.ArrayList(FrameState),
+accumulated_error: Vec2 = .zero,
 
 const CircularObstacle = struct {
     path: math.Circle,
@@ -53,17 +54,15 @@ const FrameState = struct {
         },
     };
 
-    fn next(self: *const FrameState, input: Vec2) ?FrameState {
-        const step_time = 1.0 / 30.0;
-        const step_dist = 1 * step_time;
-        const new_pos, const reached = self.player_pos.towardsPureWithFinish(input, step_dist);
-        if (reached) return null;
+    const step_time = 1.0 / 30.0;
+    const step_dist = 1 * step_time;
+    fn next(self: *const FrameState, delta: Vec2) FrameState {
+        assert(@abs(delta.mag() - step_dist) < 0.0001);
 
         var result: FrameState = self.*;
         result.time += step_time;
-        result.player_pos = new_pos;
+        result.player_pos.addInPlace(delta);
         result.obstacle.t += result.obstacle.speed * step_time;
-        std.log.debug("{d}", .{result.time});
         return result;
     }
 
@@ -107,11 +106,18 @@ pub fn update(self: *GameState, platform: PlatformGives) !bool {
     self.usual.frameStarted(platform);
     const camera: Rect = .withAspectRatio(.{ .top_left = .zero, .size = .new(6, 8) }, platform.aspect_ratio, .grow, .center);
     const mouse = platform.getMouse(camera);
-    var cur = self.frames.getLast();
-    while (cur.next(mouse.cur.position)) |new| {
-        try self.frames.append(new);
-        cur = new;
+
+    if (mouse.cur.isDown(.left)) {
+        self.accumulated_error.addInPlace(mouse.deltaPos());
     }
+
+    while (self.accumulated_error.mag() >= FrameState.step_dist) {
+        const delta = Vec2.zero.towardsPure(self.accumulated_error, FrameState.step_dist);
+        self.accumulated_error.towards(.zero, FrameState.step_dist);
+        const new = self.frames.getLast().next(delta);
+        try self.frames.append(new);
+    }
+
     platform.gl.clear(.black);
     try self.frames.getLast().draw(camera, &self.usual.canvas);
     return false;
