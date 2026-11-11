@@ -1021,6 +1021,10 @@ pub const Circle = struct {
         return pos.sub(circle.center).magSq() <= (circle.radius * circle.radius);
     }
 
+    pub fn overlaps(a: Circle, b: Circle) bool {
+        return a.center.sub(b.center).magSq() <= ((a.radius + b.radius) * (a.radius + b.radius));
+    }
+
     pub fn asPoint(circle: Circle) Point {
         return .{
             .pos = circle.center,

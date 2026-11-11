@@ -42,6 +42,7 @@ const FrameState = struct {
     time: f32,
     player_pos: Vec2,
     obstacle: CircularObstacle,
+    ever_lost: bool,
 
     pub const initial: FrameState = .{
         .time = 0,
@@ -52,7 +53,10 @@ const FrameState = struct {
             .t = 0,
             .speed = 0.2,
         },
+        .ever_lost = false,
     };
+
+    const player_radius: f32 = 1.0;
 
     const step_time = 1.0 / 30.0;
     const step_dist = 1 * step_time;
@@ -63,12 +67,14 @@ const FrameState = struct {
         result.time += step_time;
         result.player_pos.addInPlace(delta);
         result.obstacle.t += result.obstacle.speed * step_time;
+        result.ever_lost = self.ever_lost or result.obstacle.body().overlaps(.{ .center = result.player_pos, .radius = player_radius });
         return result;
     }
 
     fn draw(self: *const FrameState, camera: Rect, canvas: *Canvas) !void {
-        canvas.fillCircle(camera, self.player_pos, 1.0, .white);
+        canvas.fillCircle(camera, self.player_pos, player_radius, .white);
         canvas.fillCircleV2(camera, self.obstacle.body(), .cyan);
+        if (self.ever_lost) try canvas.drawText(0, camera, "Lost!", .centeredAt(.new(3, 1)), 1, .red);
     }
 };
 
