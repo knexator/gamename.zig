@@ -67,8 +67,8 @@ const FrameState = struct {
     time: f32,
     player: math.Circle,
     obstacle: CircularObstacle,
-    obstacles: [4]CarlaneObstacle,
-    obstaclesV2: [2]CarlaneObstacleV2,
+    obstacles: [0]CarlaneObstacle,
+    obstaclesV2: [6]CarlaneObstacleV2,
     ever_lost: bool,
 
     pub const initial: FrameState = .{
@@ -80,15 +80,14 @@ const FrameState = struct {
             .t = 0,
             .speed = 0.2,
         },
-        .obstacles = .{
-            .{ .t = 0, .period = 12, .path = .{ .a = .new(0, 5), .b = .new(12, 5) }, .size = .one },
-            .{ .t = 4, .period = 12, .path = .{ .a = .new(0, 5), .b = .new(12, 5) }, .size = .new(2, 1) },
-            .{ .t = 8, .period = 12, .path = .{ .a = .new(0, 5), .b = .new(12, 5) }, .size = .one },
-            .{ .t = 3, .period = 14, .path = .{ .a = .new(0, 8), .b = .new(12, 8) }, .size = .one },
-        },
+        .obstacles = .{},
         .obstaclesV2 = .{
-            .{ .t = 0, .data = ".X.................", .path = .{ .a = .new(-1, 10), .b = .new(13, 10) }, .car_size = .one },
-            .{ .t = 0, .data = ".X.........", .path = .{ .a = .new(-1, 11), .b = .new(13, 11) }, .car_size = .one },
+            .{ .t = 0, .data = ".........xxx.......", .path = .{ .a = .new(-1, 6), .b = .new(13, 6) }, .car_size = .one },
+            .{ .t = 0, .data = ".x....x........", .path = .{ .a = .new(-1, 7.5), .b = .new(13, 7.5) }, .car_size = .one },
+            .{ .t = 0, .data = "...Xxxx.......xx.......x...", .path = .{ .a = .new(-1, 9), .b = .new(13, 9) }, .car_size = .one },
+            .{ .t = 0, .data = "..Xx...x......", .path = .{ .a = .new(-1, 10.5), .b = .new(13, 10.5) }, .car_size = .one },
+            .{ .t = 0, .data = "....X....xxx....", .path = .{ .a = .new(-1, 12), .b = .new(13, 12) }, .car_size = .one },
+            .{ .t = 0, .data = ".....Xxx..", .path = .{ .a = .new(-1, 13.5), .b = .new(13, 13.5) }, .car_size = .one },
         },
         .ever_lost = false,
     };
