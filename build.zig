@@ -472,6 +472,7 @@ fn build_all_games_html(b: *std.Build) !void {
         "gol_editor",
         // TODO: audio stuff
         // "loopmouse",
+        "frogger",
         "akari",
         "tj6",
         "alchemy",
